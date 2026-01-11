@@ -1,0 +1,76 @@
+{
+  "name": "paintboard",
+  "version": "0.1.0",
+  "description": "Professional painting software with low-latency pen input",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:frontend": "vite",
+    "build": "vite build && tauri build",
+    "build:dev": "vite build",
+    "build:rust": "cd src-tauri && cargo build",
+    "preview": "vite preview",
+
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" && cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "lint": "eslint src --ext .ts,.tsx --fix",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "typecheck": "tsc --noEmit",
+
+    "check:all": "pnpm typecheck && pnpm lint && pnpm lint:rust && pnpm test",
+
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest run --coverage",
+
+    "prepare": "husky install"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "zustand": "^4.5.0",
+    "immer": "^10.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "@webgpu/types": "^0.1.40",
+    "typescript": "^5.3.0",
+    "vite": "^5.0.0",
+
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react": "^7.33.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "prettier": "^3.2.0",
+
+    "vitest": "^1.2.0",
+    "@testing-library/react": "^14.1.0",
+    "@testing-library/user-event": "^14.5.0",
+    "jsdom": "^24.0.0",
+    "@vitest/coverage-v8": "^1.2.0",
+
+    "@playwright/test": "^1.41.0",
+
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "src-tauri/**/*.rs": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
