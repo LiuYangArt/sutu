@@ -3,6 +3,7 @@ import { useDocumentStore } from '@/stores/document';
 import { useToolStore, applyPressureCurve } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
+import { useTabletStore } from '@/stores/tablet';
 import { StrokeBuffer, Point } from '@/utils/interpolation';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import './Canvas.css';
@@ -36,6 +37,9 @@ export function Canvas() {
     useViewportStore();
 
   const { pushState, undo, redo } = useHistoryStore();
+
+  // Tablet store: We use getState() directly in event handlers for real-time data
+  // No need to subscribe to state changes here since we sync-read in handlers
 
   // Get the active layer's context for drawing
   const getActiveLayerCtx = useCallback(() => {
@@ -288,6 +292,27 @@ export function Canvas() {
       const container = containerRef.current;
       if (!container) return;
 
+      // 同步获取最新的 WinTab 数据（避免 React 状态快照延迟）
+      const tabletState = useTabletStore.getState();
+      const tabletPoint = tabletState.currentPoint;
+      const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
+
+      // 使用 WinTab 压感数据（如果可用且有效），否则回退到 PointerEvent
+      // WinTab 数据有效的条件：正在流式传输 + 有数据点 + 压力 > 0
+      const useWinTab = isWinTabActive && tabletPoint !== null && tabletPoint.pressure > 0;
+      const pressure = useWinTab ? tabletPoint.pressure : e.pressure > 0 ? e.pressure : 0.5;
+      const tiltX = useWinTab ? tabletPoint.tilt_x : (e.tiltX ?? 0);
+      const tiltY = useWinTab ? tabletPoint.tilt_y : (e.tiltY ?? 0);
+
+      // 调试：输出压感数据
+      console.log('[Canvas] PointerDown:', {
+        pointerType: e.pointerType,
+        pointerPressure: e.pressure,
+        wintabPressure: tabletPoint?.pressure,
+        finalPressure: pressure,
+        usingWinTab: useWinTab,
+      });
+
       // 平移模式
       if (spacePressed) {
         setIsPanning(true);
@@ -308,9 +333,9 @@ export function Canvas() {
       const point: Point = {
         x: (e.clientX - rect.left) / scale,
         y: (e.clientY - rect.top) / scale,
-        pressure: e.pressure || 0.5,
-        tiltX: e.tiltX || 0,
-        tiltY: e.tiltY || 0,
+        pressure,
+        tiltX,
+        tiltY,
       };
 
       strokeBufferRef.current.addPoint(point);
@@ -335,14 +360,25 @@ export function Canvas() {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
+      // 同步获取最新的 WinTab 数据（避免 React 状态快照延迟）
+      const tabletState = useTabletStore.getState();
+      const tabletPoint = tabletState.currentPoint;
+      const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
+
+      // 使用 WinTab 压感数据（如果可用且有效），否则回退到 PointerEvent
+      const useWinTab = isWinTabActive && tabletPoint !== null && tabletPoint.pressure > 0;
+      const pressure = useWinTab ? tabletPoint.pressure : e.pressure > 0 ? e.pressure : 0.5;
+      const tiltX = useWinTab ? tabletPoint.tilt_x : (e.tiltX ?? 0);
+      const tiltY = useWinTab ? tabletPoint.tilt_y : (e.tiltY ?? 0);
+
       const rect = canvas.getBoundingClientRect();
       // 转换为画布坐标（考虑缩放）
       const point: Point = {
         x: (e.clientX - rect.left) / scale,
         y: (e.clientY - rect.top) / scale,
-        pressure: e.pressure || 0.5,
-        tiltX: e.tiltX || 0,
-        tiltY: e.tiltY || 0,
+        pressure,
+        tiltX,
+        tiltY,
       };
 
       const interpolatedPoints = strokeBufferRef.current.addPoint(point);
