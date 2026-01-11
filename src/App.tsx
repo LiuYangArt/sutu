@@ -6,6 +6,22 @@ import { TabletPanel } from './components/TabletPanel';
 import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
 
+// Check if running in Tauri environment
+const isTauri = () => {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+};
+
+// Wait for Tauri IPC to be ready
+const waitForTauri = async (maxRetries = 50, interval = 100): Promise<boolean> => {
+  for (let i = 0; i < maxRetries; i++) {
+    if (isTauri()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+  return false;
+};
+
 function App() {
   const [isReady, setIsReady] = useState(false);
   const initDocument = useDocumentStore((s) => s.initDocument);
@@ -22,6 +38,13 @@ function App() {
       // Use ref to prevent double initialization in StrictMode
       if (tabletInitializedRef.current) return;
       tabletInitializedRef.current = true;
+
+      // Wait for Tauri to be ready
+      const tauriReady = await waitForTauri();
+      if (!tauriReady) {
+        console.warn('[App] Tauri not available, tablet features disabled');
+        return;
+      }
 
       console.log('[App] Initializing tablet backend...');
       await initTablet({ backend: 'auto' });

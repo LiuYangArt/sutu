@@ -210,7 +210,7 @@ pub fn init_tablet(
             match window.window_handle() {
                 Ok(handle) => match handle.as_raw() {
                     RawWindowHandle::Win32(win32_handle) => {
-                        let hwnd = win32_handle.hwnd.get() as isize;
+                        let hwnd = win32_handle.hwnd.get();
                         tracing::info!("[Tablet] Got main window HWND: {}", hwnd);
                         Some(hwnd)
                     }
@@ -308,11 +308,15 @@ pub fn start_tablet() -> Result<(), String> {
             std::thread::spawn(move || {
                 tracing::info!("[Tablet] Event emitter thread started");
                 let mut events = Vec::with_capacity(64);
+                let mut events_to_emit = Vec::with_capacity(64);
 
                 loop {
+                    // Step 1: Quickly poll events while holding the lock (minimize lock time)
                     let should_continue = {
-                        let Ok(mut state) = state_clone.lock() else {
-                            break;
+                        let Ok(mut state) = state_clone.try_lock() else {
+                            // Lock is held by another thread, skip this iteration
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                            continue;
                         };
 
                         if !state.emitter_running {
@@ -320,25 +324,28 @@ pub fn start_tablet() -> Result<(), String> {
                         }
 
                         if let Some(backend) = state.active_backend() {
-                            let count = backend.poll(&mut events);
-                            if count > 0 {
-                                tracing::debug!("[Tablet] Emitting {} events", count);
-                                // Emit events to frontend
-                                for event in events.drain(..) {
-                                    if let Err(e) = app.emit("tablet-event", &event) {
-                                        tracing::error!("[Tablet] Failed to emit event: {}", e);
-                                    }
-                                }
-                            }
+                            backend.poll(&mut events);
                         }
                         true
                     };
+                    // Lock is released here
 
                     if !should_continue {
                         break;
                     }
 
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    // Step 2: Emit events OUTSIDE the lock to avoid blocking other threads
+                    if !events.is_empty() {
+                        events_to_emit.append(&mut events);
+                        // tracing::debug!("[Tablet] Emitting {} events", events_to_emit.len());
+                        for event in events_to_emit.drain(..) {
+                            if let Err(e) = app.emit("tablet-event", &event) {
+                                tracing::error!("[Tablet] Failed to emit event: {}", e);
+                            }
+                        }
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(2));
                 }
 
                 tracing::info!("[Tablet] Event emitter thread stopped");

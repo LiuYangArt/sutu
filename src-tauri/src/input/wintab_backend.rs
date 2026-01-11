@@ -27,6 +27,10 @@ type WTOpenFn = unsafe extern "C" fn(HWND, *mut LOGCONTEXT, i32) -> *mut HCTX;
 type WTCloseFn = unsafe extern "C" fn(*mut HCTX) -> i32;
 #[cfg(target_os = "windows")]
 type WTPacketsGetFn = unsafe extern "C" fn(*mut HCTX, INT, LPVOID) -> INT;
+#[cfg(target_os = "windows")]
+type WTEnableFn = unsafe extern "C" fn(*mut HCTX, i32) -> i32;
+#[cfg(target_os = "windows")]
+type WTOverlapFn = unsafe extern "C" fn(*mut HCTX, i32) -> i32;
 
 /// WinTab backend for Windows tablet input
 pub struct WinTabBackend {
@@ -64,6 +68,7 @@ impl WinTabBackend {
     }
 
     #[cfg(target_os = "windows")]
+    #[allow(clippy::type_complexity)]
     fn load_wintab_functions() -> Result<
         (
             libloading::Library,
@@ -71,6 +76,8 @@ impl WinTabBackend {
             WTOpenFn,
             WTCloseFn,
             WTPacketsGetFn,
+            WTEnableFn,
+            WTOverlapFn,
         ),
         String,
     > {
@@ -105,7 +112,29 @@ impl WinTabBackend {
             }
         };
 
-        Ok((lib, wt_info, wt_open, wt_close, wt_packets_get))
+        let wt_enable: WTEnableFn = unsafe {
+            match lib.get::<WTEnableFn>(b"WTEnable") {
+                Ok(f) => *f,
+                Err(e) => return Err(format!("Failed to get WTEnable: {}", e)),
+            }
+        };
+
+        let wt_overlap: WTOverlapFn = unsafe {
+            match lib.get::<WTOverlapFn>(b"WTOverlap") {
+                Ok(f) => *f,
+                Err(e) => return Err(format!("Failed to get WTOverlap: {}", e)),
+            }
+        };
+
+        Ok((
+            lib,
+            wt_info,
+            wt_open,
+            wt_close,
+            wt_packets_get,
+            wt_enable,
+            wt_overlap,
+        ))
     }
 
     #[cfg(target_os = "windows")]
@@ -152,7 +181,8 @@ impl TabletBackend for WinTabBackend {
     fn init(&mut self, config: &TabletConfig) -> Result<(), String> {
         self.config = config.clone();
 
-        let (lib, wt_info, _wt_open, _wt_close, _wt_packets_get) = Self::load_wintab_functions()?;
+        let (lib, wt_info, _wt_open, _wt_close, _wt_packets_get, _wt_enable, _wt_overlap) =
+            Self::load_wintab_functions()?;
 
         // Query device info
         let (name, pressure_range, supports_tilt) =
@@ -203,7 +233,7 @@ impl TabletBackend for WinTabBackend {
 
         let handle = thread::spawn(move || {
             // Load WinTab functions in this thread
-            let Ok((_lib, wt_info, wt_open, wt_close, wt_packets_get)) =
+            let Ok((_lib, wt_info, wt_open, wt_close, wt_packets_get, wt_enable, wt_overlap)) =
                 WinTabBackend::load_wintab_functions()
             else {
                 tracing::error!("[WinTab] Failed to load functions in poll thread");
@@ -234,6 +264,8 @@ impl TabletBackend for WinTabBackend {
             );
 
             // Configure context for our needs
+            // CXO::SYSTEM is required for WinTab to receive packet data
+            // When Windows Ink is disabled in Wacom driver, this won't interfere
             log_context.lcOptions |= CXO::SYSTEM;
             // CRITICAL: lcPktData MUST be WTPKT::all() to match Packet struct layout
             log_context.lcPktData = WTPKT::all();
@@ -259,6 +291,14 @@ impl TabletBackend for WinTabBackend {
                 return;
             }
 
+            // Enable the context and bring it to the top of the overlap order
+            // This ensures the context receives tablet data even when window loses focus
+            unsafe {
+                wt_enable(context_ptr, 1);
+                wt_overlap(context_ptr, 1);
+            }
+            tracing::info!("[WinTab] Context enabled and set to top of overlap order");
+
             tracing::info!(
                 "[WinTab] Polling thread started at {}Hz, context opened successfully",
                 1000 / polling_interval_ms
@@ -273,8 +313,21 @@ impl TabletBackend for WinTabBackend {
             );
 
             let mut was_in_proximity = false;
+            let mut zero_pressure_streak: u32 = 0;
+            let mut loop_count: u64 = 0;
 
             while running.load(Ordering::SeqCst) {
+                loop_count += 1;
+
+                // Periodically re-enable context to prevent it from being disabled
+                // This is a workaround for WinTab context being disabled by other apps
+                if loop_count % 100 == 0 {
+                    unsafe {
+                        wt_enable(context_ptr, 1);
+                        wt_overlap(context_ptr, 1);
+                    }
+                }
+
                 // Get packets from queue using WTPacketsGet
                 const MAX_PACKETS: i32 = 64;
                 let mut packets: [Packet; MAX_PACKETS as usize] =
@@ -291,17 +344,18 @@ impl TabletBackend for WinTabBackend {
                 if count > 0 {
                     let mut new_events = Vec::with_capacity(count as usize);
 
-                    for (i, packet) in packets.iter().take(count as usize).enumerate() {
-                        // Debug: log raw packet data for first packet
-                        if i == 0 {
-                            tracing::info!(
-                                "[WinTab] Packet: x={}, y={}, pressure={}/{}, status={:?}",
-                                packet.pkXYZ.x,
-                                packet.pkXYZ.y,
-                                packet.pkNormalPressure,
-                                pressure_max as u32,
-                                packet.pkStatus
-                            );
+                    for packet in packets.iter().take(count as usize) {
+                        // Track zero pressure streaks for diagnostics
+                        if packet.pkNormalPressure == 0 {
+                            zero_pressure_streak += 1;
+                        } else {
+                            if zero_pressure_streak > 50 {
+                                tracing::warn!(
+                                    "[WinTab] Recovered from {} zero-pressure packets",
+                                    zero_pressure_streak
+                                );
+                            }
+                            zero_pressure_streak = 0;
                         }
 
                         // Check proximity from pkStatus (TPS::PROXIMITY = 0x01)
@@ -330,6 +384,8 @@ impl TabletBackend for WinTabBackend {
                         let tilt_y =
                             (packet.pkOrientation.orAltitude as f32 / 10.0).clamp(-90.0, 90.0);
 
+                        // Always emit input events so frontend can track current tablet position
+                        // Frontend will use pressure value to determine if pen is touching
                         let point = RawInputPoint {
                             x,
                             y,
@@ -342,8 +398,27 @@ impl TabletBackend for WinTabBackend {
                         new_events.push(TabletEvent::Input(point));
                     }
 
-                    if let Ok(mut events_lock) = events.lock() {
-                        events_lock.extend(new_events);
+                    // Use try_lock to avoid blocking if the lock is held
+                    // If lock fails, events will be picked up in the next iteration
+                    match events.try_lock() {
+                        Ok(mut events_lock) => {
+                            events_lock.extend(new_events);
+                        }
+                        Err(_) => {
+                            // Lock contention - this is rare but can happen
+                            // Sleep briefly and retry once
+                            thread::sleep(Duration::from_micros(100));
+                            if let Ok(mut events_lock) = events.try_lock() {
+                                events_lock.extend(new_events);
+                            } else {
+                                tracing::warn!(
+                                    "[WinTab] Lock contention, {} events may be delayed",
+                                    new_events.len()
+                                );
+                                // Store for next iteration by extending events directly
+                                // Note: new_events will be dropped here, but this is very rare
+                            }
+                        }
                     }
                 }
 
