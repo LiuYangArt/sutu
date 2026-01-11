@@ -120,6 +120,31 @@
   color: var(--danger);
 }
 
+.lock-toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.layer-item:hover .lock-toggle {
+  opacity: 0.6;
+}
+
+.lock-toggle:hover {
+  opacity: 1 !important;
+}
+
+.lock-toggle.locked {
+  opacity: 0.8;
+  color: var(--accent);
+}
+
 /* Layer Panel Footer */
 .layer-panel-footer {
   padding: 12px;

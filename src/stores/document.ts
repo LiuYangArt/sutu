@@ -51,6 +51,7 @@ interface DocumentState {
   removeLayer: (id: string) => void;
   setActiveLayer: (id: string) => void;
   toggleLayerVisibility: (id: string) => void;
+  toggleLayerLock: (id: string) => void;
   setLayerOpacity: (id: string, opacity: number) => void;
   setLayerBlendMode: (id: string, blendMode: BlendMode) => void;
   renameLayer: (id: string, name: string) => void;
@@ -141,6 +142,14 @@ export const useDocumentStore = create<DocumentState>()(
         const layer = state.layers.find((l) => l.id === id);
         if (layer) {
           layer.visible = !layer.visible;
+        }
+      }),
+
+    toggleLayerLock: (id) =>
+      set((state) => {
+        const layer = state.layers.find((l) => l.id === id);
+        if (layer) {
+          layer.locked = !layer.locked;
         }
       }),
 
