@@ -35,6 +35,55 @@ export type TabletEvent =
   | 'ProximityLeave'
   | { StatusChanged: TabletStatus };
 
+// Ring buffer size - stores recent WinTab points for matching
+const POINT_BUFFER_SIZE = 128;
+
+// Ring buffer for WinTab points - stored outside Zustand for performance
+// This avoids triggering React re-renders on every WinTab event
+let pointBuffer: RawInputPoint[] = [];
+let bufferWriteIndex = 0;
+
+/**
+ * Add a point to the ring buffer (called from Tauri event listener)
+ */
+function addPointToBuffer(point: RawInputPoint): void {
+  if (pointBuffer.length < POINT_BUFFER_SIZE) {
+    pointBuffer.push(point);
+  } else {
+    pointBuffer[bufferWriteIndex] = point;
+  }
+  bufferWriteIndex = (bufferWriteIndex + 1) % POINT_BUFFER_SIZE;
+}
+
+/**
+ * Get all buffered points and clear the buffer
+ * This is the primary method for consuming WinTab data
+ */
+export function drainPointBuffer(): RawInputPoint[] {
+  const points = pointBuffer;
+  pointBuffer = [];
+  bufferWriteIndex = 0;
+  return points;
+}
+
+/**
+ * Get the most recent point without clearing the buffer
+ */
+export function getLatestPoint(): RawInputPoint | null {
+  if (pointBuffer.length === 0) return null;
+  // The most recent point is at (bufferWriteIndex - 1)
+  const index = (bufferWriteIndex - 1 + pointBuffer.length) % pointBuffer.length;
+  return pointBuffer[index] ?? null;
+}
+
+/**
+ * Clear the point buffer (call on stroke end)
+ */
+export function clearPointBuffer(): void {
+  pointBuffer = [];
+  bufferWriteIndex = 0;
+}
+
 interface TabletState {
   // Status
   status: TabletStatus;
@@ -43,7 +92,7 @@ interface TabletState {
   isInitialized: boolean;
   isStreaming: boolean;
 
-  // Current input state
+  // Current input state (for backward compatibility)
   currentPoint: RawInputPoint | null;
   inProximity: boolean;
 
@@ -123,14 +172,9 @@ export const useTabletStore = create<TabletState>((set, get) => ({
 
         if (typeof payload === 'object' && 'Input' in payload) {
           const point = payload.Input;
-          // Debug: log pressure values occasionally
-          if (Math.random() < 0.01) {
-            console.log('[Tablet] Input event:', {
-              pressure: point.pressure,
-              x: point.x,
-              y: point.y,
-            });
-          }
+          // Add to ring buffer (high-frequency, no React re-render)
+          addPointToBuffer(point);
+          // Also update currentPoint for backward compatibility
           get()._setPoint(point);
         } else if (payload === 'ProximityEnter') {
           console.log('[Tablet] Proximity enter');
@@ -138,7 +182,8 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         } else if (payload === 'ProximityLeave') {
           console.log('[Tablet] Proximity leave');
           get()._setProximity(false);
-          // Clear currentPoint so next stroke starts fresh with new WinTab data
+          // Clear buffer and currentPoint on proximity leave
+          clearPointBuffer();
           set({ currentPoint: null });
         } else if (typeof payload === 'object' && 'StatusChanged' in payload) {
           set({ status: payload.StatusChanged });
@@ -173,6 +218,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         state.unlisten();
       }
 
+      clearPointBuffer();
       set({
         isStreaming: false,
         unlisten: null,
@@ -205,6 +251,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     if (state.unlisten) {
       state.unlisten();
     }
+    clearPointBuffer();
     set({
       unlisten: null,
       isStreaming: false,

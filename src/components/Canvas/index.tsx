@@ -3,7 +3,7 @@ import { useDocumentStore } from '@/stores/document';
 import { useToolStore, applyPressureCurve } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
-import { useTabletStore } from '@/stores/tablet';
+import { useTabletStore, drainPointBuffer, clearPointBuffer } from '@/stores/tablet';
 import { StrokeBuffer, Point } from '@/utils/interpolation';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import './Canvas.css';
@@ -346,26 +346,69 @@ export function Canvas() {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      // 同步获取最新的 WinTab 数据（避免 React 状态快照延迟）
+      const rect = canvas.getBoundingClientRect();
       const tabletState = useTabletStore.getState();
-      const tabletPoint = tabletState.currentPoint;
       const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
 
-      // WinTab 模式：只要后端在运行就使用其压力数据
-      // 不依赖 Proximity 事件，因为某些驱动不可靠
-      // 当 WinTab 报告 pressure=0 时，回退到 PointerEvent
-      const useWinTabPressure = isWinTabActive && tabletPoint !== null && tabletPoint.pressure > 0;
+      // 始终使用 PointerEvent 的坐标（它们是准确的屏幕坐标）
+      const canvasX = (e.clientX - rect.left) / scale;
+      const canvasY = (e.clientY - rect.top) / scale;
 
-      // 压感数据优先级：WinTab有效压力 > PointerEvent压力 > 默认值0.5
-      const pressure = useWinTabPressure ? tabletPoint.pressure : e.pressure > 0 ? e.pressure : 0.5;
-      const tiltX = useWinTabPressure ? tabletPoint.tilt_x : (e.tiltX ?? 0);
-      const tiltY = useWinTabPressure ? tabletPoint.tilt_y : (e.tiltY ?? 0);
+      // 获取压力数据
+      let pressure: number;
+      let tiltX: number;
+      let tiltY: number;
 
-      const rect = canvas.getBoundingClientRect();
-      // 转换为画布坐标（考虑缩放）
+      if (isWinTabActive) {
+        // WinTab 模式：从缓冲区获取最新的压力数据
+        // 消费所有缓冲的点，使用最后一个有效压力值
+        const bufferedPoints = drainPointBuffer();
+        let latestPressure = 0;
+        let latestTiltX = 0;
+        let latestTiltY = 0;
+
+        // 找到最后一个有压力的点
+        for (let i = bufferedPoints.length - 1; i >= 0; i--) {
+          const p = bufferedPoints[i];
+          if (p && p.pressure > 0) {
+            latestPressure = p.pressure;
+            latestTiltX = p.tilt_x;
+            latestTiltY = p.tilt_y;
+            break;
+          }
+        }
+
+        // 如果缓冲区没有有效数据，使用 currentPoint
+        if (
+          latestPressure === 0 &&
+          tabletState.currentPoint &&
+          tabletState.currentPoint.pressure > 0
+        ) {
+          latestPressure = tabletState.currentPoint.pressure;
+          latestTiltX = tabletState.currentPoint.tilt_x;
+          latestTiltY = tabletState.currentPoint.tilt_y;
+        }
+
+        // 如果 WinTab 没有有效压力，回退到 PointerEvent
+        if (latestPressure > 0) {
+          pressure = latestPressure;
+          tiltX = latestTiltX;
+          tiltY = latestTiltY;
+        } else {
+          pressure = e.pressure > 0 ? e.pressure : 0.5;
+          tiltX = e.tiltX ?? 0;
+          tiltY = e.tiltY ?? 0;
+        }
+      } else {
+        // PointerEvent 模式
+        pressure = e.pressure > 0 ? e.pressure : 0.5;
+        tiltX = e.tiltX ?? 0;
+        tiltY = e.tiltY ?? 0;
+      }
+
       const point: Point = {
-        x: (e.clientX - rect.left) / scale,
-        y: (e.clientY - rect.top) / scale,
+        x: canvasX,
+        y: canvasY,
         pressure,
         tiltX,
         tiltY,
@@ -396,6 +439,9 @@ export function Canvas() {
 
       // 绘制剩余的插值点
       if (isDrawingRef.current) {
+        // 清理 WinTab 缓冲区
+        clearPointBuffer();
+
         const remainingPoints = strokeBufferRef.current.finish();
         if (remainingPoints.length > 0) {
           drawPoints(remainingPoints);
