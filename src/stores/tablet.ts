@@ -177,10 +177,10 @@ export const useTabletStore = create<TabletState>((set, get) => ({
           // Also update currentPoint for backward compatibility
           get()._setPoint(point);
         } else if (payload === 'ProximityEnter') {
-          console.log('[Tablet] Proximity enter');
+          // console.log('[Tablet] Proximity enter');
           get()._setProximity(true);
         } else if (payload === 'ProximityLeave') {
-          console.log('[Tablet] Proximity leave');
+          // console.log('[Tablet] Proximity leave');
           get()._setProximity(false);
           // Clear buffer and currentPoint on proximity leave
           clearPointBuffer();

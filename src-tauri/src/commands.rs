@@ -337,7 +337,7 @@ pub fn start_tablet() -> Result<(), String> {
                     // Step 2: Emit events OUTSIDE the lock to avoid blocking other threads
                     if !events.is_empty() {
                         events_to_emit.append(&mut events);
-                        tracing::debug!("[Tablet] Emitting {} events", events_to_emit.len());
+                        // tracing::debug!("[Tablet] Emitting {} events", events_to_emit.len());
                         for event in events_to_emit.drain(..) {
                             if let Err(e) = app.emit("tablet-event", &event) {
                                 tracing::error!("[Tablet] Failed to emit event: {}", e);
