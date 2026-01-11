@@ -6,7 +6,6 @@ pub mod brush;
 pub mod commands;
 pub mod input;
 
-use tauri::Manager;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize the application
@@ -46,10 +45,11 @@ pub fn run() {
             commands::get_tablet_status,
             commands::push_pointer_event,
         ])
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(debug_assertions)]
             {
-                if let Some(window) = app.get_webview_window("main") {
+                use tauri::Manager;
+                if let Some(window) = _app.get_webview_window("main") {
                     window.open_devtools();
                 }
             }
