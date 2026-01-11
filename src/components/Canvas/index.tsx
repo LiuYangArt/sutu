@@ -235,7 +235,7 @@ export function Canvas() {
 
   // 鼠标滚轮缩放
   const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
+    (e: WheelEvent) => {
       e.preventDefault();
       const container = containerRef.current;
       if (!container) return;
@@ -252,6 +252,18 @@ export function Canvas() {
     },
     [zoomIn, zoomOut]
   );
+
+  // 使用 passive: false 注册 wheel 事件，以便 preventDefault() 正常工作
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
 
   // 绘制插值后的点序列
   const drawPoints = useCallback(
@@ -473,7 +485,6 @@ export function Canvas() {
     <div
       ref={containerRef}
       className="canvas-container"
-      onWheel={handleWheel}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
