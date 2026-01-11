@@ -7,7 +7,10 @@ use crate::input::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+
+#[cfg(target_os = "windows")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 /// Document information returned after creation
 #[derive(Debug, Clone, Serialize)]
@@ -183,7 +186,49 @@ pub fn init_tablet(
     let mut state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     // Store app handle for event emission
-    state.app_handle = Some(app);
+    state.app_handle = Some(app.clone());
+
+    // If already initialized with a working backend, return current status (idempotent)
+    if state.wintab.is_some() || state.pointer.is_some() {
+        tracing::info!("[Tablet] Already initialized, returning current status");
+        let (status, backend_name, info) = if let Some(b) = state.active_backend() {
+            (b.status(), b.name().to_string(), b.info().cloned())
+        } else {
+            (TabletStatus::Disconnected, "none".to_string(), None)
+        };
+        return Ok(TabletStatusResponse {
+            status,
+            backend: backend_name,
+            info,
+        });
+    }
+
+    // Get HWND from main window (Windows only)
+    #[cfg(target_os = "windows")]
+    let main_hwnd: Option<isize> = {
+        if let Some(window) = app.get_webview_window("main") {
+            match window.window_handle() {
+                Ok(handle) => match handle.as_raw() {
+                    RawWindowHandle::Win32(win32_handle) => {
+                        let hwnd = win32_handle.hwnd.get() as isize;
+                        tracing::info!("[Tablet] Got main window HWND: {}", hwnd);
+                        Some(hwnd)
+                    }
+                    _ => {
+                        tracing::warn!("[Tablet] Not a Win32 window handle");
+                        None
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("[Tablet] Failed to get window handle: {:?}", e);
+                    None
+                }
+            }
+        } else {
+            tracing::warn!("[Tablet] Main window not found");
+            None
+        }
+    };
 
     // Configure
     state.config.polling_rate_hz = polling_rate.unwrap_or(200);
@@ -200,6 +245,13 @@ pub fn init_tablet(
     // Try WinTab first if requested or auto
     if matches!(requested_backend, BackendType::WinTab | BackendType::Auto) {
         let mut wintab = crate::input::WinTabBackend::new();
+
+        // Set HWND before init (Windows only)
+        #[cfg(target_os = "windows")]
+        if let Some(hwnd) = main_hwnd {
+            wintab.set_hwnd(hwnd);
+        }
+
         if wintab.init(&state.config).is_ok() {
             state.wintab = Some(wintab);
             state.backend_type = BackendType::WinTab;
@@ -270,9 +322,12 @@ pub fn start_tablet() -> Result<(), String> {
                         if let Some(backend) = state.active_backend() {
                             let count = backend.poll(&mut events);
                             if count > 0 {
+                                tracing::debug!("[Tablet] Emitting {} events", count);
                                 // Emit events to frontend
                                 for event in events.drain(..) {
-                                    let _ = app.emit("tablet-event", &event);
+                                    if let Err(e) = app.emit("tablet-event", &event) {
+                                        tracing::error!("[Tablet] Failed to emit event: {}", e);
+                                    }
                                 }
                             }
                         }

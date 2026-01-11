@@ -26,7 +26,9 @@ type WTOpenFn = unsafe extern "C" fn(HWND, *mut LOGCONTEXT, i32) -> *mut HCTX;
 #[cfg(target_os = "windows")]
 type WTCloseFn = unsafe extern "C" fn(*mut HCTX) -> i32;
 #[cfg(target_os = "windows")]
-type WTPacketsGetFn = unsafe extern "C" fn(*mut HCTX, INT, LPVOID) -> INT;
+type WTQueuePacketsExFn = unsafe extern "C" fn(*mut HCTX, *mut u32, *mut u32) -> i32;
+#[cfg(target_os = "windows")]
+type WTDataGetFn = unsafe extern "C" fn(*mut HCTX, u32, u32, INT, LPVOID, *mut INT) -> INT;
 
 /// WinTab backend for Windows tablet input
 pub struct WinTabBackend {
@@ -37,6 +39,8 @@ pub struct WinTabBackend {
     events: Arc<Mutex<Vec<TabletEvent>>>,
     poll_thread: Option<JoinHandle<()>>,
     pressure_max: f32,
+    #[cfg(target_os = "windows")]
+    hwnd: Option<isize>, // Window handle for WinTab context
 }
 
 impl WinTabBackend {
@@ -50,7 +54,15 @@ impl WinTabBackend {
             events: Arc::new(Mutex::new(Vec::with_capacity(64))),
             poll_thread: None,
             pressure_max: 32767.0,
+            #[cfg(target_os = "windows")]
+            hwnd: None,
         }
+    }
+
+    /// Set the window handle for the WinTab context
+    #[cfg(target_os = "windows")]
+    pub fn set_hwnd(&mut self, hwnd: isize) {
+        self.hwnd = Some(hwnd);
     }
 
     #[cfg(target_os = "windows")]
@@ -60,7 +72,8 @@ impl WinTabBackend {
             WTInfoFn,
             WTOpenFn,
             WTCloseFn,
-            WTPacketsGetFn,
+            WTQueuePacketsExFn,
+            WTDataGetFn,
         ),
         String,
     > {
@@ -88,14 +101,21 @@ impl WinTabBackend {
             }
         };
 
-        let wt_packets_get: WTPacketsGetFn = unsafe {
-            match lib.get::<WTPacketsGetFn>(b"WTPacketsGet") {
+        let wt_queue: WTQueuePacketsExFn = unsafe {
+            match lib.get::<WTQueuePacketsExFn>(b"WTQueuePacketsEx") {
                 Ok(f) => *f,
-                Err(e) => return Err(format!("Failed to get WTPacketsGet: {}", e)),
+                Err(e) => return Err(format!("Failed to get WTQueuePacketsEx: {}", e)),
             }
         };
 
-        Ok((lib, wt_info, wt_open, wt_close, wt_packets_get))
+        let wt_data_get: WTDataGetFn = unsafe {
+            match lib.get::<WTDataGetFn>(b"WTDataGet") {
+                Ok(f) => *f,
+                Err(e) => return Err(format!("Failed to get WTDataGet: {}", e)),
+            }
+        };
+
+        Ok((lib, wt_info, wt_open, wt_close, wt_queue, wt_data_get))
     }
 
     #[cfg(target_os = "windows")]
@@ -142,7 +162,8 @@ impl TabletBackend for WinTabBackend {
     fn init(&mut self, config: &TabletConfig) -> Result<(), String> {
         self.config = config.clone();
 
-        let (lib, wt_info, _wt_open, _wt_close, _wt_packets_get) = Self::load_wintab_functions()?;
+        let (lib, wt_info, _wt_open, _wt_close, _wt_queue, _wt_data_get) =
+            Self::load_wintab_functions()?;
 
         // Query device info
         let (name, pressure_range, supports_tilt) =
@@ -189,37 +210,59 @@ impl TabletBackend for WinTabBackend {
         let polling_interval_ms = 1000 / self.config.polling_rate_hz as u64;
         let pressure_max = self.pressure_max;
         let pressure_curve = self.config.pressure_curve;
+        let hwnd_value = self.hwnd; // Copy the stored HWND
 
         let handle = thread::spawn(move || {
             // Load WinTab functions in this thread
-            let Ok((_lib, wt_info, wt_open, wt_close, wt_packets_get)) =
+            let Ok((_lib, wt_info, wt_open, wt_close, wt_queue, wt_data_get)) =
                 WinTabBackend::load_wintab_functions()
             else {
                 tracing::error!("[WinTab] Failed to load functions in poll thread");
                 return;
             };
 
-            // Get window handle
-            let hwnd = unsafe { GetForegroundWindow() };
-            let hwnd_val = HWND(hwnd.0);
-
-            // Create context
+            // Get default system context (DEFSYSCTX for system-wide tablet input)
             let mut log_context = LOGCONTEXT::default();
-            let ctx_result = unsafe { wt_info(WTI::DEFCONTEXT, 0, cast_void!(log_context)) };
+            let ctx_result = unsafe { wt_info(WTI::DEFSYSCTX, 0, cast_void!(log_context)) };
             if ctx_result == 0 {
-                tracing::error!("[WinTab] Failed to get default context");
+                tracing::error!("[WinTab] Failed to get default system context");
                 return;
             }
 
-            log_context.lcOptions.insert(CXO::SYSTEM);
-            log_context.lcPktData = WTPKT::X
-                | WTPKT::Y
-                | WTPKT::NORMAL_PRESSURE
-                | WTPKT::STATUS
-                | WTPKT::ORIENTATION
-                | WTPKT::TIME;
-            log_context.lcPktMode = WTPKT::empty();
+            // Query tablet axes for coordinate conversion
+            let mut tablet_x = AXIS::default();
+            let mut tablet_y = AXIS::default();
+            unsafe {
+                wt_info(WTI::DEVICES, DVC::X as u32, cast_void!(tablet_x));
+                wt_info(WTI::DEVICES, DVC::Y as u32, cast_void!(tablet_y));
+            }
+            tracing::info!(
+                "[WinTab] Tablet axes: X({}-{}), Y({}-{})",
+                tablet_x.axMin,
+                tablet_x.axMax,
+                tablet_y.axMin,
+                tablet_y.axMax
+            );
+
+            // Configure context for our needs
+            log_context.lcOptions |= CXO::SYSTEM;
+            // CRITICAL: lcPktData MUST be WTPKT::all() to match Packet struct layout
+            log_context.lcPktData = WTPKT::all();
+            log_context.lcPktMode = WTPKT::empty(); // All fields in absolute mode
             log_context.lcMoveMask = WTPKT::X | WTPKT::Y | WTPKT::NORMAL_PRESSURE;
+
+            // Flip Y axis (tablet Y is inverted by default)
+            let default_y_extent = log_context.lcOutExtXYZ.y;
+            log_context.lcOutExtXYZ.y = -default_y_extent;
+
+            // Use provided HWND or get foreground window as fallback
+            let hwnd_val = if let Some(h) = hwnd_value {
+                HWND(h)
+            } else {
+                let hwnd = unsafe { GetForegroundWindow() };
+                HWND(hwnd.0)
+            };
+            tracing::info!("[WinTab] Using window handle: {:?}", hwnd_val);
 
             let context_ptr = unsafe { wt_open(hwnd_val, &mut log_context as *mut LOGCONTEXT, 1) };
             if context_ptr.is_null() {
@@ -228,57 +271,88 @@ impl TabletBackend for WinTabBackend {
             }
 
             tracing::info!(
-                "[WinTab] Polling thread started at {}Hz",
+                "[WinTab] Polling thread started at {}Hz, context opened successfully",
                 1000 / polling_interval_ms
+            );
+
+            let screen_width = log_context.lcOutExtXYZ.x.abs() as f32;
+            let screen_height = log_context.lcOutExtXYZ.y.abs() as f32;
+            tracing::info!(
+                "[WinTab] Output extents: {}x{}",
+                screen_width,
+                screen_height
             );
 
             let mut was_in_proximity = false;
 
             while running.load(Ordering::SeqCst) {
-                let mut packets: Vec<Packet> = vec![Packet::default(); 64];
-                let count =
-                    unsafe { wt_packets_get(context_ptr, 64, packets.as_mut_ptr() as *mut c_void) };
+                // Check for available packets
+                let mut from: u32 = 0;
+                let mut to: u32 = 0;
+                let queue_result = unsafe { wt_queue(context_ptr, &mut from, &mut to) };
 
-                if count > 0 {
-                    let mut new_events = Vec::with_capacity(count as usize);
+                if queue_result != 0 && to >= from {
+                    const MAX_PACKETS: i32 = 64;
+                    let mut packets: [Packet; MAX_PACKETS as usize] =
+                        core::array::from_fn(|_| Packet::default());
+                    let mut count_removed: INT = 0;
 
-                    for packet in packets.iter().take(count as usize) {
-                        // Infer proximity from pressure (TPS module is private in wintab_lite)
-                        // Pressure > 0 means pen is touching the tablet
-                        let has_pressure = packet.pkNormalPressure > 0;
-                        let in_proximity = has_pressure;
+                    let _total = unsafe {
+                        wt_data_get(
+                            context_ptr,
+                            from,
+                            to,
+                            MAX_PACKETS,
+                            packets.as_mut_ptr() as *mut c_void,
+                            &mut count_removed,
+                        )
+                    };
 
-                        if in_proximity && !was_in_proximity {
-                            new_events.push(TabletEvent::ProximityEnter);
-                        } else if !in_proximity && was_in_proximity {
-                            new_events.push(TabletEvent::ProximityLeave);
+                    if count_removed > 0 {
+                        let mut new_events = Vec::with_capacity(count_removed as usize);
+
+                        for packet in packets.iter().take(count_removed as usize) {
+                            // Check proximity from pkStatus if available, otherwise infer from pressure
+                            let has_pressure = packet.pkNormalPressure > 0;
+                            let in_proximity = has_pressure;
+
+                            if in_proximity && !was_in_proximity {
+                                new_events.push(TabletEvent::ProximityEnter);
+                            } else if !in_proximity && was_in_proximity {
+                                new_events.push(TabletEvent::ProximityLeave);
+                            }
+                            was_in_proximity = in_proximity;
+
+                            // Convert to normalized pressure
+                            let raw_pressure = packet.pkNormalPressure as f32 / pressure_max;
+                            let pressure = pressure_curve.apply(raw_pressure);
+
+                            // Convert tablet coordinates to screen coordinates
+                            // pkXYZ contains output coordinates (already scaled by context)
+                            let x = packet.pkXYZ.x as f32;
+                            let y = packet.pkXYZ.y as f32;
+
+                            // Convert tilt from orientation
+                            let tilt_x =
+                                (packet.pkOrientation.orAzimuth as f32 / 10.0).clamp(-90.0, 90.0);
+                            let tilt_y =
+                                (packet.pkOrientation.orAltitude as f32 / 10.0).clamp(-90.0, 90.0);
+
+                            let point = RawInputPoint {
+                                x,
+                                y,
+                                pressure,
+                                tilt_x,
+                                tilt_y,
+                                timestamp_ms: packet.pkTime as u64,
+                            };
+
+                            new_events.push(TabletEvent::Input(point));
                         }
-                        was_in_proximity = in_proximity;
 
-                        // Convert to normalized values
-                        let raw_pressure = packet.pkNormalPressure as f32 / pressure_max;
-                        let pressure = pressure_curve.apply(raw_pressure);
-
-                        // Convert tilt from orientation
-                        let tilt_x =
-                            (packet.pkOrientation.orAzimuth as f32 / 10.0).clamp(-90.0, 90.0);
-                        let tilt_y =
-                            (packet.pkOrientation.orAltitude as f32 / 10.0).clamp(-90.0, 90.0);
-
-                        let point = RawInputPoint {
-                            x: packet.pkXYZ.x as f32,
-                            y: packet.pkXYZ.y as f32,
-                            pressure,
-                            tilt_x,
-                            tilt_y,
-                            timestamp_ms: packet.pkTime as u64,
-                        };
-
-                        new_events.push(TabletEvent::Input(point));
-                    }
-
-                    if let Ok(mut events_lock) = events.lock() {
-                        events_lock.extend(new_events);
+                        if let Ok(mut events_lock) = events.lock() {
+                            events_lock.extend(new_events);
+                        }
                     }
                 }
 
