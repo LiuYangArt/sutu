@@ -24,6 +24,10 @@ pub fn init() {
 }
 
 /// Run the Tauri application
+///
+/// # Panics
+/// Panics if the Tauri application fails to start.
+#[allow(clippy::expect_used)]
 pub fn run() {
     init();
 
@@ -38,8 +42,9 @@ pub fn run() {
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
             }
             Ok(())
         })

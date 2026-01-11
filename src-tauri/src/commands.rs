@@ -1,8 +1,8 @@
 //! Tauri commands - IPC interface between frontend and backend
 
-use serde::{Deserialize, Serialize};
 use crate::brush::{BrushEngine, StrokeSegment};
 use crate::input::RawInputPoint;
+use serde::Serialize;
 
 /// Document information returned after creation
 #[derive(Debug, Clone, Serialize)]
@@ -24,11 +24,7 @@ pub struct SystemInfo {
 
 /// Create a new document
 #[tauri::command]
-pub async fn create_document(
-    width: u32,
-    height: u32,
-    dpi: u32,
-) -> Result<DocumentInfo, String> {
+pub async fn create_document(width: u32, height: u32, dpi: u32) -> Result<DocumentInfo, String> {
     tracing::info!("Creating document: {}x{} @ {}dpi", width, height, dpi);
 
     // Validate dimensions
@@ -82,11 +78,7 @@ fn uuid_simple() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
 
-    format!(
-        "{:x}{:x}",
-        now.as_secs(),
-        now.subsec_nanos()
-    )
+    format!("{:x}{:x}", now.as_secs(), now.subsec_nanos())
 }
 
 #[cfg(test)]

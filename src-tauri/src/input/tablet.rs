@@ -4,23 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Tablet connection status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TabletStatus {
     pub connected: bool,
     pub device_name: Option<String>,
     pub supports_pressure: bool,
     pub supports_tilt: bool,
-}
-
-impl Default for TabletStatus {
-    fn default() -> Self {
-        Self {
-            connected: false,
-            device_name: None,
-            supports_pressure: false,
-            supports_tilt: false,
-        }
-    }
 }
 
 /// Manages tablet device connection and input

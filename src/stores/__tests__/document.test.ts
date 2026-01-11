@@ -9,28 +9,29 @@ describe('DocumentStore', () => {
 
   describe('initDocument', () => {
     it('should initialize document with given dimensions', () => {
-      useDocumentStore.getState().initDocument({ width: 1920, height: 1080, dpi: 72 });
+      const store = useDocumentStore.getState();
+
+      store.initDocument({ width: 1920, height: 1080, dpi: 300 });
 
       const state = useDocumentStore.getState();
       expect(state.width).toBe(1920);
       expect(state.height).toBe(1080);
-      expect(state.dpi).toBe(72);
+      expect(state.dpi).toBe(300);
     });
 
     it('should create a default background layer', () => {
-      useDocumentStore.getState().initDocument({ width: 800, height: 600, dpi: 72 });
+      const store = useDocumentStore.getState();
+
+      store.initDocument({ width: 800, height: 600, dpi: 72 });
 
       const state = useDocumentStore.getState();
       expect(state.layers).toHaveLength(1);
-      expect(state.layers[0].name).toBe('Background');
-      expect(state.layers[0].type).toBe('raster');
-    });
 
-    it('should set the background layer as active', () => {
-      useDocumentStore.getState().initDocument({ width: 800, height: 600, dpi: 72 });
-
-      const state = useDocumentStore.getState();
-      expect(state.activeLayerId).toBe(state.layers[0].id);
+      const firstLayer = state.layers[0];
+      expect(firstLayer).toBeDefined();
+      expect(firstLayer!.name).toBe('Background');
+      expect(firstLayer!.type).toBe('raster');
+      expect(state.activeLayerId).toBe(firstLayer!.id);
     });
   });
 
@@ -40,60 +41,82 @@ describe('DocumentStore', () => {
     });
 
     it('should add a new layer', () => {
-      const initialCount = useDocumentStore.getState().layers.length;
+      const store = useDocumentStore.getState();
 
-      useDocumentStore.getState().addLayer({ name: 'New Layer', type: 'raster' });
+      store.addLayer({ name: 'Layer 1', type: 'raster' });
 
-      expect(useDocumentStore.getState().layers.length).toBe(initialCount + 1);
+      const state = useDocumentStore.getState();
+      expect(state.layers).toHaveLength(2);
+
+      const secondLayer = state.layers[1];
+      expect(secondLayer).toBeDefined();
+      expect(secondLayer!.name).toBe('Layer 1');
     });
 
     it('should set new layer as active', () => {
-      useDocumentStore.getState().addLayer({ name: 'New Layer', type: 'raster' });
+      const store = useDocumentStore.getState();
+
+      store.addLayer({ name: 'Layer 1', type: 'raster' });
 
       const state = useDocumentStore.getState();
-      const newLayer = state.layers[state.layers.length - 1];
-      expect(state.activeLayerId).toBe(newLayer.id);
+      const secondLayer = state.layers[1];
+      expect(secondLayer).toBeDefined();
+      expect(state.activeLayerId).toBe(secondLayer!.id);
     });
 
-    it('should create layer with correct properties', () => {
-      useDocumentStore.getState().addLayer({ name: 'Test Layer', type: 'raster' });
+    it('should create layer with default properties', () => {
+      const store = useDocumentStore.getState();
 
-      const state = useDocumentStore.getState();
-      const newLayer = state.layers[state.layers.length - 1];
-      expect(newLayer.name).toBe('Test Layer');
-      expect(newLayer.type).toBe('raster');
-      expect(newLayer.visible).toBe(true);
-      expect(newLayer.opacity).toBe(100);
-      expect(newLayer.blendMode).toBe('normal');
+      store.addLayer({ name: 'Test', type: 'raster' });
+
+      const layer = useDocumentStore.getState().layers[1];
+      expect(layer).toBeDefined();
+      expect(layer!.visible).toBe(true);
+      expect(layer!.locked).toBe(false);
+      expect(layer!.opacity).toBe(100);
+      expect(layer!.blendMode).toBe('normal');
     });
   });
 
   describe('removeLayer', () => {
     beforeEach(() => {
-      useDocumentStore.getState().initDocument({ width: 800, height: 600, dpi: 72 });
-      useDocumentStore.getState().addLayer({ name: 'Layer 1', type: 'raster' });
-      useDocumentStore.getState().addLayer({ name: 'Layer 2', type: 'raster' });
+      const store = useDocumentStore.getState();
+      store.initDocument({ width: 800, height: 600, dpi: 72 });
+      store.addLayer({ name: 'Layer 1', type: 'raster' });
+      store.addLayer({ name: 'Layer 2', type: 'raster' });
     });
 
     it('should remove the specified layer', () => {
-      const layerToRemove = useDocumentStore.getState().layers[1];
-      const initialCount = useDocumentStore.getState().layers.length;
-
-      useDocumentStore.getState().removeLayer(layerToRemove.id);
-
       const state = useDocumentStore.getState();
-      expect(state.layers.length).toBe(initialCount - 1);
-      expect(state.layers.find((l) => l.id === layerToRemove.id)).toBeUndefined();
+      const layerToRemove = state.layers[1];
+      expect(layerToRemove).toBeDefined();
+
+      state.removeLayer(layerToRemove!.id);
+
+      expect(useDocumentStore.getState().layers).toHaveLength(2);
+      expect(
+        useDocumentStore.getState().layers.find((l) => l.id === layerToRemove!.id)
+      ).toBeUndefined();
     });
 
     it('should update active layer when removing active layer', () => {
-      const activeId = useDocumentStore.getState().activeLayerId!;
-
-      useDocumentStore.getState().removeLayer(activeId);
-
       const state = useDocumentStore.getState();
-      expect(state.activeLayerId).not.toBe(activeId);
-      expect(state.activeLayerId).toBeDefined();
+      const activeId = state.activeLayerId!;
+
+      state.removeLayer(activeId);
+
+      const newState = useDocumentStore.getState();
+      expect(newState.activeLayerId).not.toBe(activeId);
+      expect(newState.activeLayerId).not.toBeNull();
+    });
+
+    it('should not remove non-existent layer', () => {
+      const state = useDocumentStore.getState();
+      const initialCount = state.layers.length;
+
+      state.removeLayer('non-existent-id');
+
+      expect(useDocumentStore.getState().layers).toHaveLength(initialCount);
     });
   });
 
@@ -103,15 +126,18 @@ describe('DocumentStore', () => {
     });
 
     it('should toggle layer visibility', () => {
-      const layer = useDocumentStore.getState().layers[0];
+      const state = useDocumentStore.getState();
+      const firstLayer = state.layers[0];
+      expect(firstLayer).toBeDefined();
+      const layerId = firstLayer!.id;
 
-      expect(layer.visible).toBe(true);
+      expect(firstLayer!.visible).toBe(true);
 
-      useDocumentStore.getState().toggleLayerVisibility(layer.id);
-      expect(useDocumentStore.getState().layers[0].visible).toBe(false);
+      state.toggleLayerVisibility(layerId);
+      expect(useDocumentStore.getState().layers[0]!.visible).toBe(false);
 
-      useDocumentStore.getState().toggleLayerVisibility(layer.id);
-      expect(useDocumentStore.getState().layers[0].visible).toBe(true);
+      useDocumentStore.getState().toggleLayerVisibility(layerId);
+      expect(useDocumentStore.getState().layers[0]!.visible).toBe(true);
     });
   });
 
@@ -121,37 +147,94 @@ describe('DocumentStore', () => {
     });
 
     it('should set layer opacity', () => {
-      const layer = useDocumentStore.getState().layers[0];
+      const state = useDocumentStore.getState();
+      const firstLayer = state.layers[0];
+      expect(firstLayer).toBeDefined();
+      const layerId = firstLayer!.id;
 
-      useDocumentStore.getState().setLayerOpacity(layer.id, 50);
+      state.setLayerOpacity(layerId, 50);
 
-      expect(useDocumentStore.getState().layers[0].opacity).toBe(50);
+      expect(useDocumentStore.getState().layers[0]!.opacity).toBe(50);
     });
 
     it('should clamp opacity to valid range', () => {
-      const layer = useDocumentStore.getState().layers[0];
+      const state = useDocumentStore.getState();
+      const firstLayer = state.layers[0];
+      expect(firstLayer).toBeDefined();
+      const layerId = firstLayer!.id;
 
-      useDocumentStore.getState().setLayerOpacity(layer.id, 150);
-      expect(useDocumentStore.getState().layers[0].opacity).toBe(100);
+      state.setLayerOpacity(layerId, 150);
+      expect(useDocumentStore.getState().layers[0]!.opacity).toBe(100);
 
-      useDocumentStore.getState().setLayerOpacity(layer.id, -10);
-      expect(useDocumentStore.getState().layers[0].opacity).toBe(0);
+      state.setLayerOpacity(layerId, -10);
+      expect(useDocumentStore.getState().layers[0]!.opacity).toBe(0);
+    });
+  });
+
+  describe('setLayerBlendMode', () => {
+    beforeEach(() => {
+      useDocumentStore.getState().initDocument({ width: 800, height: 600, dpi: 72 });
+    });
+
+    it('should set layer blend mode', () => {
+      const state = useDocumentStore.getState();
+      const firstLayer = state.layers[0];
+      expect(firstLayer).toBeDefined();
+      const layerId = firstLayer!.id;
+
+      state.setLayerBlendMode(layerId, 'multiply');
+
+      expect(useDocumentStore.getState().layers[0]!.blendMode).toBe('multiply');
+    });
+  });
+
+  describe('renameLayer', () => {
+    beforeEach(() => {
+      useDocumentStore.getState().initDocument({ width: 800, height: 600, dpi: 72 });
+    });
+
+    it('should rename the layer', () => {
+      const state = useDocumentStore.getState();
+      const firstLayer = state.layers[0];
+      expect(firstLayer).toBeDefined();
+      const layerId = firstLayer!.id;
+
+      state.renameLayer(layerId, 'New Name');
+
+      expect(useDocumentStore.getState().layers[0]!.name).toBe('New Name');
     });
   });
 
   describe('moveLayer', () => {
     beforeEach(() => {
-      useDocumentStore.getState().initDocument({ width: 800, height: 600, dpi: 72 });
-      useDocumentStore.getState().addLayer({ name: 'Layer 1', type: 'raster' });
-      useDocumentStore.getState().addLayer({ name: 'Layer 2', type: 'raster' });
+      const store = useDocumentStore.getState();
+      store.initDocument({ width: 800, height: 600, dpi: 72 });
+      store.addLayer({ name: 'Layer 1', type: 'raster' });
+      store.addLayer({ name: 'Layer 2', type: 'raster' });
     });
 
     it('should move layer to new position', () => {
-      const layerToMove = useDocumentStore.getState().layers[2]; // Last layer
+      const state = useDocumentStore.getState();
+      const thirdLayer = state.layers[2];
+      expect(thirdLayer).toBeDefined();
+      const layerId = thirdLayer!.id;
 
-      useDocumentStore.getState().moveLayer(layerToMove.id, 0);
+      state.moveLayer(layerId, 0);
 
-      expect(useDocumentStore.getState().layers[0].id).toBe(layerToMove.id);
+      const newState = useDocumentStore.getState();
+      expect(newState.layers[0]!.id).toBe(layerId);
+    });
+
+    it('should not move if target is same position', () => {
+      const state = useDocumentStore.getState();
+      const originalOrder = state.layers.map((l) => l.id);
+
+      const secondLayer = state.layers[1];
+      expect(secondLayer).toBeDefined();
+      state.moveLayer(secondLayer!.id, 1);
+
+      const newOrder = useDocumentStore.getState().layers.map((l) => l.id);
+      expect(newOrder).toEqual(originalOrder);
     });
   });
 });

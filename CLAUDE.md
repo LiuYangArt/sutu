@@ -109,6 +109,48 @@ Defined in `src-tauri/src/commands.rs`:
 | Max canvas size | 16K x 16K |
 | Memory (8K canvas) | < 2GB |
 
+## Quality Assurance
+
+### Pre-commit Hooks (Husky + lint-staged)
+
+Every commit automatically runs:
+- ESLint + Prettier on staged `.ts/.tsx` files
+- `cargo fmt` on staged `.rs` files
+
+### Testing Strategy
+
+| Layer | Tool | Location | Command |
+|-------|------|----------|---------|
+| Unit (Frontend) | Vitest | `src/**/__tests__/*.test.ts` | `pnpm test` |
+| Unit (Rust) | cargo test | `src-tauri/src/**` (`#[cfg(test)]`) | `cargo test` |
+| E2E | Playwright | `e2e/*.spec.ts` | `pnpm test:e2e` |
+| Performance | Criterion | `src-tauri/benches/` | `cargo bench` |
+
+### Development Workflow
+
+```
+1. Write test first (TDD recommended for core logic)
+2. Implement feature
+3. Run `pnpm check:all` locally
+4. Commit (husky auto-runs lint-staged)
+5. Push → CI validates (lint → test → build)
+```
+
+### When to Write Tests
+
+- **Required**: Core algorithms (brush engine, interpolation, input processing)
+- **Required**: State management (Zustand stores)
+- **Recommended**: React components with complex logic
+- **Optional**: Pure UI components (use E2E for visual regression)
+
+### CI Pipeline
+
+GitHub Actions runs on every PR:
+1. `lint` - TypeScript, ESLint, Clippy, rustfmt
+2. `test` - Vitest + cargo test with coverage
+3. `build` - Frontend + Tauri app
+4. `benchmark` - Performance regression (main branch only)
+
 ## Current Development Phase
 
 Project is in early stage (M1: Basic Painting). See `docs/todo/development-roadmap.md` for full roadmap.

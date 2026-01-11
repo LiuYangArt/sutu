@@ -85,6 +85,7 @@ fn catmull_rom_point(
 }
 
 /// Calculate the length of a path through points
+#[allow(dead_code)]
 pub fn path_length(points: &[RawInputPoint]) -> f32 {
     if points.len() < 2 {
         return 0.0;
