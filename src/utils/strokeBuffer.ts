@@ -18,6 +18,7 @@ export interface DabParams {
   flow: number; // Per-dab opacity (0-1)
   hardness: number; // Edge hardness (0-1)
   color: string; // Hex color
+  opacityCeiling?: number; // Optional opacity ceiling (0-1), if set, limits max alpha
 }
 
 export interface Rect {
@@ -119,10 +120,10 @@ export class StrokeBuffer {
   }
 
   /**
-   * Stamp a circular dab onto the buffer
+   * Stamp a circular dab onto the buffer with opacity ceiling support
    */
   stampDab(params: DabParams): void {
-    const { x, y, size, flow, hardness, color } = params;
+    const { x, y, size, flow, hardness, color, opacityCeiling } = params;
     const radius = size / 2;
 
     if (radius < 0.5) return;
@@ -131,25 +132,80 @@ export class StrokeBuffer {
 
     const rgb = hexToRgb(color);
 
-    // Create radial gradient for soft brush
-    const gradient = this.ctx.createRadialGradient(x, y, 0, x, y, radius);
+    // Calculate bounding box for pixel operations
+    const left = Math.max(0, Math.floor(x - radius));
+    const top = Math.max(0, Math.floor(y - radius));
+    const right = Math.min(this.width, Math.ceil(x + radius));
+    const bottom = Math.min(this.height, Math.ceil(y + radius));
+    const rectWidth = right - left;
+    const rectHeight = bottom - top;
 
-    if (hardness >= 0.99) {
-      // Hard brush: solid color
-      gradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${flow})`);
-      gradient.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${flow})`);
-    } else {
-      // Soft brush: gradient falloff
-      const innerRadius = hardness;
-      gradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${flow})`);
-      gradient.addColorStop(innerRadius, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${flow})`);
-      gradient.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`);
+    if (rectWidth <= 0 || rectHeight <= 0) return;
+
+    // Get current buffer data for the dab region
+    const bufferData = this.ctx.getImageData(left, top, rectWidth, rectHeight);
+    const maxAlpha = opacityCeiling !== undefined ? Math.round(opacityCeiling * 255) : 255;
+
+    // Process each pixel in the dab region
+    for (let py = 0; py < rectHeight; py++) {
+      for (let px = 0; px < rectWidth; px++) {
+        const worldX = left + px;
+        const worldY = top + py;
+
+        // Calculate distance from dab center
+        const dx = worldX + 0.5 - x;
+        const dy = worldY + 0.5 - y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > radius) continue;
+
+        // Calculate dab alpha based on hardness
+        let dabAlpha: number;
+        if (hardness >= 0.99) {
+          dabAlpha = flow;
+        } else {
+          const innerRadius = radius * hardness;
+          if (dist <= innerRadius) {
+            dabAlpha = flow;
+          } else {
+            // Linear falloff from inner to outer radius
+            const t = (dist - innerRadius) / (radius - innerRadius);
+            dabAlpha = flow * (1 - t);
+          }
+        }
+
+        if (dabAlpha <= 0) continue;
+
+        const idx = (py * rectWidth + px) * 4;
+
+        // Get current buffer pixel
+        const dstR = bufferData.data[idx] ?? 0;
+        const dstG = bufferData.data[idx + 1] ?? 0;
+        const dstB = bufferData.data[idx + 2] ?? 0;
+        const dstA = (bufferData.data[idx + 3] ?? 0) / 255;
+
+        // Porter-Duff "over" compositing
+        const srcA = dabAlpha;
+        const outA = srcA + dstA * (1 - srcA);
+
+        if (outA > 0) {
+          const outR = (rgb.r * srcA + dstR * dstA * (1 - srcA)) / outA;
+          const outG = (rgb.g * srcA + dstG * dstA * (1 - srcA)) / outA;
+          const outB = (rgb.b * srcA + dstB * dstA * (1 - srcA)) / outA;
+
+          // Apply opacity ceiling - clamp alpha to maxAlpha
+          const clampedAlpha = Math.min(Math.round(outA * 255), maxAlpha);
+
+          bufferData.data[idx] = Math.round(outR);
+          bufferData.data[idx + 1] = Math.round(outG);
+          bufferData.data[idx + 2] = Math.round(outB);
+          bufferData.data[idx + 3] = clampedAlpha;
+        }
+      }
     }
 
-    this.ctx.fillStyle = gradient;
-    this.ctx.beginPath();
-    this.ctx.arc(x, y, radius, 0, Math.PI * 2);
-    this.ctx.fill();
+    // Write back to buffer
+    this.ctx.putImageData(bufferData, left, top);
   }
 
   /**
@@ -274,6 +330,7 @@ export class BrushStamper {
 
   /**
    * Process a new input point and return dab positions
+   * Note: Pressure fade-in is now handled in useBrushRenderer before calling this
    */
   processPoint(
     x: number,

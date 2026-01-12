@@ -542,15 +542,16 @@ export function Canvas() {
     ctx.drawImage(compositeCanvas, 0, 0);
 
     // Overlay stroke buffer preview if stroke is active
+    // Note: Don't apply brushOpacity here - the stroke buffer already contains
+    // flow-accumulated alpha. Opacity ceiling is applied only at endStroke.
+    // This gives accurate WYSIWYG preview during drawing.
     if (isStrokeActive()) {
       const previewCanvas = getPreviewCanvas();
       if (previewCanvas) {
-        ctx.globalAlpha = brushOpacity;
         ctx.drawImage(previewCanvas, 0, 0);
-        ctx.globalAlpha = 1;
       }
     }
-  }, [width, height, isStrokeActive, getPreviewCanvas, brushOpacity]);
+  }, [width, height, isStrokeActive, getPreviewCanvas]);
 
   // Process a single point through the brush renderer (for brush tool)
   const processBrushPointWithConfig = useCallback(
