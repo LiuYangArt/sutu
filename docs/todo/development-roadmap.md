@@ -193,7 +193,8 @@
 
 ## M3: 笔刷系统 (Brushes)
 
-**目标**: 实现可自定义的专业笔刷系统
+**目标**: 实现可自定义的专业笔刷系统(reverse engineering photoshop abr file)
+参考笔刷文件： @abr/liuyang_paintbrushes.abr
 
 ### 任务清单
 
