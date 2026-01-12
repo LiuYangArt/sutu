@@ -153,7 +153,11 @@ export function LayerPanel() {
                 {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
               </button>
 
-              <div className="layer-thumbnail" />
+              <div className="layer-thumbnail">
+                {layer.thumbnail && (
+                  <img src={layer.thumbnail} alt={layer.name} draggable={false} />
+                )}
+              </div>
 
               <span className="layer-name" data-testid="layer-name">
                 {layer.name}
