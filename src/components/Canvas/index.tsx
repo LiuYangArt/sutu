@@ -780,84 +780,78 @@ export function Canvas() {
     [isPanning, setIsPanning, finishCurrentStroke]
   );
 
-  // 键盘事件：空格键平移 + 撤销/重做 + 笔刷大小 + Alt取色
+  // 键盘事件处理
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Space for panning
-      if (e.code === 'Space' && !e.repeat) {
-        e.preventDefault();
-        setSpacePressed(true);
-        return;
-      }
-
-      // Alt for eyedropper (temporary tool switch)
-      if (e.code === 'AltLeft' || e.code === 'AltRight') {
-        if (!e.repeat && !altPressed) {
-          // 如果正在绘制，先强制结束当前笔触
-          if (isDrawingRef.current) {
-            finishCurrentStroke();
-          }
-
+      // 优先处理修饰键组合 (Undo/Redo)
+      if (e.ctrlKey || e.metaKey) {
+        if (e.code === 'KeyZ') {
           e.preventDefault();
-          setAltPressed(true);
-          previousToolRef.current = currentTool;
-          setTool('eyedropper');
+          if (e.shiftKey) {
+            handleRedo();
+          } else {
+            handleUndo();
+          }
+        } else if (e.code === 'KeyY') {
+          e.preventDefault();
+          handleRedo();
         }
         return;
       }
 
-      // Zoom tool shortcut
-      if (e.code === 'KeyZ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        // If not already on zoom tool, switch to it based on user preference
-        if (currentTool !== 'zoom') {
-          // Toggle or temporary switch logic can be refined here
-          setTool('zoom');
-        } else {
-          // Optional: press Z again to toggle back? For now just stay on zoom.
-          // Or could go back to previous tool? Let's just switch to zoom.
-        }
-        return;
-      }
+      // 忽略不需要重复触发的按键 (除了 [] 笔刷大小调节)
+      const isBracket = e.code === 'BracketLeft' || e.code === 'BracketRight';
+      if (e.repeat && !isBracket) return;
 
-      // Brush/eraser size: [ to decrease, ] to increase
-      if (e.code === 'BracketLeft') {
-        e.preventDefault();
-        const step = e.shiftKey ? 10 : 5;
-        setCurrentSize(currentSize - step);
-        return;
-      }
-      if (e.code === 'BracketRight') {
-        e.preventDefault();
-        const step = e.shiftKey ? 10 : 5;
-        setCurrentSize(currentSize + step);
-        return;
-      }
+      switch (e.code) {
+        case 'Space':
+          e.preventDefault();
+          setSpacePressed(true);
+          break;
 
-      // Tool switching: B for brush, E for eraser
-      if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        setTool('brush');
-        return;
-      }
-      if (e.code === 'KeyE' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        setTool('eraser');
-        return;
-      }
+        case 'AltLeft':
+        case 'AltRight':
+          if (!altPressed) {
+            // 如果正在绘制，先强制结束当前笔触
+            if (isDrawingRef.current) finishCurrentStroke();
 
-      // Ctrl+Z for undo
-      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ' && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-        return;
-      }
+            e.preventDefault();
+            setAltPressed(true);
+            previousToolRef.current = currentTool;
+            setTool('eyedropper');
+          }
+          break;
 
-      // Ctrl+Y or Ctrl+Shift+Z for redo
-      if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || (e.code === 'KeyZ' && e.shiftKey))) {
-        e.preventDefault();
-        handleRedo();
-        return;
+        case 'KeyZ':
+          if (!e.altKey) {
+            e.preventDefault();
+            if (currentTool !== 'zoom') setTool('zoom');
+          }
+          break;
+
+        case 'BracketLeft':
+          e.preventDefault();
+          setCurrentSize(currentSize - (e.shiftKey ? 10 : 5));
+          break;
+
+        case 'BracketRight':
+          e.preventDefault();
+          setCurrentSize(currentSize + (e.shiftKey ? 10 : 5));
+          break;
+
+        case 'KeyB':
+          if (!e.altKey) {
+            e.preventDefault();
+            setTool('brush');
+          }
+          break;
+
+        case 'KeyE':
+          if (!e.altKey) {
+            e.preventDefault();
+            setTool('eraser');
+          }
+          break;
       }
     };
 
