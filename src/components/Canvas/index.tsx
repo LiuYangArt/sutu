@@ -691,6 +691,13 @@ export function Canvas() {
     transformOrigin: '0 0',
   };
 
+  // Calculate clip-path for checkerboard
+  const x = offsetX;
+  const y = offsetY;
+  const w = width * scale;
+  const h = height * scale;
+  const clipPathKey = `polygon(${x}px ${y}px, ${x + w}px ${y}px, ${x + w}px ${y + h}px, ${x}px ${y + h}px)`;
+
   return (
     <div
       ref={containerRef}
@@ -702,6 +709,7 @@ export function Canvas() {
       // Note: onPointerEnter cursor handling is done by native event listener
       style={{ cursor: cursorStyle }}
     >
+      <div className="canvas-checkerboard" style={{ clipPath: clipPathKey }} />
       <div className="canvas-viewport" style={viewportStyle}>
         <canvas
           ref={canvasRef}

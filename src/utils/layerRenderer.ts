@@ -57,7 +57,11 @@ export class LayerRenderer {
     this.compositeCanvas = document.createElement('canvas');
     this.compositeCanvas.width = width;
     this.compositeCanvas.height = height;
-    const ctx = this.compositeCanvas.getContext('2d', { alpha: true });
+    this.compositeCanvas.height = height;
+    const ctx = this.compositeCanvas.getContext('2d', {
+      alpha: true,
+      willReadFrequently: true,
+    });
     if (!ctx) throw new Error('Failed to create composite canvas context');
     this.compositeCtx = ctx;
   }
@@ -81,6 +85,7 @@ export class LayerRenderer {
     const ctx = canvas.getContext('2d', {
       alpha: true,
       desynchronized: true,
+      willReadFrequently: true,
     });
 
     if (!ctx) throw new Error(`Failed to create layer canvas context for ${id}`);

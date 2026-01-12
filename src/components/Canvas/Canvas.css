@@ -1,27 +1,21 @@
 .canvas-container {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   background: #2a2a2a;
   overflow: hidden;
   position: relative;
 }
 
 .canvas-viewport {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  z-index: 1;
 }
 
-.main-canvas {
-  display: block;
-  /* cursor is controlled by parent .canvas-container via JS */
-  touch-action: none;
-}
-
-/* 缩放时的棋盘格背景（用于透明区域） */
-.canvas-viewport::before {
-  content: '';
+/* Screen-space checkerboard background */
+.canvas-checkerboard {
   position: absolute;
   inset: 0;
   background-color: #ffffff;
@@ -33,9 +27,14 @@
   );
   background-size: 16px 16px;
   background-position: 0 0;
-  background-attachment: fixed;
   pointer-events: none;
-  z-index: -1;
+  z-index: 0;
+}
+
+.main-canvas {
+  display: block;
+  /* cursor is controlled by parent .canvas-container via JS */
+  touch-action: none;
 }
 
 /* Brush size cursor indicator */
