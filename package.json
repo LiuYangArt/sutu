@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:coverage": "vitest run --coverage",
-    "prepare": "husky"
+    "prepare": "husky",
+    "version": "node scripts/sync-version.mjs && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
