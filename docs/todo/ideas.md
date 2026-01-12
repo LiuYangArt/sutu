@@ -14,3 +14,5 @@ release流程/github action自动打包/自动版本号
 
 ai接入nanobanana（低优先级）
 moodboard功能（低优先级） tldraw？ 节点式工作流
+
+涂聊/联网功能
