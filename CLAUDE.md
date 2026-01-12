@@ -82,6 +82,12 @@ pnpm format           # 格式化代码
 - 日志: 使用 `tracing`，不用 `println!`
 - 错误: Tauri 命令返回 `Result<T, String>`
 
+### 文件大小限制
+
+- **单个文件不超过 1000 行**
+- 超过 500 行时应开始考虑拆分
+- 超过 1000 行时必须拆分为多个模块
+
 ## 关键数据结构
 
 **Rust** (`src-tauri/src/`):
@@ -95,17 +101,17 @@ pnpm format           # 格式化代码
 - `useDocumentStore` - 文档状态、图层管理
 - `useToolStore` - 当前工具、笔刷设置、颜色
 
-## 当前开发阶段
+## 相关文档
+
+- **架构设计**: [architecture.md](file:///f:/CodeProjects/PaintBoard/docs/architecture.md)
+- **测试策略**: [testing-strategy.md](file:///f:/CodeProjects/PaintBoard/docs/testing-strategy.md)
+- **开发环境搭建**: [development-setup.md](file:///f:/CodeProjects/PaintBoard/docs/development-setup.md)
+- **开发路线图**: [development-roadmap.md](file:///f:/CodeProjects/PaintBoard/docs/todo/development-roadmap.md)
+- **项目灵感**: [project_idea.md](file:///f:/CodeProjects/PaintBoard/docs/project_idea.md)
+
+## 开发阶段
 
 参见 `docs/todo/development-roadmap.md` 获取完整路线图。
-
-**当前重点 (M1.5 基础绘图工具)**:
-
-- [ ] 笔刷大小快捷键 `[` `]`
-- [ ] Alt 按住取色
-- [ ] 橡皮擦工具
-- [ ] Ctrl+Z / Ctrl+Shift+Z 撤销/反撤销
-- [ ] 清除图层内容
 
 ## 版本管理
 
