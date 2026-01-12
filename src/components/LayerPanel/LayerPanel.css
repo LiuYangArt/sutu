@@ -128,9 +128,9 @@
   height: 32px;
   background-color: #ffffff;
   background-image: conic-gradient(
-    #e0e0e0 0.25turn,
+    #cbcccc 0.25turn,
     #ffffff 0 0.5turn,
-    #e0e0e0 0 0.75turn,
+    #cbcccc 0 0.75turn,
     #ffffff 0
   );
   background-size: 16px 16px;
