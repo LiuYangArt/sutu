@@ -12,6 +12,7 @@ export interface Layer {
   blendMode: BlendMode;
   parent?: string;
   children?: string[];
+  thumbnail?: string; // Data URL
 }
 
 export type BlendMode =
@@ -55,6 +56,7 @@ interface DocumentState {
   setLayerOpacity: (id: string, opacity: number) => void;
   setLayerBlendMode: (id: string, blendMode: BlendMode) => void;
   renameLayer: (id: string, name: string) => void;
+  updateLayerThumbnail: (id: string, thumbnail: string) => void;
   moveLayer: (id: string, toIndex: number) => void;
 }
 
@@ -174,6 +176,14 @@ export const useDocumentStore = create<DocumentState>()(
         const layer = state.layers.find((l) => l.id === id);
         if (layer) {
           layer.name = name;
+        }
+      }),
+
+    updateLayerThumbnail: (id, thumbnail) =>
+      set((state) => {
+        const layer = state.layers.find((l) => l.id === id);
+        if (layer) {
+          layer.thumbnail = thumbnail;
         }
       }),
 

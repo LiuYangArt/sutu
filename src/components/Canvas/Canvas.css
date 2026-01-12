@@ -1,42 +1,40 @@
 .canvas-container {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   background: #2a2a2a;
   overflow: hidden;
   position: relative;
 }
 
 .canvas-viewport {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  z-index: 1;
+}
+
+/* Screen-space checkerboard background */
+.canvas-checkerboard {
+  position: absolute;
+  inset: 0;
+  background-color: #ffffff;
+  background-image: conic-gradient(
+    #cbcccc 0.25turn,
+    #ffffff 0 0.5turn,
+    #cbcccc 0 0.75turn,
+    #ffffff 0
+  );
+  background-size: 16px 16px;
+  background-position: 0 0;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .main-canvas {
   display: block;
   /* cursor is controlled by parent .canvas-container via JS */
   touch-action: none;
-}
-
-/* 缩放时的棋盘格背景（用于透明区域） */
-.canvas-viewport::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(45deg, #ccc 25%, transparent 25%),
-    linear-gradient(-45deg, #ccc 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #ccc 75%),
-    linear-gradient(-45deg, transparent 75%, #ccc 75%);
-  background-size: 16px 16px;
-  background-position:
-    0 0,
-    0 8px,
-    8px -8px,
-    -8px 0px;
-  pointer-events: none;
-  z-index: -1;
 }
 
 /* Brush size cursor indicator */

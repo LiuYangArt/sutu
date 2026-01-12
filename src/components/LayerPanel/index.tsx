@@ -16,7 +16,7 @@ const BLEND_MODES: { value: BlendMode; label: string }[] = [
   { value: 'soft-light', label: 'Soft Light' },
 ];
 
-export function LayerPanel() {
+export function LayerPanel(): JSX.Element {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
@@ -31,6 +31,8 @@ export function LayerPanel() {
     setLayerBlendMode,
     toggleLayerLock,
     moveLayer,
+    width,
+    height,
   } = useDocumentStore((s) => ({
     layers: s.layers,
     activeLayerId: s.activeLayerId,
@@ -42,58 +44,65 @@ export function LayerPanel() {
     setLayerBlendMode: s.setLayerBlendMode,
     toggleLayerLock: s.toggleLayerLock,
     moveLayer: s.moveLayer,
+    width: s.width,
+    height: s.height,
   }));
 
   const activeLayer = layers.find((l) => l.id === activeLayerId);
-
-  // Reversed layers for display (top layer first)
   const displayLayers = [...layers].reverse();
+  const { width: thumbWidth, height: thumbHeight } = calculateThumbnailDimensions(width, height);
 
-  const handleDragStart = (e: React.DragEvent, layerId: string) => {
+  function handleDragStart(e: React.DragEvent, layerId: string): void {
     setDraggedId(layerId);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', layerId);
-  };
+  }
 
-  const handleDragOver = (e: React.DragEvent, layerId: string) => {
+  function handleDragOver(e: React.DragEvent, layerId: string): void {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     if (layerId !== draggedId) {
       setDropTargetId(layerId);
     }
-  };
+  }
 
-  const handleDragLeave = () => {
+  function handleDragLeave(): void {
     setDropTargetId(null);
-  };
+  }
 
-  const handleDrop = (e: React.DragEvent, targetLayerId: string) => {
+  function handleDrop(e: React.DragEvent, targetLayerId: string): void {
     e.preventDefault();
     setDropTargetId(null);
     setDraggedId(null);
 
     if (!draggedId || draggedId === targetLayerId) return;
 
-    // Find indices in the original (non-reversed) array
     const fromIndex = layers.findIndex((l) => l.id === draggedId);
     const toIndex = layers.findIndex((l) => l.id === targetLayerId);
 
     if (fromIndex !== -1 && toIndex !== -1) {
       moveLayer(draggedId, toIndex);
     }
-  };
+  }
 
-  const handleDragEnd = () => {
+  function handleDragEnd(): void {
     setDraggedId(null);
     setDropTargetId(null);
-  };
+  }
 
-  const handleClearLayer = () => {
+  function handleClearLayer(): void {
     const win = window as Window & { __canvasClearLayer?: () => void };
     if (win.__canvasClearLayer) {
       win.__canvasClearLayer();
     }
-  };
+  }
+
+  function handleAddLayer(): void {
+    addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' });
+  }
+
+  // Event handlers wrappers to prevent inline arrow function creation in render loop where possible
+  // (Though for mapped items, inline is often inevitable without sub-components, keeping simple here)
 
   return (
     <aside className="layer-panel">
@@ -112,7 +121,7 @@ export function LayerPanel() {
           <button
             className="add-layer-btn"
             data-testid="add-layer-btn"
-            onClick={() => addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' })}
+            onClick={handleAddLayer}
             title="Add Layer"
           >
             <Plus size={16} strokeWidth={2} />
@@ -127,7 +136,9 @@ export function LayerPanel() {
           displayLayers.map((layer) => (
             <div
               key={layer.id}
-              className={`layer-item ${activeLayerId === layer.id ? 'active' : ''} ${draggedId === layer.id ? 'dragging' : ''} ${dropTargetId === layer.id ? 'drop-target' : ''}`}
+              className={`layer-item ${activeLayerId === layer.id ? 'active' : ''} ${
+                draggedId === layer.id ? 'dragging' : ''
+              } ${dropTargetId === layer.id ? 'drop-target' : ''}`}
               data-testid="layer-item"
               draggable
               onDragStart={(e) => handleDragStart(e, layer.id)}
@@ -153,7 +164,17 @@ export function LayerPanel() {
                 {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
               </button>
 
-              <div className="layer-thumbnail" />
+              <div
+                className="layer-thumbnail"
+                style={{
+                  width: thumbWidth,
+                  height: thumbHeight,
+                }}
+              >
+                {layer.thumbnail && (
+                  <img src={layer.thumbnail} alt={layer.name} draggable={false} />
+                )}
+              </div>
 
               <span className="layer-name" data-testid="layer-name">
                 {layer.name}
@@ -222,4 +243,21 @@ export function LayerPanel() {
       </footer>
     </aside>
   );
+}
+
+const MAX_THUMB_HEIGHT = 32;
+const MAX_THUMB_WIDTH = 80;
+
+function calculateThumbnailDimensions(
+  width: number,
+  height: number
+): { width: number; height: number } {
+  const aspectRatio = width / height;
+  const thumbHeight = MAX_THUMB_HEIGHT;
+  const thumbWidth = Math.max(
+    MAX_THUMB_HEIGHT,
+    Math.min(MAX_THUMB_HEIGHT * aspectRatio, MAX_THUMB_WIDTH)
+  );
+
+  return { width: thumbWidth, height: thumbHeight };
 }

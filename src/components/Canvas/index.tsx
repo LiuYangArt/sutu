@@ -24,13 +24,15 @@ export function Canvas() {
   const brushCursorRef = useRef<HTMLDivElement>(null);
   const previousToolRef = useRef<string | null>(null);
 
-  const { width, height, layers, activeLayerId, initDocument } = useDocumentStore((s) => ({
-    width: s.width,
-    height: s.height,
-    layers: s.layers,
-    activeLayerId: s.activeLayerId,
-    initDocument: s.initDocument,
-  }));
+  const { width, height, layers, activeLayerId, initDocument, updateLayerThumbnail } =
+    useDocumentStore((s) => ({
+      width: s.width,
+      height: s.height,
+      layers: s.layers,
+      activeLayerId: s.activeLayerId,
+      initDocument: s.initDocument,
+      updateLayerThumbnail: s.updateLayerThumbnail,
+    }));
 
   const {
     currentTool,
@@ -112,6 +114,35 @@ export function Canvas() {
     }
   }, [pushState, activeLayerId]);
 
+  // Update layer thumbnail
+  const updateThumbnail = useCallback(
+    (layerId: string) => {
+      if (!layerRendererRef.current) return;
+      const layer = layerRendererRef.current.getLayer(layerId);
+      if (!layer) return;
+
+      // Create a small canvas for thumbnail
+      const thumbCanvas = document.createElement('canvas');
+      const aspect = width / height;
+      const thumbWidth = 64;
+      const thumbHeight = thumbWidth / aspect;
+
+      thumbCanvas.width = thumbWidth;
+      thumbCanvas.height = thumbHeight;
+
+      const ctx = thumbCanvas.getContext('2d');
+      if (!ctx) return;
+
+      // Draw layer content to thumbnail
+      // Use clearRect to ensure transparency
+      ctx.clearRect(0, 0, thumbWidth, thumbHeight);
+      ctx.drawImage(layer.canvas, 0, 0, thumbWidth, thumbHeight);
+
+      updateLayerThumbnail(layerId, thumbCanvas.toDataURL());
+    },
+    [width, height, updateLayerThumbnail]
+  );
+
   // Restore canvas from ImageData
   const restoreCanvas = useCallback(
     (imageData: ImageData) => {
@@ -120,8 +151,9 @@ export function Canvas() {
 
       renderer.setLayerImageData(activeLayerId, imageData);
       compositeAndRender();
+      updateThumbnail(activeLayerId);
     },
-    [activeLayerId, compositeAndRender]
+    [activeLayerId, compositeAndRender, updateThumbnail]
   );
 
   // Handle undo
@@ -177,7 +209,8 @@ export function Canvas() {
 
     // Save new state after clearing
     saveToHistory();
-  }, [activeLayerId, saveToHistory, compositeAndRender]);
+    updateThumbnail(activeLayerId);
+  }, [activeLayerId, saveToHistory, compositeAndRender, updateThumbnail]);
 
   // Expose undo/redo/clearLayer handlers globally for toolbar
   useEffect(() => {
@@ -642,11 +675,14 @@ export function Canvas() {
 
         // Save state to history after stroke completes
         saveToHistory();
+        if (activeLayerId) {
+          updateThumbnail(activeLayerId);
+        }
       }
 
       isDrawingRef.current = false;
     },
-    [isPanning, setIsPanning, drawPoints, saveToHistory]
+    [isPanning, setIsPanning, drawPoints, saveToHistory, activeLayerId, updateThumbnail]
   );
 
   // 计算 viewport 变换样式
@@ -654,6 +690,13 @@ export function Canvas() {
     transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
     transformOrigin: '0 0',
   };
+
+  // Calculate clip-path for checkerboard
+  const x = offsetX;
+  const y = offsetY;
+  const w = width * scale;
+  const h = height * scale;
+  const clipPathKey = `polygon(${x}px ${y}px, ${x + w}px ${y}px, ${x + w}px ${y + h}px, ${x}px ${y + h}px)`;
 
   return (
     <div
@@ -666,6 +709,7 @@ export function Canvas() {
       // Note: onPointerEnter cursor handling is done by native event listener
       style={{ cursor: cursorStyle }}
     >
+      <div className="canvas-checkerboard" style={{ clipPath: clipPathKey }} />
       <div className="canvas-viewport" style={viewportStyle}>
         <canvas
           ref={canvasRef}
