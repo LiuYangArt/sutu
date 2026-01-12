@@ -296,6 +296,8 @@ export function Canvas() {
           fillColor: layer.isBackground ? '#ffffff' : undefined,
           isBackground: layer.isBackground,
         });
+        // Generate initial thumbnail for new layers
+        updateThumbnail(layer.id);
       } else {
         // Update existing layer properties
         renderer.updateLayer(layer.id, {
@@ -320,7 +322,7 @@ export function Canvas() {
         pushState(imageData);
       }
     }
-  }, [layers, width, height, activeLayerId, compositeAndRender, pushState]);
+  }, [layers, width, height, activeLayerId, compositeAndRender, pushState, updateThumbnail]);
 
   // Re-composite when layer visibility/opacity changes
   useEffect(() => {
@@ -564,6 +566,10 @@ export function Canvas() {
       // Drawing/erasing mode
       if (!activeLayerId) return;
 
+      // Check if active layer is visible - prevent drawing on hidden layers
+      const activeLayer = layers.find((l) => l.id === activeLayerId);
+      if (!activeLayer?.visible) return;
+
       canvas.setPointerCapture(e.pointerId);
       isDrawingRef.current = true;
       strokeBufferRef.current.reset();
@@ -578,7 +584,7 @@ export function Canvas() {
 
       strokeBufferRef.current.addPoint(point);
     },
-    [spacePressed, setIsPanning, scale, activeLayerId, currentTool, pickColorAt]
+    [spacePressed, setIsPanning, scale, activeLayerId, layers, currentTool, pickColorAt]
   );
 
   const handlePointerMove = useCallback(
