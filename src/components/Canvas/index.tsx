@@ -20,6 +20,7 @@ export function Canvas() {
   const strokeBufferRef = useRef<StrokeBuffer>(new StrokeBuffer(2));
   const panStartRef = useRef<{ x: number; y: number } | null>(null);
   const layerRendererRef = useRef<LayerRenderer | null>(null);
+  const historyInitializedRef = useRef(false);
 
   const [spacePressed, setSpacePressed] = useState(false);
   const [altPressed, setAltPressed] = useState(false);
@@ -339,11 +340,12 @@ export function Canvas() {
     // Initial composite render
     compositeAndRender();
 
-    // Save initial state to history for active layer
-    if (activeLayerId) {
+    // Save initial state to history for active layer (only once on first init)
+    if (activeLayerId && !historyInitializedRef.current) {
       const imageData = renderer.getLayerImageData(activeLayerId);
       if (imageData) {
         pushState(imageData);
+        historyInitializedRef.current = true;
       }
     }
   }, [layers, width, height, activeLayerId, compositeAndRender, pushState, updateThumbnail]);
