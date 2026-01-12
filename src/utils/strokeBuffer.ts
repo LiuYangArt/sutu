@@ -144,7 +144,6 @@ export class StrokeBuffer {
 
     // Get current buffer data for the dab region
     const bufferData = this.ctx.getImageData(left, top, rectWidth, rectHeight);
-    const maxAlpha = opacityCeiling !== undefined ? Math.round(opacityCeiling * 255) : 255;
 
     // Anti-aliasing: smooth transition over ~1px at the edge
     const aaWidth = Math.min(1.0, radius * 0.5); // AA width, max 1px, smaller for tiny brushes
@@ -193,22 +192,44 @@ export class StrokeBuffer {
         const dstB = bufferData.data[idx + 2] ?? 0;
         const dstA = (bufferData.data[idx + 3] ?? 0) / 255;
 
+        // If destination already at opacity ceiling, skip this pixel
+        // This prevents color artifacts from alpha clamping
+        if (opacityCeiling !== undefined && dstA >= opacityCeiling - 0.001) {
+          continue;
+        }
+
         // Porter-Duff "over" compositing
         const srcA = dabAlpha;
-        const outA = srcA + dstA * (1 - srcA);
+        let outA = srcA + dstA * (1 - srcA);
+
+        // Apply opacity ceiling BEFORE color calculation to avoid brightening
+        const maxAlphaFloat = opacityCeiling !== undefined ? opacityCeiling : 1.0;
+        if (outA > maxAlphaFloat) {
+          outA = maxAlphaFloat;
+        }
 
         if (outA > 0) {
-          const outR = (rgb.r * srcA + dstR * dstA * (1 - srcA)) / outA;
-          const outG = (rgb.g * srcA + dstG * dstA * (1 - srcA)) / outA;
-          const outB = (rgb.b * srcA + dstB * dstA * (1 - srcA)) / outA;
+          // Recalculate effective source contribution after clamping
+          // effectiveSrcA is how much of the source actually contributes
+          const effectiveSrcA = outA - dstA * (1 - srcA);
 
-          // Apply opacity ceiling - clamp alpha to maxAlpha
-          const clampedAlpha = Math.min(Math.round(outA * 255), maxAlpha);
+          let outR: number, outG: number, outB: number;
 
-          bufferData.data[idx] = Math.round(outR);
-          bufferData.data[idx + 1] = Math.round(outG);
-          bufferData.data[idx + 2] = Math.round(outB);
-          bufferData.data[idx + 3] = clampedAlpha;
+          if (effectiveSrcA > 0.001 && outA > 0.001) {
+            outR = (rgb.r * effectiveSrcA + dstR * dstA * (1 - srcA)) / outA;
+            outG = (rgb.g * effectiveSrcA + dstG * dstA * (1 - srcA)) / outA;
+            outB = (rgb.b * effectiveSrcA + dstB * dstA * (1 - srcA)) / outA;
+          } else {
+            // No effective contribution, keep destination color
+            outR = dstR;
+            outG = dstG;
+            outB = dstB;
+          }
+
+          bufferData.data[idx] = Math.round(Math.min(255, Math.max(0, outR)));
+          bufferData.data[idx + 1] = Math.round(Math.min(255, Math.max(0, outG)));
+          bufferData.data[idx + 2] = Math.round(Math.min(255, Math.max(0, outB)));
+          bufferData.data[idx + 3] = Math.round(outA * 255);
         }
       }
     }
