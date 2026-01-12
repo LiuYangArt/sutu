@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Eye, EyeOff, Plus, Trash2, Lock, Unlock, GripVertical, Eraser } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Eye, EyeOff, Plus, Trash2, Lock, Unlock, GripVertical, Eraser, Copy } from 'lucide-react';
 import { useDocumentStore, BlendMode } from '@/stores/document';
 import './LayerPanel.css';
 
@@ -14,11 +14,30 @@ const BLEND_MODES: { value: BlendMode; label: string }[] = [
   { value: 'color-burn', label: 'Color Burn' },
   { value: 'hard-light', label: 'Hard Light' },
   { value: 'soft-light', label: 'Soft Light' },
+  { value: 'difference', label: 'Difference' },
+  { value: 'exclusion', label: 'Exclusion' },
+  { value: 'hue', label: 'Hue' },
+  { value: 'saturation', label: 'Saturation' },
+  { value: 'color', label: 'Color' },
+  { value: 'luminosity', label: 'Luminosity' },
 ];
+
+interface ContextMenuState {
+  visible: boolean;
+  x: number;
+  y: number;
+  layerId: string | null;
+}
 
 export function LayerPanel(): JSX.Element {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    layerId: null,
+  });
 
   const {
     layers,
@@ -26,6 +45,7 @@ export function LayerPanel(): JSX.Element {
     setActiveLayer,
     addLayer,
     removeLayer,
+    duplicateLayer,
     toggleLayerVisibility,
     setLayerOpacity,
     setLayerBlendMode,
@@ -39,6 +59,7 @@ export function LayerPanel(): JSX.Element {
     setActiveLayer: s.setActiveLayer,
     addLayer: s.addLayer,
     removeLayer: s.removeLayer,
+    duplicateLayer: s.duplicateLayer,
     toggleLayerVisibility: s.toggleLayerVisibility,
     setLayerOpacity: s.setLayerOpacity,
     setLayerBlendMode: s.setLayerBlendMode,
@@ -47,6 +68,51 @@ export function LayerPanel(): JSX.Element {
     width: s.width,
     height: s.height,
   }));
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside() {
+      if (contextMenu.visible) {
+        setContextMenu((prev) => ({ ...prev, visible: false }));
+      }
+    }
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [contextMenu.visible]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, layerId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      layerId,
+    });
+  }, []);
+
+  const handleDuplicateLayer = useCallback(() => {
+    if (contextMenu.layerId) {
+      const newLayerId = duplicateLayer(contextMenu.layerId);
+      // Trigger canvas to copy layer content
+      if (newLayerId) {
+        const win = window as Window & {
+          __canvasDuplicateLayer?: (from: string, to: string) => void;
+        };
+        if (win.__canvasDuplicateLayer) {
+          win.__canvasDuplicateLayer(contextMenu.layerId, newLayerId);
+        }
+      }
+    }
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, [contextMenu.layerId, duplicateLayer]);
+
+  const handleDeleteLayer = useCallback(() => {
+    if (contextMenu.layerId) {
+      removeLayer(contextMenu.layerId);
+    }
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, [contextMenu.layerId, removeLayer]);
 
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const displayLayers = [...layers].reverse();
@@ -147,6 +213,7 @@ export function LayerPanel(): JSX.Element {
               onDrop={(e) => handleDrop(e, layer.id)}
               onDragEnd={handleDragEnd}
               onClick={() => setActiveLayer(layer.id)}
+              onContextMenu={(e) => handleContextMenu(e, layer.id)}
             >
               <div className="drag-handle">
                 <GripVertical size={14} />
@@ -241,6 +308,28 @@ export function LayerPanel(): JSX.Element {
           <span>{activeLayer?.opacity ?? 100}%</span>
         </label>
       </footer>
+
+      {/* Context Menu */}
+      {contextMenu.visible && (
+        <div
+          className="layer-context-menu"
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button className="context-menu-item" onClick={handleDuplicateLayer}>
+            <Copy size={14} />
+            <span>Duplicate Layer</span>
+          </button>
+          <button className="context-menu-item danger" onClick={handleDeleteLayer}>
+            <Trash2 size={14} />
+            <span>Delete Layer</span>
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

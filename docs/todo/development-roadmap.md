@@ -140,7 +140,7 @@
 
 ---
 
-## M2: 图层系统 (Layers) 🚧 进行中
+## M2: 图层系统 (Layers) ✅ 已完成
 
 **目标**: 实现多图层绘画和基础图层操作
 
@@ -166,22 +166,24 @@
   - [x] Multiply（正片叠底）
   - [x] Screen（滤色）
   - [x] Overlay（叠加）
-- [ ] 扩展混合模式（后续迭代）:
-  - [ ] Darken / Lighten
-  - [ ] Color Dodge / Color Burn
-  - [ ] Soft Light / Hard Light
+- [x] 扩展混合模式:
+  - [x] Darken / Lighten
+  - [x] Color Dodge / Color Burn
+  - [x] Soft Light / Hard Light
+  - [x] Difference / Exclusion
+  - [x] Hue / Saturation / Color / Luminosity
 
 #### 2.4 图层面板 UI
 
 - [x] 图层列表显示（缩略图 + 名称）
 - [x] 图层缩略图显示实际图层效果
-- [ ] background 图层优化：不可被擦除 alpha，保留背景色，包括eraser工具和图层清除工具 [/]
-- [ ] 拖拽排序
+- [x] background 图层优化：不可被擦除 alpha，保留背景色
+- [x] 拖拽排序
 - [x] 可见性切换按钮（眼睛图标）
 - [x] 锁定按钮
 - [x] 不透明度滑块
 - [x] 混合模式下拉选择
-- [ ] 右键菜单（删除、复制、合并）
+- [x] 右键菜单（删除、复制）
 
 ### 验收标准
 

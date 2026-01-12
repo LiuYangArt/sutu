@@ -13,6 +13,7 @@ export interface Layer {
   parent?: string;
   children?: string[];
   thumbnail?: string; // Data URL
+  isBackground?: boolean; // Background layer cannot be erased to transparency
 }
 
 export type BlendMode =
@@ -50,6 +51,7 @@ interface DocumentState {
   // Layer actions
   addLayer: (config: { name: string; type: Layer['type'] }) => void;
   removeLayer: (id: string) => void;
+  duplicateLayer: (id: string) => string | null; // Returns new layer ID
   setActiveLayer: (id: string) => void;
   toggleLayerVisibility: (id: string) => void;
   toggleLayerLock: (id: string) => void;
@@ -91,6 +93,7 @@ export const useDocumentStore = create<DocumentState>()(
           locked: false,
           opacity: 100,
           blendMode: 'normal',
+          isBackground: true,
         };
 
         state.layers = [bgLayer];
@@ -133,6 +136,31 @@ export const useDocumentStore = create<DocumentState>()(
           }
         }
       }),
+
+    duplicateLayer: (id) => {
+      let newLayerId: string | null = null;
+      set((state) => {
+        const index = state.layers.findIndex((l) => l.id === id);
+        if (index === -1) return;
+
+        const original = state.layers[index];
+        if (!original) return;
+
+        newLayerId = generateId();
+        const duplicated: Layer = {
+          ...original,
+          id: newLayerId,
+          name: `${original.name} Copy`,
+          isBackground: false, // Duplicated layer is never a background layer
+          thumbnail: original.thumbnail,
+        };
+
+        // Insert after the original layer
+        state.layers.splice(index + 1, 0, duplicated);
+        state.activeLayerId = newLayerId;
+      });
+      return newLayerId;
+    },
 
     setActiveLayer: (id) =>
       set((state) => {
