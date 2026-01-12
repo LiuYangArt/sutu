@@ -52,6 +52,9 @@ interface ToolState {
   pressureOpacityEnabled: boolean;
   pressureCurve: PressureCurve;
 
+  // Cursor display settings
+  showCrosshair: boolean;
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -69,6 +72,7 @@ interface ToolState {
   togglePressureSize: () => void;
   togglePressureOpacity: () => void;
   setPressureCurve: (curve: PressureCurve) => void;
+  toggleCrosshair: () => void;
 }
 
 export const useToolStore = create<ToolState>((set, get) => ({
@@ -83,6 +87,7 @@ export const useToolStore = create<ToolState>((set, get) => ({
   pressureSizeEnabled: true,
   pressureOpacityEnabled: true,
   pressureCurve: 'linear',
+  showCrosshair: false,
 
   // Actions
   setTool: (tool) => set({ currentTool: tool }),
@@ -131,4 +136,6 @@ export const useToolStore = create<ToolState>((set, get) => ({
     set((state) => ({ pressureOpacityEnabled: !state.pressureOpacityEnabled })),
 
   setPressureCurve: (curve) => set({ pressureCurve: curve }),
+
+  toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
 }));

@@ -8,6 +8,7 @@ import {
   Redo2,
   ZoomIn,
   ZoomOut,
+  Crosshair,
   LucideIcon,
 } from 'lucide-react';
 import { useToolStore, ToolType, PressureCurve } from '@/stores/tool';
@@ -46,6 +47,8 @@ export function Toolbar() {
     setBrushColor,
     pressureCurve,
     setPressureCurve,
+    showCrosshair,
+    toggleCrosshair,
   } = useToolStore();
 
   // Get current tool size (brush or eraser)
@@ -124,6 +127,14 @@ export function Toolbar() {
             ))}
           </select>
         </label>
+
+        <button
+          className={`tool-btn ${showCrosshair ? 'active' : ''}`}
+          onClick={toggleCrosshair}
+          title="Toggle Crosshair (for cursor delay comparison)"
+        >
+          <Crosshair {...ICON_PROPS} />
+        </button>
       </div>
 
       <div className="toolbar-divider" />

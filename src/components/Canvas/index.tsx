@@ -8,15 +8,7 @@ import { StrokeBuffer, Point } from '@/utils/interpolation';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import './Canvas.css';
 
-/** Cursor style for each tool type */
-const TOOL_CURSORS: Record<ToolType, string> = {
-  brush: 'none',
-  eraser: 'none',
-  eyedropper: 'crosshair',
-  move: 'move',
-  select: 'crosshair',
-  lasso: 'crosshair',
-};
+import { useCursor } from './useCursor';
 
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,7 +20,8 @@ export function Canvas() {
 
   const [spacePressed, setSpacePressed] = useState(false);
   const [altPressed, setAltPressed] = useState(false);
-  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
+
+  const brushCursorRef = useRef<HTMLDivElement>(null);
   const previousToolRef = useRef<string | null>(null);
 
   const { width, height, layers, activeLayerId, initDocument } = useDocumentStore((s) => ({
@@ -49,6 +42,7 @@ export function Canvas() {
     setCurrentSize,
     setBrushColor,
     setTool,
+    showCrosshair,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
@@ -59,6 +53,7 @@ export function Canvas() {
     setCurrentSize: s.setCurrentSize,
     setBrushColor: s.setBrushColor,
     setTool: s.setTool,
+    showCrosshair: s.showCrosshair,
   }));
 
   // Get current tool size (brush or eraser)
@@ -66,6 +61,17 @@ export function Canvas() {
 
   const { scale, offsetX, offsetY, isPanning, zoomIn, zoomOut, pan, setIsPanning } =
     useViewportStore();
+
+  const { cursorStyle, showDomCursor } = useCursor({
+    currentTool,
+    currentSize,
+    scale,
+    showCrosshair,
+    spacePressed,
+    isPanning,
+    containerRef,
+    brushCursorRef,
+  });
 
   const { pushState, undo, redo } = useHistoryStore();
 
@@ -518,12 +524,11 @@ export function Canvas() {
         const deltaY = lastEvent.clientY - panStartRef.current.y;
         pan(deltaX, deltaY);
         panStartRef.current = { x: lastEvent.clientX, y: lastEvent.clientY };
-        setCursorPos({ x: e.clientX, y: e.clientY });
+        // Note: cursor position is updated by native event listener
         return;
       }
 
-      // Update cursor position for brush size indicator
-      setCursorPos({ x: e.clientX, y: e.clientY });
+      // Note: cursor position is updated by native event listener for zero-lag
 
       // 绘画模式
       if (!isDrawingRef.current) return;
@@ -650,19 +655,6 @@ export function Canvas() {
     transformOrigin: '0 0',
   };
 
-  // 根据模式设置光标
-  const getCursor = (): string => {
-    if (spacePressed || isPanning) return 'grab';
-    return TOOL_CURSORS[currentTool];
-  };
-
-  // Show brush cursor for brush and eraser tools
-  const showBrushCursor =
-    (currentTool === 'brush' || currentTool === 'eraser') &&
-    cursorPos &&
-    !spacePressed &&
-    !isPanning;
-
   return (
     <div
       ref={containerRef}
@@ -670,14 +662,9 @@ export function Canvas() {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={(e) => {
-        handlePointerUp(e);
-        setCursorPos(null);
-      }}
-      onPointerEnter={(e) => {
-        setCursorPos({ x: e.clientX, y: e.clientY });
-      }}
-      style={{ cursor: getCursor() }}
+      onPointerLeave={handlePointerUp}
+      // Note: onPointerEnter cursor handling is done by native event listener
+      style={{ cursor: cursorStyle }}
     >
       <div className="canvas-viewport" style={viewportStyle}>
         <canvas
@@ -688,12 +675,11 @@ export function Canvas() {
           data-testid="main-canvas"
         />
       </div>
-      {showBrushCursor && (
+      {showDomCursor && (
         <div
+          ref={brushCursorRef}
           className="brush-cursor"
           style={{
-            left: cursorPos.x,
-            top: cursorPos.y,
             width: currentSize * scale,
             height: currentSize * scale,
           }}
