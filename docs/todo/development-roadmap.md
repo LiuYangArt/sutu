@@ -177,13 +177,12 @@
 
 - [x] 图层列表显示（缩略图 + 名称）
 - [x] 图层缩略图显示实际图层效果
-<<<<<<< HEAD
+      <<<<<<< HEAD
 - [ ] background 图层优化：不可被擦除 alpha，保留背景色，包括eraser工具和图层清除工具 [/]
-- [ ] 拖拽排序
-=======
+- [ ] # 拖拽排序
 - [x] background 图层优化：不可被擦除 alpha，保留背景色
 - [x] 拖拽排序
->>>>>>> fc45199d4a515e4253993d03672315b72e80a2a2
+  > > > > > > > fc45199d4a515e4253993d03672315b72e80a2a2
 - [x] 可见性切换按钮（眼睛图标）
 - [x] 锁定按钮
 - [x] 不透明度滑块
@@ -201,7 +200,7 @@
 ## M3: 笔刷系统 (Brushes)
 
 **目标**: 实现可自定义的专业笔刷系统(reverse engineering photoshop abr file)
-参考笔刷文件： @abr/liuyang_paintbrushes.abr
+参考笔刷文件： @abr/tahraart.abr
 
 ### 任务清单
 
