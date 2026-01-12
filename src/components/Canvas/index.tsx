@@ -645,39 +645,8 @@ export function Canvas() {
         const zoomFactor = 1 + deltaX * 0.01;
         const newScale = zoomStartRef.current.startScale * zoomFactor;
 
-        // Zoom centered on the screen center for now, or we could keep the initial mouse center.
-        // Scrubby zoom usually zooms around the initial click point.
-        // We know initial click point relative to viewport, but setScale needs
-        // to handle the viewport offset calculations.
-        // However, standard scrubby zoom in PS zooms into the point you clicked.
-        // But here we need to map client coordinates to viewport-relative.
-        // Let's use the center of viewport to match simple expectation or investigate setScale behavior.
-        // setScale logic:
-        // if (centerX !== undefined && centerY !== undefined) {
-        //   const scaleRatio = clampedScale / scale;
-        //   const newOffsetX = centerX - (centerX - offsetX) * scaleRatio;
-        //   const newOffsetY = centerY - (centerY - offsetY) * scaleRatio;
-        //   ...
-        // }
-        // We need 'centerX' and 'centerY' valid for the viewport.
-        // It should be relative to the viewport container top/left (which is what setScale expects? No, setScale expects viewport coordinates?)
-        // Let's look at setScale in viewport.ts:
-        // const newOffsetX = centerX - (centerX - offsetX) * scaleRatio;
-        // This suggests centerX is in the same coordinate space as offsetX... which usually is screen space or container space?
-        // Let's assume container space (client params passed to zoomIn usually).
-        // For scrubby zoom, let's just not pass center to keep it simple first (zooms top-left or center? setScale without params maintains center? No, scale with no params just updates scale)
-        // Check viewport.ts again... setScale without center updates scale but keeps offsetX/Y same?
-        // No, setScale(clampedScale) -> set({ scale: clampedScale }).
-        // This zooms towards top-left (0,0) effectively if offsetX/Y not changed?
-        // Wait, if scale changes, the view changes. If offsetX/Y stays same, the top-left corner of content stays at same screen pos.
-        // To zoom around center of screen: get viewport center.
-
-        // Let's try to zoom around the initial click point (which we didn't save in container coords, let's calculate it).
-        // Actually better to zoom around current mouse position or initial click? Scrubby is initial click.
-        // But to make it simpler, let's just use setScale(newScale) and see.
-        // Actually, let's use the zoomIn logic which handles centering? No scrubby is continuous.
-
-        // Let's retrieve container rect to convert initial mouse to container coords
+        // Retrieve container rect to convert initial mouse to container coords
+        // Zoom anchored to the initial click position
         const container = containerRef.current;
         if (container) {
           const rect = container.getBoundingClientRect();
