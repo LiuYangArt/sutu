@@ -126,7 +126,15 @@
 .layer-thumbnail {
   width: 32px;
   height: 32px;
-  background: #ffffff;
+  background-color: #ffffff;
+  background-image: conic-gradient(
+    #e0e0e0 0.25turn,
+    #ffffff 0 0.5turn,
+    #e0e0e0 0 0.75turn,
+    #ffffff 0
+  );
+  background-size: 16px 16px;
+  background-position: 0 0;
   border: 1px solid var(--border);
   border-radius: 4px;
   flex-shrink: 0;

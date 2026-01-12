@@ -31,6 +31,8 @@ export function LayerPanel() {
     setLayerBlendMode,
     toggleLayerLock,
     moveLayer,
+    width,
+    height,
   } = useDocumentStore((s) => ({
     layers: s.layers,
     activeLayerId: s.activeLayerId,
@@ -42,9 +44,17 @@ export function LayerPanel() {
     setLayerBlendMode: s.setLayerBlendMode,
     toggleLayerLock: s.toggleLayerLock,
     moveLayer: s.moveLayer,
+    width: s.width,
+    height: s.height,
   }));
 
   const activeLayer = layers.find((l) => l.id === activeLayerId);
+
+  // Calculate thumbnail dimensions
+  const MAX_THUMB_HEIGHT = 32;
+  const aspectRatio = width / height;
+  const thumbHeight = MAX_THUMB_HEIGHT;
+  const thumbWidth = Math.max(MAX_THUMB_HEIGHT, Math.min(MAX_THUMB_HEIGHT * aspectRatio, 80)); // Limit max width
 
   // Reversed layers for display (top layer first)
   const displayLayers = [...layers].reverse();
@@ -153,7 +163,13 @@ export function LayerPanel() {
                 {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
               </button>
 
-              <div className="layer-thumbnail">
+              <div
+                className="layer-thumbnail"
+                style={{
+                  width: thumbWidth,
+                  height: thumbHeight,
+                }}
+              >
                 {layer.thumbnail && (
                   <img src={layer.thumbnail} alt={layer.name} draggable={false} />
                 )}
