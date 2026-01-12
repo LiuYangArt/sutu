@@ -15,7 +15,7 @@
 
 .main-canvas {
   display: block;
-  cursor: crosshair;
+  /* cursor is controlled by parent .canvas-container via JS */
   touch-action: none;
 }
 
