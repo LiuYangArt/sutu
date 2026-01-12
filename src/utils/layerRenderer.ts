@@ -230,6 +230,15 @@ export class LayerRenderer {
   }
 
   /**
+   * Clear a single layer's content (make it transparent)
+   */
+  clearLayer(id: string): void {
+    const layer = this.layers.get(id);
+    if (!layer) return;
+    layer.ctx.clearRect(0, 0, this.width, this.height);
+  }
+
+  /**
    * Clear all layers
    */
   clear(): void {

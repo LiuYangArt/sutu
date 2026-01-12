@@ -20,13 +20,27 @@
   margin: 0;
 }
 
-.add-layer-btn {
+.layer-panel-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.add-layer-btn,
+.clear-layer-btn {
   width: 24px;
   height: 24px;
   padding: 0;
   font-size: 18px;
   line-height: 1;
   border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clear-layer-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Layer List */

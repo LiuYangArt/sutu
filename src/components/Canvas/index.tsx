@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useDocumentStore } from '@/stores/document';
-import { useToolStore, applyPressureCurve } from '@/stores/tool';
+import { useToolStore, applyPressureCurve, ToolType } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { useTabletStore, drainPointBuffer, clearPointBuffer } from '@/stores/tablet';
@@ -17,6 +17,9 @@ export function Canvas() {
   const layerRendererRef = useRef<LayerRenderer | null>(null);
 
   const [spacePressed, setSpacePressed] = useState(false);
+  const [altPressed, setAltPressed] = useState(false);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
+  const previousToolRef = useRef<string | null>(null);
 
   const { width, height, layers, activeLayerId, initDocument } = useDocumentStore((s) => ({
     width: s.width,
@@ -26,12 +29,30 @@ export function Canvas() {
     initDocument: s.initDocument,
   }));
 
-  const { brushSize, brushColor, brushOpacity, pressureCurve } = useToolStore((s) => ({
+  const {
+    currentTool,
+    brushSize,
+    eraserSize,
+    brushColor,
+    brushOpacity,
+    pressureCurve,
+    setCurrentSize,
+    setBrushColor,
+    setTool,
+  } = useToolStore((s) => ({
+    currentTool: s.currentTool,
     brushSize: s.brushSize,
+    eraserSize: s.eraserSize,
     brushColor: s.brushColor,
     brushOpacity: s.brushOpacity,
     pressureCurve: s.pressureCurve,
+    setCurrentSize: s.setCurrentSize,
+    setBrushColor: s.setBrushColor,
+    setTool: s.setTool,
   }));
+
+  // Get current tool size (brush or eraser)
+  const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
 
   const { scale, offsetX, offsetY, isPanning, zoomIn, zoomOut, pan, setIsPanning } =
     useViewportStore();
@@ -103,20 +124,62 @@ export function Canvas() {
     }
   }, [redo, restoreCanvas]);
 
-  // Expose undo/redo handlers globally for toolbar
+  // Pick color from canvas at given coordinates
+  const pickColorAt = useCallback(
+    (canvasX: number, canvasY: number) => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+
+      const x = Math.floor(canvasX);
+      const y = Math.floor(canvasY);
+
+      if (x < 0 || x >= width || y < 0 || y >= height) return;
+
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const r = pixel[0] ?? 0;
+      const g = pixel[1] ?? 0;
+      const b = pixel[2] ?? 0;
+
+      const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+      setBrushColor(hex);
+    },
+    [width, height, setBrushColor]
+  );
+
+  // Clear current layer content
+  const handleClearLayer = useCallback(() => {
+    const renderer = layerRendererRef.current;
+    if (!renderer || !activeLayerId) return;
+
+    // Save current state before clearing
+    saveToHistory();
+
+    // Clear the layer
+    renderer.clearLayer(activeLayerId);
+    compositeAndRender();
+
+    // Save new state after clearing
+    saveToHistory();
+  }, [activeLayerId, saveToHistory, compositeAndRender]);
+
+  // Expose undo/redo/clearLayer handlers globally for toolbar
   useEffect(() => {
-    (window as Window & { __canvasUndo?: () => void; __canvasRedo?: () => void }).__canvasUndo =
-      handleUndo;
-    (window as Window & { __canvasUndo?: () => void; __canvasRedo?: () => void }).__canvasRedo =
-      handleRedo;
+    const win = window as Window & {
+      __canvasUndo?: () => void;
+      __canvasRedo?: () => void;
+      __canvasClearLayer?: () => void;
+    };
+    win.__canvasUndo = handleUndo;
+    win.__canvasRedo = handleRedo;
+    win.__canvasClearLayer = handleClearLayer;
 
     return () => {
-      delete (window as Window & { __canvasUndo?: () => void; __canvasRedo?: () => void })
-        .__canvasUndo;
-      delete (window as Window & { __canvasUndo?: () => void; __canvasRedo?: () => void })
-        .__canvasRedo;
+      delete win.__canvasUndo;
+      delete win.__canvasRedo;
+      delete win.__canvasClearLayer;
     };
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, handleClearLayer]);
 
   // Initialize document and layer renderer
   useEffect(() => {
@@ -191,13 +254,50 @@ export function Canvas() {
     compositeAndRender();
   }, [layers, compositeAndRender]);
 
-  // 键盘事件：空格键平移 + 撤销/重做快捷键
+  // 键盘事件：空格键平移 + 撤销/重做 + 笔刷大小 + Alt取色
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Space for panning
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault();
         setSpacePressed(true);
+        return;
+      }
+
+      // Alt for eyedropper (temporary tool switch)
+      if (e.code === 'AltLeft' || e.code === 'AltRight') {
+        if (!e.repeat && !altPressed) {
+          e.preventDefault();
+          setAltPressed(true);
+          previousToolRef.current = currentTool;
+          setTool('eyedropper');
+        }
+        return;
+      }
+
+      // Brush/eraser size: [ to decrease, ] to increase
+      if (e.code === 'BracketLeft') {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 5;
+        setCurrentSize(Math.max(1, currentSize - step));
+        return;
+      }
+      if (e.code === 'BracketRight') {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 5;
+        setCurrentSize(Math.min(500, currentSize + step));
+        return;
+      }
+
+      // Tool switching: B for brush, E for eraser
+      if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setTool('brush');
+        return;
+      }
+      if (e.code === 'KeyE' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setTool('eraser');
         return;
       }
 
@@ -222,6 +322,15 @@ export function Canvas() {
         setIsPanning(false);
         panStartRef.current = null;
       }
+
+      // Release Alt: restore previous tool
+      if (e.code === 'AltLeft' || e.code === 'AltRight') {
+        setAltPressed(false);
+        if (previousToolRef.current) {
+          setTool(previousToolRef.current as ToolType);
+          previousToolRef.current = null;
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -231,7 +340,16 @@ export function Canvas() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [setIsPanning, handleUndo, handleRedo]);
+  }, [
+    setIsPanning,
+    handleUndo,
+    handleRedo,
+    altPressed,
+    currentTool,
+    setTool,
+    currentSize,
+    setCurrentSize,
+  ]);
 
   // 鼠标滚轮缩放
   const handleWheel = useCallback(
@@ -271,6 +389,8 @@ export function Canvas() {
       const ctx = getActiveLayerCtx();
       if (!ctx || points.length < 2) return;
 
+      const isEraser = currentTool === 'eraser';
+
       for (let i = 1; i < points.length; i++) {
         const from = points[i - 1];
         const to = points[i];
@@ -279,12 +399,23 @@ export function Canvas() {
 
         // 应用压感曲线后计算线条粗细
         const adjustedPressure = applyPressureCurve(to.pressure, pressureCurve);
-        const size = brushSize * adjustedPressure;
+        const size = currentSize * adjustedPressure;
         const opacity = brushOpacity * adjustedPressure;
 
         ctx.globalAlpha = opacity;
-        ctx.strokeStyle = brushColor;
         ctx.lineWidth = Math.max(1, size);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        if (isEraser) {
+          // Eraser: use destination-out to erase to transparency
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.strokeStyle = 'rgba(0,0,0,1)';
+        } else {
+          // Brush: normal drawing
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.strokeStyle = brushColor;
+        }
 
         ctx.beginPath();
         ctx.moveTo(from.x, from.y);
@@ -292,10 +423,21 @@ export function Canvas() {
         ctx.stroke();
       }
 
+      // Reset composite operation
+      ctx.globalCompositeOperation = 'source-over';
+
       // Update composite display
       compositeAndRender();
     },
-    [brushSize, brushColor, brushOpacity, pressureCurve, getActiveLayerCtx, compositeAndRender]
+    [
+      currentSize,
+      brushColor,
+      brushOpacity,
+      pressureCurve,
+      currentTool,
+      getActiveLayerCtx,
+      compositeAndRender,
+    ]
   );
 
   // 指针事件处理
@@ -318,19 +460,29 @@ export function Canvas() {
         return;
       }
 
-      // 绘画模式
       const canvas = canvasRef.current;
-      if (!canvas || !activeLayerId) return;
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const canvasX = (e.clientX - rect.left) / scale;
+      const canvasY = (e.clientY - rect.top) / scale;
+
+      // Eyedropper mode: pick color and return
+      if (currentTool === 'eyedropper') {
+        pickColorAt(canvasX, canvasY);
+        return;
+      }
+
+      // Drawing/erasing mode
+      if (!activeLayerId) return;
 
       canvas.setPointerCapture(e.pointerId);
       isDrawingRef.current = true;
       strokeBufferRef.current.reset();
 
-      const rect = canvas.getBoundingClientRect();
-      // 转换为画布坐标（考虑缩放）
       const point: Point = {
-        x: (e.clientX - rect.left) / scale,
-        y: (e.clientY - rect.top) / scale,
+        x: canvasX,
+        y: canvasY,
         pressure,
         tiltX,
         tiltY,
@@ -338,7 +490,7 @@ export function Canvas() {
 
       strokeBufferRef.current.addPoint(point);
     },
-    [spacePressed, setIsPanning, scale, activeLayerId]
+    [spacePressed, setIsPanning, scale, activeLayerId, currentTool, pickColorAt]
   );
 
   const handlePointerMove = useCallback(
@@ -356,8 +508,12 @@ export function Canvas() {
         const deltaY = lastEvent.clientY - panStartRef.current.y;
         pan(deltaX, deltaY);
         panStartRef.current = { x: lastEvent.clientX, y: lastEvent.clientY };
+        setCursorPos({ x: e.clientX, y: e.clientY });
         return;
       }
+
+      // Update cursor position for brush size indicator
+      setCursorPos({ x: e.clientX, y: e.clientY });
 
       // 绘画模式
       if (!isDrawingRef.current) return;
@@ -487,9 +643,19 @@ export function Canvas() {
   // 根据模式设置光标
   const getCursor = () => {
     if (spacePressed || isPanning) return 'grab';
-    if (isPanning) return 'grabbing';
+    if (currentTool === 'eyedropper') return 'crosshair';
+    if (currentTool === 'move') return 'move';
+    // Hide cursor for brush/eraser - we show custom cursor
+    if (currentTool === 'brush' || currentTool === 'eraser') return 'none';
     return 'crosshair';
   };
+
+  // Show brush cursor for brush and eraser tools
+  const showBrushCursor =
+    (currentTool === 'brush' || currentTool === 'eraser') &&
+    cursorPos &&
+    !spacePressed &&
+    !isPanning;
 
   return (
     <div
@@ -498,7 +664,13 @@ export function Canvas() {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerUp}
+      onPointerLeave={(e) => {
+        handlePointerUp(e);
+        setCursorPos(null);
+      }}
+      onPointerEnter={(e) => {
+        setCursorPos({ x: e.clientX, y: e.clientY });
+      }}
       style={{ cursor: getCursor() }}
     >
       <div className="canvas-viewport" style={viewportStyle}>
@@ -510,6 +682,17 @@ export function Canvas() {
           data-testid="main-canvas"
         />
       </div>
+      {showBrushCursor && (
+        <div
+          className="brush-cursor"
+          style={{
+            left: cursorPos.x,
+            top: cursorPos.y,
+            width: currentSize * scale,
+            height: currentSize * scale,
+          }}
+        />
+      )}
     </div>
   );
 }

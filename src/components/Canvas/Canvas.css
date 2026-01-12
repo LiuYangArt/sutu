@@ -34,3 +34,16 @@
   pointer-events: none;
   z-index: -1;
 }
+
+/* Brush size cursor indicator */
+.brush-cursor {
+  position: fixed;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  min-width: 2px;
+  min-height: 2px;
+}

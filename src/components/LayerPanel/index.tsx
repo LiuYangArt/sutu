@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, EyeOff, Plus, Trash2, Lock, Unlock, GripVertical } from 'lucide-react';
+import { Eye, EyeOff, Plus, Trash2, Lock, Unlock, GripVertical, Eraser } from 'lucide-react';
 import { useDocumentStore, BlendMode } from '@/stores/document';
 import './LayerPanel.css';
 
@@ -88,18 +88,36 @@ export function LayerPanel() {
     setDropTargetId(null);
   };
 
+  const handleClearLayer = () => {
+    const win = window as Window & { __canvasClearLayer?: () => void };
+    if (win.__canvasClearLayer) {
+      win.__canvasClearLayer();
+    }
+  };
+
   return (
     <aside className="layer-panel">
       <header className="layer-panel-header">
         <h3>Layers</h3>
-        <button
-          className="add-layer-btn"
-          data-testid="add-layer-btn"
-          onClick={() => addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' })}
-          title="Add Layer"
-        >
-          <Plus size={16} strokeWidth={2} />
-        </button>
+        <div className="layer-panel-actions">
+          <button
+            className="clear-layer-btn"
+            data-testid="clear-layer-btn"
+            onClick={handleClearLayer}
+            title="Clear Layer Content"
+            disabled={!activeLayerId}
+          >
+            <Eraser size={16} strokeWidth={2} />
+          </button>
+          <button
+            className="add-layer-btn"
+            data-testid="add-layer-btn"
+            onClick={() => addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' })}
+            title="Add Layer"
+          >
+            <Plus size={16} strokeWidth={2} />
+          </button>
+        </div>
       </header>
 
       <div className="layer-list">

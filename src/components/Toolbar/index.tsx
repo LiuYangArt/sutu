@@ -35,7 +35,8 @@ export function Toolbar() {
     currentTool,
     setTool,
     brushSize,
-    setBrushSize,
+    eraserSize,
+    setCurrentSize,
     brushOpacity,
     setBrushOpacity,
     brushColor,
@@ -43,6 +44,9 @@ export function Toolbar() {
     pressureCurve,
     setPressureCurve,
   } = useToolStore();
+
+  // Get current tool size (brush or eraser)
+  const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
 
   const { scale, zoomIn, zoomOut, resetZoom } = useViewportStore();
 
@@ -84,10 +88,10 @@ export function Toolbar() {
             type="range"
             min="1"
             max="200"
-            value={brushSize}
-            onChange={(e) => setBrushSize(Number(e.target.value))}
+            value={currentSize}
+            onChange={(e) => setCurrentSize(Number(e.target.value))}
           />
-          <span className="setting-value">{brushSize}px</span>
+          <span className="setting-value">{currentSize}px</span>
         </label>
 
         <label className="setting">
