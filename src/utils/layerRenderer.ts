@@ -57,7 +57,6 @@ export class LayerRenderer {
     this.compositeCanvas = document.createElement('canvas');
     this.compositeCanvas.width = width;
     this.compositeCanvas.height = height;
-    this.compositeCanvas.height = height;
     const ctx = this.compositeCanvas.getContext('2d', {
       alpha: true,
       willReadFrequently: true,
