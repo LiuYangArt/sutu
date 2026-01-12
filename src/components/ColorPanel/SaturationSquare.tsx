@@ -1,4 +1,5 @@
-import { memo, useRef, useCallback } from 'react';
+import { memo, useCallback } from 'react';
+import { usePointerDrag } from '@/hooks/usePointerDrag';
 import './SaturationSquare.css';
 
 interface SaturationSquareProps {
@@ -10,60 +11,22 @@ export const SaturationSquare = memo(function SaturationSquare({
   hsva,
   onChange,
 }: SaturationSquareProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
+  const handleChange = useCallback(
+    ({ x, y, width, height }: { x: number; y: number; width: number; height: number }) => {
+      const s = Math.max(0, Math.min((x / width) * 100, 100));
+      const v = Math.max(0, Math.min(100 - (y / height) * 100, 100));
 
-  const calculateSV = useCallback((x: number, y: number, width: number, height: number) => {
-    let s = (x / width) * 100;
-    let v = 100 - (y / height) * 100;
-
-    s = Math.max(0, Math.min(s, 100));
-    v = Math.max(0, Math.min(v, 100));
-
-    return { s, v };
-  }, []);
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    if (!containerRef.current) return;
-
-    isDragging.current = true;
-    containerRef.current.setPointerCapture(e.pointerId);
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const { s, v } = calculateSV(
-      e.clientX - rect.left,
-      e.clientY - rect.top,
-      rect.width,
-      rect.height
-    );
-
-    onChange({ ...hsva, s, v });
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging.current || !containerRef.current) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const { s, v } = calculateSV(
-      e.clientX - rect.left,
-      e.clientY - rect.top,
-      rect.width,
-      rect.height
-    );
-
-    // Check if changed
-    if (s !== hsva.s || v !== hsva.v) {
+      // Use a functional update callback or ensure hsva dependency?
+      // Since `onChange` will likely recreate if we pass `hsva` to dependency...
+      // But we can just pass the new S/V relative to current.
+      // Wait, inside useCallback, we need current `hsva.h`/`hsva.a` if we return full object?
+      // Yes. So we need `hsva` in dependency.
       onChange({ ...hsva, s, v });
-    }
-  };
+    },
+    [hsva, onChange]
+  );
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (isDragging.current && containerRef.current) {
-      isDragging.current = false;
-      containerRef.current.releasePointerCapture(e.pointerId);
-    }
-  };
+  const { containerRef, events } = usePointerDrag(handleChange);
 
   // Background color for the square (Base Hue)
   const bgColor = `hsl(${hsva.h}, 100%, 50%)`;
@@ -73,10 +36,7 @@ export const SaturationSquare = memo(function SaturationSquare({
       className="saturation-square"
       ref={containerRef}
       style={{ backgroundColor: bgColor }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerUp}
+      {...events}
     >
       <div className="saturation-white" />
       <div className="saturation-black" />

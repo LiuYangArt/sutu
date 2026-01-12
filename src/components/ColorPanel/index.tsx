@@ -1,7 +1,7 @@
 import { SaturationSquare } from './SaturationSquare';
 import { useToolStore } from '@/stores/tool';
 import { useState, useEffect, useCallback } from 'react';
-import { hexToHsva, hsvaToHex } from '@/utils/colorUtils';
+import { hexToHsva, hsvaToHex, normalizeHex } from '@/utils/colorUtils';
 import { VerticalHueSlider } from './VerticalHueSlider';
 import './ColorPanel.css';
 
@@ -51,22 +51,9 @@ export function ColorPanel() {
     const val = e.target.value;
     setHexInput(val);
 
-    // Check if valid hex (3 or 6 chars)
-    const cleanHex = val.replace(/[^0-9a-fA-F]/g, '');
-    if (cleanHex.length === 3 || cleanHex.length === 6) {
-      // Expand 3 char hex
-      let fullHex = cleanHex;
-      if (cleanHex.length === 3) {
-        fullHex = cleanHex
-          .split('')
-          .map((c) => c + c)
-          .join('');
-      }
-      const hex = `#${fullHex}`;
-      setBrushColor(hex);
-      // We don't update HSVA here immediately to avoid jumping while typing?
-      // Actually we should, to see preview.
-      setHsva(hexToHsva(hex));
+    const clean = val.replace(/[^0-9a-fA-F]/g, '');
+    if (clean.length === 3 || clean.length === 6) {
+      setBrushColor(`#${normalizeHex(clean)}`);
     }
   };
 
