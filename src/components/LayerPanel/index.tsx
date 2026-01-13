@@ -107,21 +107,23 @@ export function LayerPanel(): JSX.Element {
     setContextMenu((prev) => ({ ...prev, visible: false }));
   }, [contextMenu.layerId, duplicateLayer]);
 
-  const handleDeleteLayer = useCallback(() => {
-    if (contextMenu.layerId) {
-      // Use canvas interface to save history before remove
-      const win = window as Window & {
-        __canvasRemoveLayer?: (id: string) => void;
-      };
+  // Helper to remove layer via Canvas interface (saves history)
+  const safeRemoveLayer = useCallback(
+    (id: string) => {
+      const win = window as Window & { __canvasRemoveLayer?: (id: string) => void };
       if (win.__canvasRemoveLayer) {
-        win.__canvasRemoveLayer(contextMenu.layerId);
+        win.__canvasRemoveLayer(id);
       } else {
-        // Fallback if canvas not ready
-        removeLayer(contextMenu.layerId);
+        removeLayer(id);
       }
-    }
+    },
+    [removeLayer]
+  );
+
+  const handleDeleteLayer = useCallback(() => {
+    if (contextMenu.layerId) safeRemoveLayer(contextMenu.layerId);
     setContextMenu((prev) => ({ ...prev, visible: false }));
-  }, [contextMenu.layerId, removeLayer]);
+  }, [contextMenu.layerId, safeRemoveLayer]);
 
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const displayLayers = [...layers].reverse();
@@ -225,17 +227,7 @@ export function LayerPanel(): JSX.Element {
               onActivate={setActiveLayer}
               onToggleVisibility={toggleLayerVisibility}
               onToggleLock={toggleLayerLock}
-              onRemove={(id) => {
-                // Use canvas interface to save history before remove
-                const win = window as Window & {
-                  __canvasRemoveLayer?: (id: string) => void;
-                };
-                if (win.__canvasRemoveLayer) {
-                  win.__canvasRemoveLayer(id);
-                } else {
-                  removeLayer(id);
-                }
-              }}
+              onRemove={safeRemoveLayer}
               onContextMenu={handleContextMenu}
               onDragStart={handleDragStart}
               onDragOver={handleDragOver}

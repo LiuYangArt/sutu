@@ -70,130 +70,83 @@ function cloneImageData(imageData: ImageData): ImageData {
   return ctx.getImageData(0, 0, imageData.width, imageData.height);
 }
 
-export const useHistoryStore = create<HistoryState>((set, get) => ({
-  undoStack: [],
-  redoStack: [],
-  maxHistorySize: 50,
-
-  pushStroke: (layerId: string, beforeImage: ImageData) => {
+export const useHistoryStore = create<HistoryState>((set, get) => {
+  // Helper to push entry and manage stack size
+  function pushEntry(entry: HistoryEntry) {
     const { undoStack, maxHistorySize } = get();
+    const newStack = [...undoStack, entry];
+    if (newStack.length > maxHistorySize) newStack.shift();
+    set({ undoStack: newStack, redoStack: [] });
+  }
 
-    const entry: StrokeEntry = {
-      type: 'stroke',
-      layerId,
-      beforeImage: cloneImageData(beforeImage),
-      timestamp: Date.now(),
-    };
+  return {
+    undoStack: [],
+    redoStack: [],
+    maxHistorySize: 50,
 
-    const newUndoStack = [...undoStack, entry];
-    if (newUndoStack.length > maxHistorySize) {
-      newUndoStack.shift();
-    }
+    pushStroke: (layerId, beforeImage) => {
+      pushEntry({
+        type: 'stroke',
+        layerId,
+        beforeImage: cloneImageData(beforeImage),
+        timestamp: Date.now(),
+      });
+    },
 
-    set({
-      undoStack: newUndoStack,
-      redoStack: [],
-    });
-  },
+    pushAddLayer: (layerId, layerMeta, layerIndex) => {
+      pushEntry({
+        type: 'addLayer',
+        layerId,
+        layerMeta: { ...layerMeta },
+        layerIndex,
+        timestamp: Date.now(),
+      });
+    },
 
-  pushAddLayer: (layerId: string, layerMeta: Layer, layerIndex: number) => {
-    const { undoStack, maxHistorySize } = get();
+    pushRemoveLayer: (layerId, layerMeta, layerIndex, imageData) => {
+      pushEntry({
+        type: 'removeLayer',
+        layerId,
+        layerMeta: { ...layerMeta },
+        layerIndex,
+        imageData: cloneImageData(imageData),
+        timestamp: Date.now(),
+      });
+    },
 
-    const entry: AddLayerEntry = {
-      type: 'addLayer',
-      layerId,
-      layerMeta: { ...layerMeta },
-      layerIndex,
-      timestamp: Date.now(),
-    };
+    undo: () => {
+      const { undoStack, redoStack } = get();
+      if (undoStack.length === 0) return null;
 
-    const newUndoStack = [...undoStack, entry];
-    if (newUndoStack.length > maxHistorySize) {
-      newUndoStack.shift();
-    }
+      const entry = undoStack[undoStack.length - 1];
+      if (!entry) return null;
 
-    set({
-      undoStack: newUndoStack,
-      redoStack: [],
-    });
-  },
+      set({
+        undoStack: undoStack.slice(0, -1),
+        redoStack: [...redoStack, entry],
+      });
+      return entry;
+    },
 
-  pushRemoveLayer: (
-    layerId: string,
-    layerMeta: Layer,
-    layerIndex: number,
-    imageData: ImageData
-  ) => {
-    const { undoStack, maxHistorySize } = get();
+    redo: () => {
+      const { undoStack, redoStack } = get();
+      if (redoStack.length === 0) return null;
 
-    const entry: RemoveLayerEntry = {
-      type: 'removeLayer',
-      layerId,
-      layerMeta: { ...layerMeta },
-      layerIndex,
-      imageData: cloneImageData(imageData),
-      timestamp: Date.now(),
-    };
+      const entry = redoStack[redoStack.length - 1];
+      if (!entry) return null;
 
-    const newUndoStack = [...undoStack, entry];
-    if (newUndoStack.length > maxHistorySize) {
-      newUndoStack.shift();
-    }
+      set({
+        undoStack: [...undoStack, entry],
+        redoStack: redoStack.slice(0, -1),
+      });
+      return entry;
+    },
 
-    set({
-      undoStack: newUndoStack,
-      redoStack: [],
-    });
-  },
+    canUndo: () => get().undoStack.length > 0,
+    canRedo: () => get().redoStack.length > 0,
 
-  undo: () => {
-    const { undoStack, redoStack } = get();
-
-    if (undoStack.length === 0) {
-      return null;
-    }
-
-    const entry = undoStack[undoStack.length - 1];
-    if (!entry) return null;
-
-    set({
-      undoStack: undoStack.slice(0, -1),
-      redoStack: [...redoStack, entry],
-    });
-
-    return entry;
-  },
-
-  redo: () => {
-    const { undoStack, redoStack } = get();
-
-    if (redoStack.length === 0) {
-      return null;
-    }
-
-    const entry = redoStack[redoStack.length - 1];
-    if (!entry) return null;
-
-    set({
-      undoStack: [...undoStack, entry],
-      redoStack: redoStack.slice(0, -1),
-    });
-
-    return entry;
-  },
-
-  canUndo: () => {
-    return get().undoStack.length > 0;
-  },
-
-  canRedo: () => {
-    return get().redoStack.length > 0;
-  },
-
-  clear: () => {
-    set({
-      undoStack: [],
-      redoStack: [],
-    });
-  },
-}));
+    clear: () => {
+      set({ undoStack: [], redoStack: [] });
+    },
+  };
+});
