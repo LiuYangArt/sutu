@@ -132,9 +132,15 @@ export class StrokeAccumulator {
 
     if (radiusX < 0.5) return;
 
-    // Use the larger radius for dirty rect expansion
+    // Use the larger radius for calculations
     const maxRadius = Math.max(radiusX, radiusY);
-    this.expandDirtyRect(x, y, maxRadius);
+
+    // For soft brushes, extend beyond nominal radius (1.5x) for smooth falloff
+    const extentMultiplier = hardness >= 0.99 ? 1.0 : 1.5;
+    const effectiveRadius = maxRadius * extentMultiplier + 1; // +1 for AA margin
+
+    // Expand dirty rect with the EFFECTIVE radius (including soft brush extension)
+    this.expandDirtyRect(x, y, effectiveRadius);
 
     const rgb = hexToRgb(color);
 
@@ -144,9 +150,6 @@ export class StrokeAccumulator {
     const sinA = Math.sin(-angleRad);
 
     // Calculate bounding box for pixel operations
-    // For soft brushes, extend beyond nominal radius (1.5x) for smooth falloff
-    const extentMultiplier = hardness >= 0.99 ? 1.0 : 1.5;
-    const effectiveRadius = maxRadius * extentMultiplier + 1; // +1 for AA margin
     const left = Math.max(0, Math.floor(x - effectiveRadius));
     const top = Math.max(0, Math.floor(y - effectiveRadius));
     const right = Math.min(this.width, Math.ceil(x + effectiveRadius));
@@ -400,6 +403,10 @@ export class StrokeAccumulator {
  * - Uses exponential moving average (EMA) to smooth pressure transitions
  * - Prevents "stair-step" artifacts at low pressure
  * - Adds adaptive dab density when pressure changes rapidly
+ *
+ * Stroke tail fadeout:
+ * - Tracks stroke direction for smooth fadeout
+ * - Emits additional dabs along direction with decreasing pressure
  */
 export class BrushStamper {
   private accumulatedDistance: number = 0;
@@ -410,6 +417,10 @@ export class BrushStamper {
 
   // Smoothed pressure using EMA
   private smoothedPressure: number = 0;
+
+  // Track stroke direction for fadeout
+  private lastDirection: { dx: number; dy: number } = { dx: 0, dy: 0 };
+  private lastSpeed: number = 0; // pixels per sample
 
   // Minimum movement in pixels before we start the stroke
   // This prevents pressure buildup at stationary position
@@ -432,6 +443,8 @@ export class BrushStamper {
     this.strokeStartPoint = null;
     this.hasMovedEnough = false;
     this.smoothedPressure = 0;
+    this.lastDirection = { dx: 0, dy: 0 };
+    this.lastSpeed = 0;
   }
 
   /**
@@ -513,6 +526,12 @@ export class BrushStamper {
     const dy = y - this.lastPoint.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
+    // Track stroke direction for fadeout (normalized)
+    if (distance > 0.5) {
+      this.lastDirection = { dx: dx / distance, dy: dy / distance };
+      this.lastSpeed = distance;
+    }
+
     // Check for rapid pressure change - reduce spacing for smoother transition
     const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
     let effectiveSpacing = spacing;
@@ -547,27 +566,36 @@ export class BrushStamper {
   }
 
   /**
-   * Finish stroke and return final fadeout dabs
-   * This creates a tapered end similar to PS/Krita when pen is lifted quickly
+   * Finish stroke and return final fadeout dabs along stroke direction
+   * Creates a tapered end similar to PS/Krita when pen is lifted quickly
    */
-  finishStroke(): Array<{ x: number; y: number; pressure: number }> {
+  finishStroke(brushSize: number): Array<{ x: number; y: number; pressure: number }> {
     const dabs: Array<{ x: number; y: number; pressure: number }> = [];
 
-    // If we have a valid last point with pressure, emit fadeout dabs
-    if (this.lastPoint && this.hasMovedEnough && this.lastPoint.pressure > 0.05) {
-      // Emit 2-3 additional dabs with decreasing pressure for smooth taper
-      const fadeSteps = 3;
+    // If we have a valid last point with pressure and direction, emit fadeout dabs
+    if (
+      this.lastPoint &&
+      this.hasMovedEnough &&
+      this.lastPoint.pressure > 0.05 &&
+      (this.lastDirection.dx !== 0 || this.lastDirection.dy !== 0)
+    ) {
+      // Calculate fadeout distance based on brush size and last speed
+      const fadeDistance = Math.max(brushSize * 0.3, this.lastSpeed * 0.5);
+      const fadeSteps = 4;
       const lastP = this.lastPoint.pressure;
 
       for (let i = 1; i <= fadeSteps; i++) {
-        const t = i / (fadeSteps + 1);
-        // Use exponential decay for natural fadeout
-        const fadePressure = lastP * Math.exp(-3 * t);
+        const t = i / fadeSteps;
+        // Position along stroke direction
+        const fadeX = this.lastPoint.x + this.lastDirection.dx * fadeDistance * t;
+        const fadeY = this.lastPoint.y + this.lastDirection.dy * fadeDistance * t;
+        // Exponential pressure decay
+        const fadePressure = lastP * Math.exp(-4 * t);
 
         if (fadePressure > 0.01) {
           dabs.push({
-            x: this.lastPoint.x,
-            y: this.lastPoint.y,
+            x: fadeX,
+            y: fadeY,
             pressure: fadePressure,
           });
         }

@@ -115,7 +115,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
       if (!buffer) return;
 
       // Get fadeout dabs from stamper
-      const fadeoutDabs = stamperRef.current.finishStroke();
+      const fadeoutDabs = stamperRef.current.finishStroke(config.size);
 
       // Stamp fadeout dabs to create smooth tail taper
       for (const dab of fadeoutDabs) {
