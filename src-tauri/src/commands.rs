@@ -368,19 +368,14 @@ pub fn start_tablet() -> Result<(), String> {
                                         is_drawing.load(std::sync::atomic::Ordering::Relaxed);
                                     let now_drawing = point.pressure > 0.0;
 
-                                    // Reset smoother when stroke starts (pressure goes from 0 to >0)
-                                    if now_drawing && !was_drawing {
-                                        if let Ok(mut smoother) = pressure_smoother.lock() {
-                                            smoother.reset();
-                                        }
-                                    }
-
                                     // Apply pressure smoothing when drawing
                                     // Note: Pressure curve is applied in frontend, not here
                                     if now_drawing {
                                         if let Ok(mut smoother) = pressure_smoother.lock() {
-                                            let smoothed = smoother.smooth(point.pressure);
-                                            point.pressure = smoothed;
+                                            if !was_drawing {
+                                                smoother.reset();
+                                            }
+                                            point.pressure = smoother.smooth(point.pressure);
                                         }
                                     }
 

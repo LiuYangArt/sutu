@@ -37,9 +37,9 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     return { r: 0, g: 0, b: 0 };
   }
   return {
-    r: parseInt(result[1] ?? '0', 16),
-    g: parseInt(result[2] ?? '0', 16),
-    b: parseInt(result[3] ?? '0', 16),
+    r: parseInt(result[1]!, 16),
+    g: parseInt(result[2]!, 16),
+    b: parseInt(result[3]!, 16),
   };
 }
 
@@ -147,6 +147,7 @@ export class StrokeAccumulator {
 
     // Anti-aliasing: smooth transition over ~1px at the edge
     const aaWidth = Math.min(1.0, radius * 0.5); // AA width, max 1px, smaller for tiny brushes
+    const maxAlphaFloat = opacityCeiling !== undefined ? opacityCeiling : 1.0;
 
     // Process each pixel in the dab region
     for (let py = 0; py < rectHeight; py++) {
@@ -203,7 +204,6 @@ export class StrokeAccumulator {
         let outA = srcA + dstA * (1 - srcA);
 
         // Apply opacity ceiling BEFORE color calculation to avoid brightening
-        const maxAlphaFloat = opacityCeiling !== undefined ? opacityCeiling : 1.0;
         if (outA > maxAlphaFloat) {
           outA = maxAlphaFloat;
         }

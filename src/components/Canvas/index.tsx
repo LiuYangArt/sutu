@@ -551,9 +551,7 @@ export function Canvas() {
         return;
       }
 
-      // PointerDown 时刻，WinTab 数据可能还未通过 Tauri 事件到达前端
-      // 因此优先使用 PointerEvent.pressure（Windows Ink 提供的压感）
-      // WinTab 数据将在后续的 PointerMove 中使用
+      // PointerDown: WinTab data might not be ready, so allow PointerEvent pressure fallback
       const pressure = e.pressure > 0 ? e.pressure : 0.5;
       const tiltX = e.tiltX ?? 0;
       const tiltY = e.tiltY ?? 0;
@@ -565,40 +563,31 @@ export function Canvas() {
       const canvasX = (e.clientX - rect.left) / scale;
       const canvasY = (e.clientY - rect.top) / scale;
 
-      // Eyedropper mode: pick color and return
       if (currentTool === 'eyedropper') {
         pickColorAt(canvasX, canvasY);
         return;
       }
 
-      // Drawing/erasing mode
-      if (!activeLayerId) return;
-
-      // Check if active layer is visible - prevent drawing on hidden layers
       const activeLayer = layers.find((l) => l.id === activeLayerId);
-      if (!activeLayer?.visible) return;
+      if (!activeLayerId || !activeLayer?.visible) return;
 
       canvas.setPointerCapture(e.pointerId);
       isDrawingRef.current = true;
       strokeBufferRef.current.reset();
 
-      // For brush tool, use the new three-level pipeline
       if (currentTool === 'brush') {
         beginBrushStroke();
         processBrushPointWithConfig(canvasX, canvasY, pressure);
-        return;
+      } else {
+        // Eraser uses legacy buffer
+        strokeBufferRef.current.addPoint({
+          x: canvasX,
+          y: canvasY,
+          pressure,
+          tiltX,
+          tiltY,
+        });
       }
-
-      // For eraser, use the legacy stroke buffer
-      const point: Point = {
-        x: canvasX,
-        y: canvasY,
-        pressure,
-        tiltX,
-        tiltY,
-      };
-
-      strokeBufferRef.current.addPoint(point);
     },
     [
       spacePressed,
@@ -637,8 +626,7 @@ export function Canvas() {
         const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
         const deltaX = lastEvent.clientX - zoomStartRef.current.x;
 
-        // Apply scrubby zoom: drag right to zoom in, left to zoom out
-        // Sensitivity factor 0.01 means 100px drag doubles/halves the scale roughly
+        // Scrubby zoom: 100px drag doubles/halves scale
         const zoomFactor = 1 + deltaX * 0.01;
         const newScale = zoomStartRef.current.startScale * zoomFactor;
 
