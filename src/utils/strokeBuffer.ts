@@ -403,10 +403,6 @@ export class StrokeAccumulator {
  * - Uses exponential moving average (EMA) to smooth pressure transitions
  * - Prevents "stair-step" artifacts at low pressure
  * - Adds adaptive dab density when pressure changes rapidly
- *
- * Stroke tail fadeout:
- * - Tracks stroke direction for smooth fadeout
- * - Emits additional dabs along direction with decreasing pressure
  */
 export class BrushStamper {
   private accumulatedDistance: number = 0;
@@ -418,16 +414,12 @@ export class BrushStamper {
   // Smoothed pressure using EMA
   private smoothedPressure: number = 0;
 
-  // Track stroke direction for fadeout
-  private lastDirection: { dx: number; dy: number } = { dx: 0, dy: 0 };
-  private lastSpeed: number = 0; // pixels per sample
-
   // Minimum movement in pixels before we start the stroke
   // This prevents pressure buildup at stationary position
   private static readonly MIN_MOVEMENT_DISTANCE = 3;
 
   // Pressure smoothing factor (0-1): lower = more smoothing
-  // 0.3 provides good balance between responsiveness and smoothness
+  // 0.35 provides good balance between responsiveness and smoothness
   private static readonly PRESSURE_SMOOTHING = 0.35;
 
   // Additional dabs when pressure changes rapidly (prevents stepping)
@@ -443,8 +435,6 @@ export class BrushStamper {
     this.strokeStartPoint = null;
     this.hasMovedEnough = false;
     this.smoothedPressure = 0;
-    this.lastDirection = { dx: 0, dy: 0 };
-    this.lastSpeed = 0;
   }
 
   /**
@@ -526,12 +516,6 @@ export class BrushStamper {
     const dy = y - this.lastPoint.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    // Track stroke direction for fadeout (normalized)
-    if (distance > 0.5) {
-      this.lastDirection = { dx: dx / distance, dy: dy / distance };
-      this.lastSpeed = distance;
-    }
-
     // Check for rapid pressure change - reduce spacing for smoother transition
     const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
     let effectiveSpacing = spacing;
@@ -566,43 +550,15 @@ export class BrushStamper {
   }
 
   /**
-   * Finish stroke and return final fadeout dabs along stroke direction
-   * Creates a tapered end similar to PS/Krita when pen is lifted quickly
+   * Finish stroke and reset state
+   *
+   * Note: We don't artificially add fadeout dabs here. Natural pressure decay
+   * from the tablet hardware should create proper tapered ends. If the pen is
+   * lifted too quickly, we accept a blunt end rather than adding unnatural
+   * artificial taper that creates visual discontinuity.
    */
-  finishStroke(brushSize: number): Array<{ x: number; y: number; pressure: number }> {
-    const dabs: Array<{ x: number; y: number; pressure: number }> = [];
-
-    // If we have a valid last point with pressure and direction, emit fadeout dabs
-    if (
-      this.lastPoint &&
-      this.hasMovedEnough &&
-      this.lastPoint.pressure > 0.05 &&
-      (this.lastDirection.dx !== 0 || this.lastDirection.dy !== 0)
-    ) {
-      // Calculate fadeout distance based on brush size and last speed
-      const fadeDistance = Math.max(brushSize * 0.3, this.lastSpeed * 0.5);
-      const fadeSteps = 4;
-      const lastP = this.lastPoint.pressure;
-
-      for (let i = 1; i <= fadeSteps; i++) {
-        const t = i / fadeSteps;
-        // Position along stroke direction
-        const fadeX = this.lastPoint.x + this.lastDirection.dx * fadeDistance * t;
-        const fadeY = this.lastPoint.y + this.lastDirection.dy * fadeDistance * t;
-        // Exponential pressure decay
-        const fadePressure = lastP * Math.exp(-4 * t);
-
-        if (fadePressure > 0.01) {
-          dabs.push({
-            x: fadeX,
-            y: fadeY,
-            pressure: fadePressure,
-          });
-        }
-      }
-    }
-
+  finishStroke(_brushSize: number): Array<{ x: number; y: number; pressure: number }> {
     this.beginStroke();
-    return dabs;
+    return []; // No artificial fadeout - rely on natural pressure data
   }
 }
