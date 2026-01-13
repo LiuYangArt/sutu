@@ -104,7 +104,7 @@ export const useToolStore = create<ToolState>()(
       brushFlow: 1, // Default: full flow
       brushOpacity: 1, // Default: full opacity ceiling
       brushHardness: 100,
-      brushMaskType: 'gaussian', // Default to Krita-style erf Gaussian
+      brushMaskType: 'default', // Default to simple Gaussian (perf preferred)
       brushSpacing: 0.25, // 25% of brush size
       brushRoundness: 100, // 100 = perfect circle
       brushAngle: 0, // 0 degrees

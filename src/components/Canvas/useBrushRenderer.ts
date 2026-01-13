@@ -80,17 +80,22 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
       const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
 
       // Stamp each dab to the stroke buffer
+      // Stamp each dab to the stroke buffer
       for (const dab of dabs) {
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         const dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
         const dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
-        // Opacity is now handled at endStroke / preview level, not per-dab ceiling
+
+        // Restore Opacity Pressure in Post-Multiply mode:
+        // Simulate opacity pressure by scaling the flow (source alpha).
+        const opacityScale = config.pressureOpacityEnabled ? dabPressure : 1.0;
+        const finalFlow = dabFlow * opacityScale;
 
         const dabParams: DabParams = {
           x: dab.x,
           y: dab.y,
           size: Math.max(1, dabSize),
-          flow: dabFlow,
+          flow: finalFlow,
           hardness: config.hardness / 100, // Convert from 0-100 to 0-1
           maskType: config.maskType,
           color: config.color,
