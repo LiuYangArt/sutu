@@ -1,6 +1,6 @@
 import { useRef, useCallback } from 'react';
 
-type PointerOutput = { x: number; y: number; width: number; height: number };
+export type PointerOutput = { x: number; y: number; width: number; height: number };
 
 /**
  * Hook to handle pointer drag comparisons for custom sliders/pickers
@@ -14,7 +14,15 @@ export function usePointerDrag(
     onDragEnd?: () => void;
     hideCursor?: boolean;
   }
-) {
+): {
+  containerRef: React.RefObject<HTMLDivElement>;
+  events: {
+    onPointerDown: (e: React.PointerEvent) => void;
+    onPointerMove: (e: React.PointerEvent) => void;
+    onPointerUp: (e: React.PointerEvent) => void;
+    onPointerLeave: (e: React.PointerEvent) => void;
+  };
+} {
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
   const rectRef = useRef<DOMRect | null>(null);

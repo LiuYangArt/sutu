@@ -1,5 +1,5 @@
 import { memo, useCallback, useRef } from 'react';
-import { usePointerDrag } from '@/hooks/usePointerDrag';
+import { usePointerDrag, PointerOutput } from '@/hooks/usePointerDrag';
 import './VerticalHueSlider.css';
 
 interface VerticalHueSliderProps {
@@ -14,10 +14,10 @@ export const VerticalHueSlider = memo(function VerticalHueSlider({
   const pointerRef = useRef<HTMLDivElement>(null);
 
   const handleChange = useCallback(
-    (data: { y: number; height: number; width: number }) => {
+    ({ y, height }: PointerOutput) => {
       // 0% at top (0deg), 100% at bottom (360deg)
-      const relativeY = Math.max(0, Math.min(data.y, data.height));
-      const percent = relativeY / data.height;
+      const relativeY = Math.max(0, Math.min(y, height));
+      const percent = relativeY / height;
 
       // Direct DOM update
       if (pointerRef.current) {

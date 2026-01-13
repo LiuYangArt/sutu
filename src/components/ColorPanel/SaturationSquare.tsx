@@ -1,5 +1,5 @@
 import { memo, useCallback, useRef } from 'react';
-import { usePointerDrag } from '@/hooks/usePointerDrag';
+import { usePointerDrag, PointerOutput } from '@/hooks/usePointerDrag';
 import './SaturationSquare.css';
 
 interface SaturationSquareProps {
@@ -16,7 +16,7 @@ export const SaturationSquare = memo(function SaturationSquare({
   hsvaRef.current = hsva; // Keep ref in sync with render
 
   const handleChange = useCallback(
-    ({ x, y, width, height }: { x: number; y: number; width: number; height: number }) => {
+    ({ x, y, width, height }: PointerOutput) => {
       const s = Math.max(0, Math.min((x / width) * 100, 100));
       const v = Math.max(0, Math.min(100 - (y / height) * 100, 100));
 

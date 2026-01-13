@@ -1,4 +1,4 @@
-- [ ] (Doing #29) 色盘取色的圆圈有延迟，比cursor的crosshair要慢几帧 ， 在色盘拖拽取色的时候直接隐藏cursor
+- [x] (Fixed #29) 色盘取色的圆圈有延迟，比cursor的crosshair要慢几帧 ， 在色盘拖拽取色的时候直接隐藏cursor
 
 增加wintab/windows ink切换
 
