@@ -11,12 +11,15 @@
  * 3. Layer Level: Composites stroke with Opacity as ceiling
  */
 
+export type MaskType = 'gaussian' | 'default';
+
 export interface DabParams {
   x: number;
   y: number;
   size: number;
   flow: number; // Per-dab opacity (0-1)
   hardness: number; // Edge hardness (0-1)
+  maskType?: MaskType; // Mask type: 'gaussian' (erf-based, default) or 'default' (simple)
   color: string; // Hex color
   opacityCeiling?: number; // Optional opacity ceiling (0-1), if set, limits max alpha
   roundness?: number; // Brush roundness (0-1, 1 = circle, <1 = ellipse)
@@ -28,6 +31,28 @@ export interface Rect {
   top: number;
   right: number;
   bottom: number;
+}
+
+/**
+ * Error function approximation (Abramowitz and Stegun formula 7.1.26)
+ * Used for Krita-style Gaussian mask falloff
+ * Accuracy: |error| < 1.5e-7
+ */
+function erf(x: number): number {
+  const sign = x >= 0 ? 1 : -1;
+  x = Math.abs(x);
+
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+
+  const t = 1.0 / (1.0 + p * x);
+  const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+
+  return sign * y;
 }
 
 /**
@@ -126,7 +151,18 @@ export class StrokeAccumulator {
    * Supports roundness (ellipse) and angle (rotation)
    */
   stampDab(params: DabParams): void {
-    const { x, y, size, flow, hardness, color, opacityCeiling, roundness = 1, angle = 0 } = params;
+    const {
+      x,
+      y,
+      size,
+      flow,
+      hardness,
+      maskType = 'gaussian', // Default to Krita-style erf Gaussian
+      color,
+      opacityCeiling,
+      roundness = 1,
+      angle = 0,
+    } = params;
     const radiusX = size / 2;
     const radiusY = radiusX * roundness; // Scale Y radius for roundness
 
@@ -135,8 +171,20 @@ export class StrokeAccumulator {
     // Use the larger radius for calculations
     const maxRadius = Math.max(radiusX, radiusY);
 
-    // For soft brushes, extend beyond nominal radius (1.5x) for smooth falloff
-    const extentMultiplier = hardness >= 0.99 ? 1.0 : 1.5;
+    // Dynamic extent multiplier based on mask type
+    let extentMultiplier: number;
+    if (hardness >= 0.99) {
+      extentMultiplier = 1.0;
+    } else if (maskType === 'gaussian') {
+      // Gaussian (erf) mask decays much faster than simple exp()
+      // Hardness 0 (Fade 1) needs ~1.5x radius to decay fully
+      // Hardness 0.5 needs less
+      extentMultiplier = 1.0 + 0.5 * (1 - hardness);
+    } else {
+      // Default simple Gaussian: 1.5x fallback
+      extentMultiplier = 1.5;
+    }
+
     const effectiveRadius = maxRadius * extentMultiplier + 1; // +1 for AA margin
 
     // Expand dirty rect with the EFFECTIVE radius (including soft brush extension)
@@ -163,7 +211,6 @@ export class StrokeAccumulator {
     const bufferData = this.ctx.getImageData(left, top, rectWidth, rectHeight);
 
     // Anti-aliasing: smooth transition over ~1px at the edge
-    const aaWidth = Math.min(1.0, radiusX * 0.5); // AA width, max 1px, smaller for tiny brushes
     const maxAlphaFloat = opacityCeiling !== undefined ? opacityCeiling : 1.0;
 
     // Process each pixel in the dab region
@@ -192,23 +239,77 @@ export class StrokeAccumulator {
 
         if (hardness >= 0.99) {
           // Hard brush: full alpha inside, AA at edge
-          if (normDist > 1 + aaWidth / radiusX) {
+          // Improved AA: linear falloff over 1px at the exact physical edge
+          const physicalDist = normDist * radiusX;
+          const distFromEdge = physicalDist - radiusX;
+
+          if (distFromEdge > 1.0) {
             continue; // Outside AA zone
-          } else if (normDist > 1) {
-            // Anti-aliasing zone
-            const edgeNormDist = normDist - 1;
-            const coverage = Math.max(0, 1 - edgeNormDist / (aaWidth / radiusX));
-            dabAlpha = flow * coverage;
+          } else if (distFromEdge > 0.0) {
+            // Anti-aliasing zone (0 to 1px outside nominal radius)
+            // Linear falloff from 1.0 to 0.0 over 1px
+            dabAlpha = flow * (1.0 - distFromEdge);
           } else {
             dabAlpha = flow;
           }
+        } else if (maskType === 'gaussian') {
+          // Krita-style Gaussian (erf-based)
+          // Convert hardness (0-1) to fade (1-0 inverted, clamped)
+          const fade = 1.0 - hardness;
+          // Avoid 0/1 singularities exactly like Krita
+          const safeFade = Math.max(1e-6, Math.min(1 - 1e-6, fade));
+
+          // Krita's magic constants
+          const SQRT_2 = Math.SQRT2;
+          // center computation from KisGaussCircleMaskGenerator
+          const center = (2.5 * (6761.0 * safeFade - 10000.0)) / (SQRT_2 * 6761.0 * safeFade);
+          // alphafactor computation
+          const alphafactor = 255.0 / (2.0 * erf(center));
+
+          // distfactor computation
+          // Note: radiusX is effectiveSrcWidth / 2
+          const distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX);
+
+          // Calculate scaled distance
+          const physicalDist = normDist * radiusX;
+
+          // Anti-aliasing logic (Krita KisAntialiasingFadeMaker style)
+          // For brushes with significant hardness, we force linear bleed at the edge (1px)
+          // to prevent aliasing.
+          const aaStart = radiusX - 1.0;
+
+          if (hardness > 0.5 && physicalDist > aaStart) {
+            // Inside the 1px edge processing zone
+            if (physicalDist > radiusX) {
+              // Outside nominal radius: cut off
+              continue;
+            }
+
+            // Calculate alpha at aaStart to ensure continuity
+            const distAtStart = aaStart * distfactor;
+            const valAtStart =
+              alphafactor * (erf(distAtStart + center) - erf(distAtStart - center));
+            const baseAlphaAtStart = Math.max(0, Math.min(1, valAtStart / 255.0));
+
+            // Linear interpolation from baseAlphaAtStart down to 0 at radiusX
+            // dist goes from aaStart to radiusX -> t goes 0 to 1
+            const t = physicalDist - aaStart;
+            dabAlpha = flow * baseAlphaAtStart * (1.0 - t);
+          } else {
+            // Normal Gaussian calculation
+            const scaledDist = physicalDist * distfactor;
+            const val = alphafactor * (erf(scaledDist + center) - erf(scaledDist - center));
+            const rawAlpha = Math.max(0, Math.min(1, val / 255.0));
+
+            dabAlpha = flow * rawAlpha;
+          }
         } else {
+          // 'default': Simple Gaussian exp(-k*t²) (Original PaintBoard implementation)
           // Soft brush: Gaussian falloff from center, extends beyond nominal edge
           // Map hardness to control inner core vs. falloff zone
           const innerRadius = hardness; // 0-1, where falloff begins
 
           // For soft brushes, extend processing area beyond nominal radius
-          // Gaussian at t=2 gives exp(-2.5*4) ≈ 0.00005, effectively invisible
           const maxExtent = 1.5; // Process up to 1.5x nominal radius for soft brushes
           if (normDist > maxExtent) {
             continue;
@@ -218,12 +319,8 @@ export class StrokeAccumulator {
             // Inside hard core
             dabAlpha = flow;
           } else {
-            // Gaussian falloff zone - continues smoothly beyond edge
-            // t goes from 0 (at inner edge) and can exceed 1 for smooth falloff
+            // Gaussian falloff zone
             const t = (normDist - innerRadius) / (1 - innerRadius);
-
-            // Use TRUE Gaussian falloff: exp(-k * t²)
-            // k = 2.5 gives a very soft airbrush effect similar to Photoshop
             const gaussianK = 2.5;
             dabAlpha = flow * Math.exp(-gaussianK * t * t);
           }

@@ -1,4 +1,4 @@
-import { useToolStore, PressureCurve } from '@/stores/tool';
+import { useToolStore, PressureCurve, BrushMaskType } from '@/stores/tool';
 import './BrushPanel.css';
 
 const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
@@ -86,6 +86,8 @@ export function BrushPanel() {
     setBrushOpacity,
     brushHardness,
     setBrushHardness,
+    brushMaskType,
+    setBrushMaskType,
     brushSpacing,
     setBrushSpacing,
     brushRoundness,
@@ -127,6 +129,18 @@ export function BrushPanel() {
           displayValue={`${brushHardness}%`}
           onChange={setBrushHardness}
         />
+
+        <div className="brush-setting-row">
+          <span className="brush-setting-label">Softness</span>
+          <select
+            value={brushMaskType}
+            onChange={(e) => setBrushMaskType(e.target.value as BrushMaskType)}
+            className="brush-select"
+          >
+            <option value="gaussian">Gaussian (Smooth)</option>
+            <option value="default">Default</option>
+          </select>
+        </div>
 
         <SliderRow
           label="Roundness"

@@ -6,7 +6,7 @@
  */
 
 import { useRef, useCallback } from 'react';
-import { StrokeAccumulator, BrushStamper, DabParams } from '@/utils/strokeBuffer';
+import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
 import { applyPressureCurve, PressureCurve } from '@/stores/tool';
 
 export interface BrushRenderConfig {
@@ -14,6 +14,7 @@ export interface BrushRenderConfig {
   flow: number;
   opacity: number;
   hardness: number;
+  maskType: MaskType; // Mask type: 'gaussian' or 'default'
   spacing: number;
   roundness: number; // 0-1 (1 = circle, <1 = ellipse)
   angle: number; // 0-360 degrees
@@ -93,6 +94,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
           size: Math.max(1, dabSize),
           flow: dabFlow,
           hardness: config.hardness / 100, // Convert from 0-100 to 0-1
+          maskType: config.maskType,
           color: config.color,
           opacityCeiling: dabOpacity, // Apply opacity ceiling during stamping for accurate preview
           roundness: config.roundness / 100, // Convert from 0-100 to 0-1
