@@ -10,6 +10,7 @@ interface StrokeEntry {
   type: 'stroke';
   layerId: string;
   beforeImage: ImageData;
+  afterImage?: ImageData; // Filled during undo, used for redo
   timestamp: number;
 }
 

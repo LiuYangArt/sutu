@@ -198,11 +198,11 @@ export function Canvas() {
 
     switch (entry.type) {
       case 'stroke': {
-        // Save current state for redo, then restore beforeImage
+        // Save current state (afterImage) for redo before restoring
         const currentImageData = renderer.getLayerImageData(entry.layerId);
         if (currentImageData) {
-          // Store current state in the entry for redo (via redoStack)
-          // Note: redo will need to restore this
+          // Mutate the entry in redoStack to store afterImage
+          entry.afterImage = currentImageData;
         }
         renderer.setLayerImageData(entry.layerId, entry.beforeImage);
         compositeAndRender();
@@ -251,10 +251,12 @@ export function Canvas() {
 
     switch (entry.type) {
       case 'stroke': {
-        // For stroke redo, we need the afterImage
-        // Since we only store beforeImage, redo stroke is not fully supported yet
-        // This is a known limitation - will show warning
-        console.warn('Stroke redo not fully implemented - beforeImage only');
+        // Restore afterImage (saved during undo)
+        if (entry.afterImage) {
+          renderer.setLayerImageData(entry.layerId, entry.afterImage);
+          compositeAndRender();
+          updateThumbnail(entry.layerId);
+        }
         break;
       }
       case 'addLayer': {
