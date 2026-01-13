@@ -14,6 +14,26 @@ interface FloatingPanelProps {
   minHeight?: number;
 }
 
+// Separate component to prevent re-creation on parent render
+const ResizeHandle = React.memo(
+  ({
+    dir,
+    onResize,
+  }: {
+    dir: ResizeDirection;
+    onResize: (delta: Partial<PanelGeometry>) => void;
+  }) => {
+    const dragEvents = usePanelResize({
+      direction: dir,
+      onResize,
+    });
+
+    return <div className={`${Style.resizeHandle} ${Style['resize-' + dir]}`} {...dragEvents} />;
+  }
+);
+
+ResizeHandle.displayName = 'ResizeHandle';
+
 export function FloatingPanel({
   panelId,
   title,
@@ -53,37 +73,25 @@ export function FloatingPanel({
     onDragStart: handleFocus,
   });
 
-  // Resize Handle Component
-  const ResizeHandle = ({ dir }: { dir: ResizeDirection }) => {
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    const handleResize = useCallback(
-      (delta: Partial<PanelGeometry>) => {
-        if (!panel) return;
-        const newGeo = { ...panel };
-        if (delta.x !== undefined) newGeo.x += delta.x;
-        if (delta.y !== undefined) newGeo.y += delta.y;
-        if (delta.width !== undefined)
-          newGeo.width = Math.max(minWidth, newGeo.width + delta.width);
-        if (delta.height !== undefined)
-          newGeo.height = Math.max(minHeight, newGeo.height + delta.height);
+  const handleResize = useCallback(
+    (delta: Partial<PanelGeometry>) => {
+      if (!panel) return;
+      const newGeo = { ...panel };
+      if (delta.x !== undefined) newGeo.x += delta.x;
+      if (delta.y !== undefined) newGeo.y += delta.y;
+      if (delta.width !== undefined) newGeo.width = Math.max(minWidth, newGeo.width + delta.width);
+      if (delta.height !== undefined)
+        newGeo.height = Math.max(minHeight, newGeo.height + delta.height);
 
-        updateGeometry(panelId, {
-          x: newGeo.x,
-          y: newGeo.y,
-          width: newGeo.width,
-          height: newGeo.height,
-        });
-      },
-      [panel, panelId, updateGeometry]
-    );
-
-    const dragEvents = usePanelResize({
-      direction: dir,
-      onResize: handleResize,
-    });
-
-    return <div className={`${Style.resizeHandle} ${Style['resize-' + dir]}`} {...dragEvents} />;
-  };
+      updateGeometry(panelId, {
+        x: newGeo.x,
+        y: newGeo.y,
+        width: newGeo.width,
+        height: newGeo.height,
+      });
+    },
+    [panel, panelId, updateGeometry, minWidth, minHeight]
+  );
 
   // 1. Hooks must run before return
   // 2. We can render null if panel is invalid/closed after hooks
@@ -136,7 +144,7 @@ export function FloatingPanel({
         <>
           <div className={Style.panelContent}>{children}</div>
           {(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as ResizeDirection[]).map((dir) => (
-            <ResizeHandle key={dir} dir={dir} />
+            <ResizeHandle key={dir} dir={dir} onResize={handleResize} />
           ))}
         </>
       )}

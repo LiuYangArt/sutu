@@ -10,7 +10,7 @@ import {
 import { useToolStore, ToolType } from '@/stores/tool';
 import './ToolsPanel.css';
 
-const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
+const ICON_PROPS = { size: 24, strokeWidth: 1.5 } as const;
 
 const TOOLS: { id: ToolType; label: string; icon: LucideIcon }[] = [
   { id: 'brush', label: 'Brush', icon: Brush },

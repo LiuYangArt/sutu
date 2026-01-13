@@ -8,6 +8,7 @@ import './Toolbar.css';
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
 
 const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
+  // Pressure curve presets
   { id: 'linear', label: 'Linear' },
   { id: 'soft', label: 'Soft' },
   { id: 'hard', label: 'Hard' },
