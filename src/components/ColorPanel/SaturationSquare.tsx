@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useRef } from 'react';
 import { usePointerDrag } from '@/hooks/usePointerDrag';
 import './SaturationSquare.css';
 
@@ -11,22 +11,31 @@ export const SaturationSquare = memo(function SaturationSquare({
   hsva,
   onChange,
 }: SaturationSquareProps) {
+  const pointerRef = useRef<HTMLDivElement>(null);
+  const hsvaRef = useRef(hsva);
+  hsvaRef.current = hsva; // Keep ref in sync with render
+
   const handleChange = useCallback(
     ({ x, y, width, height }: { x: number; y: number; width: number; height: number }) => {
       const s = Math.max(0, Math.min((x / width) * 100, 100));
       const v = Math.max(0, Math.min(100 - (y / height) * 100, 100));
 
-      // Use a functional update callback or ensure hsva dependency?
-      // Since `onChange` will likely recreate if we pass `hsva` to dependency...
-      // But we can just pass the new S/V relative to current.
-      // Wait, inside useCallback, we need current `hsva.h`/`hsva.a` if we return full object?
-      // Yes. So we need `hsva` in dependency.
-      onChange({ ...hsva, s, v });
+      // Direct DOM update for zero latency
+      if (pointerRef.current) {
+        pointerRef.current.style.left = `${s}%`;
+        pointerRef.current.style.top = `${100 - v}%`;
+      }
+
+      // Update state
+      const current = hsvaRef.current;
+      onChange({ ...current, s, v });
     },
-    [hsva, onChange]
+    [onChange]
   );
 
-  const { containerRef, events } = usePointerDrag(handleChange);
+  const { containerRef, events } = usePointerDrag(handleChange, {
+    hideCursor: true,
+  });
 
   // Background color for the square (Base Hue)
   const bgColor = `hsl(${hsva.h}, 100%, 50%)`;
@@ -41,6 +50,7 @@ export const SaturationSquare = memo(function SaturationSquare({
       <div className="saturation-white" />
       <div className="saturation-black" />
       <div
+        ref={pointerRef}
         className="saturation-pointer"
         style={{
           left: `${hsva.s}%`,

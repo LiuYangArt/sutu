@@ -5,16 +5,26 @@ type PointerOutput = { x: number; y: number; width: number; height: number };
 /**
  * Hook to handle pointer drag comparisons for custom sliders/pickers
  * @param onChange Callback with position details
+ * @param options Configuration options
  */
-export function usePointerDrag(onChange: (output: PointerOutput) => void) {
+export function usePointerDrag(
+  onChange: (output: PointerOutput) => void,
+  options?: {
+    onDragStart?: () => void;
+    onDragEnd?: () => void;
+    hideCursor?: boolean;
+  }
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
+  const rectRef = useRef<DOMRect | null>(null);
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
       if (!isDragging.current || !containerRef.current) return;
 
-      const rect = containerRef.current.getBoundingClientRect();
+      // Use cached rect if available, otherwise get fresh (fallback)
+      const rect = rectRef.current || containerRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
@@ -33,18 +43,37 @@ export function usePointerDrag(onChange: (output: PointerOutput) => void) {
       isDragging.current = true;
       containerRef.current.setPointerCapture(e.pointerId);
 
+      // Cache the rect to avoid reflows during drag
+      rectRef.current = containerRef.current.getBoundingClientRect();
+
+      if (options?.hideCursor) {
+        containerRef.current.style.cursor = 'none';
+      }
+
+      options?.onDragStart?.();
+
       // Trigger initial move on down
       handlePointerMove(e);
     },
-    [handlePointerMove]
+    [handlePointerMove, options]
   );
 
-  const handlePointerUp = useCallback((e: React.PointerEvent) => {
-    if (isDragging.current && containerRef.current) {
-      isDragging.current = false;
-      containerRef.current.releasePointerCapture(e.pointerId);
-    }
-  }, []);
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      if (isDragging.current && containerRef.current) {
+        isDragging.current = false;
+        containerRef.current.releasePointerCapture(e.pointerId);
+        rectRef.current = null;
+
+        if (options?.hideCursor) {
+          containerRef.current.style.cursor = '';
+        }
+
+        options?.onDragEnd?.();
+      }
+    },
+    [options]
+  );
 
   return {
     containerRef,
