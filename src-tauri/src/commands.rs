@@ -3,7 +3,8 @@
 use crate::brush::{BrushEngine, StrokeSegment};
 use crate::input::wintab_spike::SpikeResult;
 use crate::input::{
-    PressureCurve, RawInputPoint, TabletBackend, TabletConfig, TabletInfo, TabletStatus,
+    PressureCurve, PressureSmoother, RawInputPoint, TabletBackend, TabletConfig, TabletEvent,
+    TabletInfo, TabletStatus,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -130,6 +131,12 @@ struct TabletState {
     config: TabletConfig,
     app_handle: Option<AppHandle>,
     emitter_running: bool,
+    /// Pressure smoother for first-stroke issue (shared with emitter thread)
+    pressure_smoother: Arc<Mutex<PressureSmoother>>,
+    /// Track if pen is currently drawing (pressure > 0)
+    is_drawing: Arc<std::sync::atomic::AtomicBool>,
+    /// Pressure curve for mapping (applied after smoothing)
+    pressure_curve: Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl TabletState {
@@ -141,6 +148,9 @@ impl TabletState {
             config: TabletConfig::default(),
             app_handle: None,
             emitter_running: false,
+            pressure_smoother: Arc::new(Mutex::new(PressureSmoother::new(3))),
+            is_drawing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pressure_curve: Arc::new(std::sync::atomic::AtomicU8::new(0)), // 0=Linear
         }
     }
 
@@ -232,12 +242,23 @@ pub fn init_tablet(
 
     // Configure
     state.config.polling_rate_hz = polling_rate.unwrap_or(200);
-    state.config.pressure_curve = match pressure_curve.as_deref() {
+    let curve = match pressure_curve.as_deref() {
         Some("soft") => PressureCurve::Soft,
         Some("hard") => PressureCurve::Hard,
         Some("scurve") => PressureCurve::SCurve,
         _ => PressureCurve::Linear,
     };
+    state.config.pressure_curve = curve;
+    // Store curve type as atomic for thread-safe access (0=Linear, 1=Soft, 2=Hard, 3=SCurve)
+    let curve_id = match curve {
+        PressureCurve::Linear => 0u8,
+        PressureCurve::Soft => 1u8,
+        PressureCurve::Hard => 2u8,
+        PressureCurve::SCurve => 3u8,
+    };
+    state
+        .pressure_curve
+        .store(curve_id, std::sync::atomic::Ordering::Relaxed);
 
     let requested_backend = backend.unwrap_or(BackendType::Auto);
     state.backend_type = requested_backend;
@@ -304,6 +325,9 @@ pub fn start_tablet() -> Result<(), String> {
         if let Some(app) = state.app_handle.clone() {
             state.emitter_running = true;
             let state_clone = get_tablet_state();
+            // Clone Arc handles for the emitter thread
+            let pressure_smoother = state.pressure_smoother.clone();
+            let is_drawing = state.is_drawing.clone();
 
             std::thread::spawn(move || {
                 tracing::info!("[Tablet] Event emitter thread started");
@@ -334,10 +358,45 @@ pub fn start_tablet() -> Result<(), String> {
                         break;
                     }
 
-                    // Step 2: Emit events OUTSIDE the lock to avoid blocking other threads
+                    // Step 2: Process and emit events OUTSIDE the lock
                     if !events.is_empty() {
-                        events_to_emit.append(&mut events);
-                        // tracing::debug!("[Tablet] Emitting {} events", events_to_emit.len());
+                        // Process events with pressure smoothing
+                        for event in events.drain(..) {
+                            let processed_event = match event {
+                                TabletEvent::Input(mut point) => {
+                                    let was_drawing =
+                                        is_drawing.load(std::sync::atomic::Ordering::Relaxed);
+                                    let now_drawing = point.pressure > 0.0;
+
+                                    // Apply pressure smoothing when drawing
+                                    // Note: Pressure curve is applied in frontend, not here
+                                    if now_drawing {
+                                        if let Ok(mut smoother) = pressure_smoother.lock() {
+                                            if !was_drawing {
+                                                smoother.reset();
+                                            }
+                                            point.pressure = smoother.smooth(point.pressure);
+                                        }
+                                    }
+
+                                    is_drawing
+                                        .store(now_drawing, std::sync::atomic::Ordering::Relaxed);
+                                    TabletEvent::Input(point)
+                                }
+                                TabletEvent::ProximityLeave => {
+                                    // Reset smoother when pen leaves
+                                    is_drawing.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    if let Ok(mut smoother) = pressure_smoother.lock() {
+                                        smoother.reset();
+                                    }
+                                    TabletEvent::ProximityLeave
+                                }
+                                other => other,
+                            };
+                            events_to_emit.push(processed_event);
+                        }
+
+                        // Emit processed events
                         for event in events_to_emit.drain(..) {
                             if let Err(e) = app.emit("tablet-event", &event) {
                                 tracing::error!("[Tablet] Failed to emit event: {}", e);

@@ -1,20 +1,15 @@
 import { RawInputPoint } from '@/stores/tablet';
 
 /**
- * Resolves pressure and tilt data, preferring WinTab buffer if active
- *
- * @param evt The original pointer event
- * @param isWinTabActive Whether WinTab backend is currently active
- * @param bufferedPoints Buffered WinTab points to match against
- * @param currentPoint The last known valid WinTab point, if any
- * @param toleranceMs Time matching tolerance in ms
+ * Resolves pressure and tilt data, preferring WinTab buffer if active.
+ * Respects pressure=0 from backend smoothing.
  */
 export function getEffectiveInputData(
   evt: PointerEvent,
   isWinTabActive: boolean,
   bufferedPoints: RawInputPoint[],
   currentPoint: RawInputPoint | null,
-  toleranceMs: number = 20 // Relaxed tolerance
+  toleranceMs: number = 20
 ): { pressure: number; tiltX: number; tiltY: number } {
   if (!isWinTabActive) {
     return {
@@ -32,21 +27,17 @@ export function getEffectiveInputData(
     if (!pt) continue;
 
     // Find point with timestamp <= event time + tolerance
-    // And ensure it has valid pressure (filtering out lift-off noise if needed, though usually desirable)
     if (pt.timestamp_ms <= eventTime + toleranceMs) {
-      if (pt.pressure > 0) {
-        return {
-          pressure: pt.pressure,
-          tiltX: pt.tilt_x,
-          tiltY: pt.tilt_y,
-        };
-      }
+      return {
+        pressure: pt.pressure,
+        tiltX: pt.tilt_x,
+        tiltY: pt.tilt_y,
+      };
     }
   }
 
-  // 2. Fallback: Use currentPoint (last known valid input) if available
-  // This handles cases where WinTab data is sparse or bufferedPoints is empty for this frame
-  if (currentPoint && currentPoint.pressure > 0) {
+  // 2. Fallback: Use currentPoint (last known input) if available
+  if (currentPoint) {
     return {
       pressure: currentPoint.pressure,
       tiltX: currentPoint.tilt_x,
@@ -55,7 +46,6 @@ export function getEffectiveInputData(
   }
 
   // 3. Ultimate Fallback: Use PointerEvent data
-  // Note: Windows Ink 'pressure' might be available even if WinTab logic missed
   return {
     pressure: evt.pressure > 0 ? evt.pressure : 0.5,
     tiltX: evt.tiltX,

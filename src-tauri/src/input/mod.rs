@@ -11,7 +11,7 @@ pub use backend::{
     PressureCurve, TabletBackend, TabletConfig, TabletEvent, TabletInfo, TabletStatus,
 };
 pub use pointer_backend::PointerEventBackend;
-pub use processor::InputProcessor;
+pub use processor::{InputProcessor, PressureSmoother};
 pub use tablet::TabletManager;
 pub use wintab_backend::WinTabBackend;
 

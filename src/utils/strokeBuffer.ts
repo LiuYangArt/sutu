@@ -37,9 +37,9 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     return { r: 0, g: 0, b: 0 };
   }
   return {
-    r: parseInt(result[1] ?? '0', 16),
-    g: parseInt(result[2] ?? '0', 16),
-    b: parseInt(result[3] ?? '0', 16),
+    r: parseInt(result[1]!, 16),
+    g: parseInt(result[2]!, 16),
+    b: parseInt(result[3]!, 16),
   };
 }
 
@@ -147,6 +147,7 @@ export class StrokeAccumulator {
 
     // Anti-aliasing: smooth transition over ~1px at the edge
     const aaWidth = Math.min(1.0, radius * 0.5); // AA width, max 1px, smaller for tiny brushes
+    const maxAlphaFloat = opacityCeiling !== undefined ? opacityCeiling : 1.0;
 
     // Process each pixel in the dab region
     for (let py = 0; py < rectHeight; py++) {
@@ -203,7 +204,6 @@ export class StrokeAccumulator {
         let outA = srcA + dstA * (1 - srcA);
 
         // Apply opacity ceiling BEFORE color calculation to avoid brightening
-        const maxAlphaFloat = opacityCeiling !== undefined ? opacityCeiling : 1.0;
         if (outA > maxAlphaFloat) {
           outA = maxAlphaFloat;
         }
@@ -343,11 +343,21 @@ export class StrokeAccumulator {
 
 /**
  * BrushStamper - Generates dabs at regular intervals along the stroke path
+ *
+ * Key behavior for first stroke issue:
+ * - Delays emitting dabs until pen has moved MIN_MOVEMENT_DISTANCE
+ * - Prevents pressure buildup at stationary position from causing blobs
  */
 export class BrushStamper {
   private accumulatedDistance: number = 0;
   private lastPoint: { x: number; y: number; pressure: number } | null = null;
   private isStrokeStart: boolean = true;
+  private strokeStartPoint: { x: number; y: number } | null = null;
+  private hasMovedEnough: boolean = false;
+
+  // Minimum movement in pixels before we start the stroke
+  // This prevents pressure buildup at stationary position
+  private static readonly MIN_MOVEMENT_DISTANCE = 3;
 
   /**
    * Reset for a new stroke
@@ -356,11 +366,13 @@ export class BrushStamper {
     this.accumulatedDistance = 0;
     this.lastPoint = null;
     this.isStrokeStart = true;
+    this.strokeStartPoint = null;
+    this.hasMovedEnough = false;
   }
 
   /**
    * Process a new input point and return dab positions
-   * Note: Pressure fade-in is now handled in useBrushRenderer before calling this
+   * Note: Pressure fade-in is now handled in Rust backend (PressureSmoother)
    */
   processPoint(
     x: number,
@@ -371,16 +383,42 @@ export class BrushStamper {
   ): Array<{ x: number; y: number; pressure: number }> {
     const dabs: Array<{ x: number; y: number; pressure: number }> = [];
 
-    // First point: emit initial dab
+    // First point: just record position, don't emit dab yet
     if (this.isStrokeStart) {
       this.isStrokeStart = false;
+      this.strokeStartPoint = { x, y };
       this.lastPoint = { x, y, pressure };
-      dabs.push({ x, y, pressure });
+      // Don't emit first dab - wait for movement
       return dabs;
     }
 
-    if (!this.lastPoint) {
+    if (!this.lastPoint || !this.strokeStartPoint) {
       this.lastPoint = { x, y, pressure };
+      this.strokeStartPoint = { x, y };
+      return dabs;
+    }
+
+    // Check if we've moved enough from stroke start
+    if (!this.hasMovedEnough) {
+      const dxFromStart = x - this.strokeStartPoint.x;
+      const dyFromStart = y - this.strokeStartPoint.y;
+      const distFromStart = Math.sqrt(dxFromStart * dxFromStart + dyFromStart * dyFromStart);
+
+      if (distFromStart < BrushStamper.MIN_MOVEMENT_DISTANCE) {
+        // Haven't moved enough yet - DON'T update lastPoint.pressure
+        // This prevents pressure buildup at stationary position
+        // Just update position for distance tracking
+        this.lastPoint.x = x;
+        this.lastPoint.y = y;
+        // Keep pressure at 0 or very low until movement starts
+        return dabs;
+      }
+
+      // We've moved enough - now emit the first dab with CURRENT pressure
+      // (not the accumulated pressure from stationary period)
+      this.hasMovedEnough = true;
+      this.lastPoint = { x, y, pressure };
+      dabs.push({ x, y, pressure });
       return dabs;
     }
 
