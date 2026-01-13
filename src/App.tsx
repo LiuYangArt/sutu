@@ -101,7 +101,17 @@ function App() {
       minHeight: 200,
     });
 
-    // 3. Layer Panel (Bottom Right)
+    // 3. Brush Panel (Below Color Panel)
+    registerPanel({
+      id: 'brush-panel',
+      title: 'Brush',
+      defaultGeometry: { x: window.innerWidth - 300, y: 420, width: 280, height: 300 },
+      defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 420 },
+      minWidth: 240,
+      minHeight: 200,
+    });
+
+    // 4. Layer Panel (Bottom Right)
     registerPanel({
       id: 'layer-panel',
       title: 'Layers',
@@ -115,6 +125,7 @@ function App() {
     // Auto open defaults
     openPanel('tools-panel');
     openPanel('color-panel');
+    openPanel('brush-panel');
     openPanel('layer-panel');
 
     // Ensure debug panel is closed (if persisted)

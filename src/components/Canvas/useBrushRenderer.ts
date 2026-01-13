@@ -15,6 +15,8 @@ export interface BrushRenderConfig {
   opacity: number;
   hardness: number;
   spacing: number;
+  roundness: number; // 0-1 (1 = circle, <1 = ellipse)
+  angle: number; // 0-360 degrees
   color: string;
   pressureSizeEnabled: boolean;
   pressureFlowEnabled: boolean;
@@ -93,6 +95,8 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
           hardness: config.hardness / 100, // Convert from 0-100 to 0-1
           color: config.color,
           opacityCeiling: dabOpacity, // Apply opacity ceiling during stamping for accurate preview
+          roundness: config.roundness / 100, // Convert from 0-100 to 0-1
+          angle: config.angle,
         };
 
         buffer.stampDab(dabParams);
@@ -108,8 +112,10 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
     const buffer = strokeBufferRef.current;
     if (!buffer) return;
 
+    // Reset stamper state (no artificial fadeout - rely on natural pressure)
+    stamperRef.current.finishStroke(0);
+
     buffer.endStroke(layerCtx, opacity);
-    stamperRef.current.finishStroke();
   }, []);
 
   /**

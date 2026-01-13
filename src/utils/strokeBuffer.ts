@@ -19,6 +19,8 @@ export interface DabParams {
   hardness: number; // Edge hardness (0-1)
   color: string; // Hex color
   opacityCeiling?: number; // Optional opacity ceiling (0-1), if set, limits max alpha
+  roundness?: number; // Brush roundness (0-1, 1 = circle, <1 = ellipse)
+  angle?: number; // Brush angle in degrees (0-360)
 }
 
 export interface Rect {
@@ -120,23 +122,38 @@ export class StrokeAccumulator {
   }
 
   /**
-   * Stamp a circular dab onto the buffer with opacity ceiling and anti-aliasing
+   * Stamp an elliptical dab onto the buffer with opacity ceiling and anti-aliasing
+   * Supports roundness (ellipse) and angle (rotation)
    */
   stampDab(params: DabParams): void {
-    const { x, y, size, flow, hardness, color, opacityCeiling } = params;
-    const radius = size / 2;
+    const { x, y, size, flow, hardness, color, opacityCeiling, roundness = 1, angle = 0 } = params;
+    const radiusX = size / 2;
+    const radiusY = radiusX * roundness; // Scale Y radius for roundness
 
-    if (radius < 0.5) return;
+    if (radiusX < 0.5) return;
 
-    this.expandDirtyRect(x, y, radius);
+    // Use the larger radius for calculations
+    const maxRadius = Math.max(radiusX, radiusY);
+
+    // For soft brushes, extend beyond nominal radius (1.5x) for smooth falloff
+    const extentMultiplier = hardness >= 0.99 ? 1.0 : 1.5;
+    const effectiveRadius = maxRadius * extentMultiplier + 1; // +1 for AA margin
+
+    // Expand dirty rect with the EFFECTIVE radius (including soft brush extension)
+    this.expandDirtyRect(x, y, effectiveRadius);
 
     const rgb = hexToRgb(color);
 
-    // Calculate bounding box for pixel operations (add 1px margin for AA)
-    const left = Math.max(0, Math.floor(x - radius - 1));
-    const top = Math.max(0, Math.floor(y - radius - 1));
-    const right = Math.min(this.width, Math.ceil(x + radius + 1));
-    const bottom = Math.min(this.height, Math.ceil(y + radius + 1));
+    // Pre-calculate rotation values (angle in degrees to radians)
+    const angleRad = (angle * Math.PI) / 180;
+    const cosA = Math.cos(-angleRad); // Negative for inverse rotation
+    const sinA = Math.sin(-angleRad);
+
+    // Calculate bounding box for pixel operations
+    const left = Math.max(0, Math.floor(x - effectiveRadius));
+    const top = Math.max(0, Math.floor(y - effectiveRadius));
+    const right = Math.min(this.width, Math.ceil(x + effectiveRadius));
+    const bottom = Math.min(this.height, Math.ceil(y + effectiveRadius));
     const rectWidth = right - left;
     const rectHeight = bottom - top;
 
@@ -146,7 +163,7 @@ export class StrokeAccumulator {
     const bufferData = this.ctx.getImageData(left, top, rectWidth, rectHeight);
 
     // Anti-aliasing: smooth transition over ~1px at the edge
-    const aaWidth = Math.min(1.0, radius * 0.5); // AA width, max 1px, smaller for tiny brushes
+    const aaWidth = Math.min(1.0, radiusX * 0.5); // AA width, max 1px, smaller for tiny brushes
     const maxAlphaFloat = opacityCeiling !== undefined ? opacityCeiling : 1.0;
 
     // Process each pixel in the dab region
@@ -155,32 +172,61 @@ export class StrokeAccumulator {
         const worldX = left + px;
         const worldY = top + py;
 
-        // Calculate distance from dab center (sample at pixel center)
+        // Calculate offset from dab center (sample at pixel center)
         const dx = worldX + 0.5 - x;
         const dy = worldY + 0.5 - y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
 
-        // Skip pixels clearly outside the brush (with AA margin)
-        if (dist > radius + aaWidth) continue;
+        // Apply inverse rotation to get position in brush-local coordinates
+        const localX = dx * cosA - dy * sinA;
+        const localY = dx * sinA + dy * cosA;
+
+        // Calculate normalized distance for ellipse
+        // dist = 1.0 at the edge of the ellipse
+        const normX = localX / radiusX;
+        const normY = localY / radiusY;
+        const normDist = Math.sqrt(normX * normX + normY * normY);
 
         // Calculate dab alpha based on hardness
+        // Soft brushes use Gaussian falloff that extends beyond nominal edge
         let dabAlpha: number;
-        const innerRadius = radius * hardness;
 
-        if (dist <= innerRadius) {
-          // Inside hard core: full flow
-          dabAlpha = flow;
-        } else if (dist <= radius) {
-          // Softness falloff zone
-          const t = (dist - innerRadius) / (radius - innerRadius);
-          dabAlpha = flow * (1 - t);
+        if (hardness >= 0.99) {
+          // Hard brush: full alpha inside, AA at edge
+          if (normDist > 1 + aaWidth / radiusX) {
+            continue; // Outside AA zone
+          } else if (normDist > 1) {
+            // Anti-aliasing zone
+            const edgeNormDist = normDist - 1;
+            const coverage = Math.max(0, 1 - edgeNormDist / (aaWidth / radiusX));
+            dabAlpha = flow * coverage;
+          } else {
+            dabAlpha = flow;
+          }
         } else {
-          // Anti-aliasing zone (radius to radius + aaWidth)
-          // Smooth edge coverage falloff
-          const edgeDist = dist - radius;
-          const coverage = Math.max(0, 1 - edgeDist / aaWidth);
-          // For hard brushes, apply AA to full flow; for soft, it's already fading
-          dabAlpha = flow * coverage * (hardness >= 0.99 ? 1 : 0);
+          // Soft brush: Gaussian falloff from center, extends beyond nominal edge
+          // Map hardness to control inner core vs. falloff zone
+          const innerRadius = hardness; // 0-1, where falloff begins
+
+          // For soft brushes, extend processing area beyond nominal radius
+          // Gaussian at t=2 gives exp(-2.5*4) ≈ 0.00005, effectively invisible
+          const maxExtent = 1.5; // Process up to 1.5x nominal radius for soft brushes
+          if (normDist > maxExtent) {
+            continue;
+          }
+
+          if (normDist <= innerRadius) {
+            // Inside hard core
+            dabAlpha = flow;
+          } else {
+            // Gaussian falloff zone - continues smoothly beyond edge
+            // t goes from 0 (at inner edge) and can exceed 1 for smooth falloff
+            const t = (normDist - innerRadius) / (1 - innerRadius);
+
+            // Use TRUE Gaussian falloff: exp(-k * t²)
+            // k = 2.5 gives a very soft airbrush effect similar to Photoshop
+            const gaussianK = 2.5;
+            dabAlpha = flow * Math.exp(-gaussianK * t * t);
+          }
         }
 
         if (dabAlpha <= 0.001) continue;
@@ -229,7 +275,12 @@ export class StrokeAccumulator {
           bufferData.data[idx] = Math.round(Math.min(255, Math.max(0, outR)));
           bufferData.data[idx + 1] = Math.round(Math.min(255, Math.max(0, outG)));
           bufferData.data[idx + 2] = Math.round(Math.min(255, Math.max(0, outB)));
-          bufferData.data[idx + 3] = Math.round(outA * 255);
+
+          // Apply subtle ordered dithering to alpha to reduce banding at low values
+          // This breaks up the "stair-step" effect visible at low opacity
+          const ditherPattern = ((worldX + worldY) % 2) * 0.5 - 0.25; // -0.25 or +0.25
+          const ditheredAlpha = outA * 255 + ditherPattern;
+          bufferData.data[idx + 3] = Math.round(Math.min(255, Math.max(0, ditheredAlpha)));
         }
       }
     }
@@ -347,6 +398,11 @@ export class StrokeAccumulator {
  * Key behavior for first stroke issue:
  * - Delays emitting dabs until pen has moved MIN_MOVEMENT_DISTANCE
  * - Prevents pressure buildup at stationary position from causing blobs
+ *
+ * Pressure smoothing:
+ * - Uses exponential moving average (EMA) to smooth pressure transitions
+ * - Prevents "stair-step" artifacts at low pressure
+ * - Adds adaptive dab density when pressure changes rapidly
  */
 export class BrushStamper {
   private accumulatedDistance: number = 0;
@@ -355,9 +411,19 @@ export class BrushStamper {
   private strokeStartPoint: { x: number; y: number } | null = null;
   private hasMovedEnough: boolean = false;
 
+  // Smoothed pressure using EMA
+  private smoothedPressure: number = 0;
+
   // Minimum movement in pixels before we start the stroke
   // This prevents pressure buildup at stationary position
   private static readonly MIN_MOVEMENT_DISTANCE = 3;
+
+  // Pressure smoothing factor (0-1): lower = more smoothing
+  // 0.35 provides good balance between responsiveness and smoothness
+  private static readonly PRESSURE_SMOOTHING = 0.35;
+
+  // Additional dabs when pressure changes rapidly (prevents stepping)
+  private static readonly PRESSURE_CHANGE_THRESHOLD = 0.1;
 
   /**
    * Reset for a new stroke
@@ -368,11 +434,29 @@ export class BrushStamper {
     this.isStrokeStart = true;
     this.strokeStartPoint = null;
     this.hasMovedEnough = false;
+    this.smoothedPressure = 0;
+  }
+
+  /**
+   * Apply exponential moving average to smooth pressure
+   */
+  private smoothPressure(rawPressure: number): number {
+    if (this.smoothedPressure === 0) {
+      // First pressure reading - initialize directly
+      this.smoothedPressure = rawPressure;
+    } else {
+      // EMA: smoothed = alpha * raw + (1-alpha) * previous
+      this.smoothedPressure =
+        BrushStamper.PRESSURE_SMOOTHING * rawPressure +
+        (1 - BrushStamper.PRESSURE_SMOOTHING) * this.smoothedPressure;
+    }
+    return this.smoothedPressure;
   }
 
   /**
    * Process a new input point and return dab positions
-   * Note: Pressure fade-in is now handled in Rust backend (PressureSmoother)
+   * Applies pressure smoothing via EMA to prevent stepping artifacts
+   * IMPORTANT: EMA is only applied AFTER the pen has moved enough to prevent "big head" issue
    */
   processPoint(
     x: number,
@@ -384,16 +468,18 @@ export class BrushStamper {
     const dabs: Array<{ x: number; y: number; pressure: number }> = [];
 
     // First point: just record position, don't emit dab yet
+    // DON'T apply EMA here - we haven't moved yet
     if (this.isStrokeStart) {
       this.isStrokeStart = false;
       this.strokeStartPoint = { x, y };
-      this.lastPoint = { x, y, pressure };
+      this.lastPoint = { x, y, pressure: 0 }; // Start with 0 pressure
+      this.smoothedPressure = 0; // Reset EMA
       // Don't emit first dab - wait for movement
       return dabs;
     }
 
     if (!this.lastPoint || !this.strokeStartPoint) {
-      this.lastPoint = { x, y, pressure };
+      this.lastPoint = { x, y, pressure: 0 };
       this.strokeStartPoint = { x, y };
       return dabs;
     }
@@ -405,30 +491,42 @@ export class BrushStamper {
       const distFromStart = Math.sqrt(dxFromStart * dxFromStart + dyFromStart * dyFromStart);
 
       if (distFromStart < BrushStamper.MIN_MOVEMENT_DISTANCE) {
-        // Haven't moved enough yet - DON'T update lastPoint.pressure
+        // Haven't moved enough yet - DON'T update pressure at all
         // This prevents pressure buildup at stationary position
         // Just update position for distance tracking
         this.lastPoint.x = x;
         this.lastPoint.y = y;
-        // Keep pressure at 0 or very low until movement starts
+        // DON'T call smoothPressure() - that would accumulate pressure
         return dabs;
       }
 
-      // We've moved enough - now emit the first dab with CURRENT pressure
-      // (not the accumulated pressure from stationary period)
+      // We've moved enough - NOW initialize EMA with current pressure
       this.hasMovedEnough = true;
+      this.smoothedPressure = pressure; // Initialize EMA with current pressure
       this.lastPoint = { x, y, pressure };
       dabs.push({ x, y, pressure });
       return dabs;
     }
+
+    // Apply pressure smoothing only AFTER we've started moving
+    const smoothedPressure = this.smoothPressure(pressure);
 
     // Calculate distance from last point
     const dx = x - this.lastPoint.x;
     const dy = y - this.lastPoint.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    // Spacing threshold
-    const threshold = Math.max(size * spacing, 1);
+    // Check for rapid pressure change - reduce spacing for smoother transition
+    const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
+    let effectiveSpacing = spacing;
+    if (pressureChange > BrushStamper.PRESSURE_CHANGE_THRESHOLD) {
+      // Reduce spacing when pressure is changing rapidly
+      // This adds more dabs during transitions for smoother appearance
+      effectiveSpacing = spacing * 0.5;
+    }
+
+    // Spacing threshold based on current size (not pressure-scaled to avoid inconsistent spacing)
+    const threshold = Math.max(size * effectiveSpacing, 1);
 
     this.accumulatedDistance += distance;
 
@@ -437,20 +535,30 @@ export class BrushStamper {
       const t = 1 - (this.accumulatedDistance - threshold) / distance;
       const dabX = this.lastPoint.x + dx * t;
       const dabY = this.lastPoint.y + dy * t;
-      const dabPressure = this.lastPoint.pressure + (pressure - this.lastPoint.pressure) * t;
+
+      // Use smoothstep interpolation for pressure (smoother than linear)
+      const smoothT = t * t * (3 - 2 * t);
+      const dabPressure =
+        this.lastPoint.pressure + (smoothedPressure - this.lastPoint.pressure) * smoothT;
 
       dabs.push({ x: dabX, y: dabY, pressure: dabPressure });
       this.accumulatedDistance -= threshold;
     }
 
-    this.lastPoint = { x, y, pressure };
+    this.lastPoint = { x, y, pressure: smoothedPressure };
     return dabs;
   }
 
   /**
-   * Finish stroke
+   * Finish stroke and reset state
+   *
+   * Note: We don't artificially add fadeout dabs here. Natural pressure decay
+   * from the tablet hardware should create proper tapered ends. If the pen is
+   * lifted too quickly, we accept a blunt end rather than adding unnatural
+   * artificial taper that creates visual discontinuity.
    */
-  finishStroke(): void {
+  finishStroke(_brushSize: number): Array<{ x: number; y: number; pressure: number }> {
     this.beginStroke();
+    return []; // No artificial fadeout - rely on natural pressure data
   }
 }

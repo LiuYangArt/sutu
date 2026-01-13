@@ -8,11 +8,13 @@ import { useShallow } from 'zustand/react/shallow';
 import { ColorPanel } from '../ColorPanel';
 import { LayerPanel } from '../LayerPanel';
 import { ToolsPanel } from '../ToolsPanel';
+import { BrushPanel } from '../BrushPanel';
 
 const PANEL_REGISTRY: Record<string, React.FC> = {
   'color-panel': ColorPanel,
   'layer-panel': LayerPanel,
   'tools-panel': ToolsPanel,
+  'brush-panel': BrushPanel,
   // Add more generic panels here
   'debug-panel': () => <div style={{ padding: 10, color: '#ccc' }}>Debug Info Content</div>,
 };
