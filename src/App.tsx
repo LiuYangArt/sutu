@@ -5,6 +5,8 @@ import { RightPanel } from './components/RightPanel';
 import { TabletPanel } from './components/TabletPanel';
 import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
+import { PanelLayer } from './components/UI/PanelLayer';
+import { usePanelStore } from './stores/panel';
 
 // Check if running in Tauri environment
 const isTauri = () => {
@@ -71,6 +73,20 @@ function App() {
     setIsReady(true);
   }, [initDocument]);
 
+  // Register default panels
+  const registerPanel = usePanelStore((s) => s.registerPanel);
+  const openPanel = usePanelStore((s) => s.openPanel);
+
+  useEffect(() => {
+    registerPanel({
+      id: 'debug-panel',
+      title: 'Debug Controls',
+      defaultGeometry: { x: 100, y: 100, width: 300, height: 200 },
+    });
+    // Auto open for dev
+    openPanel('debug-panel');
+  }, [registerPanel, openPanel]);
+
   if (!isReady) {
     return (
       <div className="loading">
@@ -85,6 +101,7 @@ function App() {
       <main className="workspace">
         <Canvas />
         <RightPanel />
+        <PanelLayer />
       </main>
       <TabletPanel />
     </div>
