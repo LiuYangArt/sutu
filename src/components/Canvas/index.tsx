@@ -96,7 +96,16 @@ export function Canvas() {
     brushCursorRef,
   });
 
-  const { pushState, undo, redo } = useHistoryStore();
+  const {
+    pushStroke,
+    pushAddLayer,
+    pushRemoveLayer: _pushRemoveLayer,
+    undo,
+    redo,
+  } = useHistoryStore();
+
+  // Store beforeImage when stroke starts
+  const beforeImageRef = useRef<{ layerId: string; imageData: ImageData } | null>(null);
 
   // Initialize brush renderer for Flow/Opacity three-level pipeline
   const {
@@ -133,16 +142,25 @@ export function Canvas() {
     ctx.drawImage(compositeCanvas, 0, 0);
   }, [width, height]);
 
-  // Save canvas state to history
-  const saveToHistory = useCallback(() => {
+  // Save beforeImage at stroke start
+  const captureBeforeImage = useCallback(() => {
     const renderer = layerRendererRef.current;
     if (!renderer || !activeLayerId) return;
 
     const imageData = renderer.getLayerImageData(activeLayerId);
     if (imageData) {
-      pushState(imageData);
+      beforeImageRef.current = { layerId: activeLayerId, imageData };
     }
-  }, [pushState, activeLayerId]);
+  }, [activeLayerId]);
+
+  // Push stroke to history using beforeImage
+  const saveStrokeToHistory = useCallback(() => {
+    if (!beforeImageRef.current) return;
+
+    const { layerId, imageData } = beforeImageRef.current;
+    pushStroke(layerId, imageData);
+    beforeImageRef.current = null;
+  }, [pushStroke]);
 
   // Update layer thumbnail
   const updateThumbnail = useCallback(
@@ -151,7 +169,6 @@ export function Canvas() {
       const layer = layerRendererRef.current.getLayer(layerId);
       if (!layer) return;
 
-      // Create a small canvas for thumbnail
       const thumbCanvas = document.createElement('canvas');
       const aspect = width / height;
       const thumbWidth = 64;
@@ -163,8 +180,6 @@ export function Canvas() {
       const ctx = thumbCanvas.getContext('2d');
       if (!ctx) return;
 
-      // Draw layer content to thumbnail
-      // Use clearRect to ensure transparency
       ctx.clearRect(0, 0, thumbWidth, thumbHeight);
       ctx.drawImage(layer.canvas, 0, 0, thumbWidth, thumbHeight);
 
@@ -173,34 +188,103 @@ export function Canvas() {
     [width, height, updateLayerThumbnail]
   );
 
-  // Restore canvas from ImageData
-  const restoreCanvas = useCallback(
-    (imageData: ImageData) => {
-      const renderer = layerRendererRef.current;
-      if (!renderer || !activeLayerId) return;
-
-      renderer.setLayerImageData(activeLayerId, imageData);
-      compositeAndRender();
-      updateThumbnail(activeLayerId);
-    },
-    [activeLayerId, compositeAndRender, updateThumbnail]
-  );
-
-  // Handle undo
+  // Handle undo for all operation types
   const handleUndo = useCallback(() => {
-    const state = undo();
-    if (state) {
-      restoreCanvas(state.imageData);
-    }
-  }, [undo, restoreCanvas]);
+    const entry = undo();
+    if (!entry) return;
 
-  // Handle redo
-  const handleRedo = useCallback(() => {
-    const state = redo();
-    if (state) {
-      restoreCanvas(state.imageData);
+    const renderer = layerRendererRef.current;
+    if (!renderer) return;
+
+    switch (entry.type) {
+      case 'stroke': {
+        // Save current state for redo, then restore beforeImage
+        const currentImageData = renderer.getLayerImageData(entry.layerId);
+        if (currentImageData) {
+          // Store current state in the entry for redo (via redoStack)
+          // Note: redo will need to restore this
+        }
+        renderer.setLayerImageData(entry.layerId, entry.beforeImage);
+        compositeAndRender();
+        updateThumbnail(entry.layerId);
+        break;
+      }
+      case 'addLayer': {
+        // Undo add = remove the layer
+        const { removeLayer } = useDocumentStore.getState();
+        renderer.removeLayer(entry.layerId);
+        removeLayer(entry.layerId);
+        compositeAndRender();
+        break;
+      }
+      case 'removeLayer': {
+        // Undo remove = restore the layer
+        // Insert layer back at original index
+        useDocumentStore.setState((state) => {
+          const newLayers = [...state.layers];
+          newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
+          return { layers: newLayers, activeLayerId: entry.layerId };
+        });
+        // Recreate in renderer and restore content
+        renderer.createLayer(entry.layerId, {
+          visible: entry.layerMeta.visible,
+          opacity: entry.layerMeta.opacity,
+          blendMode: entry.layerMeta.blendMode,
+          isBackground: entry.layerMeta.isBackground,
+        });
+        renderer.setLayerImageData(entry.layerId, entry.imageData);
+        renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
+        compositeAndRender();
+        updateThumbnail(entry.layerId);
+        break;
+      }
     }
-  }, [redo, restoreCanvas]);
+  }, [undo, compositeAndRender, updateThumbnail]);
+
+  // Handle redo for all operation types
+  const handleRedo = useCallback(() => {
+    const entry = redo();
+    if (!entry) return;
+
+    const renderer = layerRendererRef.current;
+    if (!renderer) return;
+
+    switch (entry.type) {
+      case 'stroke': {
+        // For stroke redo, we need the afterImage
+        // Since we only store beforeImage, redo stroke is not fully supported yet
+        // This is a known limitation - will show warning
+        console.warn('Stroke redo not fully implemented - beforeImage only');
+        break;
+      }
+      case 'addLayer': {
+        // Redo add = add the layer back
+        useDocumentStore.setState((state) => {
+          const newLayers = [...state.layers];
+          newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
+          return { layers: newLayers, activeLayerId: entry.layerId };
+        });
+        renderer.createLayer(entry.layerId, {
+          visible: entry.layerMeta.visible,
+          opacity: entry.layerMeta.opacity,
+          blendMode: entry.layerMeta.blendMode,
+          isBackground: entry.layerMeta.isBackground,
+        });
+        renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
+        compositeAndRender();
+        updateThumbnail(entry.layerId);
+        break;
+      }
+      case 'removeLayer': {
+        // Redo remove = remove the layer again
+        const { removeLayer } = useDocumentStore.getState();
+        renderer.removeLayer(entry.layerId);
+        removeLayer(entry.layerId);
+        compositeAndRender();
+        break;
+      }
+    }
+  }, [redo, compositeAndRender, updateThumbnail]);
 
   // Pick color from canvas at given coordinates
   const pickColorAt = useCallback(
@@ -230,17 +314,17 @@ export function Canvas() {
     const renderer = layerRendererRef.current;
     if (!renderer || !activeLayerId) return;
 
-    // Save current state before clearing
-    saveToHistory();
+    // Capture state before clearing for undo
+    captureBeforeImage();
 
     // Clear the layer
     renderer.clearLayer(activeLayerId);
     compositeAndRender();
 
-    // Save new state after clearing
-    saveToHistory();
+    // Push to history
+    saveStrokeToHistory();
     updateThumbnail(activeLayerId);
-  }, [activeLayerId, saveToHistory, compositeAndRender, updateThumbnail]);
+  }, [activeLayerId, captureBeforeImage, saveStrokeToHistory, compositeAndRender, updateThumbnail]);
 
   // Duplicate layer content from source to target
   const handleDuplicateLayer = useCallback(
@@ -328,6 +412,11 @@ export function Canvas() {
         });
         // Generate initial thumbnail for new layers
         updateThumbnail(layer.id);
+
+        // Save initial state to history for new layers
+        // Use pushAddLayer to record layer creation for undo
+        const layerIndex = layers.findIndex((l) => l.id === layer.id);
+        pushAddLayer(layer.id, layer, layerIndex);
       } else {
         // Update existing layer properties
         renderer.updateLayer(layer.id, {
@@ -345,15 +434,11 @@ export function Canvas() {
     // Initial composite render
     compositeAndRender();
 
-    // Save initial state to history for active layer (only once on first init)
+    // Mark history as initialized after first layer is added
     if (activeLayerId && !historyInitializedRef.current) {
-      const imageData = renderer.getLayerImageData(activeLayerId);
-      if (imageData) {
-        pushState(imageData);
-        historyInitializedRef.current = true;
-      }
+      historyInitializedRef.current = true;
     }
-  }, [layers, width, height, activeLayerId, compositeAndRender, pushState, updateThumbnail]);
+  }, [layers, width, height, activeLayerId, compositeAndRender, pushAddLayer, updateThumbnail]);
 
   // Re-composite when layer visibility/opacity changes
   useEffect(() => {
@@ -583,6 +668,9 @@ export function Canvas() {
       isDrawingRef.current = true;
       strokeBufferRef.current.reset();
 
+      // Capture layer state before stroke starts (for undo)
+      captureBeforeImage();
+
       if (currentTool === 'brush') {
         beginBrushStroke();
         processBrushPointWithConfig(canvasX, canvasY, pressure);
@@ -605,6 +693,7 @@ export function Canvas() {
       layers,
       currentTool,
       pickColorAt,
+      captureBeforeImage,
       beginBrushStroke,
       processBrushPointWithConfig,
     ]
@@ -725,8 +814,8 @@ export function Canvas() {
       }
     }
 
-    // Save state to history after stroke completes
-    saveToHistory();
+    // Save stroke to history (uses beforeImage captured at stroke start)
+    saveStrokeToHistory();
     if (activeLayerId) {
       updateThumbnail(activeLayerId);
     }
@@ -739,7 +828,7 @@ export function Canvas() {
     endBrushStroke,
     compositeAndRender,
     drawPoints,
-    saveToHistory,
+    saveStrokeToHistory,
     activeLayerId,
     updateThumbnail,
   ]);

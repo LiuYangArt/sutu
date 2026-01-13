@@ -1,21 +1,55 @@
 import { create } from 'zustand';
+import { Layer } from './document';
 
 /**
- * History entry representing a canvas state snapshot
+ * History entry types for unified timeline
  */
-interface HistoryEntry {
+export type HistoryEntry = StrokeEntry | AddLayerEntry | RemoveLayerEntry;
+
+interface StrokeEntry {
+  type: 'stroke';
+  layerId: string;
+  beforeImage: ImageData;
+  timestamp: number;
+}
+
+interface AddLayerEntry {
+  type: 'addLayer';
+  layerId: string;
+  layerMeta: Layer;
+  layerIndex: number;
+  timestamp: number;
+}
+
+interface RemoveLayerEntry {
+  type: 'removeLayer';
+  layerId: string;
+  layerMeta: Layer;
+  layerIndex: number;
   imageData: ImageData;
   timestamp: number;
 }
 
 interface HistoryState {
-  // History stack
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
   maxHistorySize: number;
 
-  // Actions
-  pushState: (imageData: ImageData) => void;
+  // Push stroke operation (with beforeImage)
+  pushStroke: (layerId: string, beforeImage: ImageData) => void;
+
+  // Push layer add operation
+  pushAddLayer: (layerId: string, layerMeta: Layer, layerIndex: number) => void;
+
+  // Push layer remove operation
+  pushRemoveLayer: (
+    layerId: string,
+    layerMeta: Layer,
+    layerIndex: number,
+    imageData: ImageData
+  ) => void;
+
+  // Undo/Redo
   undo: () => HistoryEntry | null;
   redo: () => HistoryEntry | null;
   canUndo: () => boolean;
@@ -23,63 +57,110 @@ interface HistoryState {
   clear: () => void;
 }
 
+// Clone ImageData to avoid reference issues
+function cloneImageData(imageData: ImageData): ImageData {
+  const canvas = document.createElement('canvas');
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Failed to create canvas context');
+
+  ctx.putImageData(imageData, 0, 0);
+  return ctx.getImageData(0, 0, imageData.width, imageData.height);
+}
+
 export const useHistoryStore = create<HistoryState>((set, get) => ({
   undoStack: [],
   redoStack: [],
   maxHistorySize: 50,
 
-  pushState: (imageData: ImageData) => {
+  pushStroke: (layerId: string, beforeImage: ImageData) => {
     const { undoStack, maxHistorySize } = get();
 
-    // Clone ImageData to avoid reference issues
-    const canvas = document.createElement('canvas');
-    canvas.width = imageData.width;
-    canvas.height = imageData.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.putImageData(imageData, 0, 0);
-    const clonedData = ctx.getImageData(0, 0, imageData.width, imageData.height);
-
-    const newEntry: HistoryEntry = {
-      imageData: clonedData,
+    const entry: StrokeEntry = {
+      type: 'stroke',
+      layerId,
+      beforeImage: cloneImageData(beforeImage),
       timestamp: Date.now(),
     };
 
-    // Add to undo stack, clear redo stack
-    const newUndoStack = [...undoStack, newEntry];
-
-    // Limit history size
+    const newUndoStack = [...undoStack, entry];
     if (newUndoStack.length > maxHistorySize) {
       newUndoStack.shift();
     }
 
     set({
       undoStack: newUndoStack,
-      redoStack: [], // Clear redo stack on new action
+      redoStack: [],
+    });
+  },
+
+  pushAddLayer: (layerId: string, layerMeta: Layer, layerIndex: number) => {
+    const { undoStack, maxHistorySize } = get();
+
+    const entry: AddLayerEntry = {
+      type: 'addLayer',
+      layerId,
+      layerMeta: { ...layerMeta },
+      layerIndex,
+      timestamp: Date.now(),
+    };
+
+    const newUndoStack = [...undoStack, entry];
+    if (newUndoStack.length > maxHistorySize) {
+      newUndoStack.shift();
+    }
+
+    set({
+      undoStack: newUndoStack,
+      redoStack: [],
+    });
+  },
+
+  pushRemoveLayer: (
+    layerId: string,
+    layerMeta: Layer,
+    layerIndex: number,
+    imageData: ImageData
+  ) => {
+    const { undoStack, maxHistorySize } = get();
+
+    const entry: RemoveLayerEntry = {
+      type: 'removeLayer',
+      layerId,
+      layerMeta: { ...layerMeta },
+      layerIndex,
+      imageData: cloneImageData(imageData),
+      timestamp: Date.now(),
+    };
+
+    const newUndoStack = [...undoStack, entry];
+    if (newUndoStack.length > maxHistorySize) {
+      newUndoStack.shift();
+    }
+
+    set({
+      undoStack: newUndoStack,
+      redoStack: [],
     });
   },
 
   undo: () => {
     const { undoStack, redoStack } = get();
 
-    if (undoStack.length < 2) {
-      // Need at least 2 entries: one to restore, one to move to redo
+    if (undoStack.length === 0) {
       return null;
     }
 
-    // Pop current state and move to redo
-    const currentState = undoStack[undoStack.length - 1];
-    const previousState = undoStack[undoStack.length - 2];
-
-    if (!currentState || !previousState) return null;
+    const entry = undoStack[undoStack.length - 1];
+    if (!entry) return null;
 
     set({
       undoStack: undoStack.slice(0, -1),
-      redoStack: [...redoStack, currentState],
+      redoStack: [...redoStack, entry],
     });
 
-    return previousState;
+    return entry;
   },
 
   redo: () => {
@@ -89,19 +170,19 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       return null;
     }
 
-    const nextState = redoStack[redoStack.length - 1];
-    if (!nextState) return null;
+    const entry = redoStack[redoStack.length - 1];
+    if (!entry) return null;
 
     set({
-      undoStack: [...undoStack, nextState],
+      undoStack: [...undoStack, entry],
       redoStack: redoStack.slice(0, -1),
     });
 
-    return nextState;
+    return entry;
   },
 
   canUndo: () => {
-    return get().undoStack.length >= 2;
+    return get().undoStack.length > 0;
   },
 
   canRedo: () => {
