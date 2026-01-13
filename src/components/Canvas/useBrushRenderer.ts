@@ -107,42 +107,16 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
 
   /**
    * End stroke and composite to layer with opacity ceiling
-   * Also stamps fadeout dabs for smooth tail taper
    */
-  const endStroke = useCallback(
-    (layerCtx: CanvasRenderingContext2D, opacity: number, config: BrushRenderConfig) => {
-      const buffer = strokeBufferRef.current;
-      if (!buffer) return;
+  const endStroke = useCallback((layerCtx: CanvasRenderingContext2D, opacity: number) => {
+    const buffer = strokeBufferRef.current;
+    if (!buffer) return;
 
-      // Get fadeout dabs from stamper
-      const fadeoutDabs = stamperRef.current.finishStroke(config.size);
+    // Reset stamper state (no artificial fadeout - rely on natural pressure)
+    stamperRef.current.finishStroke(0);
 
-      // Stamp fadeout dabs to create smooth tail taper
-      for (const dab of fadeoutDabs) {
-        const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
-        const dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
-        const dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
-        const dabOpacity = config.pressureOpacityEnabled
-          ? config.opacity * dabPressure
-          : config.opacity;
-
-        buffer.stampDab({
-          x: dab.x,
-          y: dab.y,
-          size: Math.max(1, dabSize),
-          flow: dabFlow,
-          hardness: config.hardness / 100,
-          color: config.color,
-          opacityCeiling: dabOpacity,
-          roundness: config.roundness / 100,
-          angle: config.angle,
-        });
-      }
-
-      buffer.endStroke(layerCtx, opacity);
-    },
-    []
-  );
+    buffer.endStroke(layerCtx, opacity);
+  }, []);
 
   /**
    * Get the stroke buffer canvas for preview rendering

@@ -714,8 +714,7 @@ export function Canvas() {
     if (currentTool === 'brush') {
       const layerCtx = getActiveLayerCtx();
       if (layerCtx) {
-        const config = getBrushConfig();
-        endBrushStroke(layerCtx, brushOpacity, config);
+        endBrushStroke(layerCtx, brushOpacity);
       }
       compositeAndRender();
     } else {
@@ -736,7 +735,6 @@ export function Canvas() {
   }, [
     currentTool,
     getActiveLayerCtx,
-    getBrushConfig,
     brushOpacity,
     endBrushStroke,
     compositeAndRender,
