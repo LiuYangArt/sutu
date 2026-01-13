@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 
+// Restore PanelGeometry definition
 export interface PanelGeometry {
   x: number;
   y: number;
@@ -9,17 +10,26 @@ export interface PanelGeometry {
   height: number;
 }
 
+export interface PanelAlignment {
+  horizontal: 'left' | 'right';
+  vertical: 'top' | 'bottom';
+  offsetX: number; // Distance from horizontal edge
+  offsetY: number; // Distance from vertical edge
+}
+
 export interface PanelState extends PanelGeometry {
   id: string;
   isOpen: boolean;
   isCollapsed: boolean;
   zIndex: number;
+  alignment?: PanelAlignment;
 }
 
 export interface PanelConfig {
   id: string;
   title: string;
-  defaultGeometry: PanelGeometry;
+  defaultGeometry: PanelGeometry; // Keeping for backward compat or initial calc
+  defaultAlignment?: PanelAlignment;
   minWidth?: number;
   minHeight?: number;
 }
@@ -38,6 +48,7 @@ interface PanelStoreState {
   togglePanel: (id: string) => void;
   minimizePanel: (id: string, isCollapsed?: boolean) => void;
   updateGeometry: (id: string, geometry: Partial<PanelGeometry>) => void;
+  updateAlignment: (id: string, alignment: PanelAlignment) => void;
   bringToFront: (id: string) => void;
 }
 
@@ -60,6 +71,7 @@ export const usePanelStore = create<PanelStoreState>()(
               isOpen: true,
               isCollapsed: false,
               zIndex: state.maxZIndex + 1,
+              alignment: config.defaultAlignment,
             };
             state.maxZIndex += 1;
           }
@@ -106,6 +118,13 @@ export const usePanelStore = create<PanelStoreState>()(
         set((state) => {
           if (state.panels[id]) {
             Object.assign(state.panels[id], geometry);
+          }
+        }),
+
+      updateAlignment: (id, alignment) =>
+        set((state) => {
+          if (state.panels[id]) {
+            state.panels[id].alignment = alignment;
           }
         }),
 

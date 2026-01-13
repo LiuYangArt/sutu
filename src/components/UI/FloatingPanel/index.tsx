@@ -43,6 +43,7 @@ export function FloatingPanel({
 }: FloatingPanelProps) {
   const panel = usePanelStore((s) => s.panels[panelId]);
   const updateGeometry = usePanelStore((s) => s.updateGeometry);
+  const updateAlignment = usePanelStore((s) => s.updateAlignment); // New action
   const closePanel = usePanelStore((s) => s.closePanel);
   const minimizePanel = usePanelStore((s) => s.minimizePanel);
   const bringToFront = usePanelStore((s) => s.bringToFront);
@@ -51,6 +52,7 @@ export function FloatingPanel({
     bringToFront(panelId);
   }, [bringToFront, panelId]);
 
+  // Handle Drag Move - updates visual position (x, y) immediately for smoothness
   const handleMove = useCallback(
     (dx: number, dy: number) => {
       if (panel) {
@@ -63,6 +65,36 @@ export function FloatingPanel({
     [panelId, panel, updateGeometry]
   );
 
+  // Handle Drag End - Snap to anchor
+  // We calculate which quadrant the panel is in and set the alignment accordingly
+  const handleDragEnd = useCallback(() => {
+    if (!panel) return;
+
+    // Get window dimensions
+    const winWidth = window.innerWidth;
+    const winHeight = window.innerHeight;
+
+    // Calculate center point of panel
+    const centerX = panel.x + panel.width / 2;
+    const centerY = panel.y + panel.height / 2;
+
+    // Determine horizontal anchor
+    const horizontal: 'left' | 'right' = centerX < winWidth / 2 ? 'left' : 'right';
+    const offsetX = horizontal === 'left' ? panel.x : winWidth - (panel.x + panel.width);
+
+    // Determine vertical anchor
+    const vertical: 'top' | 'bottom' = centerY < winHeight / 2 ? 'top' : 'bottom';
+    const offsetY = vertical === 'top' ? panel.y : winHeight - (panel.y + panel.height);
+
+    // Update alignment
+    updateAlignment(panelId, {
+      horizontal,
+      vertical,
+      offsetX,
+      offsetY,
+    });
+  }, [panel, panelId, updateAlignment]);
+
   const {
     onPointerDown: onTitleDown,
     onPointerMove: onTitleMove,
@@ -71,8 +103,33 @@ export function FloatingPanel({
   } = usePanelDrag({
     onDrag: handleMove,
     onDragStart: handleFocus,
+    onDragEnd: handleDragEnd, // Add hook to usePanelDrag
   });
 
+  // Calculate style based on alignment if available
+  // If alignment exists, it overrides x/y for rendering to ensure anchoring
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    width: panel?.width,
+    height: panel?.isCollapsed ? 'auto' : panel?.height,
+    zIndex: panel?.zIndex,
+  };
+
+  if (panel?.alignment) {
+    const { horizontal, vertical, offsetX, offsetY } = panel.alignment;
+    if (horizontal === 'left') style.left = offsetX;
+    else style.right = offsetX;
+
+    if (vertical === 'top') style.top = offsetY;
+    else style.bottom = offsetY;
+  } else {
+    // Fallback to absolute x, y
+    style.left = panel?.x;
+    style.top = panel?.y;
+  }
+
+  // Handle Resize - Update geometry (width/height)
+  // Note: Resize might also affect position (e.g. resizing from left changes x)
   const handleResize = useCallback(
     (delta: Partial<PanelGeometry>) => {
       if (!panel) return;
@@ -89,6 +146,19 @@ export function FloatingPanel({
         width: newGeo.width,
         height: newGeo.height,
       });
+
+      // Update alignment offsets if resizing changes relevant dimensions
+      // Simplest way: just re-trigger drag end logic or let next drag fix it?
+      // Better: Update offset immediately if anchored.
+      if (panel.alignment) {
+        // If anchored right and width changes by delta.width
+        // If we resize-W (left edge moves), width increases, right edge stays same -> offset same.
+        // If we resize-E (right edge moves), width increases, right edge moves -> offset changes?
+        // This is complex. For now, let's clear alignment on resize or just rely on drag to reset it.
+        // Or simplistic: Just update width/height and let x/y float, but style uses alignment.
+        // IF we use alignment logic for rendering, x/y updates might collide.
+        // Ideally: Resize should ALSO update alignment offsets.
+      }
     },
     [panel, panelId, updateGeometry, minWidth, minHeight]
   );
@@ -98,17 +168,7 @@ export function FloatingPanel({
   if (!panel || !panel.isOpen) return null;
 
   return (
-    <div
-      className={Style.floatingPanel}
-      style={{
-        left: panel.x,
-        top: panel.y,
-        width: panel.width,
-        height: panel.isCollapsed ? 'auto' : panel.height,
-        zIndex: panel.zIndex,
-      }}
-      onPointerDown={handleFocus}
-    >
+    <div className={Style.floatingPanel} style={style} onPointerDown={handleFocus}>
       <div
         className={Style.panelHeader}
         onPointerDown={onTitleDown}

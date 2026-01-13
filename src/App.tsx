@@ -83,6 +83,7 @@ function App() {
       id: 'tools-panel',
       title: 'Tools',
       defaultGeometry: { x: 20, y: 100, width: 80, height: 260 },
+      defaultAlignment: { horizontal: 'left', vertical: 'top', offsetX: 20, offsetY: 100 },
       minWidth: 80,
       minHeight: 200,
     });
@@ -92,6 +93,7 @@ function App() {
       id: 'color-panel',
       title: 'Color',
       defaultGeometry: { x: window.innerWidth - 300, y: 80, width: 280, height: 320 },
+      defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 80 },
       minWidth: 200,
       minHeight: 200,
     });
@@ -101,6 +103,7 @@ function App() {
       id: 'layer-panel',
       title: 'Layers',
       defaultGeometry: { x: window.innerWidth - 300, y: 420, width: 280, height: 400 },
+      defaultAlignment: { horizontal: 'right', vertical: 'bottom', offsetX: 20, offsetY: 260 }, // approx 1080 - 420 - 400 = 260
       minWidth: 200,
       minHeight: 200,
     });
