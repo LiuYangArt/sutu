@@ -136,9 +136,21 @@ export function FloatingPanel({
       const newGeo = { ...panel };
       if (delta.x !== undefined) newGeo.x += delta.x;
       if (delta.y !== undefined) newGeo.y += delta.y;
-      if (delta.width !== undefined) newGeo.width = Math.max(minWidth, newGeo.width + delta.width);
-      if (delta.height !== undefined)
-        newGeo.height = Math.max(minHeight, newGeo.height + delta.height);
+      if (delta.width !== undefined) {
+        let newWidth = newGeo.width + delta.width;
+        newWidth = Math.max(minWidth, newWidth);
+        if (panel.minWidth) newWidth = Math.max(panel.minWidth, newWidth);
+        if (panel.maxWidth) newWidth = Math.min(panel.maxWidth, newWidth);
+        newGeo.width = newWidth;
+      }
+
+      if (delta.height !== undefined) {
+        let newHeight = newGeo.height + delta.height;
+        newHeight = Math.max(minHeight, newHeight);
+        if (panel.minHeight) newHeight = Math.max(panel.minHeight, newHeight);
+        if (panel.maxHeight) newHeight = Math.min(panel.maxHeight, newHeight);
+        newGeo.height = newHeight;
+      }
 
       updateGeometry(panelId, {
         x: newGeo.x,
@@ -148,17 +160,7 @@ export function FloatingPanel({
       });
 
       // Update alignment offsets if resizing changes relevant dimensions
-      // Simplest way: just re-trigger drag end logic or let next drag fix it?
-      // Better: Update offset immediately if anchored.
-      if (panel.alignment) {
-        // If anchored right and width changes by delta.width
-        // If we resize-W (left edge moves), width increases, right edge stays same -> offset same.
-        // If we resize-E (right edge moves), width increases, right edge moves -> offset changes?
-        // This is complex. For now, let's clear alignment on resize or just rely on drag to reset it.
-        // Or simplistic: Just update width/height and let x/y float, but style uses alignment.
-        // IF we use alignment logic for rendering, x/y updates might collide.
-        // Ideally: Resize should ALSO update alignment offsets.
-      }
+      // ... (Same as before)
     },
     [panel, panelId, updateGeometry, minWidth, minHeight]
   );
@@ -166,6 +168,10 @@ export function FloatingPanel({
   // 1. Hooks must run before return
   // 2. We can render null if panel is invalid/closed after hooks
   if (!panel || !panel.isOpen) return null;
+
+  const isResizable = panel.resizable !== false;
+  const isClosable = panel.closable !== false;
+  const isMinimizable = panel.minimizable !== false;
 
   return (
     <div className={Style.floatingPanel} style={style} onPointerDown={handleFocus}>
@@ -178,34 +184,39 @@ export function FloatingPanel({
       >
         <span className={Style.panelTitle}>{title || panelId}</span>
         <div className={Style.windowControls}>
-          <button
-            className={Style.iconBtn}
-            onClick={(e) => {
-              e.stopPropagation();
-              minimizePanel(panelId);
-            }}
-            title={panel.isCollapsed ? 'Expand' : 'Collapse'}
-          >
-            {panel.isCollapsed ? <Maximize2 size={14} /> : <Minus size={14} />}
-          </button>
-          <button
-            className={Style.iconBtn}
-            onClick={(e) => {
-              e.stopPropagation();
-              closePanel(panelId);
-            }}
-          >
-            <X size={14} />
-          </button>
+          {isMinimizable && (
+            <button
+              className={Style.iconBtn}
+              onClick={(e) => {
+                e.stopPropagation();
+                minimizePanel(panelId);
+              }}
+              title={panel.isCollapsed ? 'Expand' : 'Collapse'}
+            >
+              {panel.isCollapsed ? <Maximize2 size={14} /> : <Minus size={14} />}
+            </button>
+          )}
+          {isClosable && (
+            <button
+              className={Style.iconBtn}
+              onClick={(e) => {
+                e.stopPropagation();
+                closePanel(panelId);
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 
       {!panel.isCollapsed && (
         <>
           <div className={Style.panelContent}>{children}</div>
-          {(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as ResizeDirection[]).map((dir) => (
-            <ResizeHandle key={dir} dir={dir} onResize={handleResize} />
-          ))}
+          {isResizable &&
+            (['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as ResizeDirection[]).map((dir) => (
+              <ResizeHandle key={dir} dir={dir} onResize={handleResize} />
+            ))}
         </>
       )}
     </div>

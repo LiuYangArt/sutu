@@ -1,5 +1,6 @@
 .layer-panel {
-  width: 260px;
+  width: 100%;
+  height: 100%;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
   display: flex;

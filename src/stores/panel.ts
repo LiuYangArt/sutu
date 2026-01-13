@@ -23,15 +23,28 @@ export interface PanelState extends PanelGeometry {
   isCollapsed: boolean;
   zIndex: number;
   alignment?: PanelAlignment;
+  // Dynamic overrides or copies from config
+  minWidth?: number;
+  minHeight?: number;
+  resizable?: boolean;
+  closable?: boolean;
+  minimizable?: boolean;
+  maxWidth?: number;
+  maxHeight?: number;
 }
 
 export interface PanelConfig {
   id: string;
   title: string;
-  defaultGeometry: PanelGeometry; // Keeping for backward compat or initial calc
+  defaultGeometry: PanelGeometry;
   defaultAlignment?: PanelAlignment;
   minWidth?: number;
   minHeight?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+  resizable?: boolean;
+  closable?: boolean;
+  minimizable?: boolean;
 }
 
 interface PanelStoreState {
@@ -72,6 +85,13 @@ export const usePanelStore = create<PanelStoreState>()(
               isCollapsed: false,
               zIndex: state.maxZIndex + 1,
               alignment: config.defaultAlignment,
+              resizable: config.resizable ?? true, // Default to true
+              closable: config.closable ?? true,
+              minimizable: config.minimizable ?? true,
+              minWidth: config.minWidth,
+              minHeight: config.minHeight,
+              maxWidth: config.maxWidth,
+              maxHeight: config.maxHeight,
             };
             state.maxZIndex += 1;
           }
