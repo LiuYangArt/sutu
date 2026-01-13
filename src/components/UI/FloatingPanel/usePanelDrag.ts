@@ -1,0 +1,67 @@
+import { useRef, useCallback } from 'react';
+
+interface DragOptions {
+  onDragStart?: () => void;
+  onDrag: (deltaX: number, deltaY: number) => void;
+  onDragEnd?: () => void;
+}
+
+export function usePanelDrag(options: DragOptions) {
+  const isDragging = useRef(false);
+  const lastPos = useRef({ x: 0, y: 0 });
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.stopPropagation(); // Prevent triggering other drags
+      e.preventDefault();
+
+      // Only allow left mouse button generic drag
+      if (e.button !== 0) return;
+
+      isDragging.current = true;
+      lastPos.current = { x: e.clientX, y: e.clientY };
+
+      const target = e.target as HTMLElement;
+      target.setPointerCapture(e.pointerId);
+
+      options.onDragStart?.();
+    },
+    [options]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!isDragging.current) return;
+      e.preventDefault();
+
+      const deltaX = e.clientX - lastPos.current.x;
+      const deltaY = e.clientY - lastPos.current.y;
+
+      // Update last pos
+      lastPos.current = { x: e.clientX, y: e.clientY };
+
+      options.onDrag(deltaX, deltaY);
+    },
+    [options]
+  );
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      if (!isDragging.current) return;
+
+      isDragging.current = false;
+      const target = e.target as HTMLElement;
+      target.releasePointerCapture(e.pointerId);
+
+      options.onDragEnd?.();
+    },
+    [options]
+  );
+
+  return {
+    onPointerDown: handlePointerDown,
+    onPointerMove: handlePointerMove,
+    onPointerUp: handlePointerUp,
+    onPointerLeave: handlePointerUp, // Handle leaving element
+  };
+}

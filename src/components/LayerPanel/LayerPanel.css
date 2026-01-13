@@ -1,5 +1,6 @@
 .layer-panel {
-  width: 260px;
+  width: 100%;
+  height: 100%;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
   display: flex;
@@ -178,6 +179,18 @@
 .delete-layer-btn:hover {
   opacity: 1 !important;
   color: var(--danger);
+  background: rgba(0, 0, 0, 0.1); /* Slight bg for better visibility */
+  border-radius: 4px;
+}
+
+/* Active State Overrides for Delete */
+.layer-item.active .delete-layer-btn {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.layer-item.active .delete-layer-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .lock-toggle {
@@ -198,11 +211,28 @@
 
 .lock-toggle:hover {
   opacity: 1 !important;
+  color: var(--text-primary);
 }
 
 .lock-toggle.locked {
   opacity: 0.8;
   color: var(--accent);
+}
+
+/* Active State Overrides for Lock */
+.layer-item.active .lock-toggle {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.layer-item.active .lock-toggle:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.layer-item.active .lock-toggle.locked {
+  color: #fff;
+  opacity: 1;
 }
 
 /* Layer Panel Footer */

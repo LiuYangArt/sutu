@@ -1,0 +1,138 @@
+.floatingPanel {
+  position: fixed;
+  background: var(--surface-color, #1e1e1e);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: visible; /* To allow resize moves outside if needed, though handles are inside */
+  user-select: none;
+  contain: layout style;
+}
+
+.panelHeader {
+  height: 32px;
+  background: var(--surface-hover, #2a2a2a);
+  border-bottom: 1px solid var(--border-color, #333);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  cursor: grab;
+  flex-shrink: 0;
+  border-radius: 6px 6px 0 0;
+}
+
+.panelHeader:active {
+  cursor: grabbing;
+}
+
+.panelTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.windowControls {
+  display: flex;
+  gap: 4px;
+}
+
+.iconBtn {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.iconBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.panelContent {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  /* padding could be handled by children */
+}
+
+/* Resize Handles */
+.resizeHandle {
+  position: absolute;
+  z-index: 9999; /* Ensure high z-index */
+  /* Debugging: uncomment to see handles
+  background: rgba(255, 0, 0, 0.2);
+  */
+}
+
+.resize-n {
+  top: -4px;
+  left: 6px;
+  right: 6px;
+  height: 8px;
+  cursor: n-resize;
+}
+.resize-s {
+  bottom: -4px;
+  left: 6px;
+  right: 6px;
+  height: 8px;
+  cursor: s-resize;
+}
+.resize-e {
+  right: -4px;
+  top: 6px;
+  bottom: 6px;
+  width: 8px;
+  cursor: e-resize;
+}
+.resize-w {
+  left: -4px;
+  top: 6px;
+  bottom: 6px;
+  width: 8px;
+  cursor: w-resize;
+}
+
+.resize-ne {
+  top: -4px;
+  right: -4px;
+  width: 12px;
+  height: 12px;
+  cursor: ne-resize;
+  z-index: 10000;
+}
+.resize-nw {
+  top: -4px;
+  left: -4px;
+  width: 12px;
+  height: 12px;
+  cursor: nw-resize;
+  z-index: 10000;
+}
+.resize-se {
+  bottom: -4px;
+  right: -4px;
+  width: 12px;
+  height: 12px;
+  cursor: se-resize;
+  z-index: 10000;
+}
+.resize-sw {
+  bottom: -4px;
+  left: -4px;
+  width: 12px;
+  height: 12px;
+  cursor: sw-resize;
+  z-index: 10000;
+}
