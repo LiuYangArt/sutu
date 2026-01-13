@@ -1,4 +1,9 @@
-笔刷大小圆圈有延迟，比默认的crosshair要慢几帧
+色盘取色的圆圈有延迟，比cursor的crosshair要慢几帧 ， 取色的时候直接隐藏cursor
 
-PointerEvent 对比 octotablet 性能？x
-octotablet 集成， 添加windows ink/wintab 切换设置（如果不能实时切换，重启服务也可以？ ）
+增加wintab/windows ink切换
+
+ui 模块化， dockable ui panels
+tools（brush / eraser /zoom等）拆到单独的悬浮panel
+
+增加menu button 》 settings
+设置页面 左边分类tab， 右边详细设置
