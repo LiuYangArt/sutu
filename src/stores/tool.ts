@@ -5,6 +5,13 @@ export type ToolType = 'brush' | 'eraser' | 'eyedropper' | 'move' | 'select' | '
 
 export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 
+/**
+ * Brush mask type - controls how hardness affects edge falloff
+ * - 'gaussian': erf-based Gaussian (Krita-style, smoother, default)
+ * - 'default': Simple Gaussian exp(-k*t²) (original implementation)
+ */
+export type BrushMaskType = 'gaussian' | 'default';
+
 /** Clamp brush/eraser size to valid range */
 const clampSize = (size: number): number => Math.max(1, Math.min(500, size));
 
@@ -43,6 +50,7 @@ interface ToolState {
   brushFlow: number; // Flow: per-dab opacity, accumulates within stroke
   brushOpacity: number; // Opacity: ceiling for entire stroke
   brushHardness: number;
+  brushMaskType: BrushMaskType; // Mask type: edge falloff algorithm
   brushSpacing: number; // Spacing as fraction of size (0.01-1.0)
   brushRoundness: number; // Roundness: 0-100 (100 = circle, <100 = ellipse)
   brushAngle: number; // Angle: 0-360 degrees
@@ -67,6 +75,7 @@ interface ToolState {
   setBrushFlow: (flow: number) => void;
   setBrushOpacity: (opacity: number) => void;
   setBrushHardness: (hardness: number) => void;
+  setBrushMaskType: (maskType: BrushMaskType) => void;
   setBrushSpacing: (spacing: number) => void;
   setBrushRoundness: (roundness: number) => void;
   setBrushAngle: (angle: number) => void;
@@ -95,6 +104,7 @@ export const useToolStore = create<ToolState>()(
       brushFlow: 1, // Default: full flow
       brushOpacity: 1, // Default: full opacity ceiling
       brushHardness: 100,
+      brushMaskType: 'default', // Default to simple Gaussian (perf preferred)
       brushSpacing: 0.25, // 25% of brush size
       brushRoundness: 100, // 100 = perfect circle
       brushAngle: 0, // 0 degrees
@@ -117,6 +127,8 @@ export const useToolStore = create<ToolState>()(
       setBrushOpacity: (opacity) => set({ brushOpacity: Math.max(0.01, Math.min(1, opacity)) }),
 
       setBrushHardness: (hardness) => set({ brushHardness: Math.max(0, Math.min(100, hardness)) }),
+
+      setBrushMaskType: (maskType) => set({ brushMaskType: maskType }),
 
       setBrushSpacing: (spacing) => set({ brushSpacing: Math.max(0.01, Math.min(1, spacing)) }),
 
@@ -178,6 +190,7 @@ export const useToolStore = create<ToolState>()(
         brushFlow: state.brushFlow,
         brushOpacity: state.brushOpacity,
         brushHardness: state.brushHardness,
+        brushMaskType: state.brushMaskType,
         brushSpacing: state.brushSpacing,
         brushRoundness: state.brushRoundness,
         brushAngle: state.brushAngle,

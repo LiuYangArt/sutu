@@ -11,6 +11,7 @@ import './Canvas.css';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { getEffectiveInputData } from './inputUtils';
+import { HARD_BRUSH_THRESHOLD } from '@/constants';
 
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -47,6 +48,7 @@ export function Canvas() {
     brushOpacity,
     brushFlow,
     brushHardness,
+    brushMaskType,
     brushSpacing,
     brushRoundness,
     brushAngle,
@@ -66,6 +68,7 @@ export function Canvas() {
     brushOpacity: s.brushOpacity,
     brushFlow: s.brushFlow,
     brushHardness: s.brushHardness,
+    brushMaskType: s.brushMaskType,
     brushSpacing: s.brushSpacing,
     brushRoundness: s.brushRoundness,
     brushAngle: s.brushAngle,
@@ -523,6 +526,7 @@ export function Canvas() {
       flow: brushFlow,
       opacity: brushOpacity,
       hardness: brushHardness,
+      maskType: brushMaskType,
       spacing: brushSpacing,
       roundness: brushRoundness,
       angle: brushAngle,
@@ -537,6 +541,7 @@ export function Canvas() {
     brushFlow,
     brushOpacity,
     brushHardness,
+    brushMaskType,
     brushSpacing,
     brushRoundness,
     brushAngle,
@@ -569,10 +574,19 @@ export function Canvas() {
     if (isStrokeActive()) {
       const previewCanvas = getPreviewCanvas();
       if (previewCanvas) {
+        ctx.save();
+        // Hybrid Strategy Preview Sync:
+        // - Hard Brushes (>= Threshold): Opacity uses Clamp mode (burned into buffer). Render with alpha 1.0.
+        // - Soft Brushes (< Threshold): Opacity uses Post-Multiply mode. Render with alpha = brushOpacity.
+        const isHardBrush = brushHardness >= HARD_BRUSH_THRESHOLD;
+        const previewOpacity = isHardBrush ? 1.0 : Math.max(0, Math.min(1, brushOpacity));
+
+        ctx.globalAlpha = previewOpacity;
         ctx.drawImage(previewCanvas, 0, 0);
+        ctx.restore();
       }
     }
-  }, [width, height, isStrokeActive, getPreviewCanvas]);
+  }, [width, height, isStrokeActive, getPreviewCanvas, brushOpacity, brushHardness]);
 
   // Process a single point through the brush renderer (for brush tool)
   const processBrushPointWithConfig = useCallback(
