@@ -21,7 +21,7 @@ export interface DabParams {
   hardness: number; // Edge hardness (0-1)
   maskType?: MaskType; // Mask type: 'gaussian' (erf-based, default) or 'default' (simple)
   color: string; // Hex color
-  // opacityCeiling removed - opacity is now handled at stroke composition level
+  opacityCeiling?: number; // Optional opacity ceiling (0-1). If set, limits max accumulation.
   roundness?: number; // Brush roundness (0-1, 1 = circle, <1 = ellipse)
   angle?: number; // Brush angle in degrees (0-360)
 }
@@ -159,6 +159,7 @@ export class StrokeAccumulator {
       hardness,
       maskType = 'gaussian', // Default to Krita-style erf Gaussian
       color,
+      opacityCeiling, // Hybrid Strategy: Used for Hard brushes to prevent edge thinning
       roundness = 1,
       angle = 0,
     } = params;
@@ -333,23 +334,58 @@ export class StrokeAccumulator {
         const dstB = bufferData.data[idx + 2] ?? 0;
         const dstA = (bufferData.data[idx + 3] ?? 0) / 255;
 
+        // Hybrid Strategy: Opacity Ceiling for Hard Brushes
+        // If opacityCeiling is set (for Hard brushes), simple clamping is used.
+        if (opacityCeiling !== undefined && dstA >= opacityCeiling - 0.001) {
+          continue;
+        }
+
         // Porter-Duff "over" compositing
-        // Allow alpha to accumulate naturally up to 1.0
-        // Opacity ceiling is NOT applied here to allow soft gradients to accumulate correctly
         const srcA = dabAlpha;
-        const outA = srcA + dstA * (1 - srcA);
+        let outA = srcA + dstA * (1 - srcA);
+
+        // Apply opacity ceiling if defined
+        if (opacityCeiling !== undefined && outA > opacityCeiling) {
+          outA = opacityCeiling;
+        }
 
         if (outA > 0) {
-          // Recalculate effective source contribution
-          // effectiveSrcA is how much of the source actually contributes
-          const effectiveSrcA = outA - dstA * (1 - srcA);
+          // Recalculate effective source contribution using the clamped outA
+          // effectiveSrcA is derived from the standard Over formula: outA = srcA_eff + dstA * (1 - srcA_eff)
+          // But here we clamped outA.
+          // Correct approach for clamping:
+          // We effectively reduce srcA to fit the ceiling.
+          // outA = newSrcA + dstA * (1 - newSrcA)
+          // Solve for newSrcA:
+          // outA - dstA = newSrcA * (1 - dstA)
+          // newSrcA = (outA - dstA) / (1 - dstA)
+
+          let effectiveSrcA: number;
+          if (opacityCeiling !== undefined && outA >= opacityCeiling) {
+            // Clamped state
+            if (dstA >= 0.999) {
+              effectiveSrcA = 0;
+            } else {
+              effectiveSrcA = (outA - dstA) / (1.0 - dstA);
+            }
+            // Clamp effectiveSrcA to [0, 1] just in case
+            effectiveSrcA = Math.max(0, Math.min(1, effectiveSrcA));
+          } else {
+            // Standard composition (Post-Multiply mode or pre-ceiling)
+            // In this case effectiveSrcA is just srcA as per standard formula?
+            // Actually, the original accumulation logic:
+            // outR = (srcR * srcA + dstR * dstA * (1 - srcA)) / outA
+            // Here effectiveSrcA = srcA.
+            effectiveSrcA = srcA;
+          }
 
           let outR: number, outG: number, outB: number;
 
           if (effectiveSrcA > 0.001 && outA > 0.001) {
-            outR = (rgb.r * effectiveSrcA + dstR * dstA * (1 - srcA)) / outA;
-            outG = (rgb.g * effectiveSrcA + dstG * dstA * (1 - srcA)) / outA;
-            outB = (rgb.b * effectiveSrcA + dstB * dstA * (1 - srcA)) / outA;
+            // Note: Use effectiveSrcA for color mixing
+            outR = (rgb.r * effectiveSrcA + dstR * dstA * (1 - effectiveSrcA)) / outA;
+            outG = (rgb.g * effectiveSrcA + dstG * dstA * (1 - effectiveSrcA)) / outA;
+            outB = (rgb.b * effectiveSrcA + dstB * dstA * (1 - effectiveSrcA)) / outA;
           } else {
             // No effective contribution, keep destination color
             outR = dstR;
@@ -361,9 +397,8 @@ export class StrokeAccumulator {
           bufferData.data[idx + 1] = Math.round(Math.min(255, Math.max(0, outG)));
           bufferData.data[idx + 2] = Math.round(Math.min(255, Math.max(0, outB)));
 
-          // Apply subtle ordered dithering to alpha to reduce banding at low values
-          // This breaks up the "stair-step" effect visible at low opacity
-          const ditherPattern = ((worldX + worldY) % 2) * 0.5 - 0.25; // -0.25 or +0.25
+          // Dithering
+          const ditherPattern = ((worldX + worldY) % 2) * 0.5 - 0.25;
           const ditheredAlpha = outA * 255 + ditherPattern;
           bufferData.data[idx + 3] = Math.round(Math.min(255, Math.max(0, ditheredAlpha)));
         }

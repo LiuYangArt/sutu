@@ -36,6 +36,7 @@ export interface UseBrushRendererProps {
 export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
   const strokeBufferRef = useRef<StrokeAccumulator | null>(null);
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
+  const strokeModeRef = useRef<'hard' | 'soft'>('soft');
 
   // Initialize or resize stroke buffer
   const ensureStrokeBuffer = useCallback(() => {
@@ -86,10 +87,27 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
         const dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
         const dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
 
-        // Restore Opacity Pressure in Post-Multiply mode:
-        // Simulate opacity pressure by scaling the flow (source alpha).
-        const opacityScale = config.pressureOpacityEnabled ? dabPressure : 1.0;
-        const finalFlow = dabFlow * opacityScale;
+        // Hybrid Strategy:
+        // - Hard Brushes (>= 95%): Use Opacity Ceiling (Clamp) to maintain solid edges.
+        // - Soft Brushes (< 95%): Use Post-Multiply to allow smooth gradients.
+        const isHardBrush = config.hardness >= 95;
+        strokeModeRef.current = isHardBrush ? 'hard' : 'soft';
+
+        let finalFlow = dabFlow;
+        let ceiling: number | undefined = undefined;
+
+        if (isHardBrush) {
+          // Hard Mode: Clamp (Old behavior)
+          // Opacity pressure affects the ceiling
+          ceiling = config.pressureOpacityEnabled ? config.opacity * dabPressure : config.opacity;
+          finalFlow = dabFlow; // Flow stays as flow
+        } else {
+          // Soft Mode: Post-Multiply (New behavior)
+          // Opacity pressure modulates flow
+          const opacityScale = config.pressureOpacityEnabled ? dabPressure : 1.0;
+          finalFlow = dabFlow * opacityScale;
+          ceiling = undefined;
+        }
 
         const dabParams: DabParams = {
           x: dab.x,
@@ -99,6 +117,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
           hardness: config.hardness / 100, // Convert from 0-100 to 0-1
           maskType: config.maskType,
           color: config.color,
+          opacityCeiling: ceiling,
           roundness: config.roundness / 100, // Convert from 0-100 to 0-1
           angle: config.angle,
         };
@@ -119,7 +138,12 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
     // Reset stamper state (no artificial fadeout - rely on natural pressure)
     stamperRef.current.finishStroke(0);
 
-    buffer.endStroke(layerCtx, opacity);
+    // Hybrid Strategy: Determine endStroke opacity
+    // If Hard mode, opacity was applied at proper ceiling. End stroke should be composite at full strength.
+    // If Soft mode, opacity is applied here as a multiplier as ceiling was 1.0.
+    const finalOpacity = strokeModeRef.current === 'hard' ? 1.0 : opacity;
+
+    buffer.endStroke(layerCtx, finalOpacity);
   }, []);
 
   /**
