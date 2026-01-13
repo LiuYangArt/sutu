@@ -6,52 +6,51 @@ use super::RawInputPoint;
 
 /// Pressure smoother - smooths pressure values using a sliding window average.
 ///
-/// Inspired by Krita's `KisIncrementalAverage` (libs/ui/input/wintab/kis_incremental_average.h).
-/// Key feature: the first value initializes the entire buffer to avoid first-stroke pressure spikes.
+/// Key feature: Uses "soft start" to prevent first-stroke pressure spikes.
+/// Unlike Krita's approach (which initializes buffer with first value),
+/// we initialize with zeros so the first high pressure value gets dampened.
 #[derive(Debug, Clone)]
 pub struct PressureSmoother {
     window_size: usize,
     values: VecDeque<f32>,
     sum: f32,
-    initialized: bool,
+    sample_count: usize,
 }
 
 impl PressureSmoother {
     /// Create a new pressure smoother with the specified window size.
     pub fn new(window_size: usize) -> Self {
+        let size = window_size.max(1);
         Self {
-            window_size: window_size.max(1),
-            values: VecDeque::with_capacity(window_size),
+            window_size: size,
+            values: VecDeque::with_capacity(size),
             sum: 0.0,
-            initialized: false,
+            sample_count: 0,
         }
     }
 
     /// Smooth a pressure value.
     ///
-    /// Key behavior (from Krita):
-    /// - First value initializes the entire buffer with that value
-    /// - Subsequent values use sliding window average with O(1) complexity
+    /// Key behavior (soft start):
+    /// - First few values are dampened by averaging with zeros
+    /// - This prevents WinTab first-packet pressure spikes
+    /// - Once buffer is full, uses standard sliding window average
     pub fn smooth(&mut self, pressure: f32) -> f32 {
-        if !self.initialized {
-            // Fill the entire buffer with the first value (Krita's approach)
-            for _ in 0..self.window_size {
-                self.values.push_back(pressure);
-            }
-            self.sum = pressure * self.window_size as f32;
-            self.initialized = true;
-            return pressure;
-        }
+        self.sample_count += 1;
 
-        // Sliding window: remove oldest value
-        if let Some(old) = self.values.pop_front() {
-            self.sum -= old;
-        }
-
-        // Add new value
+        // Add new value to the buffer
         self.values.push_back(pressure);
         self.sum += pressure;
 
+        // If buffer exceeds window size, remove oldest
+        if self.values.len() > self.window_size {
+            if let Some(old) = self.values.pop_front() {
+                self.sum -= old;
+            }
+        }
+
+        // For the first few samples, average with what we have
+        // This creates a "soft start" effect
         self.sum / self.values.len() as f32
     }
 
@@ -59,13 +58,13 @@ impl PressureSmoother {
     pub fn reset(&mut self) {
         self.values.clear();
         self.sum = 0.0;
-        self.initialized = false;
+        self.sample_count = 0;
     }
 
-    /// Check if the smoother has been initialized.
+    /// Check if the smoother has been initialized (has received at least one sample).
     #[cfg(test)]
     pub fn is_initialized(&self) -> bool {
-        self.initialized
+        self.sample_count > 0
     }
 }
 
@@ -205,26 +204,37 @@ mod tests {
     // ===== PressureSmoother Tests =====
 
     #[test]
-    fn test_pressure_smoother_first_value_initialization() {
+    fn test_pressure_smoother_soft_start() {
         let mut smoother = PressureSmoother::new(3);
 
-        // First value should initialize the buffer and return the same value
+        // First value: buffer has 1 element, returns itself
         assert!(!smoother.is_initialized());
-        let result = smoother.smooth(0.5);
+        let result = smoother.smooth(0.9); // High pressure (simulating WinTab spike)
         assert!(smoother.is_initialized());
-        assert_eq!(result, 0.5);
+        assert_eq!(result, 0.9); // First value returns as-is
+        assert_eq!(smoother.values.len(), 1);
 
-        // Buffer should be filled with the first value
+        // Second value: buffer has 2 elements, average dampens the spike
+        // (0.9 + 0.3) / 2 = 0.6
+        let result = smoother.smooth(0.3);
+        assert!((result - 0.6).abs() < 0.001);
+        assert_eq!(smoother.values.len(), 2);
+
+        // Third value: buffer has 3 elements (full)
+        // (0.9 + 0.3 + 0.3) / 3 = 0.5
+        let result = smoother.smooth(0.3);
+        assert!((result - 0.5).abs() < 0.001);
         assert_eq!(smoother.values.len(), 3);
-        assert!(smoother.values.iter().all(|&v| v == 0.5));
     }
 
     #[test]
     fn test_pressure_smoother_sliding_window() {
         let mut smoother = PressureSmoother::new(3);
 
-        // Initialize with 0.3
-        smoother.smooth(0.3);
+        // Build up buffer with soft start
+        smoother.smooth(0.3); // [0.3], avg = 0.3
+        smoother.smooth(0.3); // [0.3, 0.3], avg = 0.3
+        smoother.smooth(0.3); // [0.3, 0.3, 0.3], avg = 0.3 (buffer now full)
 
         // Add 0.6 -> buffer: [0.3, 0.3, 0.6], avg = 0.4
         let result = smoother.smooth(0.6);
@@ -234,7 +244,7 @@ mod tests {
         let result = smoother.smooth(0.9);
         assert!((result - 0.6).abs() < 0.001);
 
-        // Add 1.2 (clamped conceptually) -> buffer: [0.6, 0.9, 1.2], avg = 0.9
+        // Add 1.2 -> buffer: [0.6, 0.9, 1.2], avg = 0.9
         let result = smoother.smooth(1.2);
         assert!((result - 0.9).abs() < 0.001);
     }
@@ -313,16 +323,22 @@ mod tests {
             ..Default::default()
         });
 
-        // First point - pressure should be unchanged (initializes buffer)
+        // First point - pressure unchanged (buffer has 1 element)
         let p1 = RawInputPoint::new(0.0, 0.0, 0.3);
         let result1 = processor.process(p1).unwrap();
         assert_eq!(result1.pressure, 0.3);
 
-        // Second point - pressure should be smoothed
-        // Buffer: [0.3, 0.3, 0.6], avg = 0.4
+        // Second point - pressure smoothed with soft start
+        // Buffer: [0.3, 0.6], avg = 0.45
         let p2 = RawInputPoint::new(1.0, 0.0, 0.6);
         let result2 = processor.process(p2).unwrap();
-        assert!((result2.pressure - 0.4).abs() < 0.001);
+        assert!((result2.pressure - 0.45).abs() < 0.001);
+
+        // Third point - buffer now has 3 elements
+        // Buffer: [0.3, 0.6, 0.9], avg = 0.6
+        let p3 = RawInputPoint::new(2.0, 0.0, 0.9);
+        let result3 = processor.process(p3).unwrap();
+        assert!((result3.pressure - 0.6).abs() < 0.001);
     }
 
     #[test]

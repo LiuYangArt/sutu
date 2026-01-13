@@ -228,7 +228,7 @@ impl TabletBackend for WinTabBackend {
         let events = self.events.clone();
         let polling_interval_ms = 1000 / self.config.polling_rate_hz as u64;
         let pressure_max = self.pressure_max;
-        let pressure_curve = self.config.pressure_curve;
+        // Note: pressure_curve is now applied in commands.rs AFTER smoothing
         let hwnd_value = self.hwnd; // Copy the stored HWND
 
         let handle = thread::spawn(move || {
@@ -369,9 +369,8 @@ impl TabletBackend for WinTabBackend {
                         }
                         was_in_proximity = in_proximity;
 
-                        // Convert to normalized pressure
-                        let raw_pressure = packet.pkNormalPressure as f32 / pressure_max;
-                        let pressure = pressure_curve.apply(raw_pressure);
+                        // Convert to normalized pressure (raw value, curve applied later after smoothing)
+                        let pressure = packet.pkNormalPressure as f32 / pressure_max;
 
                         // Convert tablet coordinates to screen coordinates
                         // pkXYZ contains output coordinates (already scaled by context)

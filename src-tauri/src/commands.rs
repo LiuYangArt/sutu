@@ -135,6 +135,8 @@ struct TabletState {
     pressure_smoother: Arc<Mutex<PressureSmoother>>,
     /// Track if pen is currently drawing (pressure > 0)
     is_drawing: Arc<std::sync::atomic::AtomicBool>,
+    /// Pressure curve for mapping (applied after smoothing)
+    pressure_curve: Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl TabletState {
@@ -148,6 +150,7 @@ impl TabletState {
             emitter_running: false,
             pressure_smoother: Arc::new(Mutex::new(PressureSmoother::new(3))),
             is_drawing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pressure_curve: Arc::new(std::sync::atomic::AtomicU8::new(0)), // 0=Linear
         }
     }
 
@@ -239,12 +242,23 @@ pub fn init_tablet(
 
     // Configure
     state.config.polling_rate_hz = polling_rate.unwrap_or(200);
-    state.config.pressure_curve = match pressure_curve.as_deref() {
+    let curve = match pressure_curve.as_deref() {
         Some("soft") => PressureCurve::Soft,
         Some("hard") => PressureCurve::Hard,
         Some("scurve") => PressureCurve::SCurve,
         _ => PressureCurve::Linear,
     };
+    state.config.pressure_curve = curve;
+    // Store curve type as atomic for thread-safe access (0=Linear, 1=Soft, 2=Hard, 3=SCurve)
+    let curve_id = match curve {
+        PressureCurve::Linear => 0u8,
+        PressureCurve::Soft => 1u8,
+        PressureCurve::Hard => 2u8,
+        PressureCurve::SCurve => 3u8,
+    };
+    state
+        .pressure_curve
+        .store(curve_id, std::sync::atomic::Ordering::Relaxed);
 
     let requested_backend = backend.unwrap_or(BackendType::Auto);
     state.backend_type = requested_backend;
@@ -314,6 +328,7 @@ pub fn start_tablet() -> Result<(), String> {
             // Clone Arc handles for the emitter thread
             let pressure_smoother = state.pressure_smoother.clone();
             let is_drawing = state.is_drawing.clone();
+            let pressure_curve_atomic = state.pressure_curve.clone();
 
             std::thread::spawn(move || {
                 tracing::info!("[Tablet] Event emitter thread started");
@@ -346,6 +361,16 @@ pub fn start_tablet() -> Result<(), String> {
 
                     // Step 2: Process and emit events OUTSIDE the lock
                     if !events.is_empty() {
+                        // Get current curve type
+                        let curve_id =
+                            pressure_curve_atomic.load(std::sync::atomic::Ordering::Relaxed);
+                        let curve = match curve_id {
+                            1 => PressureCurve::Soft,
+                            2 => PressureCurve::Hard,
+                            3 => PressureCurve::SCurve,
+                            _ => PressureCurve::Linear,
+                        };
+
                         // Process events with pressure smoothing
                         for event in events.drain(..) {
                             let processed_event = match event {
@@ -361,10 +386,13 @@ pub fn start_tablet() -> Result<(), String> {
                                         }
                                     }
 
-                                    // Apply pressure smoothing when drawing
+                                    // Apply pressure smoothing when drawing, THEN apply curve
                                     if now_drawing {
                                         if let Ok(mut smoother) = pressure_smoother.lock() {
-                                            point.pressure = smoother.smooth(point.pressure);
+                                            // Step 1: Smooth raw pressure
+                                            let smoothed = smoother.smooth(point.pressure);
+                                            // Step 2: Apply pressure curve AFTER smoothing
+                                            point.pressure = curve.apply(smoothed);
                                         }
                                     }
 
