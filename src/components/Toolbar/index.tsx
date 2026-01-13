@@ -1,18 +1,5 @@
-import {
-  Brush,
-  Eraser,
-  Pipette,
-  Move,
-  BoxSelect,
-  Undo2,
-  Redo2,
-  ZoomIn,
-  ZoomOut,
-  Crosshair,
-  LucideIcon,
-  ZoomIn as ZoomIcon,
-} from 'lucide-react';
-import { useToolStore, ToolType, PressureCurve } from '@/stores/tool';
+import { Undo2, Redo2, ZoomIn, ZoomOut, Crosshair } from 'lucide-react';
+import { useToolStore, PressureCurve } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import './Toolbar.css';
@@ -20,16 +7,8 @@ import './Toolbar.css';
 /** Common icon props for toolbar icons */
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
 
-const TOOLS: { id: ToolType; label: string; icon: LucideIcon }[] = [
-  { id: 'brush', label: 'Brush', icon: Brush },
-  { id: 'eraser', label: 'Eraser', icon: Eraser },
-  { id: 'eyedropper', label: 'Eyedropper', icon: Pipette },
-  { id: 'move', label: 'Move', icon: Move },
-  { id: 'select', label: 'Select', icon: BoxSelect },
-  { id: 'zoom', label: 'Zoom', icon: ZoomIcon },
-];
-
 const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
+  // Pressure curve presets
   { id: 'linear', label: 'Linear' },
   { id: 'soft', label: 'Soft' },
   { id: 'hard', label: 'Hard' },
@@ -60,7 +39,6 @@ function PressureToggle({
 export function Toolbar() {
   const {
     currentTool,
-    setTool,
     brushSize,
     eraserSize,
     setCurrentSize,
@@ -101,19 +79,6 @@ export function Toolbar() {
 
   return (
     <header className="toolbar">
-      <div className="toolbar-section tools">
-        {TOOLS.map((tool) => (
-          <button
-            key={tool.id}
-            className={`tool-btn ${currentTool === tool.id ? 'active' : ''}`}
-            onClick={() => setTool(tool.id)}
-            title={tool.label}
-          >
-            <tool.icon {...ICON_PROPS} />
-          </button>
-        ))}
-      </div>
-
       <div className="toolbar-divider" />
 
       <div className="toolbar-section brush-settings">

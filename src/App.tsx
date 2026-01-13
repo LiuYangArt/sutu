@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
 import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
-import { RightPanel } from './components/RightPanel';
 import { TabletPanel } from './components/TabletPanel';
 import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
+import { PanelLayer } from './components/UI/PanelLayer';
+import { usePanelStore } from './stores/panel';
 
 // Check if running in Tauri environment
 const isTauri = () => {
@@ -71,6 +72,55 @@ function App() {
     setIsReady(true);
   }, [initDocument]);
 
+  // Register default panels
+  const registerPanel = usePanelStore((s) => s.registerPanel);
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const closePanel = usePanelStore((s) => s.closePanel);
+
+  useEffect(() => {
+    // 1. Tools Panel (Top Left)
+    registerPanel({
+      id: 'tools-panel',
+      title: 'Tools',
+      defaultGeometry: { x: 20, y: 100, width: 100, height: 180 },
+      defaultAlignment: { horizontal: 'left', vertical: 'top', offsetX: 20, offsetY: 100 },
+      resizable: false,
+      closable: false,
+      minimizable: false,
+      minWidth: 100,
+      minHeight: 180,
+    });
+
+    // 2. Color Panel (Top Right, mimicking existing right panel top)
+    registerPanel({
+      id: 'color-panel',
+      title: 'Color',
+      defaultGeometry: { x: window.innerWidth - 300, y: 80, width: 280, height: 320 },
+      defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 80 },
+      minWidth: 200,
+      minHeight: 200,
+    });
+
+    // 3. Layer Panel (Bottom Right)
+    registerPanel({
+      id: 'layer-panel',
+      title: 'Layers',
+      defaultGeometry: { x: window.innerWidth - 300, y: 420, width: 280, height: 400 },
+      defaultAlignment: { horizontal: 'right', vertical: 'bottom', offsetX: 20, offsetY: 260 },
+      minWidth: 240,
+      maxWidth: 400,
+      minHeight: 200,
+    });
+
+    // Auto open defaults
+    openPanel('tools-panel');
+    openPanel('color-panel');
+    openPanel('layer-panel');
+
+    // Ensure debug panel is closed (if persisted)
+    closePanel('debug-panel');
+  }, [registerPanel, openPanel, closePanel]);
+
   if (!isReady) {
     return (
       <div className="loading">
@@ -84,8 +134,8 @@ function App() {
       <Toolbar />
       <main className="workspace">
         <Canvas />
-        <RightPanel />
       </main>
+      <PanelLayer />
       <TabletPanel />
     </div>
   );
