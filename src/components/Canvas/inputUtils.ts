@@ -3,6 +3,10 @@ import { RawInputPoint } from '@/stores/tablet';
 /**
  * Resolves pressure and tilt data, preferring WinTab buffer if active
  *
+ * IMPORTANT: Do NOT filter out pressure=0 points!
+ * The backend PressureSmoother intentionally returns 0 for the first few samples
+ * to prevent heavy first dab. We must respect this.
+ *
  * @param evt The original pointer event
  * @param isWinTabActive Whether WinTab backend is currently active
  * @param bufferedPoints Buffered WinTab points to match against
@@ -27,26 +31,27 @@ export function getEffectiveInputData(
   const eventTime = evt.timeStamp;
 
   // 1. Search backwards for the latest relevant point in buffer
+  // NOTE: We accept pressure=0 now - backend's PressureSmoother returns 0
+  // intentionally for the first few samples to prevent heavy first dab
   for (let i = bufferedPoints.length - 1; i >= 0; i--) {
     const pt = bufferedPoints[i];
     if (!pt) continue;
 
     // Find point with timestamp <= event time + tolerance
-    // And ensure it has valid pressure (filtering out lift-off noise if needed, though usually desirable)
     if (pt.timestamp_ms <= eventTime + toleranceMs) {
-      if (pt.pressure > 0) {
-        return {
-          pressure: pt.pressure,
-          tiltX: pt.tilt_x,
-          tiltY: pt.tilt_y,
-        };
-      }
+      // Accept ALL pressure values, including 0
+      // The backend has already applied smoothing/fade-in
+      return {
+        pressure: pt.pressure,
+        tiltX: pt.tilt_x,
+        tiltY: pt.tilt_y,
+      };
     }
   }
 
-  // 2. Fallback: Use currentPoint (last known valid input) if available
-  // This handles cases where WinTab data is sparse or bufferedPoints is empty for this frame
-  if (currentPoint && currentPoint.pressure > 0) {
+  // 2. Fallback: Use currentPoint (last known input) if available
+  // This handles cases where WinTab data is sparse or bufferedPoints is empty
+  if (currentPoint) {
     return {
       pressure: currentPoint.pressure,
       tiltX: currentPoint.tilt_x,

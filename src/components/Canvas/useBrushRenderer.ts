@@ -27,32 +27,12 @@ export interface UseBrushRendererProps {
   height: number;
 }
 
-// Pressure fade-in settings to prevent heavy first dab from WinTab
-const FADE_IN_POINTS = 4;
-const FIRST_POINT_MAX_PRESSURE = 0.1;
+// Pressure fade-in is now handled in Rust backend (PressureSmoother)
+// Frontend no longer needs its own fade-in logic
 
 export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
   const strokeBufferRef = useRef<StrokeAccumulator | null>(null);
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
-  const pointCountRef = useRef<number>(0);
-
-  // Apply pressure fade-in to prevent heavy first dab
-  const applyPressureFadeIn = useCallback((pressure: number): number => {
-    const count = pointCountRef.current;
-    if (count >= FADE_IN_POINTS) {
-      return pressure;
-    }
-
-    // First point: cap at max first point pressure
-    if (count === 0) {
-      return Math.min(pressure, FIRST_POINT_MAX_PRESSURE);
-    }
-
-    // Subsequent fade-in points: interpolate from capped to full
-    const t = count / FADE_IN_POINTS;
-    const cappedPressure = Math.min(pressure, FIRST_POINT_MAX_PRESSURE);
-    return cappedPressure + (pressure - cappedPressure) * t;
-  }, []);
 
   // Initialize or resize stroke buffer
   const ensureStrokeBuffer = useCallback(() => {
@@ -74,11 +54,11 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
     const buffer = ensureStrokeBuffer();
     buffer.beginStroke();
     stamperRef.current.beginStroke();
-    pointCountRef.current = 0; // Reset pressure fade-in counter
   }, [ensureStrokeBuffer]);
 
   /**
    * Process a point during stroke and render dabs to stroke buffer
+   * Note: Pressure fade-in is handled in Rust backend (PressureSmoother)
    */
   const processPoint = useCallback(
     (x: number, y: number, pressure: number, config: BrushRenderConfig): void => {
@@ -87,18 +67,14 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
 
       const stamper = stamperRef.current;
 
-      // Apply pressure fade-in BEFORE pressure curve to prevent heavy first dab
-      const fadedPressure = applyPressureFadeIn(pressure);
-      pointCountRef.current++;
-
-      // Apply pressure curve
-      const adjustedPressure = applyPressureCurve(fadedPressure, config.pressureCurve);
+      // Apply pressure curve (fade-in already applied by backend)
+      const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
 
       // Calculate dynamic size for stamper spacing calculation
       const size = config.pressureSizeEnabled ? config.size * adjustedPressure : config.size;
 
-      // Get dab positions from stamper (pass faded pressure, not raw)
-      const dabs = stamper.processPoint(x, y, fadedPressure, size, config.spacing);
+      // Get dab positions from stamper
+      const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
 
       // Stamp each dab to the stroke buffer
       for (const dab of dabs) {
@@ -122,7 +98,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
         buffer.stampDab(dabParams);
       }
     },
-    [applyPressureFadeIn]
+    []
   );
 
   /**
