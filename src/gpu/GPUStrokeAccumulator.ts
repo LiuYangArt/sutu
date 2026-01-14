@@ -13,7 +13,7 @@
 
 import type { Rect } from '@/utils/strokeBuffer';
 import type { GPUDabParams, DabInstanceData } from './types';
-import { BATCH_SIZE_THRESHOLD, BATCH_TIME_THRESHOLD_MS } from './types';
+import { BATCH_SIZE_THRESHOLD, BATCH_TIME_THRESHOLD_MS, DAB_INSTANCE_SIZE } from './types';
 import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
 import { BrushPipeline } from './pipeline/BrushPipeline';
@@ -207,54 +207,64 @@ export class GPUStrokeAccumulator {
   }
 
   /**
-   * Flush pending dabs to GPU using per-dab loop
+   * Flush pending dabs to GPU using per-dab loop with optimized partial copies
    *
    * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
-   * All passes are batched in a single CommandEncoder for efficient submission.
+   * Uses partial texture copies (dirty rects) to minimize memory bandwidth.
+   */
+  /**
+   * Flush pending dabs to GPU using per-dab loop with optimized partial copies
+   *
+   * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
+   * Uses partial texture copies (dirty rects) to minimize memory bandwidth.
+   * Uses a single instance buffer with offsets to minimize buffer creation overhead.
    */
   private flushBatch(): void {
     if (this.instanceBuffer.count === 0) return;
 
     this.cpuTimer.start();
 
+    // 1. Get data and upload to GPU
     const dabs = this.instanceBuffer.getDabsData();
     const bbox = this.instanceBuffer.getBoundingBox();
-    this.instanceBuffer.clear();
+    // Flush uploads to GPU and resets the pending/bbox counters
+    const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();
 
     const encoder = this.device.createCommandEncoder({
       label: 'Brush Batch Encoder',
     });
 
-    // Calculate scissor rect once for all passes
-    let scissor: { x: number; y: number; w: number; h: number } | null = null;
-    if (bbox.width > 0 && bbox.height > 0) {
-      const scissorX = Math.max(0, bbox.x);
-      const scissorY = Math.max(0, bbox.y);
-      const scissorW = Math.min(this.width - scissorX, bbox.width);
-      const scissorH = Math.min(this.height - scissorY, bbox.height);
-      if (scissorW > 0 && scissorH > 0) {
-        scissor = { x: scissorX, y: scissorY, w: scissorW, h: scissorH };
-      }
-    }
+    // 2. Setup scissor
+    const scissor = this.computeScissorRect(bbox);
 
-    // Track temporary buffers for cleanup after submit
-    const tempBuffers: GPUBuffer[] = [];
+    // 3. Render loop
+    let prevDabRect: { x: number; y: number; w: number; h: number } | null = null;
 
-    // Render each dab in its own pass with ping-pong textures
     for (let i = 0; i < dabs.length; i++) {
       const dab = dabs[i]!;
+      const dabRect = this.computeDabBounds(dab);
 
-      // Copy source to dest (preserve existing content for areas not covered by dab)
-      this.pingPongBuffer.copySourceToDest(encoder);
+      // Partial Copy Logic: Sync Dest with Source
+      if (i === 0) {
+        // First dab: copy accumulated dirty rect
+        const dr = this.dirtyRect;
+        const copyW = dr.right - dr.left;
+        const copyH = dr.bottom - dr.top;
+        if (copyW > 0 && copyH > 0) {
+          this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
+        }
+      } else if (prevDabRect) {
+        // Subsequent dabs: copy previous dab's bounds
+        this.pingPongBuffer.copyRect(
+          encoder,
+          prevDabRect.x,
+          prevDabRect.y,
+          prevDabRect.w,
+          prevDabRect.h
+        );
+      }
 
-      // Create bind group pointing to current source texture
-      const bindGroup = this.brushPipeline.createBindGroup(this.pingPongBuffer.source);
-
-      // Create single-dab instance buffer
-      const singleDabBuffer = this.createSingleDabBuffer(dab);
-      tempBuffers.push(singleDabBuffer);
-
-      // Render pass writes to dest
+      // Render Pass
       const pass = encoder.beginRenderPass({
         label: `Dab Pass ${i}`,
         colorAttachments: [
@@ -264,7 +274,7 @@ export class GPUStrokeAccumulator {
             storeOp: 'store',
           },
         ],
-        // Only add timestamp writes for first dab to avoid overhead
+        // Only timestamp first pass
         timestampWrites: i === 0 ? this.profiler.getTimestampWrites() : undefined,
       });
 
@@ -273,25 +283,20 @@ export class GPUStrokeAccumulator {
       }
 
       pass.setPipeline(this.brushPipeline.renderPipeline);
-      pass.setBindGroup(0, bindGroup);
-      pass.setVertexBuffer(0, singleDabBuffer);
-      pass.draw(6, 1); // 6 vertices, 1 instance
+      pass.setBindGroup(0, this.brushPipeline.createBindGroup(this.pingPongBuffer.source));
+
+      // Use offset into the single large batch buffer
+      const offset = i * DAB_INSTANCE_SIZE;
+      pass.setVertexBuffer(0, gpuBatchBuffer, offset, DAB_INSTANCE_SIZE);
+      pass.draw(6, 1);
       pass.end();
 
-      // Swap ping-pong (dest becomes new source for next dab)
       this.pingPongBuffer.swap();
+      prevDabRect = dabRect;
     }
 
-    // Resolve profiler timestamps
     void this.profiler.resolveTimestamps(encoder);
-
-    // Single submit for all dabs
     this.device.queue.submit([encoder.finish()]);
-
-    // Cleanup temporary buffers after submission
-    for (const buf of tempBuffers) {
-      buf.destroy();
-    }
 
     const cpuTime = this.cpuTimer.stop();
     this.profiler.recordFrame({
@@ -299,7 +304,6 @@ export class GPUStrokeAccumulator {
       cpuTimeMs: cpuTime,
     });
 
-    // Trigger async preview update
     this.previewNeedsUpdate = true;
     if (!this.previewUpdatePending) {
       void this.updatePreview();
@@ -307,32 +311,36 @@ export class GPUStrokeAccumulator {
   }
 
   /**
-   * Create a GPU buffer for a single dab (using mappedAtCreation for sync writes)
-   * Returns the buffer which should be destroyed after the encoder is submitted
+   * Calculate scissor rect for the batch
    */
-  private createSingleDabBuffer(dab: DabInstanceData): GPUBuffer {
-    const data = new Float32Array([
-      dab.x,
-      dab.y,
-      dab.size,
-      dab.hardness,
-      dab.r,
-      dab.g,
-      dab.b,
-      dab.dabOpacity,
-      dab.flow,
-    ]);
+  private computeScissorRect(bbox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): { x: number; y: number; w: number; h: number } | null {
+    if (bbox.width <= 0 || bbox.height <= 0) return null;
 
-    const buffer = this.device.createBuffer({
-      size: data.byteLength,
-      usage: GPUBufferUsage.VERTEX,
-      mappedAtCreation: true,
-    });
+    const x = Math.max(0, bbox.x);
+    const y = Math.max(0, bbox.y);
+    const w = Math.min(this.width - x, bbox.width);
+    const h = Math.min(this.height - y, bbox.height);
 
-    new Float32Array(buffer.getMappedRange()).set(data);
-    buffer.unmap();
+    return w > 0 && h > 0 ? { x, y, w, h } : null;
+  }
 
-    return buffer;
+  /**
+   * Calculate bounding box for a single dab (including AA margin)
+   */
+  private computeDabBounds(dab: DabInstanceData): { x: number; y: number; w: number; h: number } {
+    const margin = 2;
+    const dabRadius = dab.size + margin;
+    return {
+      x: Math.floor(dab.x - dabRadius),
+      y: Math.floor(dab.y - dabRadius),
+      w: Math.ceil(dabRadius * 2),
+      h: Math.ceil(dabRadius * 2),
+    };
   }
 
   /**
