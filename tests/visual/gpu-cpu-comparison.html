@@ -7,6 +7,8 @@
       body {
         font-family: sans-serif;
         padding: 20px;
+        background: #1a1a1a;
+        color: #eee;
       }
       .canvas-container {
         display: flex;
@@ -17,23 +19,38 @@
         text-align: center;
       }
       canvas {
-        border: 1px solid #ccc;
+        border: 1px solid #444;
         background: white;
       }
       .controls {
-        background: #f5f5f5;
+        background: #2a2a2a;
         padding: 15px;
         border-radius: 8px;
         display: flex;
-        gap: 20px;
+        gap: 15px;
         align-items: center;
         flex-wrap: wrap;
+      }
+      .control-group {
+        display: flex;
+        gap: 15px;
+        align-items: center;
       }
       label {
         display: flex;
         flex-direction: column;
         gap: 5px;
-        font-size: 14px;
+        font-size: 13px;
+      }
+      input[type='range'] {
+        width: 100px;
+      }
+      select {
+        padding: 6px 10px;
+        border-radius: 4px;
+        background: #333;
+        color: #eee;
+        border: 1px solid #555;
       }
       button {
         padding: 8px 16px;
@@ -48,47 +65,81 @@
       }
       #results {
         margin-top: 20px;
+        padding: 15px;
+        background: #2a2a2a;
+        border-radius: 8px;
       }
       h3 {
         margin: 10px 0;
+        color: #ccc;
+      }
+      .param-note {
+        font-size: 12px;
+        color: #888;
+        margin-top: 5px;
+      }
+      .mode-toggle {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .mode-toggle label {
+        flex-direction: row;
+        gap: 5px;
       }
     </style>
   </head>
   <body>
     <h1>GPU vs CPU 渲染对比</h1>
+    <p class="param-note" id="modeDescription">测试模式：点/笔触对比</p>
 
     <div class="controls">
-      <label>
-        Size: <span id="sizeValue">100</span>
-        <input type="range" id="size" min="10" max="500" value="100" />
-      </label>
-      <label>
-        Hardness: <span id="hardnessValue">0.5</span>
-        <input type="range" id="hardness" min="0" max="1" step="0.01" value="0.5" />
-      </label>
-      <label>
-        Flow: <span id="flowValue">1.0</span>
-        <input type="range" id="flow" min="0.1" max="1" step="0.1" value="1.0" />
-      </label>
-      <label>
-        Opacity: <span id="opacityValue">1.0</span>
-        <input type="range" id="opacity" min="0.1" max="1" step="0.1" value="1.0" />
-      </label>
-      <button id="runTest">运行测试 (Run Test)</button>
+      <div class="control-group">
+        <label>
+          模式:
+          <select id="testMode">
+            <option value="point">Single Point (5 dabs)</option>
+            <option value="stroke" selected>Stroke Line (笔触)</option>
+          </select>
+        </label>
+        <label>
+          Size: <span id="sizeValue">80</span>
+          <input type="range" id="size" min="20" max="300" value="80" />
+        </label>
+        <label>
+          Hardness: <span id="hardnessValue">0.5</span>
+          <input type="range" id="hardness" min="0" max="1" step="0.01" value="0.5" />
+        </label>
+      </div>
+      <div class="control-group">
+        <label>
+          Flow: <span id="flowValue">0.3</span>
+          <input type="range" id="flow" min="0.1" max="1" step="0.1" value="0.3" />
+        </label>
+        <label>
+          Opacity: <span id="opacityValue">1.0</span>
+          <input type="range" id="opacity" min="0.1" max="1" step="0.1" value="1.0" />
+        </label>
+        <label>
+          Spacing: <span id="spacingValue">25</span>%
+          <input type="range" id="spacing" min="10" max="100" step="5" value="25" />
+        </label>
+        <button id="runTest">运行测试 (Run Test)</button>
+      </div>
     </div>
 
     <div class="canvas-container">
       <div class="canvas-wrapper">
         <h3>CPU 渲染 (Reference)</h3>
-        <canvas id="cpuCanvas" width="500" height="500"></canvas>
+        <canvas id="cpuCanvas" width="500" height="300"></canvas>
       </div>
       <div class="canvas-wrapper">
         <h3>GPU 渲染 (Target)</h3>
-        <canvas id="gpuCanvas" width="500" height="500"></canvas>
+        <canvas id="gpuCanvas" width="500" height="300"></canvas>
       </div>
       <div class="canvas-wrapper">
         <h3>差异 (Diff > 2)</h3>
-        <canvas id="diffCanvas" width="500" height="500"></canvas>
+        <canvas id="diffCanvas" width="500" height="300"></canvas>
       </div>
     </div>
 
@@ -98,15 +149,21 @@
       import { StrokeAccumulator } from '../../src/utils/strokeBuffer.ts';
       import { GPUContext, GPUStrokeAccumulator } from '../../src/gpu/index.ts';
 
-      // UI Elements
+      const CANVAS_W = 500,
+        CANVAS_H = 300;
+
+      const testModeSelect = document.getElementById('testMode');
       const sizeInput = document.getElementById('size');
       const hardnessInput = document.getElementById('hardness');
       const flowInput = document.getElementById('flow');
       const opacityInput = document.getElementById('opacity');
+      const spacingInput = document.getElementById('spacing');
       const sizeValue = document.getElementById('sizeValue');
       const hardnessValue = document.getElementById('hardnessValue');
       const flowValue = document.getElementById('flowValue');
       const opacityValue = document.getElementById('opacityValue');
+      const spacingValue = document.getElementById('spacingValue');
+      const modeDescription = document.getElementById('modeDescription');
       const runBtn = document.getElementById('runTest');
       const resultsDiv = document.getElementById('results');
 
@@ -115,31 +172,49 @@
       hardnessInput.addEventListener('input', (e) => (hardnessValue.textContent = e.target.value));
       flowInput.addEventListener('input', (e) => (flowValue.textContent = e.target.value));
       opacityInput.addEventListener('input', (e) => (opacityValue.textContent = e.target.value));
+      spacingInput.addEventListener('input', (e) => (spacingValue.textContent = e.target.value));
+      testModeSelect.addEventListener('change', updateModeDescription);
+
+      function updateModeDescription() {
+        const mode = testModeSelect.value;
+        if (mode === 'point') {
+          modeDescription.textContent = '测试 5 个重叠 dab 的累积效果（用于验证 Alpha Darken）';
+        } else {
+          modeDescription.textContent = '测试水平笔触绘制效果（模拟真实绘画）';
+        }
+      }
+      updateModeDescription();
 
       runBtn.addEventListener('click', runTest);
 
       async function runTest() {
+        const mode = testModeSelect.value;
         const size = parseFloat(sizeInput.value);
         const hardness = parseFloat(hardnessInput.value);
         const flow = parseFloat(flowInput.value);
         const opacity = parseFloat(opacityInput.value);
+        const spacingPercent = parseFloat(spacingInput.value) / 100;
+        const color = '#000000';
 
-        const x = 250;
-        const y = 250;
-        const color = '#ff0000';
-
-        resultsDiv.innerHTML = 'Running...';
+        resultsDiv.innerHTML = '<span style="color:#888">Running...</span>';
 
         try {
-          // === CPU Reference ===
-          const cpuAccumulator = new StrokeAccumulator(500, 500);
+          // Generate dab positions based on mode
+          const dabPositions = generateDabPositions(mode, size, spacingPercent);
+
+          // ============= CPU Reference =============
+          const cpuLayerCanvas = document.createElement('canvas');
+          cpuLayerCanvas.width = CANVAS_W;
+          cpuLayerCanvas.height = CANVAS_H;
+          const cpuLayerCtx = cpuLayerCanvas.getContext('2d', { willReadFrequently: true });
+
+          const cpuAccumulator = new StrokeAccumulator(CANVAS_W, CANVAS_H);
           cpuAccumulator.beginStroke(hardness);
 
-          // Stamp multiple dabs to trigger sync (CPU syncs every 4 dabs)
-          for (let i = 0; i < 5; i++) {
+          for (const pos of dabPositions) {
             cpuAccumulator.stampDab({
-              x: x + i * 2,
-              y,
+              x: pos.x,
+              y: pos.y,
               size,
               flow,
               hardness,
@@ -147,27 +222,33 @@
               dabOpacity: 1.0,
             });
           }
+          cpuAccumulator.endStroke(cpuLayerCtx, opacity);
 
-          // Get the internal canvas directly (bypasses endStroke compositing)
-          const cpuCanvas = cpuAccumulator.getCanvas();
-
-          // === GPU Target ===
-          const gpuCtx = GPUContext.getInstance();
-          await gpuCtx.initialize();
-          if (!gpuCtx.device) {
+          // ============= GPU Target =============
+          const gpuCtxInstance = GPUContext.getInstance();
+          await gpuCtxInstance.initialize();
+          if (!gpuCtxInstance.device) {
             resultsDiv.innerHTML = '<span style="color:red">WebGPU not supported</span>';
             return;
           }
 
-          const gpuAccumulator = new GPUStrokeAccumulator(gpuCtx.device, 500, 500);
+          const gpuLayerCanvas = document.createElement('canvas');
+          gpuLayerCanvas.width = CANVAS_W;
+          gpuLayerCanvas.height = CANVAS_H;
+          const gpuLayerCtx = gpuLayerCanvas.getContext('2d', { willReadFrequently: true });
+
+          const gpuAccumulator = new GPUStrokeAccumulator(
+            gpuCtxInstance.device,
+            CANVAS_W,
+            CANVAS_H
+          );
           gpuAccumulator.clear();
           gpuAccumulator.beginStroke();
 
-          // Match CPU: stamp multiple dabs
-          for (let i = 0; i < 5; i++) {
+          for (const pos of dabPositions) {
             gpuAccumulator.stampDab({
-              x: x + i * 2,
-              y,
+              x: pos.x,
+              y: pos.y,
               size,
               flow,
               hardness,
@@ -175,36 +256,29 @@
               dabOpacity: 1.0,
             });
           }
+          await gpuAccumulator.endStroke(gpuLayerCtx, opacity);
 
-          // Flush GPU and get preview canvas
-          // Note: We use a dummy context for endStroke but then read getCanvas()
-          const dummyCanvas = new OffscreenCanvas(500, 500);
-          const dummyCtx = dummyCanvas.getContext('2d');
-          await gpuAccumulator.endStroke(dummyCtx, opacity);
-          const gpuCanvas = gpuAccumulator.getCanvas();
-
-          // === Display ===
+          // ============= Display =============
           const cpuDisplayCtx = document.getElementById('cpuCanvas').getContext('2d');
           const gpuDisplayCtx = document.getElementById('gpuCanvas').getContext('2d');
           const diffCtx = document.getElementById('diffCanvas').getContext('2d');
 
-          cpuDisplayCtx.clearRect(0, 0, 500, 500);
-          gpuDisplayCtx.clearRect(0, 0, 500, 500);
-          diffCtx.clearRect(0, 0, 500, 500);
+          cpuDisplayCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+          gpuDisplayCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+          diffCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
-          // Draw the accumulator canvases directly
-          cpuDisplayCtx.drawImage(cpuCanvas, 0, 0);
-          gpuDisplayCtx.drawImage(gpuCanvas, 0, 0);
+          cpuDisplayCtx.drawImage(cpuLayerCanvas, 0, 0);
+          gpuDisplayCtx.drawImage(gpuLayerCanvas, 0, 0);
 
-          // === Compare ===
+          // ============= Compare =============
           const diffResult = compareCanvases(cpuDisplayCtx, gpuDisplayCtx, diffCtx);
 
           resultsDiv.innerHTML = `
-            <h3>Result</h3>
-            <div>Max Diff: ${diffResult.maxDiff}</div>
+            <h3>Result (${dabPositions.length} dabs)</h3>
+            <div>Max Diff: <strong>${diffResult.maxDiff}</strong></div>
             <div>Diff Pixels: ${diffResult.diffPixels} (${diffResult.diffPercent}%)</div>
-            <div style="color: ${diffResult.passed ? 'green' : 'red'}">
-              ${diffResult.passed ? 'PASSED (Diff <= 2)' : 'FAILED'}
+            <div style="color: ${diffResult.passed ? '#4CAF50' : '#F44336'}; font-weight: bold;">
+              ${diffResult.passed ? '✓ PASSED (Diff ≤ 2)' : '✗ FAILED'}
             </div>
           `;
         } catch (e) {
@@ -213,38 +287,55 @@
         }
       }
 
-      function compareCanvases(cpuCtx, gpuCtx, diffCtx) {
-        const w = 500;
-        const h = 500;
-        const cpuData = cpuCtx.getImageData(0, 0, w, h);
-        const gpuData = gpuCtx.getImageData(0, 0, w, h);
-        const diffImageData = diffCtx.createImageData(w, h);
+      function generateDabPositions(mode, size, spacingPercent) {
+        const positions = [];
+        const y = CANVAS_H / 2;
 
-        let maxDiff = 0;
-        let diffPixels = 0;
+        if (mode === 'point') {
+          // 5 overlapping dabs at center
+          const x = CANVAS_W / 2;
+          for (let i = 0; i < 5; i++) {
+            positions.push({ x, y });
+          }
+        } else {
+          // Stroke line from left to right
+          const step = size * spacingPercent;
+          const startX = size / 2 + 20;
+          const endX = CANVAS_W - size / 2 - 20;
+
+          for (let x = startX; x <= endX; x += step) {
+            positions.push({ x, y });
+          }
+        }
+        return positions;
+      }
+
+      function compareCanvases(cpuCtx, gpuCtx, diffCtx) {
+        const cpuData = cpuCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+        const gpuData = gpuCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+        const diffImageData = diffCtx.createImageData(CANVAS_W, CANVAS_H);
+
+        let maxDiff = 0,
+          diffPixels = 0;
         const threshold = 2;
 
         for (let i = 0; i < cpuData.data.length; i += 4) {
-          const r1 = cpuData.data[i];
-          const g1 = cpuData.data[i + 1];
-          const b1 = cpuData.data[i + 2];
-          const a1 = cpuData.data[i + 3];
+          const r1 = cpuData.data[i],
+            g1 = cpuData.data[i + 1],
+            b1 = cpuData.data[i + 2],
+            a1 = cpuData.data[i + 3];
+          const r2 = gpuData.data[i],
+            g2 = gpuData.data[i + 1],
+            b2 = gpuData.data[i + 2],
+            a2 = gpuData.data[i + 3];
 
-          const r2 = gpuData.data[i];
-          const g2 = gpuData.data[i + 1];
-          const b2 = gpuData.data[i + 2];
-          const a2 = gpuData.data[i + 3];
-
-          const rDiff = Math.abs(r1 - r2);
-          const gDiff = Math.abs(g1 - g2);
-          const bDiff = Math.abs(b1 - b2);
-          const aDiff = Math.abs(a1 - a2);
-
-          const localMax = Math.max(rDiff, gDiff, bDiff, aDiff);
-
-          if (localMax > maxDiff) {
-            maxDiff = localMax;
-          }
+          const localMax = Math.max(
+            Math.abs(r1 - r2),
+            Math.abs(g1 - g2),
+            Math.abs(b1 - b2),
+            Math.abs(a1 - a2)
+          );
+          if (localMax > maxDiff) maxDiff = localMax;
 
           if (localMax > threshold) {
             diffPixels++;
@@ -256,16 +347,15 @@
             diffImageData.data[i] = r1;
             diffImageData.data[i + 1] = g1;
             diffImageData.data[i + 2] = b1;
-            diffImageData.data[i + 3] = 30;
+            diffImageData.data[i + 3] = 50;
           }
         }
 
         diffCtx.putImageData(diffImageData, 0, 0);
-
         return {
           maxDiff,
           diffPixels,
-          diffPercent: ((diffPixels / (w * h)) * 100).toFixed(4),
+          diffPercent: ((diffPixels / (CANVAS_W * CANVAS_H)) * 100).toFixed(4),
           passed: maxDiff <= threshold,
         };
       }
