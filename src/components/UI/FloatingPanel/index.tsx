@@ -97,7 +97,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
       // Update geometry to match visual position and clear alignment
       // passing undefined to alignment switches to absolute positioning mode
       updateGeometry(panelId, { x, y });
-      updateAlignment(panelId, undefined as any);
+      updateAlignment(panelId, undefined);
     }
   }, [panelId, panel, updateGeometry, updateAlignment, bringToFront]);
 

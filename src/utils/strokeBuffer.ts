@@ -261,25 +261,15 @@ export class StrokeAccumulator {
         const dstB = bufferData.data[idx + 2] ?? 0;
         const dstA = (bufferData.data[idx + 3] ?? 0) / 255;
 
-        // Krita Alpha Darken compositing:
-        // - If dstA >= targetAlpha: don't increase alpha (already at ceiling)
-        // - If dstA < targetAlpha: lerp from dstA toward targetAlpha
-        // This prevents unlimited accumulation while preserving gradients
-        let outA: number;
-        if (dstA >= targetAlpha - 0.001) {
-          // Already at ceiling, only blend colors, don't increase alpha
-          outA = dstA;
-        } else {
-          // Lerp from dstA toward targetAlpha: outA = dstA + (targetAlpha - dstA) * srcAlpha
-          outA = dstA + (targetAlpha - dstA) * srcAlpha;
-        }
+        // Alpha Darken: lerp toward ceiling, clamp if already reached
+        const outA = dstA >= targetAlpha - 0.001 ? dstA : dstA + (targetAlpha - dstA) * srcAlpha;
 
         if (outA > 0.001) {
-          // Color blending using srcAlpha (Krita-style lerp)
-          // dst[i] = lerp(dst[i], src[i], srcAlpha)
-          const outR = dstA > 0.001 ? dstR + (rgb.r - dstR) * srcAlpha : rgb.r;
-          const outG = dstA > 0.001 ? dstG + (rgb.g - dstG) * srcAlpha : rgb.g;
-          const outB = dstA > 0.001 ? dstB + (rgb.b - dstB) * srcAlpha : rgb.b;
+          // Color blending: lerp toward source color
+          const hasExisting = dstA > 0.001;
+          const outR = hasExisting ? dstR + (rgb.r - dstR) * srcAlpha : rgb.r;
+          const outG = hasExisting ? dstG + (rgb.g - dstG) * srcAlpha : rgb.g;
+          const outB = hasExisting ? dstB + (rgb.b - dstB) * srcAlpha : rgb.b;
 
           bufferData.data[idx] = Math.round(Math.min(255, Math.max(0, outR)));
           bufferData.data[idx + 1] = Math.round(Math.min(255, Math.max(0, outG)));
@@ -287,8 +277,9 @@ export class StrokeAccumulator {
 
           // Dithering for smooth alpha transitions
           const ditherPattern = ((worldX + worldY) % 2) * 0.5 - 0.25;
-          const ditheredAlpha = outA * 255 + ditherPattern;
-          bufferData.data[idx + 3] = Math.round(Math.min(255, Math.max(0, ditheredAlpha)));
+          bufferData.data[idx + 3] = Math.round(
+            Math.min(255, Math.max(0, outA * 255 + ditherPattern))
+          );
         }
       }
     }
@@ -395,10 +386,7 @@ export class StrokeAccumulator {
 
   /**
    * Calculate pure mask shape (0-1) based on hardness and mask type.
-   * This returns ONLY the shape gradient, without flow or opacity applied.
-   * Following Krita's architecture: mask is purely geometric, opacity/flow applied separately.
-   *
-   * Key principle: Center point always returns 1.0 for all mask types.
+   * Center point always returns 1.0 for all mask types.
    */
   private calculateMaskShape(
     normDist: number,
@@ -408,95 +396,45 @@ export class StrokeAccumulator {
     fade: number
   ): number {
     if (hardness >= 0.99) {
-      // Hard brush: full alpha inside, AA at edge
-      // Improved AA: linear falloff over 1px at the exact physical edge
-      const physicalDist = normDist * radiusX;
-      const distFromEdge = physicalDist - radiusX;
-
-      if (distFromEdge > 1.0) {
-        return 0; // Outside AA zone
-      } else if (distFromEdge > 0.0) {
-        // Anti-aliasing zone (0 to 1px outside nominal radius)
-        // Linear falloff from 1.0 to 0.0 over 1px
-        return 1.0 - distFromEdge;
-      } else {
-        return 1.0; // Center = 1.0
-      }
+      // Hard brush with 1px anti-aliased edge
+      const distFromEdge = normDist * radiusX - radiusX;
+      if (distFromEdge > 1.0) return 0;
+      if (distFromEdge > 0.0) return 1.0 - distFromEdge;
+      return 1.0;
     } else if (maskType === 'gaussian') {
       // Krita-style Gaussian (erf-based) mask
-      // Reference: libs/image/kis_gauss_circle_mask_generator.cpp
-      //
-      // NORMALIZATION: The alphafactor ensures center point (dist=0) always returns 1.0
-      // At dist=0: val = alphafactor * (erf(center) - erf(-center))
-      //                = alphafactor * 2 * erf(center)
-      //                = (255 / (2 * erf(center))) * 2 * erf(center)
-      //                = 255
-      // So rawAlpha = 255/255 = 1.0 regardless of fade/hardness value.
-      //
-      // Enhanced fade range (0-2.0) for softer edges than Krita's default (0-1.0)
+      // alphafactor normalizes so center point = 1.0 regardless of fade/hardness
       const safeFade = Math.max(1e-6, Math.min(2.0, fade));
 
       const SQRT_2 = Math.SQRT2;
-      // center: controls the shape of the Gaussian curve
       const center = (2.5 * (6761.0 * safeFade - 10000.0)) / (SQRT_2 * 6761.0 * safeFade);
-      // alphafactor: normalizes so that center point = 255 (or 1.0 when divided by 255)
       const alphafactor = 255.0 / (2.0 * erf(center));
-
-      // distfactor: scales physical distance to the erf input domain
       const distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX);
-
-      // Calculate scaled distance
       const physicalDist = normDist * radiusX;
-
-      // Anti-aliasing logic (Krita KisAntialiasingFadeMaker style)
-      // For brushes with significant hardness, we force linear bleed at the edge (1px)
-      // to prevent aliasing.
       const aaStart = radiusX - 1.0;
 
+      // Anti-aliasing for harder brushes: linear bleed at edge
       if (hardness > 0.5 && physicalDist > aaStart) {
-        // Inside the 1px edge processing zone
-        if (physicalDist > radiusX) {
-          // Outside nominal radius: cut off
-          return 0;
-        }
+        if (physicalDist > radiusX) return 0;
 
-        // Calculate alpha at aaStart to ensure continuity
         const distAtStart = aaStart * distfactor;
         const valAtStart = alphafactor * (erf(distAtStart + center) - erf(distAtStart - center));
         const baseAlphaAtStart = Math.max(0, Math.min(1, valAtStart / 255.0));
-
-        // Linear interpolation from baseAlphaAtStart down to 0 at radiusX
-        // dist goes from aaStart to radiusX -> t goes 0 to 1
-        const t = physicalDist - aaStart;
-        return baseAlphaAtStart * (1.0 - t);
-      } else {
-        // Normal Gaussian calculation
-        const scaledDist = physicalDist * distfactor;
-        const val = alphafactor * (erf(scaledDist + center) - erf(scaledDist - center));
-        // Use double precision equivalent in JS (number is double)
-        return Math.max(0, Math.min(1, val / 255.0));
+        return baseAlphaAtStart * (1.0 - (physicalDist - aaStart));
       }
+
+      // Normal Gaussian calculation
+      const scaledDist = physicalDist * distfactor;
+      const val = alphafactor * (erf(scaledDist + center) - erf(scaledDist - center));
+      return Math.max(0, Math.min(1, val / 255.0));
     } else {
-      // 'default': Simple Gaussian exp(-k*t²) (Original PaintBoard implementation)
-      // Soft brush: Gaussian falloff from center, extends beyond nominal edge
-      // Map hardness to control inner core vs. falloff zone
-      const innerRadius = hardness; // 0-1, where falloff begins
+      // Simple Gaussian exp(-k*t²) with inner core
+      const maxExtent = 1.5;
+      if (normDist > maxExtent) return 0;
+      if (normDist <= hardness) return 1.0;
 
-      // For soft brushes, extend processing area beyond nominal radius
-      const maxExtent = 1.5; // Process up to 1.5x nominal radius for soft brushes
-      if (normDist > maxExtent) {
-        return 0;
-      }
-
-      if (normDist <= innerRadius) {
-        // Inside hard core
-        return 1.0; // Center = 1.0
-      } else {
-        // Gaussian falloff zone
-        const t = (normDist - innerRadius) / (1 - innerRadius);
-        const gaussianK = 2.5;
-        return Math.exp(-gaussianK * t * t);
-      }
+      const t = (normDist - hardness) / (1 - hardness);
+      return Math.exp(-2.5 * t * t);
     }
   }
 

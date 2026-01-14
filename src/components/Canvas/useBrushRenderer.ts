@@ -60,11 +60,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
   }, [ensureStrokeBuffer]);
 
   /**
-   * Process a point during stroke and render dabs to stroke buffer
-   *
-   * Key principle: Opacity must be applied at DAB level when pressure-sensitive.
-   * This ensures each dab's transparency is determined by the pressure at that moment,
-   * and earlier dabs are not affected by later pressure changes.
+   * Process a point and render dabs to stroke buffer
    */
   const processPoint = useCallback(
     (x: number, y: number, pressure: number, config: BrushRenderConfig): void => {
@@ -82,16 +78,11 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
       // Get dab positions from stamper
       const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
 
-      // Stamp each dab to the stroke buffer
       for (const dab of dabs) {
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         const dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
         const dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
 
-        // Krita-style unified formula (same for ALL brush types):
-        // dabAlpha = maskShape * flow * dabOpacity
-        // Opacity is ALWAYS applied at dab level as a multiplier.
-        // This ensures consistent behavior across all brush hardness levels.
         const dabOpacity = config.pressureOpacityEnabled
           ? config.opacity * dabPressure
           : config.opacity;
@@ -104,7 +95,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
           hardness: config.hardness / 100, // Convert from 0-100 to 0-1
           maskType: config.maskType,
           color: config.color,
-          dabOpacity, // Krita-style: multiplier for entire dab (consistent for all brushes)
+          dabOpacity,
           roundness: config.roundness / 100, // Convert from 0-100 to 0-1
           angle: config.angle,
         };
@@ -116,39 +107,22 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
   );
 
   /**
-   * End stroke and composite to layer
-   * Opacity is already baked into the buffer at dab level, so we use 1.0 here.
+   * End stroke and composite to layer (opacity already baked at dab level)
    */
-  const endStroke = useCallback((layerCtx: CanvasRenderingContext2D, _opacity: number) => {
+  const endStroke = useCallback((layerCtx: CanvasRenderingContext2D) => {
     const buffer = strokeBufferRef.current;
     if (!buffer) return;
 
-    // Reset stamper state (no artificial fadeout - rely on natural pressure)
     stamperRef.current.finishStroke(0);
-
-    // Krita-style: opacity is already applied at dab level, so use 1.0 here
     buffer.endStroke(layerCtx, 1.0);
   }, []);
 
-  /**
-   * Get the stroke buffer canvas for preview rendering
-   */
   const getPreviewCanvas = useCallback(() => {
     return strokeBufferRef.current?.getCanvas() ?? null;
   }, []);
 
-  /**
-   * Get the current preview opacity.
-   * Krita-style: opacity is already baked into buffer at dab level,
-   * so preview always uses 1.0 for accurate WYSIWYG.
-   */
-  const getPreviewOpacity = useCallback(() => {
-    return 1.0;
-  }, []);
+  const getPreviewOpacity = useCallback(() => 1.0, []);
 
-  /**
-   * Check if stroke is active
-   */
   const isStrokeActive = useCallback(() => {
     return strokeBufferRef.current?.isActive() ?? false;
   }, []);
