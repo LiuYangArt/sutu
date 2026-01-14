@@ -1,0 +1,274 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>GPU vs CPU 渲染对比测试</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        padding: 20px;
+      }
+      .canvas-container {
+        display: flex;
+        gap: 20px;
+        margin-top: 20px;
+      }
+      .canvas-wrapper {
+        text-align: center;
+      }
+      canvas {
+        border: 1px solid #ccc;
+        background: white;
+      }
+      .controls {
+        background: #f5f5f5;
+        padding: 15px;
+        border-radius: 8px;
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 14px;
+      }
+      button {
+        padding: 8px 16px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      #results {
+        margin-top: 20px;
+      }
+      h3 {
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GPU vs CPU 渲染对比</h1>
+
+    <div class="controls">
+      <label>
+        Size: <span id="sizeValue">100</span>
+        <input type="range" id="size" min="10" max="500" value="100" />
+      </label>
+      <label>
+        Hardness: <span id="hardnessValue">0.5</span>
+        <input type="range" id="hardness" min="0" max="1" step="0.01" value="0.5" />
+      </label>
+      <label>
+        Flow: <span id="flowValue">1.0</span>
+        <input type="range" id="flow" min="0.1" max="1" step="0.1" value="1.0" />
+      </label>
+      <label>
+        Opacity: <span id="opacityValue">1.0</span>
+        <input type="range" id="opacity" min="0.1" max="1" step="0.1" value="1.0" />
+      </label>
+      <button id="runTest">运行测试 (Run Test)</button>
+    </div>
+
+    <div class="canvas-container">
+      <div class="canvas-wrapper">
+        <h3>CPU 渲染 (Reference)</h3>
+        <canvas id="cpuCanvas" width="500" height="500"></canvas>
+      </div>
+      <div class="canvas-wrapper">
+        <h3>GPU 渲染 (Target)</h3>
+        <canvas id="gpuCanvas" width="500" height="500"></canvas>
+      </div>
+      <div class="canvas-wrapper">
+        <h3>差异 (Diff > 2)</h3>
+        <canvas id="diffCanvas" width="500" height="500"></canvas>
+      </div>
+    </div>
+
+    <div id="results"></div>
+
+    <script type="module">
+      import { StrokeAccumulator } from '../../src/utils/strokeBuffer.ts';
+      import { GPUContext, GPUStrokeAccumulator } from '../../src/gpu/index.ts';
+
+      // UI Elements
+      const sizeInput = document.getElementById('size');
+      const hardnessInput = document.getElementById('hardness');
+      const flowInput = document.getElementById('flow');
+      const opacityInput = document.getElementById('opacity');
+      const sizeValue = document.getElementById('sizeValue');
+      const hardnessValue = document.getElementById('hardnessValue');
+      const flowValue = document.getElementById('flowValue');
+      const opacityValue = document.getElementById('opacityValue');
+      const runBtn = document.getElementById('runTest');
+      const resultsDiv = document.getElementById('results');
+
+      // Update labels
+      sizeInput.addEventListener('input', (e) => (sizeValue.textContent = e.target.value));
+      hardnessInput.addEventListener('input', (e) => (hardnessValue.textContent = e.target.value));
+      flowInput.addEventListener('input', (e) => (flowValue.textContent = e.target.value));
+      opacityInput.addEventListener('input', (e) => (opacityValue.textContent = e.target.value));
+
+      runBtn.addEventListener('click', runTest);
+
+      async function runTest() {
+        const size = parseFloat(sizeInput.value);
+        const hardness = parseFloat(hardnessInput.value);
+        const flow = parseFloat(flowInput.value);
+        const opacity = parseFloat(opacityInput.value);
+
+        const x = 250;
+        const y = 250;
+        const color = '#ff0000';
+
+        resultsDiv.innerHTML = 'Running...';
+
+        try {
+          // === CPU Reference ===
+          const cpuAccumulator = new StrokeAccumulator(500, 500);
+          cpuAccumulator.beginStroke(hardness);
+
+          // Stamp multiple dabs to trigger sync (CPU syncs every 4 dabs)
+          for (let i = 0; i < 5; i++) {
+            cpuAccumulator.stampDab({
+              x: x + i * 2,
+              y,
+              size,
+              flow,
+              hardness,
+              color,
+              dabOpacity: 1.0,
+            });
+          }
+
+          // Get the internal canvas directly (bypasses endStroke compositing)
+          const cpuCanvas = cpuAccumulator.getCanvas();
+
+          // === GPU Target ===
+          const gpuCtx = GPUContext.getInstance();
+          await gpuCtx.initialize();
+          if (!gpuCtx.device) {
+            resultsDiv.innerHTML = '<span style="color:red">WebGPU not supported</span>';
+            return;
+          }
+
+          const gpuAccumulator = new GPUStrokeAccumulator(gpuCtx.device, 500, 500);
+          gpuAccumulator.clear();
+          gpuAccumulator.beginStroke();
+
+          // Match CPU: stamp multiple dabs
+          for (let i = 0; i < 5; i++) {
+            gpuAccumulator.stampDab({
+              x: x + i * 2,
+              y,
+              size,
+              flow,
+              hardness,
+              color,
+              dabOpacity: 1.0,
+            });
+          }
+
+          // Flush GPU and get preview canvas
+          // Note: We use a dummy context for endStroke but then read getCanvas()
+          const dummyCanvas = new OffscreenCanvas(500, 500);
+          const dummyCtx = dummyCanvas.getContext('2d');
+          await gpuAccumulator.endStroke(dummyCtx, opacity);
+          const gpuCanvas = gpuAccumulator.getCanvas();
+
+          // === Display ===
+          const cpuDisplayCtx = document.getElementById('cpuCanvas').getContext('2d');
+          const gpuDisplayCtx = document.getElementById('gpuCanvas').getContext('2d');
+          const diffCtx = document.getElementById('diffCanvas').getContext('2d');
+
+          cpuDisplayCtx.clearRect(0, 0, 500, 500);
+          gpuDisplayCtx.clearRect(0, 0, 500, 500);
+          diffCtx.clearRect(0, 0, 500, 500);
+
+          // Draw the accumulator canvases directly
+          cpuDisplayCtx.drawImage(cpuCanvas, 0, 0);
+          gpuDisplayCtx.drawImage(gpuCanvas, 0, 0);
+
+          // === Compare ===
+          const diffResult = compareCanvases(cpuDisplayCtx, gpuDisplayCtx, diffCtx);
+
+          resultsDiv.innerHTML = `
+            <h3>Result</h3>
+            <div>Max Diff: ${diffResult.maxDiff}</div>
+            <div>Diff Pixels: ${diffResult.diffPixels} (${diffResult.diffPercent}%)</div>
+            <div style="color: ${diffResult.passed ? 'green' : 'red'}">
+              ${diffResult.passed ? 'PASSED (Diff <= 2)' : 'FAILED'}
+            </div>
+          `;
+        } catch (e) {
+          console.error(e);
+          resultsDiv.innerHTML = `<span style="color:red">Error: ${e.message}</span>`;
+        }
+      }
+
+      function compareCanvases(cpuCtx, gpuCtx, diffCtx) {
+        const w = 500;
+        const h = 500;
+        const cpuData = cpuCtx.getImageData(0, 0, w, h);
+        const gpuData = gpuCtx.getImageData(0, 0, w, h);
+        const diffImageData = diffCtx.createImageData(w, h);
+
+        let maxDiff = 0;
+        let diffPixels = 0;
+        const threshold = 2;
+
+        for (let i = 0; i < cpuData.data.length; i += 4) {
+          const r1 = cpuData.data[i];
+          const g1 = cpuData.data[i + 1];
+          const b1 = cpuData.data[i + 2];
+          const a1 = cpuData.data[i + 3];
+
+          const r2 = gpuData.data[i];
+          const g2 = gpuData.data[i + 1];
+          const b2 = gpuData.data[i + 2];
+          const a2 = gpuData.data[i + 3];
+
+          const rDiff = Math.abs(r1 - r2);
+          const gDiff = Math.abs(g1 - g2);
+          const bDiff = Math.abs(b1 - b2);
+          const aDiff = Math.abs(a1 - a2);
+
+          const localMax = Math.max(rDiff, gDiff, bDiff, aDiff);
+
+          if (localMax > maxDiff) {
+            maxDiff = localMax;
+          }
+
+          if (localMax > threshold) {
+            diffPixels++;
+            diffImageData.data[i] = 255;
+            diffImageData.data[i + 1] = 0;
+            diffImageData.data[i + 2] = 0;
+            diffImageData.data[i + 3] = 255;
+          } else {
+            diffImageData.data[i] = r1;
+            diffImageData.data[i + 1] = g1;
+            diffImageData.data[i + 2] = b1;
+            diffImageData.data[i + 3] = 30;
+          }
+        }
+
+        diffCtx.putImageData(diffImageData, 0, 0);
+
+        return {
+          maxDiff,
+          diffPixels,
+          diffPercent: ((diffPixels / (w * h)) * 100).toFixed(4),
+          passed: maxDiff <= threshold,
+        };
+      }
+    </script>
+  </body>
+</html>
