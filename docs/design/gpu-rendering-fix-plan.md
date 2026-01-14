@@ -68,6 +68,11 @@ GPU 当前工作方式 (错误):
    - 一次性渲染最终状态
    - 适合高重叠场景，复杂度较高
 
+> [!IMPORTANT]
+> **Debug 验证 (2026-01-14)**: 将 `BATCH_SIZE_THRESHOLD` 设为 `1` 后，GPU 渲染与 CPU 完全一致。
+> 这证明 Shader 的 Alpha Darken 逻辑**是正确的**，问题仅在于 Instancing 架构导致同批次 dab 无法正确累积。
+> 生产环境需恢复 `64` 并使用 Compute Shader 解决。
+
 ### P1: Preview/Composite 数据流不一致
 
 | 问题     | 现象               | 根因                                     |

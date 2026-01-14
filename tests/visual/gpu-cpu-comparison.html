@@ -91,6 +91,7 @@
           <select id="testMode">
             <option value="point">Single Point (5 dabs)</option>
             <option value="stroke" selected>Stroke Line (笔触)</option>
+            <option value="realtime">Realtime Simulation (模拟实时)</option>
           </select>
         </label>
         <label>
@@ -179,10 +180,12 @@
 
       function updateModeDescription() {
         const mode = els.testMode.value;
-        els.modeDescription.textContent =
-          mode === 'point'
-            ? '测试 5 个重叠 dab 的累积效果（用于验证 Alpha Darken）'
-            : '测试水平笔触绘制效果（模拟真实绘画）';
+        const descriptions = {
+          point: '测试 5 个重叠 dab 的累积效果（用于验证 Alpha Darken）',
+          stroke: '测试理想笔触绘制效果（BrushStamper + 正弦波轨迹）',
+          realtime: '模拟真实输入（随机丢点 15%、位置抖动 ±3px、压感噪声）',
+        };
+        els.modeDescription.textContent = descriptions[mode] || '';
       }
 
       // Initialize
@@ -312,32 +315,57 @@
             { x: 250, y: 150 },
             { x: 250, y: 150 },
           ];
-        } else {
-          // Use BrushStamper for realistic simulation
+        } else if (mode === 'realtime') {
+          // Simulate realistic real-time input with random drops and jitter
           const stamper = new BrushStamper();
           const dabs = [];
           stamper.beginStroke();
 
-          // Generate simulated input points (Sine wave)
-          const points = [];
+          const dropRate = 0.15; // 15% of points are dropped
+          const jitterAmount = 3; // Random position jitter in pixels
           const startX = 50;
           const endX = 450;
-          const steps = 100; // Simulate 100 input events
+          const steps = 80; // Fewer steps than stroke mode
+
+          for (let i = 0; i <= steps; i++) {
+            // Random drop simulation
+            if (Math.random() < dropRate) continue;
+
+            const t = i / steps;
+            // Add random jitter to position
+            const jitterX = (Math.random() - 0.5) * jitterAmount;
+            const jitterY = (Math.random() - 0.5) * jitterAmount;
+            const x = startX + (endX - startX) * t + jitterX;
+            const y = 150 + Math.sin(t * Math.PI * 2) * 50 + jitterY;
+            // Pressure with random noise
+            const basePressure = 0.5 + Math.sin(t * Math.PI) * 0.4;
+            const pressure = Math.max(
+              0.1,
+              Math.min(1.0, basePressure + (Math.random() - 0.5) * 0.2)
+            );
+
+            const newDabs = stamper.processPoint(x, y, pressure, size, spacingPercent);
+            dabs.push(...newDabs);
+          }
+
+          return dabs;
+        } else {
+          // Use BrushStamper for ideal simulation (Stroke Line mode)
+          const stamper = new BrushStamper();
+          const dabs = [];
+          stamper.beginStroke();
+
+          const startX = 50;
+          const endX = 450;
+          const steps = 100;
 
           for (let i = 0; i <= steps; i++) {
             const t = i / steps;
             const x = startX + (endX - startX) * t;
-            // Sine wave movement
             const y = 150 + Math.sin(t * Math.PI * 2) * 50;
-            // Pressure variation
             const pressure = 0.5 + Math.sin(t * Math.PI) * 0.5;
 
-            points.push({ x, y, pressure });
-          }
-
-          // Process points using stamper
-          for (const p of points) {
-            const newDabs = stamper.processPoint(p.x, p.y, p.pressure, size, spacingPercent);
+            const newDabs = stamper.processPoint(x, y, pressure, size, spacingPercent);
             dabs.push(...newDabs);
           }
 
