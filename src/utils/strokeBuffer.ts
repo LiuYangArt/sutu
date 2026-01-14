@@ -447,20 +447,26 @@ export class StrokeAccumulator {
         dabAlpha = flow;
       }
     } else if (maskType === 'gaussian') {
-      // Krita-style Gaussian (erf-based)
-      // Use enhanced fade calculation (up to 2.0)
-      // Avoid 0/1 singularities exactly like Krita
+      // Krita-style Gaussian (erf-based) mask
+      // Reference: libs/image/kis_gauss_circle_mask_generator.cpp
+      //
+      // NORMALIZATION: The alphafactor ensures center point (dist=0) always returns 1.0
+      // At dist=0: val = alphafactor * (erf(center) - erf(-center))
+      //                = alphafactor * 2 * erf(center)
+      //                = (255 / (2 * erf(center))) * 2 * erf(center)
+      //                = 255
+      // So rawAlpha = 255/255 = 1.0 regardless of fade/hardness value.
+      //
+      // Enhanced fade range (0-2.0) for softer edges than Krita's default (0-1.0)
       const safeFade = Math.max(1e-6, Math.min(2.0, fade));
 
-      // Krita's magic constants
       const SQRT_2 = Math.SQRT2;
-      // center computation from KisGaussCircleMaskGenerator
+      // center: controls the shape of the Gaussian curve
       const center = (2.5 * (6761.0 * safeFade - 10000.0)) / (SQRT_2 * 6761.0 * safeFade);
-      // alphafactor computation
+      // alphafactor: normalizes so that center point = 255 (or 1.0 when divided by 255)
       const alphafactor = 255.0 / (2.0 * erf(center));
 
-      // distfactor computation
-      // Note: radiusX is effectiveSrcWidth / 2
+      // distfactor: scales physical distance to the erf input domain
       const distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX);
 
       // Calculate scaled distance

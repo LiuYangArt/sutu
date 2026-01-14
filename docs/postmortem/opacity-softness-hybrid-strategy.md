@@ -2,6 +2,52 @@
 
 本文档记录了 PaintBoard 画笔引擎在实现 Softness (Hardness < 100%) 和 Opacity 时的关键技术选型与优化经验，特别是参考 Krita 源码的实现细节与 Hybrid Opacity 策略的由来。
 
+## 0. 2026-01 更新：透明度压感一致性修复
+
+### 问题
+不同 hardness 下透明度压感不一致。调整 hardness 时，同样的压力产生不同的视觉透明度。
+
+### 根因分析
+在 Hybrid Strategy 的软笔刷模式中，压感被双重应用：
+
+```typescript
+// 旧代码 (useBrushRenderer.ts)
+const dabFlow = config.flow * dabPressure;  // 压感第一次应用
+const opacityScale = config.pressureOpacityEnabled ? dabPressure : 1.0;
+finalFlow = dabFlow * opacityScale;  // 压感第二次应用！
+// 结果: finalFlow = flow * pressure² (二次曲线)
+```
+
+而硬笔刷模式是线性的 (`ceiling = opacity * pressure`)，导致两种模式的压感响应曲线不一致。
+
+### Krita 研究发现
+通过分析 Krita 源码 (`libs/image/kis_gauss_circle_mask_generator.cpp`)：
+
+1. **Mask 归一化正确**：`alphafactor = 255.0 / (2.0 * erf(center))` 确保中心点始终为 255
+2. **Opacity/Flow 解耦**：在合成阶段独立应用，不在 mask 计算时乘入
+3. **关键文件**：`kis_painter_blt_multi_fixed.cpp:60-61`
+
+### 修复方案
+修改 `useBrushRenderer.ts`，避免压感双重应用：
+
+```typescript
+// 新代码
+if (config.pressureOpacityEnabled && !config.pressureFlowEnabled) {
+  // 只有 opacity 压感启用时，才应用到 flow
+  finalFlow = dabFlow * dabPressure;
+} else {
+  // flow 压感已应用，或无压感
+  finalFlow = dabFlow;
+}
+```
+
+### 验证
+- 类型检查 ✓
+- Lint ✓
+- 测试 ✓
+
+---
+
 ## 1. Gaussian (Error Function) Mask
 
 为了获得与 Photoshop/Krita 一致的柔和笔刷效果，我们引入了基于误差函数 (`erf`) 的高斯遮罩算法。

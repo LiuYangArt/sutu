@@ -99,14 +99,22 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
 
         if (isHardBrush) {
           // Hard Mode: Clamp (Old behavior)
-          // Opacity pressure affects the ceiling
+          // Opacity pressure affects the ceiling, limits max accumulation
           ceiling = config.pressureOpacityEnabled ? config.opacity * dabPressure : config.opacity;
-          finalFlow = dabFlow; // Flow stays as flow
+          finalFlow = dabFlow;
         } else {
           // Soft Mode: Post-Multiply (New behavior)
-          // Opacity pressure modulates flow
-          const opacityScale = config.pressureOpacityEnabled ? dabPressure : 1.0;
-          finalFlow = dabFlow * opacityScale;
+          // Opacity is applied at endStroke, not here.
+          // To match hard brush pressure response, apply opacity pressure to flow
+          // but avoid double-applying pressure (dabFlow already has flow pressure).
+          // Only apply opacity pressure if it's enabled and flow pressure is NOT enabled.
+          if (config.pressureOpacityEnabled && !config.pressureFlowEnabled) {
+            // Opacity pressure only: modulate flow by pressure
+            finalFlow = dabFlow * dabPressure;
+          } else {
+            // Flow pressure already applied in dabFlow, or no pressure enabled
+            finalFlow = dabFlow;
+          }
           ceiling = undefined;
         }
 
