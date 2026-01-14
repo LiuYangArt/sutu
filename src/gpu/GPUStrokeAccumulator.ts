@@ -13,7 +13,12 @@
 
 import type { Rect } from '@/utils/strokeBuffer';
 import type { GPUDabParams, DabInstanceData } from './types';
-import { BATCH_SIZE_THRESHOLD, BATCH_TIME_THRESHOLD_MS, DAB_INSTANCE_SIZE } from './types';
+import {
+  BATCH_SIZE_THRESHOLD,
+  BATCH_TIME_THRESHOLD_MS,
+  DAB_INSTANCE_SIZE,
+  calculateEffectiveRadius,
+} from './types';
 import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
 import { BrushPipeline } from './pipeline/BrushPipeline';
@@ -183,7 +188,7 @@ export class GPUStrokeAccumulator {
     };
 
     this.instanceBuffer.push(dabData);
-    this.expandDirtyRect(params.x, params.y, radius);
+    this.expandDirtyRect(params.x, params.y, radius, params.hardness);
     this.dabsSinceLastFlush++;
 
     // Check if batch should be flushed
@@ -198,26 +203,21 @@ export class GPUStrokeAccumulator {
     }
   }
 
-  private expandDirtyRect(x: number, y: number, radius: number): void {
-    const margin = 2; // AA margin
-    this.dirtyRect.left = Math.min(this.dirtyRect.left, Math.floor(x - radius - margin));
-    this.dirtyRect.top = Math.min(this.dirtyRect.top, Math.floor(y - radius - margin));
-    this.dirtyRect.right = Math.max(this.dirtyRect.right, Math.ceil(x + radius + margin));
-    this.dirtyRect.bottom = Math.max(this.dirtyRect.bottom, Math.ceil(y + radius + margin));
+  private expandDirtyRect(x: number, y: number, radius: number, hardness: number): void {
+    const effectiveRadius = calculateEffectiveRadius(radius, hardness);
+    const margin = 2;
+    this.dirtyRect.left = Math.min(this.dirtyRect.left, Math.floor(x - effectiveRadius - margin));
+    this.dirtyRect.top = Math.min(this.dirtyRect.top, Math.floor(y - effectiveRadius - margin));
+    this.dirtyRect.right = Math.max(this.dirtyRect.right, Math.ceil(x + effectiveRadius + margin));
+    this.dirtyRect.bottom = Math.max(
+      this.dirtyRect.bottom,
+      Math.ceil(y + effectiveRadius + margin)
+    );
   }
 
   /**
-   * Flush pending dabs to GPU using per-dab loop with optimized partial copies
-   *
+   * Flush pending dabs to GPU using per-dab loop with optimized partial copies.
    * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
-   * Uses partial texture copies (dirty rects) to minimize memory bandwidth.
-   */
-  /**
-   * Flush pending dabs to GPU using per-dab loop with optimized partial copies
-   *
-   * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
-   * Uses partial texture copies (dirty rects) to minimize memory bandwidth.
-   * Uses a single instance buffer with offsets to minimize buffer creation overhead.
    */
   private flushBatch(): void {
     if (this.instanceBuffer.count === 0) return;
@@ -334,7 +334,7 @@ export class GPUStrokeAccumulator {
    */
   private computeDabBounds(dab: DabInstanceData): { x: number; y: number; w: number; h: number } {
     const margin = 2;
-    const dabRadius = dab.size + margin;
+    const dabRadius = calculateEffectiveRadius(dab.size, dab.hardness) + margin;
     return {
       x: Math.floor(dab.x - dabRadius),
       y: Math.floor(dab.y - dabRadius),

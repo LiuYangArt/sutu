@@ -30,12 +30,13 @@ struct Uniforms {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) local_uv: vec2<f32>,      // -1 to 1 within quad
+    @location(0) local_uv: vec2<f32>,      // UV within quad (range depends on extent)
     @location(1) color: vec3<f32>,          // RGB color
     @location(2) hardness: f32,
     @location(3) dab_opacity: f32,          // Alpha ceiling for Alpha Darken
     @location(4) flow: f32,                 // Per-dab flow multiplier
     @location(5) dab_size: f32,             // Dab radius in pixels (for AA calculation)
+    @location(6) extent_multiplier: f32,    // Quad expansion factor for soft brushes
 };
 
 // Instance data from vertex buffer (matches InstanceBuffer layout, 36 bytes)
@@ -64,20 +65,29 @@ fn vs_main(
         vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0)
     );
 
+    // Calculate extent multiplier based on hardness (matches CPU maskCache.ts)
+    // For soft brushes, the Gaussian falloff extends beyond dab_size
+    // fade = (1 - hardness) * 2, extentMultiplier = 1 + fade
+    let fade = (1.0 - instance.hardness) * 2.0;
+    let extent_multiplier = select(1.0, 1.0 + fade, instance.hardness < 0.99);
+    let effective_radius = instance.dab_size * extent_multiplier;
+
     let local_pos = quad_positions[vertex_idx];
-    let world_pos = instance.dab_pos + local_pos * instance.dab_size;
+    let world_pos = instance.dab_pos + local_pos * effective_radius;
 
     // Convert to clip space (-1 to 1), flip Y for screen coordinates
     let clip_pos = (world_pos / uniforms.canvas_size) * 2.0 - 1.0;
 
     var out: VertexOutput;
     out.position = vec4<f32>(clip_pos.x, -clip_pos.y, 0.0, 1.0);
+    // local_pos is [-1, 1] within expanded quad; will be scaled by extent_multiplier in fragment shader
     out.local_uv = local_pos;
     out.color = instance.color;
     out.hardness = instance.hardness;
     out.dab_opacity = instance.dab_opacity;
     out.flow = instance.flow;
     out.dab_size = instance.dab_size;
+    out.extent_multiplier = extent_multiplier;
     return out;
 }
 
@@ -113,10 +123,13 @@ fn erf_approx(x: f32) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let dist = length(in.local_uv);
+    // local_uv is [-1, 1] within the expanded quad
+    // Multiply by extent_multiplier to get distance relative to original dab boundary
+    // dist = 1.0 corresponds to the original dab edge (not expanded edge)
+    let dist = length(in.local_uv) * in.extent_multiplier;
 
-    // Discard pixels outside the circle
-    if (dist > 1.0) {
+    // Discard pixels outside the expanded extent
+    if (dist > in.extent_multiplier) {
         discard;
     }
 

@@ -114,3 +114,13 @@ export const INITIAL_INSTANCE_CAPACITY = 1024;
  */
 export const BATCH_SIZE_THRESHOLD = 64; // Dabs per encoder submit (per-dab loop inside)
 export const BATCH_TIME_THRESHOLD_MS = 4; // Flush after N ms
+
+/**
+ * Calculate effective radius for soft brush quad expansion.
+ * Must match brush.wgsl vertex shader logic.
+ */
+export function calculateEffectiveRadius(radius: number, hardness: number): number {
+  if (hardness >= 0.99) return radius;
+  const fade = (1.0 - hardness) * 2.0;
+  return radius * (1.0 + fade);
+}

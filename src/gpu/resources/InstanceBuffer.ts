@@ -19,6 +19,7 @@ import {
   DAB_INSTANCE_SIZE,
   DAB_FLOATS_PER_INSTANCE,
   INITIAL_INSTANCE_CAPACITY,
+  calculateEffectiveRadius,
   type DabInstanceData,
   type BoundingBox,
 } from '../types';
@@ -68,11 +69,11 @@ export class InstanceBuffer {
     this.cpuData[offset + 7] = dab.dabOpacity;
     this.cpuData[offset + 8] = dab.flow;
 
-    // Update bounding box
-    this.minX = Math.min(this.minX, dab.x - dab.size);
-    this.minY = Math.min(this.minY, dab.y - dab.size);
-    this.maxX = Math.max(this.maxX, dab.x + dab.size);
-    this.maxY = Math.max(this.maxY, dab.y + dab.size);
+    const effectiveRadius = calculateEffectiveRadius(dab.size, dab.hardness);
+    this.minX = Math.min(this.minX, dab.x - effectiveRadius);
+    this.minY = Math.min(this.minY, dab.y - effectiveRadius);
+    this.maxX = Math.max(this.maxX, dab.x + effectiveRadius);
+    this.maxY = Math.max(this.maxY, dab.y + effectiveRadius);
 
     this.pendingCount++;
   }
