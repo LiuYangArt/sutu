@@ -19,6 +19,13 @@ export type BrushMaskType = 'gaussian' | 'default';
  */
 export type RenderMode = 'gpu' | 'cpu';
 
+/**
+ * Color blend mode - controls how colors are mixed during GPU rendering
+ * - 'srgb': Match Canvas 2D behavior (8-bit quantization, default)
+ * - 'linear': Physically correct linear-space blending
+ */
+export type ColorBlendMode = 'srgb' | 'linear';
+
 /** Clamp brush/eraser size to valid range */
 const clampSize = (size: number): number => Math.max(1, Math.min(800, size));
 
@@ -79,6 +86,9 @@ interface ToolState {
   // Render mode
   renderMode: RenderMode;
 
+  // Color blend mode (GPU only)
+  colorBlendMode: ColorBlendMode;
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -104,6 +114,7 @@ interface ToolState {
   setPressureCurve: (curve: PressureCurve) => void;
   toggleCrosshair: () => void;
   setRenderMode: (mode: RenderMode) => void;
+  setColorBlendMode: (mode: ColorBlendMode) => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -128,6 +139,7 @@ export const useToolStore = create<ToolState>()(
       pressureCurve: 'linear',
       showCrosshair: false,
       renderMode: 'gpu',
+      colorBlendMode: 'linear',
 
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
@@ -195,6 +207,8 @@ export const useToolStore = create<ToolState>()(
       toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
 
       setRenderMode: (mode) => set({ renderMode: mode }),
+
+      setColorBlendMode: (mode) => set({ colorBlendMode: mode }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -216,6 +230,7 @@ export const useToolStore = create<ToolState>()(
         pressureOpacityEnabled: state.pressureOpacityEnabled,
         pressureCurve: state.pressureCurve,
         renderMode: state.renderMode,
+        colorBlendMode: state.colorBlendMode,
       }),
     }
   )

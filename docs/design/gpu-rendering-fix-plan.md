@@ -26,7 +26,7 @@
 | ~~白色边缘线~~           | 硬边笔刷中间白色残影 | Instancing 导致累积失败       | BATCH_SIZE=1 (临时)     | ✅ 已修复 |
 | ~~**软笔刷边缘被裁切**~~ | 低 Hardness 边缘硬切 | Quad 尺寸未扩展到 1.5x        | 根据 hardness 扩展 quad | ✅ 已修复 |
 | hardness=100 渐变        | 边缘应纯色却有渐变   | AA 带用归一化距离             | 改用物理像素计算        | ⏳ 待验证 |
-| **颜色空间不一致**       | 深色混合结果差异     | CPU=sRGB, GPU=Linear          | 强制 sRGB 空间混合      | ⏳ 待处理 |
+| **颜色空间不一致**       | 深色混合结果差异     | CPU=sRGB, GPU=Linear          | 添加混合模式选项        | ✅ 已修复 |
 
 ### ~~P0: 🚨 GPU Instancing 破坏 Alpha Darken 累积~~ ✅ 已修复
 

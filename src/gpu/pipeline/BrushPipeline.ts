@@ -19,6 +19,7 @@ export class BrushPipeline {
   // Cached canvas size to avoid redundant updates
   private cachedWidth: number = 0;
   private cachedHeight: number = 0;
+  private cachedColorBlendMode: number = 0; // 0 = sRGB, 1 = linear
 
   constructor(device: GPUDevice) {
     this.device = device;
@@ -142,6 +143,23 @@ export class BrushPipeline {
 
     this.cachedWidth = width;
     this.cachedHeight = height;
+  }
+
+  /**
+   * Update color blend mode uniform
+   * @param mode - 'srgb' (0) or 'linear' (1)
+   */
+  updateColorBlendMode(mode: 'srgb' | 'linear'): void {
+    const modeValue = mode === 'linear' ? 1.0 : 0.0;
+    if (modeValue === this.cachedColorBlendMode) {
+      return;
+    }
+
+    // Write to offset 8 (third float in the uniform buffer)
+    const data = new Float32Array([modeValue]);
+    this.device.queue.writeBuffer(this.uniformBuffer, 8, data);
+
+    this.cachedColorBlendMode = modeValue;
   }
 
   /**

@@ -23,6 +23,7 @@ import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
 import { BrushPipeline } from './pipeline/BrushPipeline';
 import { GPUProfiler, CPUTimer } from './profiler';
+import { useToolStore, type ColorBlendMode } from '@/stores/tool';
 
 export class GPUStrokeAccumulator {
   private device: GPUDevice;
@@ -52,6 +53,9 @@ export class GPUStrokeAccumulator {
   private previewReadbackBuffer: GPUBuffer | null = null;
   private previewUpdatePending: boolean = false;
   private previewNeedsUpdate: boolean = false; // Flag to ensure final update
+
+  // Cached color blend mode to avoid redundant updates
+  private cachedColorBlendMode: ColorBlendMode = 'linear';
 
   // Performance timing
   private cpuTimer: CPUTimer = new CPUTimer();
@@ -140,6 +144,20 @@ export class GPUStrokeAccumulator {
 
     // Clear GPU buffers
     this.pingPongBuffer.clear(this.device);
+
+    // Sync color blend mode from store
+    this.syncColorBlendMode();
+  }
+
+  /**
+   * Sync color blend mode from store to shader uniform
+   */
+  private syncColorBlendMode(): void {
+    const mode = useToolStore.getState().colorBlendMode;
+    if (mode !== this.cachedColorBlendMode) {
+      this.brushPipeline.updateColorBlendMode(mode);
+      this.cachedColorBlendMode = mode;
+    }
   }
 
   /**

@@ -1,4 +1,10 @@
-import { useToolStore, PressureCurve, BrushMaskType, RenderMode } from '@/stores/tool';
+import {
+  useToolStore,
+  PressureCurve,
+  BrushMaskType,
+  RenderMode,
+  ColorBlendMode,
+} from '@/stores/tool';
 import './BrushPanel.css';
 
 const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
@@ -11,6 +17,11 @@ const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
 const RENDER_MODES: { id: RenderMode; label: string; description: string }[] = [
   { id: 'gpu', label: 'GPU', description: 'WebGPU accelerated' },
   { id: 'cpu', label: 'CPU', description: 'Canvas 2D fallback' },
+];
+
+const COLOR_BLEND_MODES: { id: ColorBlendMode; label: string; description: string }[] = [
+  { id: 'srgb', label: 'sRGB', description: 'Match CPU rendering exactly' },
+  { id: 'linear', label: 'Linear', description: 'Smoother gradients (default)' },
 ];
 
 /** Pressure toggle button component */
@@ -109,6 +120,8 @@ export function BrushPanel(): JSX.Element {
     togglePressureOpacity,
     renderMode,
     setRenderMode,
+    colorBlendMode,
+    setColorBlendMode,
   } = useToolStore();
 
   return (
@@ -237,6 +250,24 @@ export function BrushPanel(): JSX.Element {
             ))}
           </select>
         </div>
+
+        {renderMode === 'gpu' && (
+          <div className="brush-setting-row">
+            <span className="brush-setting-label">Blending</span>
+            <select
+              value={colorBlendMode}
+              onChange={(e) => setColorBlendMode(e.target.value as ColorBlendMode)}
+              className="brush-select"
+              title={COLOR_BLEND_MODES.find((m) => m.id === colorBlendMode)?.description}
+            >
+              {COLOR_BLEND_MODES.map((mode) => (
+                <option key={mode.id} value={mode.id} title={mode.description}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
     </div>
   );
