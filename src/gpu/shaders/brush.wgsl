@@ -18,11 +18,13 @@
 
 struct Uniforms {
     canvas_size: vec2<f32>,
-    _padding: vec2<f32>,
+    color_blend_mode: f32,  // 0.0 = sRGB (8-bit quantize), 1.0 = linear
+    _padding: f32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var stroke_source: texture_2d<f32>;  // Previous frame (read-only)
+@group(0) @binding(3) var<storage, read> gaussian_table: array<f32>;  // Gaussian error function LUT
 
 // ============================================================================
 // Vertex Shader Types
@@ -95,26 +97,57 @@ fn vs_main(
 // Error Function Approximation (for Gaussian soft edge)
 // ============================================================================
 
-// Abramowitz and Stegun approximation (matches maskCache.ts erfFast)
+// Lookup table based approximation (matches CPU erfFast)
 fn erf_approx(x: f32) -> f32 {
     let sign_x = sign(x);
     let ax = abs(x);
 
-    if (ax >= 4.0) {
+    let MAX_VAL = 4.0;
+    let LUT_SIZE = 1024.0;
+    let SCALE = 256.0; // LUT_SIZE / MAX_VAL
+
+    if (ax >= MAX_VAL) {
         return sign_x;
     }
 
-    let p = 0.3275911;
-    let a1 = 0.254829592;
-    let a2 = -0.284496736;
-    let a3 = 1.421413741;
-    let a4 = -1.453152027;
-    let a5 = 1.061405429;
+    let idx = ax * SCALE;
+    let i = u32(idx);
+    let frac = fract(idx);
 
-    let t = 1.0 / (1.0 + p * ax);
-    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * exp(-ax * ax);
+    // Linear interpolation
+    let y0 = gaussian_table[i];
+    let y1 = gaussian_table[i + 1u];
+    let y = mix(y0, y1, frac);
 
     return sign_x * y;
+}
+
+// ============================================================================
+// Color Space Conversion Functions
+// ============================================================================
+
+// Quantize to 8-bit precision (matches Canvas 2D behavior)
+fn quantize_to_8bit(val: f32) -> f32 {
+    return floor(val * 255.0 + 0.5) / 255.0;
+}
+
+// NOTE: srgb_to_linear/linear_to_srgb are reserved for future true linear blending.
+// Currently "linear" mode just skips 8-bit quantization for smoother gradients.
+
+// sRGB to Linear conversion (for physically correct blending)
+fn srgb_to_linear(c: f32) -> f32 {
+    if (c <= 0.04045) {
+        return c / 12.92;
+    }
+    return pow((c + 0.055) / 1.055, 2.4);
+}
+
+// Linear to sRGB conversion
+fn linear_to_srgb(c: f32) -> f32 {
+    if (c <= 0.0031308) {
+        return c * 12.92;
+    }
+    return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
 }
 
 // ============================================================================
@@ -231,6 +264,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // No existing color: use source directly
         out_rgb = in.color;
     }
+
+    // ========================================================================
+    // Color Space Post-Processing
+    // Based on color_blend_mode uniform:
+    // - 0.0 (sRGB): Quantize to 8-bit to match Canvas 2D behavior
+    // - 1.0 (Linear): Values already in sRGB, no further processing needed
+    //   (Note: For truly linear blending, we would need to convert input colors
+    //    to linear space before blending and convert back here. The current
+    //    implementation just skips quantization for smoother gradients.)
+    // ========================================================================
+    if (uniforms.color_blend_mode < 0.5) {
+        // sRGB mode: quantize to 8-bit to match Canvas 2D exactly
+        out_rgb = vec3(
+            quantize_to_8bit(out_rgb.r),
+            quantize_to_8bit(out_rgb.g),
+            quantize_to_8bit(out_rgb.b)
+        );
+        out_a = quantize_to_8bit(out_a);
+    }
+    // Linear mode: no quantization, keep full float precision for smoother gradients
+
+
+
+
 
     return vec4<f32>(out_rgb, out_a);
 }

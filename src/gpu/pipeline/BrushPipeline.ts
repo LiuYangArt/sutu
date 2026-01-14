@@ -6,6 +6,7 @@
  */
 
 import { DAB_INSTANCE_SIZE } from '../types';
+import { erfLUT } from '@/utils/maskCache';
 
 // Import shader source (Vite handles ?raw imports)
 import brushShaderCode from '../shaders/brush.wgsl?raw';
@@ -14,11 +15,13 @@ export class BrushPipeline {
   private device: GPUDevice;
   private pipeline: GPURenderPipeline;
   private uniformBuffer: GPUBuffer;
+  private gaussianBuffer: GPUBuffer;
   private bindGroupLayout: GPUBindGroupLayout;
 
   // Cached canvas size to avoid redundant updates
   private cachedWidth: number = 0;
   private cachedHeight: number = 0;
+  private cachedColorBlendMode: number = 0; // 0 = sRGB, 1 = linear
 
   constructor(device: GPUDevice) {
     this.device = device;
@@ -30,11 +33,19 @@ export class BrushPipeline {
     });
 
     // Uniform buffer for canvas size (16 bytes: vec2 + padding)
-    this.uniformBuffer = device.createBuffer({
-      label: 'Brush Uniforms',
-      size: 16,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    this.uniformBuffer = this.createBuffer(
+      'Brush Uniforms',
+      16,
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    );
+
+    // Gaussian lookup table storage buffer
+    this.gaussianBuffer = this.createBuffer(
+      'Gaussian LUT',
+      erfLUT.byteLength,
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      erfLUT
+    );
 
     // Bind group layout
     this.bindGroupLayout = device.createBindGroupLayout({
@@ -49,6 +60,11 @@ export class BrushPipeline {
           binding: 1,
           visibility: GPUShaderStage.FRAGMENT,
           texture: { sampleType: 'unfilterable-float' }, // rgba32float requires unfilterable-float
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'read-only-storage' },
         },
       ],
     });
@@ -130,6 +146,24 @@ export class BrushPipeline {
   }
 
   /**
+   * Helper to create and optionally initialize a GPU buffer
+   */
+  private createBuffer(
+    label: string,
+    size: number,
+    usage: number,
+    data?: BufferSource | Float32Array
+  ): GPUBuffer {
+    const buffer = this.device.createBuffer({ label, size, usage });
+    if (data) {
+      // Cast needed because WebGPU expects BufferSource (which includes ArrayBufferView),
+      // but strict types sometimes mismatch with standard Float32Array
+      this.device.queue.writeBuffer(buffer, 0, data as unknown as BufferSource);
+    }
+    return buffer;
+  }
+
+  /**
    * Update canvas size uniform
    */
   updateCanvasSize(width: number, height: number): void {
@@ -142,6 +176,23 @@ export class BrushPipeline {
 
     this.cachedWidth = width;
     this.cachedHeight = height;
+  }
+
+  /**
+   * Update color blend mode uniform
+   * @param mode - 'srgb' (0) or 'linear' (1)
+   */
+  updateColorBlendMode(mode: 'srgb' | 'linear'): void {
+    const modeValue = mode === 'linear' ? 1.0 : 0.0;
+    if (modeValue === this.cachedColorBlendMode) {
+      return;
+    }
+
+    // Write to offset 8 (third float in the uniform buffer)
+    const data = new Float32Array([modeValue]);
+    this.device.queue.writeBuffer(this.uniformBuffer, 8, data);
+
+    this.cachedColorBlendMode = modeValue;
   }
 
   /**
@@ -161,6 +212,10 @@ export class BrushPipeline {
           binding: 1,
           resource: sourceTexture.createView(),
         },
+        {
+          binding: 3,
+          resource: { buffer: this.gaussianBuffer },
+        },
       ],
     });
   }
@@ -177,5 +232,6 @@ export class BrushPipeline {
    */
   destroy(): void {
     this.uniformBuffer.destroy();
+    this.gaussianBuffer.destroy();
   }
 }

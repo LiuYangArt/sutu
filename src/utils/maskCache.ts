@@ -26,10 +26,10 @@ export interface MaskCacheParams {
 // erf Lookup Table (copied from strokeBuffer.ts for independence)
 // ============================================================================
 
-const ERF_LUT_SIZE = 1024;
-const ERF_LUT_MAX = 4.0;
+export const ERF_LUT_SIZE = 1024;
+export const ERF_LUT_MAX = 4.0;
 const ERF_LUT_SCALE = ERF_LUT_SIZE / ERF_LUT_MAX;
-const erfLUT: Float32Array = new Float32Array(ERF_LUT_SIZE + 1);
+export const erfLUT: Float32Array = new Float32Array(ERF_LUT_SIZE + 1);
 
 // Initialize LUT at module load time
 (function initErfLUT() {

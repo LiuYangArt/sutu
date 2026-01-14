@@ -11,8 +11,8 @@
 | 目标                           | 状态      | 说明                        |
 | ------------------------------ | --------- | --------------------------- |
 | 大笔刷性能提升                 | ✅ 已达成 | 500px+ 笔刷性能明显优于 CPU |
-| 视觉效果与 CPU 一致            | ❌ 未达成 | 算法差异导致视觉缺陷        |
-| WYSIWYG（Preview = Composite） | ❌ 未达成 | 抬笔时有闪烁                |
+| 视觉效果与 CPU 一致            | ✅ 已达成 | Shader 算法已对齐           |
+| WYSIWYG（Preview = Composite） | ✅ 已达成 | 预览与结果一致              |
 
 ---
 
@@ -25,8 +25,15 @@
 | ~~Gaussian 曲线错误~~    | 软笔刷边缘过渡不柔和 | `distfactor` 缺少 `/dab_size` | 修正公式                | ✅ 已修复 |
 | ~~白色边缘线~~           | 硬边笔刷中间白色残影 | Instancing 导致累积失败       | BATCH_SIZE=1 (临时)     | ✅ 已修复 |
 | ~~**软笔刷边缘被裁切**~~ | 低 Hardness 边缘硬切 | Quad 尺寸未扩展到 1.5x        | 根据 hardness 扩展 quad | ✅ 已修复 |
-| hardness=100 渐变        | 边缘应纯色却有渐变   | AA 带用归一化距离             | 改用物理像素计算        | ⏳ 待验证 |
-| **颜色空间不一致**       | 深色混合结果差异     | CPU=sRGB, GPU=Linear          | 强制 sRGB 空间混合      | ⏳ 待处理 |
+| hardness=100 渐变        | 边缘应纯色却有渐变   | AA 带用归一化距离             | 改用物理像素计算        | ✅ 已修复 |
+| **颜色空间不一致**       | 深色混合结果差异     | CPU=sRGB, GPU=Linear          | 添加混合模式选项        | ✅ 已修复 |
+
+### P1: 算法实现细节对齐
+
+| 问题                    | 现象                     | 修复方案                          | 状态      |
+| ----------------------- | ------------------------ | --------------------------------- | --------- |
+| **Gaussian 曲线精度**   | 软笔刷边缘仍有细微差异   | 使用 Storage Buffer 查表          | ✅ 已修复 |
+| **Premultiplied Alpha** | 低 Opacity 边缘发灰/变色 | 移除 Alpha Guard (Straight Alpha) | ✅ 已修复 |
 
 ### ~~P0: 🚨 GPU Instancing 破坏 Alpha Darken 累积~~ ✅ 已修复
 
@@ -136,7 +143,7 @@ GPU 当前工作方式 (错误):
 
 ---
 
-### Phase 1: 修复 Shader 算法
+### Phase 1: 修复 Shader 算法 (✅ 已完成)
 
 #### 1.1 颜色空间对齐（极其关键！）
 
@@ -171,7 +178,7 @@ canvas.getContext('webgpu', { colorSpace: 'srgb' });
 
 > 此修复解决了软笔刷边缘过渡不均匀的问题，使 GPU 渲染与 CPU 一致。
 
-#### 1.3 使用 Storage Buffer 查表（替代数学近似）
+#### 1.3 使用 Storage Buffer 查表 (✅ 已完成)
 
 > [!TIP]
 > 不用纹理采样（有线性插值误差），用 Storage Buffer 完全复制 CPU 查表逻辑。
@@ -193,7 +200,10 @@ fn get_gaussian(dist: f32) -> f32 {
 > - CPU `Math.floor(val * 1023)` → GPU `u32(val * 1023.0)`
 > - CPU `Math.round(val * 1023)` → GPU `u32(val * 1023.0 + 0.5)`
 
-#### 1.4 预乘 Alpha 守卫代码
+#### 1.4 预乘 Alpha 守卫代码 (❌ 已废弃)
+
+> [!NOTE]
+> 经验证，Shader 使用 Straight Alpha 逻辑与 CPU 保持一致。添加 `min(rgb, a)` 守卫会导致低 Opacity 时颜色变暗/发灰，因此**不应添加**此守卫。
 
 > [!WARNING]
 > 永远不要输出 `rgb > a` 的非法预乘值。
