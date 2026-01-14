@@ -109,6 +109,7 @@ pnpm format           # 格式化代码
 - **开发路线图**: [development-roadmap.md](file:///f:/CodeProjects/PaintBoard/docs/todo/development-roadmap.md)
 - **项目灵感**: [project_idea.md](file:///f:/CodeProjects/PaintBoard/docs/project_idea.md)
 - **DEBUG经验**: @docs/postmortem/
+- **kirta源码**: F:\CodeProjects\krita\
 
 ## 开发阶段
 

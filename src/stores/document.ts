@@ -67,8 +67,8 @@ const generateId = () => `layer_${Date.now()}_${Math.random().toString(36).slice
 
 // Initial state
 const initialState = {
-  width: 1920,
-  height: 1080,
+  width: 4000,
+  height: 3000,
   dpi: 72,
   layers: [] as Layer[],
   activeLayerId: null as string | null,
