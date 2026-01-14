@@ -3,11 +3,22 @@
  *
  * This hook manages the stroke buffer and dab stamping to achieve
  * Photoshop-like brush behavior with proper Flow/Opacity separation.
+ *
+ * Supports two backends:
+ * - WebGPU (GPU acceleration for large brushes)
+ * - Canvas 2D (fallback for unsupported environments)
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
 import { applyPressureCurve, PressureCurve } from '@/stores/tool';
+import {
+  GPUContext,
+  GPUStrokeAccumulator,
+  shouldUseGPU,
+  reportGPUFallback,
+  type RenderBackend,
+} from '@/gpu';
 
 export interface BrushRenderConfig {
   size: number;
@@ -30,52 +41,112 @@ export interface UseBrushRendererProps {
   height: number;
 }
 
-// Pressure fade-in is now handled in Rust backend (PressureSmoother)
-// Frontend no longer needs its own fade-in logic
+export interface UseBrushRendererResult {
+  beginStroke: (hardness?: number) => void;
+  processPoint: (x: number, y: number, pressure: number, config: BrushRenderConfig) => void;
+  endStroke: (layerCtx: CanvasRenderingContext2D) => void;
+  getPreviewCanvas: () => HTMLCanvasElement | null;
+  getPreviewOpacity: () => number;
+  isStrokeActive: () => boolean;
+  backend: RenderBackend;
+}
 
-export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
-  const strokeBufferRef = useRef<StrokeAccumulator | null>(null);
+export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseBrushRendererResult {
+  const [backend, setBackend] = useState<RenderBackend>('canvas2d');
+  const [gpuInitialized, setGpuInitialized] = useState(false);
+
+  // CPU backend (Canvas 2D)
+  const cpuBufferRef = useRef<StrokeAccumulator | null>(null);
+
+  // GPU backend (WebGPU)
+  const gpuBufferRef = useRef<GPUStrokeAccumulator | null>(null);
+
+  // Shared stamper (generates dab positions)
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
 
-  // Initialize or resize stroke buffer
-  const ensureStrokeBuffer = useCallback(() => {
-    if (!strokeBufferRef.current) {
-      strokeBufferRef.current = new StrokeAccumulator(width, height);
+  // Track if endStroke is async (GPU path)
+  const pendingEndStrokeRef = useRef<Promise<void> | null>(null);
+
+  // Initialize WebGPU backend
+  useEffect(() => {
+    if (!shouldUseGPU()) {
+      reportGPUFallback('WebGPU not available or disabled');
+      return;
+    }
+
+    const initGPU = async () => {
+      try {
+        const ctx = GPUContext.getInstance();
+        const supported = await ctx.initialize();
+
+        if (supported && ctx.device) {
+          gpuBufferRef.current = new GPUStrokeAccumulator(ctx.device, width, height);
+          setBackend('gpu');
+          setGpuInitialized(true);
+          console.log('[useBrushRenderer] WebGPU backend initialized');
+        } else {
+          reportGPUFallback('WebGPU initialization failed');
+        }
+      } catch (error) {
+        console.error('[useBrushRenderer] GPU init error:', error);
+        reportGPUFallback('WebGPU initialization threw error');
+      }
+    };
+
+    void initGPU();
+
+    return () => {
+      gpuBufferRef.current?.destroy();
+      gpuBufferRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally run once; resize handled in separate effect
+  }, []);
+
+  // Handle resize for GPU buffer
+  useEffect(() => {
+    if (gpuInitialized && gpuBufferRef.current) {
+      gpuBufferRef.current.resize(width, height);
+    }
+  }, [width, height, gpuInitialized]);
+
+  // Ensure CPU buffer exists (for fallback or canvas2d mode)
+  const ensureCPUBuffer = useCallback(() => {
+    if (!cpuBufferRef.current) {
+      cpuBufferRef.current = new StrokeAccumulator(width, height);
     } else {
-      const dims = strokeBufferRef.current.getDimensions();
+      const dims = cpuBufferRef.current.getDimensions();
       if (dims.width !== width || dims.height !== height) {
-        strokeBufferRef.current.resize(width, height);
+        cpuBufferRef.current.resize(width, height);
       }
     }
-    return strokeBufferRef.current;
+    return cpuBufferRef.current;
   }, [width, height]);
 
   /**
    * Begin a new brush stroke
-   * @param hardness - Brush hardness (0-100), determines if Rust SIMD path is used
    */
   const beginStroke = useCallback(
     (hardness: number = 100) => {
-      const buffer = ensureStrokeBuffer();
-      buffer.beginStroke(hardness / 100); // Convert 0-100 to 0-1
       stamperRef.current.beginStroke();
+
+      if (backend === 'gpu' && gpuBufferRef.current) {
+        gpuBufferRef.current.beginStroke();
+      } else {
+        const buffer = ensureCPUBuffer();
+        buffer.beginStroke(hardness / 100);
+      }
     },
-    [ensureStrokeBuffer]
+    [backend, ensureCPUBuffer]
   );
 
   /**
    * Process a point and render dabs to stroke buffer
-   * Uses Rust SIMD backend for soft brushes (hardness < 95)
    */
   const processPoint = useCallback(
     (x: number, y: number, pressure: number, config: BrushRenderConfig): void => {
-      const buffer = strokeBufferRef.current;
-      if (!buffer || !buffer.isActive()) return;
-
       const stamper = stamperRef.current;
-      const useRustPath = buffer.isUsingRustPath();
 
-      // Apply pressure curve (fade-in already applied by backend)
+      // Apply pressure curve
       const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
 
       // Calculate dynamic size for stamper spacing calculation
@@ -98,46 +169,75 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
           y: dab.y,
           size: Math.max(1, dabSize),
           flow: dabFlow,
-          hardness: config.hardness / 100, // Convert from 0-100 to 0-1
+          hardness: config.hardness / 100,
           maskType: config.maskType,
           color: config.color,
           dabOpacity,
-          roundness: config.roundness / 100, // Convert from 0-100 to 0-1
+          roundness: config.roundness / 100,
           angle: config.angle,
         };
 
-        // Use Rust SIMD for soft brushes, JS for hard brushes
-        if (useRustPath) {
-          // Fire and forget - Rust path is async but we don't wait
-          void buffer.stampDabRust(dabParams);
-        } else {
-          buffer.stampDab(dabParams);
+        if (backend === 'gpu' && gpuBufferRef.current) {
+          // GPU path: stampDab is synchronous (batches internally)
+          gpuBufferRef.current.stampDab(dabParams);
+        } else if (cpuBufferRef.current) {
+          // CPU path
+          const cpuBuffer = cpuBufferRef.current;
+          if (cpuBuffer.isUsingRustPath()) {
+            void cpuBuffer.stampDabRust(dabParams);
+          } else {
+            cpuBuffer.stampDab(dabParams);
+          }
         }
       }
     },
-    []
+    [backend]
   );
 
   /**
-   * End stroke and composite to layer (opacity already baked at dab level)
+   * End stroke and composite to layer
    */
-  const endStroke = useCallback((layerCtx: CanvasRenderingContext2D) => {
-    const buffer = strokeBufferRef.current;
-    if (!buffer) return;
+  const endStroke = useCallback(
+    (layerCtx: CanvasRenderingContext2D) => {
+      stamperRef.current.finishStroke(0);
 
-    stamperRef.current.finishStroke(0);
-    buffer.endStroke(layerCtx, 1.0);
-  }, []);
+      if (backend === 'gpu' && gpuBufferRef.current) {
+        // GPU path: endStroke is async
+        pendingEndStrokeRef.current = gpuBufferRef.current.endStroke(layerCtx, 1.0).then(() => {
+          pendingEndStrokeRef.current = null;
+        });
+      } else if (cpuBufferRef.current) {
+        // CPU path: endStroke is sync
+        cpuBufferRef.current.endStroke(layerCtx, 1.0);
+      }
+    },
+    [backend]
+  );
 
+  /**
+   * Get preview canvas for stroke visualization
+   */
   const getPreviewCanvas = useCallback(() => {
-    return strokeBufferRef.current?.getCanvas() ?? null;
-  }, []);
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      return gpuBufferRef.current.getCanvas();
+    }
+    return cpuBufferRef.current?.getCanvas() ?? null;
+  }, [backend]);
 
+  /**
+   * Get preview opacity (always 1.0 as opacity is baked into dabs)
+   */
   const getPreviewOpacity = useCallback(() => 1.0, []);
 
+  /**
+   * Check if stroke is active
+   */
   const isStrokeActive = useCallback(() => {
-    return strokeBufferRef.current?.isActive() ?? false;
-  }, []);
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      return gpuBufferRef.current.isActive();
+    }
+    return cpuBufferRef.current?.isActive() ?? false;
+  }, [backend]);
 
   return {
     beginStroke,
@@ -146,5 +246,6 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
     getPreviewCanvas,
     getPreviewOpacity,
     isStrokeActive,
+    backend,
   };
 }
