@@ -15,6 +15,7 @@
 mod blend;
 mod engine;
 mod interpolation;
+pub mod soft_dab;
 mod stamper;
 mod stroke_buffer;
 
