@@ -207,10 +207,10 @@ export class GPUStrokeAccumulator {
   }
 
   /**
-   * Flush pending dabs to GPU using per-dab loop
+   * Flush pending dabs to GPU using per-dab loop with optimized partial copies
    *
    * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
-   * All passes are batched in a single CommandEncoder for efficient submission.
+   * Uses partial texture copies (dirty rects) to minimize memory bandwidth.
    */
   private flushBatch(): void {
     if (this.instanceBuffer.count === 0) return;
@@ -240,12 +240,41 @@ export class GPUStrokeAccumulator {
     // Track temporary buffers for cleanup after submit
     const tempBuffers: GPUBuffer[] = [];
 
+    // Track previous dab bounds for incremental copy
+    let prevDabRect: { x: number; y: number; w: number; h: number } | null = null;
+
     // Render each dab in its own pass with ping-pong textures
     for (let i = 0; i < dabs.length; i++) {
       const dab = dabs[i]!;
 
-      // Copy source to dest (preserve existing content for areas not covered by dab)
-      this.pingPongBuffer.copySourceToDest(encoder);
+      // Calculate dab bounds (with margin for AA)
+      const margin = 2;
+      const dabRadius = dab.size + margin;
+      const dabRect = {
+        x: Math.floor(dab.x - dabRadius),
+        y: Math.floor(dab.y - dabRadius),
+        w: Math.ceil(dabRadius * 2),
+        h: Math.ceil(dabRadius * 2),
+      };
+
+      if (i === 0) {
+        // First dab: copy accumulated dirty rect (sync dest with source)
+        const dr = this.dirtyRect;
+        const copyW = dr.right - dr.left;
+        const copyH = dr.bottom - dr.top;
+        if (copyW > 0 && copyH > 0) {
+          this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
+        }
+      } else if (prevDabRect) {
+        // Subsequent dabs: only copy previous dab's bounds
+        this.pingPongBuffer.copyRect(
+          encoder,
+          prevDabRect.x,
+          prevDabRect.y,
+          prevDabRect.w,
+          prevDabRect.h
+        );
+      }
 
       // Create bind group pointing to current source texture
       const bindGroup = this.brushPipeline.createBindGroup(this.pingPongBuffer.source);
@@ -280,6 +309,9 @@ export class GPUStrokeAccumulator {
 
       // Swap ping-pong (dest becomes new source for next dab)
       this.pingPongBuffer.swap();
+
+      // Track this dab's bounds for next iteration
+      prevDabRect = dabRect;
     }
 
     // Resolve profiler timestamps

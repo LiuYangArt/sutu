@@ -33,6 +33,7 @@
 > [!NOTE]
 > **修复方案 (2026-01-14)**: 改用 Per-dab Loop with Batched Encoder，每个 dab 单独 render pass，
 > 使用 Ping-Pong 纹理交替读写，所有操作在同一 CommandEncoder 中批量提交。
+> **优化 (2026-01-14)**: 使用 Partial Copy (dirty rect) 替代全帧拷贝，大幅减少内存带宽消耗。
 > 验证结果：笔触形状和累积效果与 CPU 一致，剩余差异主要在边缘 AA 处理。
 
 | 问题              | 现象                      | 根因                                | 状态      |

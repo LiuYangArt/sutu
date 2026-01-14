@@ -76,7 +76,29 @@ export class PingPongBuffer {
   }
 
   /**
-   * Copy source texture to destination
+   * Copy a rectangular region from source to destination
+   * Used for incremental updates during per-dab rendering
+   */
+  copyRect(encoder: GPUCommandEncoder, x: number, y: number, width: number, height: number): void {
+    if (width <= 0 || height <= 0) return;
+
+    // Clamp to texture bounds
+    const clampedX = Math.max(0, Math.min(x, this._width));
+    const clampedY = Math.max(0, Math.min(y, this._height));
+    const clampedW = Math.min(width, this._width - clampedX);
+    const clampedH = Math.min(height, this._height - clampedY);
+
+    if (clampedW <= 0 || clampedH <= 0) return;
+
+    encoder.copyTextureToTexture(
+      { texture: this.currentSource, origin: { x: clampedX, y: clampedY } },
+      { texture: this.currentDest, origin: { x: clampedX, y: clampedY } },
+      [clampedW, clampedH]
+    );
+  }
+
+  /**
+   * Copy source texture to destination (full frame)
    * This preserves the previous frame state in areas not covered by new dabs
    */
   copySourceToDest(encoder: GPUCommandEncoder): void {
