@@ -46,6 +46,7 @@ export class GPUStrokeAccumulator {
   // Preview readback buffer (separate to avoid conflicts)
   private previewReadbackBuffer: GPUBuffer | null = null;
   private previewUpdatePending: boolean = false;
+  private previewNeedsUpdate: boolean = false; // Flag to ensure final update
 
   // Performance timing
   private cpuTimer: CPUTimer = new CPUTimer();
@@ -169,20 +170,6 @@ export class GPUStrokeAccumulator {
     const rgb = this.hexToRgb(params.color);
     const radius = params.size / 2;
 
-    // DEBUG: Log first few dabs to check parameter values
-    if (this.dabsSinceLastFlush < 3) {
-      console.log('[GPU stampDab] params:', {
-        x: params.x.toFixed(1),
-        y: params.y.toFixed(1),
-        size: params.size.toFixed(1),
-        flow: params.flow.toFixed(3),
-        hardness: params.hardness.toFixed(3),
-        dabOpacity: (params.dabOpacity ?? 1.0).toFixed(3),
-        color: params.color,
-        rgb: { r: rgb.r, g: rgb.g, b: rgb.b },
-      });
-    }
-
     const dabData: DabInstanceData = {
       x: params.x,
       y: params.y,
@@ -287,18 +274,22 @@ export class GPUStrokeAccumulator {
     });
 
     // 7. Trigger async preview update
-    void this.updatePreview();
+    this.previewNeedsUpdate = true;
+    if (!this.previewUpdatePending) {
+      void this.updatePreview();
+    }
   }
 
   /**
    * Async update preview canvas from GPU texture
    */
   private async updatePreview(): Promise<void> {
-    if (this.previewUpdatePending || !this.previewReadbackBuffer || !this.active) {
+    if (this.previewUpdatePending || !this.previewReadbackBuffer) {
       return;
     }
 
     this.previewUpdatePending = true;
+    this.previewNeedsUpdate = false;
 
     try {
       // Copy current texture to preview readback buffer
@@ -353,11 +344,16 @@ export class GPUStrokeAccumulator {
       // Ignore errors during preview update
     } finally {
       this.previewUpdatePending = false;
+      // If more updates were requested while we were updating, do another round
+      if (this.previewNeedsUpdate) {
+        void this.updatePreview();
+      }
     }
   }
 
   /**
    * End stroke and composite to layer
+   * Uses previewCanvas as source to ensure WYSIWYG (preview = composite)
    * @returns The dirty rectangle that was modified
    */
   async endStroke(layerCtx: CanvasRenderingContext2D, opacity: number): Promise<Rect> {
@@ -370,11 +366,14 @@ export class GPUStrokeAccumulator {
 
     this.active = false;
 
-    // Wait for GPU to complete
+    // Wait for GPU to complete all submitted work
     await this.device.queue.onSubmittedWorkDone();
 
-    // Composite to layer
-    await this.compositeToLayer(layerCtx, opacity);
+    // Wait for preview to be fully updated (WYSIWYG: use same data as preview)
+    await this.waitForPreviewReady();
+
+    // Composite from previewCanvas (not GPU texture) to ensure WYSIWYG
+    this.compositeFromPreview(layerCtx, opacity);
 
     // Return clamped dirty rect
     return {
@@ -386,14 +385,86 @@ export class GPUStrokeAccumulator {
   }
 
   /**
-   * Read GPU texture and composite to layer canvas
+   * Wait for preview canvas to be fully updated
+   * This ensures WYSIWYG - preview and composite use same data
    */
-  private async compositeToLayer(
-    layerCtx: CanvasRenderingContext2D,
-    opacity: number
-  ): Promise<void> {
-    if (!this.readbackBuffer) return;
+  private async waitForPreviewReady(): Promise<void> {
+    // If preview update is pending, wait for it to complete
+    while (this.previewUpdatePending || this.previewNeedsUpdate) {
+      // Trigger update if needed
+      if (this.previewNeedsUpdate && !this.previewUpdatePending) {
+        void this.updatePreview();
+      }
+      // Small delay to allow async update to progress
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
 
+    // Do a final synchronous update to ensure previewCanvas matches GPU texture
+    await this.updatePreviewSync();
+  }
+
+  /**
+   * Synchronous preview update for endStroke
+   * Reads GPU texture and updates previewCanvas
+   */
+  private async updatePreviewSync(): Promise<void> {
+    if (!this.previewReadbackBuffer) return;
+
+    // Copy current texture to preview readback buffer
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture: this.pingPongBuffer.source },
+      { buffer: this.previewReadbackBuffer, bytesPerRow: this.readbackBytesPerRow },
+      [this.width, this.height]
+    );
+    this.device.queue.submit([encoder.finish()]);
+
+    // Wait for GPU and map buffer
+    await this.previewReadbackBuffer.mapAsync(GPUMapMode.READ);
+    const gpuData = new Float32Array(this.previewReadbackBuffer.getMappedRange());
+
+    // Get dirty rect bounds
+    const rect = {
+      left: Math.max(0, this.dirtyRect.left),
+      top: Math.max(0, this.dirtyRect.top),
+      right: Math.min(this.width, this.dirtyRect.right),
+      bottom: Math.min(this.height, this.dirtyRect.bottom),
+    };
+
+    const rectWidth = rect.right - rect.left;
+    const rectHeight = rect.bottom - rect.top;
+
+    if (rectWidth > 0 && rectHeight > 0) {
+      // Create ImageData for the dirty region
+      const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
+      const floatsPerRow = this.readbackBytesPerRow / 4;
+
+      for (let py = 0; py < rectHeight; py++) {
+        for (let px = 0; px < rectWidth; px++) {
+          const bufferX = rect.left + px;
+          const bufferY = rect.top + py;
+          const srcIdx = bufferY * floatsPerRow + bufferX * 4;
+          const dstIdx = (py * rectWidth + px) * 4;
+
+          // Convert float (0-1) to uint8 (0-255)
+          imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
+          imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
+          imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
+          imageData.data[dstIdx + 3] = Math.round((gpuData[srcIdx + 3] ?? 0) * 255);
+        }
+      }
+
+      this.previewCtx.putImageData(imageData, rect.left, rect.top);
+    }
+
+    this.previewReadbackBuffer.unmap();
+  }
+
+  /**
+   * Composite from previewCanvas to layer (WYSIWYG approach)
+   * Uses the same data that was displayed as preview
+   */
+  private compositeFromPreview(layerCtx: CanvasRenderingContext2D, opacity: number): void {
     const rect = {
       left: Math.max(0, this.dirtyRect.left),
       top: Math.max(0, this.dirtyRect.top),
@@ -406,104 +477,45 @@ export class GPUStrokeAccumulator {
 
     if (rectWidth <= 0 || rectHeight <= 0) return;
 
-    // Copy GPU texture to readback buffer
-    const encoder = this.device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture: this.pingPongBuffer.source },
-      { buffer: this.readbackBuffer, bytesPerRow: this.readbackBytesPerRow },
-      [this.width, this.height]
-    );
-    this.device.queue.submit([encoder.finish()]);
-
-    // Map and read data
-    await this.readbackBuffer.mapAsync(GPUMapMode.READ);
-    const gpuData = new Float32Array(this.readbackBuffer.getMappedRange());
-
-    // DEBUG: Sample the GPU data to check what was rendered
-    const floatsPerRow = this.readbackBytesPerRow / 4; // Float32 = 4 bytes
-    let maxAlpha = 0;
-    const samplePixels: { r: number; g: number; b: number; a: number }[] = [];
-    for (
-      let py = 0;
-      py < rectHeight && samplePixels.length < 5;
-      py += Math.max(1, Math.floor(rectHeight / 5))
-    ) {
-      for (
-        let px = 0;
-        px < rectWidth && samplePixels.length < 5;
-        px += Math.max(1, Math.floor(rectWidth / 5))
-      ) {
-        const bufferX = rect.left + px;
-        const bufferY = rect.top + py;
-        const srcIdx = bufferY * floatsPerRow + bufferX * 4;
-        const a = gpuData[srcIdx + 3] ?? 0;
-        if (a > 0.001) {
-          samplePixels.push({
-            r: gpuData[srcIdx] ?? 0,
-            g: gpuData[srcIdx + 1] ?? 0,
-            b: gpuData[srcIdx + 2] ?? 0,
-            a: a,
-          });
-          maxAlpha = Math.max(maxAlpha, a);
-        }
-      }
-    }
-    console.log(
-      '[GPU compositeToLayer] rect:',
-      rect,
-      'maxAlpha:',
-      maxAlpha.toFixed(3),
-      'samples:',
-      samplePixels.map(
-        (p) => `rgba(${p.r.toFixed(2)},${p.g.toFixed(2)},${p.b.toFixed(2)},${p.a.toFixed(3)})`
-      )
-    );
+    // Read stroke data from previewCanvas (same as what user saw)
+    const strokeData = this.previewCtx.getImageData(rect.left, rect.top, rectWidth, rectHeight);
 
     // Get layer data for compositing
     const layerData = layerCtx.getImageData(rect.left, rect.top, rectWidth, rectHeight);
 
     // Composite using Porter-Duff over
-    for (let py = 0; py < rectHeight; py++) {
-      for (let px = 0; px < rectWidth; px++) {
-        const bufferX = rect.left + px;
-        const bufferY = rect.top + py;
-        const srcIdx = bufferY * floatsPerRow + bufferX * 4;
-        const dstIdx = (py * rectWidth + px) * 4;
+    for (let i = 0; i < strokeData.data.length; i += 4) {
+      const strokeR = strokeData.data[i]!;
+      const strokeG = strokeData.data[i + 1]!;
+      const strokeB = strokeData.data[i + 2]!;
+      const strokeA = strokeData.data[i + 3]! / 255;
 
-        const strokeR = gpuData[srcIdx]!;
-        const strokeG = gpuData[srcIdx + 1]!;
-        const strokeB = gpuData[srcIdx + 2]!;
-        const strokeA = gpuData[srcIdx + 3]!;
+      if (strokeA < 0.001) continue;
 
-        if (strokeA < 0.001) continue;
+      // Apply opacity scaling
+      const srcAlpha = strokeA * opacity;
 
-        // Apply opacity scaling
-        const srcAlpha = strokeA * opacity;
+      const dstR = layerData.data[i]!;
+      const dstG = layerData.data[i + 1]!;
+      const dstB = layerData.data[i + 2]!;
+      const dstAlpha = layerData.data[i + 3]! / 255;
 
-        const dstR = layerData.data[dstIdx]!;
-        const dstG = layerData.data[dstIdx + 1]!;
-        const dstB = layerData.data[dstIdx + 2]!;
-        const dstAlpha = layerData.data[dstIdx + 3]! / 255;
+      // Porter-Duff over
+      const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
 
-        // Porter-Duff over
-        const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
-
-        if (outAlpha > 0) {
-          layerData.data[dstIdx] = Math.round(
-            (strokeR * 255 * srcAlpha + dstR * dstAlpha * (1 - srcAlpha)) / outAlpha
-          );
-          layerData.data[dstIdx + 1] = Math.round(
-            (strokeG * 255 * srcAlpha + dstG * dstAlpha * (1 - srcAlpha)) / outAlpha
-          );
-          layerData.data[dstIdx + 2] = Math.round(
-            (strokeB * 255 * srcAlpha + dstB * dstAlpha * (1 - srcAlpha)) / outAlpha
-          );
-          layerData.data[dstIdx + 3] = Math.round(outAlpha * 255);
-        }
+      if (outAlpha > 0) {
+        layerData.data[i] = Math.round(
+          (strokeR * srcAlpha + dstR * dstAlpha * (1 - srcAlpha)) / outAlpha
+        );
+        layerData.data[i + 1] = Math.round(
+          (strokeG * srcAlpha + dstG * dstAlpha * (1 - srcAlpha)) / outAlpha
+        );
+        layerData.data[i + 2] = Math.round(
+          (strokeB * srcAlpha + dstB * dstAlpha * (1 - srcAlpha)) / outAlpha
+        );
+        layerData.data[i + 3] = Math.round(outAlpha * 255);
       }
     }
-
-    this.readbackBuffer.unmap();
 
     // Write back to layer
     layerCtx.putImageData(layerData, rect.left, rect.top);

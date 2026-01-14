@@ -35,6 +35,7 @@ struct VertexOutput {
     @location(2) hardness: f32,
     @location(3) dab_opacity: f32,          // Alpha ceiling for Alpha Darken
     @location(4) flow: f32,                 // Per-dab flow multiplier
+    @location(5) dab_size: f32,             // Dab radius in pixels (for AA calculation)
 };
 
 // Instance data from vertex buffer (matches InstanceBuffer layout, 36 bytes)
@@ -76,6 +77,7 @@ fn vs_main(
     out.hardness = instance.hardness;
     out.dab_opacity = instance.dab_opacity;
     out.flow = instance.flow;
+    out.dab_size = instance.dab_size;
     return out;
 }
 
@@ -125,14 +127,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if (in.hardness >= 0.99) {
         // Hard brush: sharp edge with 1px anti-aliasing
-        // Matches maskCache.ts stampHardBrush behavior
-        let edge_dist = dist - 1.0;
-        if (edge_dist >= 0.5) {
+        // Use physical pixel size for AA band calculation
+        // in.dab_size is the radius in pixels
+        let pixel_size = 1.0 / in.dab_size;  // 1 pixel in normalized units
+        let half_pixel = pixel_size * 0.5;
+
+        let edge_dist = dist - 1.0;  // Distance from edge in normalized units
+
+        if (edge_dist >= half_pixel) {
+            // Fully outside
             mask = 0.0;
-        } else if (edge_dist > -0.5) {
-            // Linear falloff in 1px AA band
-            mask = 0.5 - edge_dist;
+        } else if (edge_dist > -half_pixel) {
+            // Within 1px AA band: linear falloff
+            mask = (half_pixel - edge_dist) / pixel_size;
         } else {
+            // Fully inside
             mask = 1.0;
         }
     } else {
