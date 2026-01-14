@@ -61,7 +61,7 @@ interface PanelStoreState {
   togglePanel: (id: string) => void;
   minimizePanel: (id: string, isCollapsed?: boolean) => void;
   updateGeometry: (id: string, geometry: Partial<PanelGeometry>) => void;
-  updateAlignment: (id: string, alignment: PanelAlignment) => void;
+  updateAlignment: (id: string, alignment: PanelAlignment | undefined) => void;
   bringToFront: (id: string) => void;
 }
 

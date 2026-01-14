@@ -11,7 +11,6 @@ import './Canvas.css';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { getEffectiveInputData } from './inputUtils';
-import { HARD_BRUSH_THRESHOLD } from '@/constants';
 
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -110,6 +109,7 @@ export function Canvas() {
     processPoint: processBrushPoint, // Rename to match new logic
     endStroke: endBrushStroke,
     getPreviewCanvas,
+    getPreviewOpacity,
     isStrokeActive,
   } = useBrushRenderer({ width, height });
 
@@ -568,25 +568,20 @@ export function Canvas() {
     ctx.drawImage(compositeCanvas, 0, 0);
 
     // Overlay stroke buffer preview if stroke is active
-    // Note: Don't apply brushOpacity here - the stroke buffer already contains
-    // flow-accumulated alpha. Opacity ceiling is applied only at endStroke.
-    // This gives accurate WYSIWYG preview during drawing.
+    // Uses getPreviewOpacity() to ensure preview matches endStroke result exactly.
     if (isStrokeActive()) {
       const previewCanvas = getPreviewCanvas();
       if (previewCanvas) {
         ctx.save();
-        // Hybrid Strategy Preview Sync:
-        // - Hard Brushes (>= Threshold): Opacity uses Clamp mode (burned into buffer). Render with alpha 1.0.
-        // - Soft Brushes (< Threshold): Opacity uses Post-Multiply mode. Render with alpha = brushOpacity.
-        const isHardBrush = brushHardness >= HARD_BRUSH_THRESHOLD;
-        const previewOpacity = isHardBrush ? 1.0 : Math.max(0, Math.min(1, brushOpacity));
-
-        ctx.globalAlpha = previewOpacity;
+        // getPreviewOpacity() returns:
+        // - Hard brush: 1.0 (opacity already baked into buffer as ceiling)
+        // - Soft brush: maxEffectiveOpacity (opacity * max pressure during stroke)
+        ctx.globalAlpha = getPreviewOpacity();
         ctx.drawImage(previewCanvas, 0, 0);
         ctx.restore();
       }
     }
-  }, [width, height, isStrokeActive, getPreviewCanvas, brushOpacity, brushHardness]);
+  }, [width, height, isStrokeActive, getPreviewCanvas, getPreviewOpacity]);
 
   // Process a single point through the brush renderer (for brush tool)
   const processBrushPointWithConfig = useCallback(
@@ -849,7 +844,7 @@ export function Canvas() {
     if (currentTool === 'brush') {
       const layerCtx = getActiveLayerCtx();
       if (layerCtx) {
-        endBrushStroke(layerCtx, brushOpacity);
+        endBrushStroke(layerCtx);
       }
       compositeAndRender();
     } else {
@@ -870,7 +865,6 @@ export function Canvas() {
   }, [
     currentTool,
     getActiveLayerCtx,
-    brushOpacity,
     endBrushStroke,
     compositeAndRender,
     drawPoints,
