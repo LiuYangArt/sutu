@@ -24,6 +24,7 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var stroke_source: texture_2d<f32>;  // Previous frame (read-only)
+@group(0) @binding(3) var<storage, read> gaussian_table: array<f32>;  // Gaussian error function LUT
 
 // ============================================================================
 // Vertex Shader Types
@@ -96,24 +97,27 @@ fn vs_main(
 // Error Function Approximation (for Gaussian soft edge)
 // ============================================================================
 
-// Abramowitz and Stegun approximation (matches maskCache.ts erfFast)
+// Lookup table based approximation (matches CPU erfFast)
 fn erf_approx(x: f32) -> f32 {
     let sign_x = sign(x);
     let ax = abs(x);
 
-    if (ax >= 4.0) {
+    let MAX_VAL = 4.0;
+    let LUT_SIZE = 1024.0;
+    let SCALE = 256.0; // LUT_SIZE / MAX_VAL
+
+    if (ax >= MAX_VAL) {
         return sign_x;
     }
 
-    let p = 0.3275911;
-    let a1 = 0.254829592;
-    let a2 = -0.284496736;
-    let a3 = 1.421413741;
-    let a4 = -1.453152027;
-    let a5 = 1.061405429;
+    let idx = ax * SCALE;
+    let i = u32(idx);
+    let frac = fract(idx);
 
-    let t = 1.0 / (1.0 + p * ax);
-    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * exp(-ax * ax);
+    // Linear interpolation
+    let y0 = gaussian_table[i];
+    let y1 = gaussian_table[i + 1u];
+    let y = mix(y0, y1, frac);
 
     return sign_x * y;
 }
@@ -280,6 +284,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         out_a = quantize_to_8bit(out_a);
     }
     // Linear mode: no quantization, keep full float precision for smoother gradients
+
+
+
+
 
     return vec4<f32>(out_rgb, out_a);
 }
