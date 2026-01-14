@@ -835,7 +835,7 @@ export function Canvas() {
   );
 
   // Finish the current stroke properly (used by PointerUp and Alt key)
-  const finishCurrentStroke = useCallback(() => {
+  const finishCurrentStroke = useCallback(async () => {
     if (!isDrawingRef.current) return;
 
     // 清理 WinTab 缓冲区
@@ -845,7 +845,7 @@ export function Canvas() {
     if (currentTool === 'brush') {
       const layerCtx = getActiveLayerCtx();
       if (layerCtx) {
-        endBrushStroke(layerCtx);
+        await endBrushStroke(layerCtx);
       }
       compositeAndRender();
     } else {

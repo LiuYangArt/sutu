@@ -44,7 +44,7 @@ export interface UseBrushRendererProps {
 export interface UseBrushRendererResult {
   beginStroke: (hardness?: number) => void;
   processPoint: (x: number, y: number, pressure: number, config: BrushRenderConfig) => void;
-  endStroke: (layerCtx: CanvasRenderingContext2D) => void;
+  endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
   getPreviewOpacity: () => number;
   isStrokeActive: () => boolean;
@@ -63,9 +63,6 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseB
 
   // Shared stamper (generates dab positions)
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
-
-  // Track if endStroke is async (GPU path)
-  const pendingEndStrokeRef = useRef<Promise<void> | null>(null);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -196,16 +193,15 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseB
 
   /**
    * End stroke and composite to layer
+   * Returns a Promise that resolves when compositing is complete
    */
   const endStroke = useCallback(
-    (layerCtx: CanvasRenderingContext2D) => {
+    async (layerCtx: CanvasRenderingContext2D): Promise<void> => {
       stamperRef.current.finishStroke(0);
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         // GPU path: endStroke is async
-        pendingEndStrokeRef.current = gpuBufferRef.current.endStroke(layerCtx, 1.0).then(() => {
-          pendingEndStrokeRef.current = null;
-        });
+        await gpuBufferRef.current.endStroke(layerCtx, 1.0);
       } else if (cpuBufferRef.current) {
         // CPU path: endStroke is sync
         cpuBufferRef.current.endStroke(layerCtx, 1.0);
