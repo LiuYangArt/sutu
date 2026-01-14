@@ -112,5 +112,5 @@ export const INITIAL_INSTANCE_CAPACITY = 1024;
 /**
  * Batch processing thresholds
  */
-export const BATCH_SIZE_THRESHOLD = 64; // Flush after N dabs
+export const BATCH_SIZE_THRESHOLD = 64; // Dabs per encoder submit (per-dab loop inside)
 export const BATCH_TIME_THRESHOLD_MS = 4; // Flush after N ms

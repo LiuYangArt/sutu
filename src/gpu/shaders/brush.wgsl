@@ -147,15 +147,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         // Soft brush: Gaussian (erf-based) falloff
         // Matches maskCache.ts generateMask with maskType='gaussian'
+        //
+        // CPU uses: distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX)
+        //           scaledDist = physicalDist * distfactor
+        // where physicalDist = normDist * radiusX
+        //
+        // So: scaledDist = normDist * radiusX * (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX)
+        //                = normDist * (SQRT_2 * 12500.0) / (6761.0 * safeFade)
+        //
+        // But we use `dist` which is already normalized (0-1), and in.dab_size is radius.
+        // We need: physicalDist = dist * in.dab_size
+        //          distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * in.dab_size)
+        //          scaledDist = physicalDist * distfactor
+
         let fade = (1.0 - in.hardness) * 2.0;
         let safe_fade = max(0.001, fade);
 
         let SQRT_2 = 1.41421356;
         let center = (2.5 * (6761.0 * safe_fade - 10000.0)) / (SQRT_2 * 6761.0 * safe_fade);
         let alphafactor = 1.0 / (2.0 * erf_approx(center));
-        let distfactor = (SQRT_2 * 12500.0) / (6761.0 * safe_fade);
 
-        let scaled_dist = dist * distfactor;
+        // Calculate distance factor for Gaussian falloff
+        // Corresponds to CPU: distScale = (Math.SQRT2 * 12500) / (6761 * safeFade * diameter)
+        let distfactor = (SQRT_2 * 12500.0) / (6761.0 * safe_fade * in.dab_size);
+
+        // Convert normalized dist to physical distance, then scale
+        let physical_dist = dist * in.dab_size;
+        let scaled_dist = physical_dist * distfactor;
         let val = alphafactor * (erf_approx(scaled_dist + center) - erf_approx(scaled_dist - center));
         mask = saturate(val);
     }

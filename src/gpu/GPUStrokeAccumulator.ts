@@ -207,77 +207,132 @@ export class GPUStrokeAccumulator {
   }
 
   /**
-   * Flush pending dabs to GPU
+   * Flush pending dabs to GPU using per-dab loop
+   *
+   * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
+   * All passes are batched in a single CommandEncoder for efficient submission.
    */
   private flushBatch(): void {
     if (this.instanceBuffer.count === 0) return;
 
     this.cpuTimer.start();
 
-    const { buffer, count } = this.instanceBuffer.flush();
+    const dabs = this.instanceBuffer.getDabsData();
     const bbox = this.instanceBuffer.getBoundingBox();
+    this.instanceBuffer.clear();
 
     const encoder = this.device.createCommandEncoder({
       label: 'Brush Batch Encoder',
     });
 
-    // 1. Copy source to dest (preserve existing content)
-    this.pingPongBuffer.copySourceToDest(encoder);
-
-    // 2. Create bind group with source texture for reading
-    const bindGroup = this.brushPipeline.createBindGroup(this.pingPongBuffer.source);
-
-    // 3. Begin render pass, write to dest
-    const pass = encoder.beginRenderPass({
-      label: 'Brush Render Pass',
-      colorAttachments: [
-        {
-          view: this.pingPongBuffer.dest.createView(),
-          loadOp: 'load', // Keep copied content
-          storeOp: 'store',
-        },
-      ],
-      timestampWrites: this.profiler.getTimestampWrites(),
-    });
-
-    // 4. Set scissor rect for optimization
+    // Calculate scissor rect once for all passes
+    let scissor: { x: number; y: number; w: number; h: number } | null = null;
     if (bbox.width > 0 && bbox.height > 0) {
       const scissorX = Math.max(0, bbox.x);
       const scissorY = Math.max(0, bbox.y);
       const scissorW = Math.min(this.width - scissorX, bbox.width);
       const scissorH = Math.min(this.height - scissorY, bbox.height);
-
       if (scissorW > 0 && scissorH > 0) {
-        pass.setScissorRect(scissorX, scissorY, scissorW, scissorH);
+        scissor = { x: scissorX, y: scissorY, w: scissorW, h: scissorH };
       }
     }
 
-    // 5. Draw instanced quads
-    pass.setPipeline(this.brushPipeline.renderPipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.setVertexBuffer(0, buffer);
-    pass.draw(6, count); // 6 vertices per quad, count instances
-    pass.end();
+    // Track temporary buffers for cleanup after submit
+    const tempBuffers: GPUBuffer[] = [];
+
+    // Render each dab in its own pass with ping-pong textures
+    for (let i = 0; i < dabs.length; i++) {
+      const dab = dabs[i]!;
+
+      // Copy source to dest (preserve existing content for areas not covered by dab)
+      this.pingPongBuffer.copySourceToDest(encoder);
+
+      // Create bind group pointing to current source texture
+      const bindGroup = this.brushPipeline.createBindGroup(this.pingPongBuffer.source);
+
+      // Create single-dab instance buffer
+      const singleDabBuffer = this.createSingleDabBuffer(dab);
+      tempBuffers.push(singleDabBuffer);
+
+      // Render pass writes to dest
+      const pass = encoder.beginRenderPass({
+        label: `Dab Pass ${i}`,
+        colorAttachments: [
+          {
+            view: this.pingPongBuffer.dest.createView(),
+            loadOp: 'load',
+            storeOp: 'store',
+          },
+        ],
+        // Only add timestamp writes for first dab to avoid overhead
+        timestampWrites: i === 0 ? this.profiler.getTimestampWrites() : undefined,
+      });
+
+      if (scissor) {
+        pass.setScissorRect(scissor.x, scissor.y, scissor.w, scissor.h);
+      }
+
+      pass.setPipeline(this.brushPipeline.renderPipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.setVertexBuffer(0, singleDabBuffer);
+      pass.draw(6, 1); // 6 vertices, 1 instance
+      pass.end();
+
+      // Swap ping-pong (dest becomes new source for next dab)
+      this.pingPongBuffer.swap();
+    }
 
     // Resolve profiler timestamps
     void this.profiler.resolveTimestamps(encoder);
 
+    // Single submit for all dabs
     this.device.queue.submit([encoder.finish()]);
 
-    // 6. Swap ping-pong buffers
-    this.pingPongBuffer.swap();
+    // Cleanup temporary buffers after submission
+    for (const buf of tempBuffers) {
+      buf.destroy();
+    }
 
     const cpuTime = this.cpuTimer.stop();
     this.profiler.recordFrame({
-      dabCount: count,
+      dabCount: dabs.length,
       cpuTimeMs: cpuTime,
     });
 
-    // 7. Trigger async preview update
+    // Trigger async preview update
     this.previewNeedsUpdate = true;
     if (!this.previewUpdatePending) {
       void this.updatePreview();
     }
+  }
+
+  /**
+   * Create a GPU buffer for a single dab (using mappedAtCreation for sync writes)
+   * Returns the buffer which should be destroyed after the encoder is submitted
+   */
+  private createSingleDabBuffer(dab: DabInstanceData): GPUBuffer {
+    const data = new Float32Array([
+      dab.x,
+      dab.y,
+      dab.size,
+      dab.hardness,
+      dab.r,
+      dab.g,
+      dab.b,
+      dab.dabOpacity,
+      dab.flow,
+    ]);
+
+    const buffer = this.device.createBuffer({
+      size: data.byteLength,
+      usage: GPUBufferUsage.VERTEX,
+      mappedAtCreation: true,
+    });
+
+    new Float32Array(buffer.getMappedRange()).set(data);
+    buffer.unmap();
+
+    return buffer;
   }
 
   /**
