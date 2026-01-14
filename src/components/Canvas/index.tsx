@@ -59,6 +59,7 @@ export function Canvas() {
     setBrushColor,
     setTool,
     showCrosshair,
+    renderMode,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
@@ -79,6 +80,7 @@ export function Canvas() {
     setBrushColor: s.setBrushColor,
     setTool: s.setTool,
     showCrosshair: s.showCrosshair,
+    renderMode: s.renderMode,
   }));
 
   // Get current tool size (brush or eraser)
@@ -106,12 +108,14 @@ export function Canvas() {
   // Initialize brush renderer for Flow/Opacity three-level pipeline
   const {
     beginStroke: beginBrushStroke,
-    processPoint: processBrushPoint, // Rename to match new logic
+    processPoint: processBrushPoint,
     endStroke: endBrushStroke,
     getPreviewCanvas,
     getPreviewOpacity,
     isStrokeActive,
-  } = useBrushRenderer({ width, height });
+    backend: _activeBackend,
+    gpuAvailable: _gpuAvailable,
+  } = useBrushRenderer({ width, height, renderMode });
 
   // Tablet store: We use getState() directly in event handlers for real-time data
   // No need to subscribe to state changes here since we sync-read in handlers

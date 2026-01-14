@@ -105,10 +105,10 @@ function App() {
     registerPanel({
       id: 'brush-panel',
       title: 'Brush',
-      defaultGeometry: { x: window.innerWidth - 300, y: 420, width: 280, height: 300 },
+      defaultGeometry: { x: window.innerWidth - 300, y: 420, width: 280, height: 440 },
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 420 },
       minWidth: 240,
-      minHeight: 200,
+      minHeight: 350,
     });
 
     // 4. Layer Panel (Bottom Right)

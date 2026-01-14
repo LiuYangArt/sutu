@@ -1,4 +1,4 @@
-import { useToolStore, PressureCurve, BrushMaskType } from '@/stores/tool';
+import { useToolStore, PressureCurve, BrushMaskType, RenderMode } from '@/stores/tool';
 import './BrushPanel.css';
 
 const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
@@ -6,6 +6,11 @@ const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
   { id: 'soft', label: 'Soft' },
   { id: 'hard', label: 'Hard' },
   { id: 'sCurve', label: 'S-Curve' },
+];
+
+const RENDER_MODES: { id: RenderMode; label: string; description: string }[] = [
+  { id: 'gpu', label: 'GPU', description: 'WebGPU accelerated' },
+  { id: 'cpu', label: 'CPU', description: 'Canvas 2D fallback' },
 ];
 
 /** Pressure toggle button component */
@@ -102,6 +107,8 @@ export function BrushPanel() {
     togglePressureFlow,
     pressureOpacityEnabled,
     togglePressureOpacity,
+    renderMode,
+    setRenderMode,
   } = useToolStore();
 
   return (
@@ -207,6 +214,25 @@ export function BrushPanel() {
             {PRESSURE_CURVES.map((curve) => (
               <option key={curve.id} value={curve.id}>
                 {curve.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="brush-panel-section">
+        <h4>Renderer</h4>
+        <div className="brush-setting-row">
+          <span className="brush-setting-label">Mode</span>
+          <select
+            value={renderMode}
+            onChange={(e) => setRenderMode(e.target.value as RenderMode)}
+            className="brush-select"
+            title={RENDER_MODES.find((m) => m.id === renderMode)?.description}
+          >
+            {RENDER_MODES.map((mode) => (
+              <option key={mode.id} value={mode.id} title={mode.description}>
+                {mode.label}
               </option>
             ))}
           </select>

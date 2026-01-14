@@ -12,6 +12,13 @@ export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
  */
 export type BrushMaskType = 'gaussian' | 'default';
 
+/**
+ * Render mode - controls which backend to use for brush rendering
+ * - 'gpu': GPU rendering (WebGPU)
+ * - 'cpu': CPU rendering (Canvas 2D)
+ */
+export type RenderMode = 'gpu' | 'cpu';
+
 /** Clamp brush/eraser size to valid range */
 const clampSize = (size: number): number => Math.max(1, Math.min(800, size));
 
@@ -69,6 +76,9 @@ interface ToolState {
   // Cursor display settings
   showCrosshair: boolean;
 
+  // Render mode
+  renderMode: RenderMode;
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -93,6 +103,7 @@ interface ToolState {
   togglePressureOpacity: () => void;
   setPressureCurve: (curve: PressureCurve) => void;
   toggleCrosshair: () => void;
+  setRenderMode: (mode: RenderMode) => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -116,6 +127,7 @@ export const useToolStore = create<ToolState>()(
       pressureOpacityEnabled: false, // Opacity ceiling not affected by pressure by default
       pressureCurve: 'linear',
       showCrosshair: false,
+      renderMode: 'gpu',
 
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
@@ -181,6 +193,8 @@ export const useToolStore = create<ToolState>()(
       setPressureCurve: (curve) => set({ pressureCurve: curve }),
 
       toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
+
+      setRenderMode: (mode) => set({ renderMode: mode }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -201,6 +215,7 @@ export const useToolStore = create<ToolState>()(
         pressureFlowEnabled: state.pressureFlowEnabled,
         pressureOpacityEnabled: state.pressureOpacityEnabled,
         pressureCurve: state.pressureCurve,
+        renderMode: state.renderMode,
       }),
     }
   )

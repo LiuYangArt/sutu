@@ -11,7 +11,7 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
-import { applyPressureCurve, PressureCurve } from '@/stores/tool';
+import { applyPressureCurve, PressureCurve, RenderMode } from '@/stores/tool';
 import {
   GPUContext,
   GPUStrokeAccumulator,
@@ -39,6 +39,8 @@ export interface BrushRenderConfig {
 export interface UseBrushRendererProps {
   width: number;
   height: number;
+  /** User-selected render mode */
+  renderMode: RenderMode;
 }
 
 export interface UseBrushRendererResult {
@@ -48,12 +50,18 @@ export interface UseBrushRendererResult {
   getPreviewCanvas: () => HTMLCanvasElement | null;
   getPreviewOpacity: () => number;
   isStrokeActive: () => boolean;
+  /** Actual backend in use (may differ from requested if GPU unavailable) */
   backend: RenderBackend;
+  /** Whether GPU is available */
+  gpuAvailable: boolean;
 }
 
-export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseBrushRendererResult {
-  const [backend, setBackend] = useState<RenderBackend>('canvas2d');
-  const [gpuInitialized, setGpuInitialized] = useState(false);
+export function useBrushRenderer({
+  width,
+  height,
+  renderMode,
+}: UseBrushRendererProps): UseBrushRendererResult {
+  const [gpuAvailable, setGpuAvailable] = useState(false);
 
   // CPU backend (Canvas 2D)
   const cpuBufferRef = useRef<StrokeAccumulator | null>(null);
@@ -78,9 +86,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseB
 
         if (supported && ctx.device) {
           gpuBufferRef.current = new GPUStrokeAccumulator(ctx.device, width, height);
-          setBackend('gpu');
-          setGpuInitialized(true);
-          console.log('[useBrushRenderer] WebGPU backend initialized');
+          setGpuAvailable(true);
         } else {
           reportGPUFallback('WebGPU initialization failed');
         }
@@ -101,10 +107,18 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseB
 
   // Handle resize for GPU buffer
   useEffect(() => {
-    if (gpuInitialized && gpuBufferRef.current) {
+    if (gpuAvailable && gpuBufferRef.current) {
       gpuBufferRef.current.resize(width, height);
     }
-  }, [width, height, gpuInitialized]);
+  }, [width, height, gpuAvailable]);
+
+  // Determine actual backend based on renderMode and GPU availability
+  const backend: RenderBackend = (() => {
+    if (!gpuAvailable || !gpuBufferRef.current) {
+      return 'canvas2d';
+    }
+    return renderMode === 'gpu' ? 'gpu' : 'canvas2d';
+  })();
 
   // Ensure CPU buffer exists (for fallback or canvas2d mode)
   const ensureCPUBuffer = useCallback(() => {
@@ -175,10 +189,8 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseB
         };
 
         if (backend === 'gpu' && gpuBufferRef.current) {
-          // GPU path: stampDab is synchronous (batches internally)
           gpuBufferRef.current.stampDab(dabParams);
         } else if (cpuBufferRef.current) {
-          // CPU path
           const cpuBuffer = cpuBufferRef.current;
           if (cpuBuffer.isUsingRustPath()) {
             void cpuBuffer.stampDabRust(dabParams);
@@ -200,10 +212,8 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseB
       stamperRef.current.finishStroke(0);
 
       if (backend === 'gpu' && gpuBufferRef.current) {
-        // GPU path: endStroke is async
         await gpuBufferRef.current.endStroke(layerCtx, 1.0);
       } else if (cpuBufferRef.current) {
-        // CPU path: endStroke is sync
         cpuBufferRef.current.endStroke(layerCtx, 1.0);
       }
     },
@@ -243,5 +253,6 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps): UseB
     getPreviewOpacity,
     isStrokeActive,
     backend,
+    gpuAvailable,
   };
 }
