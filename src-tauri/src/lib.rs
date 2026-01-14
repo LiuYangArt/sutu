@@ -44,6 +44,7 @@ pub fn run() {
             commands::stop_tablet,
             commands::get_tablet_status,
             commands::push_pointer_event,
+            commands::stamp_soft_dab,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

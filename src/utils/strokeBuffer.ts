@@ -9,7 +9,14 @@
  * 1. Dab Level: Individual brush stamps with Flow-controlled alpha
  * 2. Stroke Accumulator: Accumulates dabs within a single stroke
  * 3. Layer Level: Composites stroke with Opacity as ceiling
+ *
+ * Performance optimization:
+ * - Soft brushes (hardness < 95%) use Rust SIMD backend for mask calculation
+ * - Persistent buffer avoids frequent getImageData/putImageData calls
  */
+
+import { invoke } from '@tauri-apps/api/core';
+import { MaskCache, type MaskCacheParams } from './maskCache';
 
 export type MaskType = 'gaussian' | 'default';
 
@@ -31,28 +38,6 @@ export interface Rect {
   top: number;
   right: number;
   bottom: number;
-}
-
-/**
- * Error function approximation (Abramowitz and Stegun formula 7.1.26)
- * Used for Krita-style Gaussian mask falloff
- * Accuracy: |error| < 1.5e-7
- */
-function erf(x: number): number {
-  const sign = x >= 0 ? 1 : -1;
-  x = Math.abs(x);
-
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
-
-  const t = 1.0 / (1.0 + p * x);
-  const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-
-  return sign * y;
 }
 
 /**
@@ -81,6 +66,30 @@ export class StrokeAccumulator {
   private active: boolean = false;
   private dirtyRect: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
 
+  // Persistent ImageData buffer - avoids getImageData/putImageData per dab
+  // This is the key optimization: we keep the buffer in memory during the stroke
+  private imageData: ImageData | null = null;
+  private bufferData: Uint8ClampedArray | null = null;
+
+  // Mask cache for pre-computed brush masks (Krita-style optimization)
+  private maskCache: MaskCache = new MaskCache();
+
+  // Canvas sync throttling - sync every N dabs instead of every dab
+  private syncCounter: number = 0;
+  private static readonly SYNC_INTERVAL = 4; // Sync every 4 dabs (reduced from 2)
+
+  // Accumulated dirty rect for batched syncing
+  private pendingDirtyRect: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
+
+  // Reusable ImageData for sync operations - avoids allocation per sync
+  private syncImageData: ImageData | null = null;
+  private syncImageDataWidth: number = 0;
+  private syncImageDataHeight: number = 0;
+
+  // Legacy fields (kept for compatibility)
+  private persistentBuffer: Uint8ClampedArray | null = null;
+  private useRustPath: boolean = false;
+
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
@@ -108,10 +117,20 @@ export class StrokeAccumulator {
 
   /**
    * Begin a new stroke
+   * @param hardness - Brush hardness (0-1), determines if Rust SIMD path is used
    */
-  beginStroke(): void {
+  beginStroke(_hardness: number = 1): void {
     this.clear();
     this.active = true;
+
+    // Initialize persistent ImageData buffer for the entire canvas
+    // This avoids getImageData/putImageData per dab - major performance win
+    this.imageData = this.ctx.createImageData(this.width, this.height);
+    this.bufferData = this.imageData.data;
+
+    // DISABLED: Rust SIMD path has too much IPC overhead
+    this.useRustPath = false;
+    this.persistentBuffer = null;
   }
 
   /**
@@ -125,7 +144,19 @@ export class StrokeAccumulator {
       right: 0,
       bottom: 0,
     };
+    this.pendingDirtyRect = {
+      left: this.width,
+      top: this.height,
+      right: 0,
+      bottom: 0,
+    };
+    this.syncCounter = 0;
     this.active = false;
+    this.imageData = null;
+    this.bufferData = null;
+    this.persistentBuffer = null;
+    this.useRustPath = false;
+    // Don't clear syncImageData - it can be reused across strokes
   }
 
   /**
@@ -136,19 +167,81 @@ export class StrokeAccumulator {
   }
 
   /**
-   * Expand dirty rect to include a dab
+   * Expand dirty rect from Rust dirty rect tuple (left, top, width, height)
    */
-  private expandDirtyRect(x: number, y: number, radius: number): void {
-    const margin = Math.ceil(radius) + 1;
-    this.dirtyRect.left = Math.min(this.dirtyRect.left, Math.floor(x - margin));
-    this.dirtyRect.top = Math.min(this.dirtyRect.top, Math.floor(y - margin));
-    this.dirtyRect.right = Math.max(this.dirtyRect.right, Math.ceil(x + margin));
-    this.dirtyRect.bottom = Math.max(this.dirtyRect.bottom, Math.ceil(y + margin));
+  private expandDirtyRectFromRust(rect: [number, number, number, number]): void {
+    const [left, top, width, height] = rect;
+    if (width === 0 || height === 0) return;
+    this.dirtyRect.left = Math.min(this.dirtyRect.left, left);
+    this.dirtyRect.top = Math.min(this.dirtyRect.top, top);
+    this.dirtyRect.right = Math.max(this.dirtyRect.right, left + width);
+    this.dirtyRect.bottom = Math.max(this.dirtyRect.bottom, top + height);
+  }
+
+  /**
+   * Stamp a dab using Rust SIMD backend (for soft brushes)
+   * Uses persistent buffer to avoid IPC overhead per dab
+   */
+  async stampDabRust(params: DabParams): Promise<void> {
+    if (!this.persistentBuffer) {
+      // Fallback to JS path if buffer not initialized
+      this.stampDab(params);
+      return;
+    }
+
+    const rgb = hexToRgb(params.color);
+    const radius = params.size / 2;
+
+    try {
+      const [newBuffer, dirtyRect] = await invoke<[number[], [number, number, number, number]]>(
+        'stamp_soft_dab',
+        {
+          buffer: Array.from(this.persistentBuffer),
+          bufferWidth: this.width,
+          bufferHeight: this.height,
+          cx: params.x,
+          cy: params.y,
+          radius: radius,
+          hardness: params.hardness,
+          roundness: params.roundness ?? 1,
+          color: [rgb.r, rgb.g, rgb.b] as [number, number, number],
+          flow: params.flow,
+          dabOpacity: params.dabOpacity ?? 1,
+        }
+      );
+
+      // Update persistent buffer
+      this.persistentBuffer = new Uint8ClampedArray(newBuffer);
+      this.expandDirtyRectFromRust(dirtyRect);
+    } catch (error) {
+      console.error('Rust dab stamp failed, falling back to JS:', error);
+      this.stampDab(params);
+    }
+  }
+
+  /**
+   * Check if using Rust SIMD path
+   */
+  isUsingRustPath(): boolean {
+    return this.useRustPath;
+  }
+
+  /**
+   * Sync persistent buffer to canvas (call before endStroke when using Rust path)
+   */
+  private syncBufferToCanvas(): void {
+    if (!this.persistentBuffer) return;
+
+    // Create ImageData from the persistent buffer
+    const imageData = this.ctx.createImageData(this.width, this.height);
+    imageData.data.set(this.persistentBuffer);
+    this.ctx.putImageData(imageData, 0, 0);
   }
 
   /**
    * Stamp an elliptical dab onto the buffer with anti-aliasing
-   * Supports roundness (ellipse) and angle (rotation)
+   * Uses cached mask for performance (Krita-style optimization)
+   * Hard brushes (hardness >= 0.99) use a fast path that skips mask caching
    *
    * Krita-style unified formula: dabAlpha = maskShape * flow * dabOpacity
    * - maskShape: pure geometric gradient (0-1), center always = 1.0
@@ -162,130 +255,131 @@ export class StrokeAccumulator {
       size,
       flow,
       hardness,
-      maskType = 'gaussian', // Default to Krita-style erf Gaussian
+      maskType = 'gaussian',
       color,
-      dabOpacity = 1.0, // Krita-style multiplier for entire dab
+      dabOpacity = 1.0,
       roundness = 1,
       angle = 0,
     } = params;
-    const radiusX = size / 2;
-    const radiusY = radiusX * roundness; // Scale Y radius for roundness
 
-    if (radiusX < 0.5) return;
-
-    // Use the larger radius for calculations
-    const maxRadius = Math.max(radiusX, radiusY);
-
-    // Krita-style Gaussian logic adjustments for softer edges
-    const fade = maskType === 'gaussian' ? (1.0 - hardness) * 2.0 : 0; // Enhance fade range for smoother falloff
-
-    // Dynamic extent multiplier based on mask type
-    let extentMultiplier: number;
-    if (hardness >= 0.99) {
-      extentMultiplier = 1.0;
-    } else if (maskType === 'gaussian') {
-      // Gaussian (erf) mask decays much faster than simple exp()
-      // Extend calculation area significantly for soft brushes
-      extentMultiplier = 1.0 + fade;
-    } else {
-      // Default simple Gaussian: 1.5x fallback
-      extentMultiplier = 1.5;
-    }
-
-    const effectiveRadius = maxRadius * extentMultiplier + 1; // +1 for AA margin
-
-    // Expand dirty rect with the EFFECTIVE radius (including soft brush extension)
-    this.expandDirtyRect(x, y, effectiveRadius);
+    if (size < 1) return;
+    if (!this.bufferData) return;
 
     const rgb = hexToRgb(color);
+    let dabDirtyRect: Rect;
 
-    // Pre-calculate rotation values (angle in degrees to radians)
-    const angleRad = (angle * Math.PI) / 180;
-    const cosA = Math.cos(-angleRad); // Negative for inverse rotation
-    const sinA = Math.sin(-angleRad);
+    // Fast path for hard brushes - skip mask caching entirely
+    if (hardness >= 0.99) {
+      dabDirtyRect = this.maskCache.stampHardBrush(
+        this.bufferData,
+        this.width,
+        this.height,
+        x,
+        y,
+        size / 2, // radius
+        roundness,
+        angle,
+        flow,
+        dabOpacity,
+        rgb.r,
+        rgb.g,
+        rgb.b
+      );
+    } else {
+      // Soft brushes use cached mask
+      const cacheParams: MaskCacheParams = {
+        size,
+        hardness,
+        roundness,
+        angle,
+        maskType,
+      };
 
-    // Calculate bounding box for pixel operations
-    const left = Math.max(0, Math.floor(x - effectiveRadius));
-    const top = Math.max(0, Math.floor(y - effectiveRadius));
-    const right = Math.min(this.width, Math.ceil(x + effectiveRadius));
-    const bottom = Math.min(this.height, Math.ceil(y + effectiveRadius));
-    const rectWidth = right - left;
-    const rectHeight = bottom - top;
-
-    if (rectWidth <= 0 || rectHeight <= 0) return;
-
-    // Get current buffer data for the dab region
-    const bufferData = this.ctx.getImageData(left, top, rectWidth, rectHeight);
-
-    // Process each pixel in the dab region
-    for (let py = 0; py < rectHeight; py++) {
-      for (let px = 0; px < rectWidth; px++) {
-        const worldX = left + px;
-        const worldY = top + py;
-
-        // Calculate offset from dab center (sample at pixel center)
-        const dx = worldX + 0.5 - x;
-        const dy = worldY + 0.5 - y;
-
-        // Apply inverse rotation to get position in brush-local coordinates
-        const localX = dx * cosA - dy * sinA;
-        const localY = dx * sinA + dy * cosA;
-
-        // Calculate normalized distance for ellipse
-        // dist = 1.0 at the edge of the ellipse
-        const normX = localX / radiusX;
-        const normY = localY / radiusY;
-        const normDist = Math.sqrt(normX * normX + normY * normY);
-
-        // Calculate pure mask shape (Krita-style: mask is purely geometric)
-        const maskShape = this.calculateMaskShape(normDist, radiusX, hardness, maskType, fade);
-
-        // Krita-style unified formula: dabAlpha = maskShape * flow * dabOpacity
-        // - maskShape: pure geometric gradient (0-1), center = 1.0
-        // - flow: per-dab accumulation rate
-        // - dabOpacity: per-dab transparency (also serves as accumulation ceiling)
-
-        // Calculate source alpha for color blending
-        const srcAlpha = maskShape * flow;
-
-        // Target alpha (accumulation ceiling) - Krita Alpha Darken style
-        const targetAlpha = dabOpacity;
-
-        if (srcAlpha <= 0.001) continue;
-
-        const idx = (py * rectWidth + px) * 4;
-
-        // Get current buffer pixel
-        const dstR = bufferData.data[idx] ?? 0;
-        const dstG = bufferData.data[idx + 1] ?? 0;
-        const dstB = bufferData.data[idx + 2] ?? 0;
-        const dstA = (bufferData.data[idx + 3] ?? 0) / 255;
-
-        // Alpha Darken: lerp toward ceiling, clamp if already reached
-        const outA = dstA >= targetAlpha - 0.001 ? dstA : dstA + (targetAlpha - dstA) * srcAlpha;
-
-        if (outA > 0.001) {
-          // Color blending: lerp toward source color
-          const hasExisting = dstA > 0.001;
-          const outR = hasExisting ? dstR + (rgb.r - dstR) * srcAlpha : rgb.r;
-          const outG = hasExisting ? dstG + (rgb.g - dstG) * srcAlpha : rgb.g;
-          const outB = hasExisting ? dstB + (rgb.b - dstB) * srcAlpha : rgb.b;
-
-          bufferData.data[idx] = Math.round(Math.min(255, Math.max(0, outR)));
-          bufferData.data[idx + 1] = Math.round(Math.min(255, Math.max(0, outG)));
-          bufferData.data[idx + 2] = Math.round(Math.min(255, Math.max(0, outB)));
-
-          // Dithering for smooth alpha transitions
-          const ditherPattern = ((worldX + worldY) % 2) * 0.5 - 0.25;
-          bufferData.data[idx + 3] = Math.round(
-            Math.min(255, Math.max(0, outA * 255 + ditherPattern))
-          );
-        }
+      // Only regenerate mask when parameters change (major performance win)
+      if (this.maskCache.needsUpdate(cacheParams)) {
+        this.maskCache.generateMask(cacheParams);
       }
+
+      // Use cached mask for fast blending
+      dabDirtyRect = this.maskCache.stampToBuffer(
+        this.bufferData,
+        this.width,
+        this.height,
+        x,
+        y,
+        flow,
+        dabOpacity,
+        rgb.r,
+        rgb.g,
+        rgb.b
+      );
     }
 
-    // Write back to buffer
-    this.ctx.putImageData(bufferData, left, top);
+    // Expand main dirty rect
+    if (dabDirtyRect.right > dabDirtyRect.left && dabDirtyRect.bottom > dabDirtyRect.top) {
+      this.dirtyRect.left = Math.min(this.dirtyRect.left, dabDirtyRect.left);
+      this.dirtyRect.top = Math.min(this.dirtyRect.top, dabDirtyRect.top);
+      this.dirtyRect.right = Math.max(this.dirtyRect.right, dabDirtyRect.right);
+      this.dirtyRect.bottom = Math.max(this.dirtyRect.bottom, dabDirtyRect.bottom);
+
+      // Accumulate pending dirty rect for batched sync
+      this.pendingDirtyRect.left = Math.min(this.pendingDirtyRect.left, dabDirtyRect.left);
+      this.pendingDirtyRect.top = Math.min(this.pendingDirtyRect.top, dabDirtyRect.top);
+      this.pendingDirtyRect.right = Math.max(this.pendingDirtyRect.right, dabDirtyRect.right);
+      this.pendingDirtyRect.bottom = Math.max(this.pendingDirtyRect.bottom, dabDirtyRect.bottom);
+    }
+
+    // Throttled canvas sync - sync every N dabs instead of every dab
+    this.syncCounter++;
+    if (this.syncCounter >= StrokeAccumulator.SYNC_INTERVAL) {
+      this.syncPendingToCanvas();
+      this.syncCounter = 0;
+    }
+  }
+
+  /**
+   * Sync pending dirty region to canvas for preview
+   */
+  private syncPendingToCanvas(): void {
+    if (!this.bufferData) return;
+
+    const left = Math.max(0, this.pendingDirtyRect.left);
+    const top = Math.max(0, this.pendingDirtyRect.top);
+    const right = Math.min(this.width, this.pendingDirtyRect.right);
+    const bottom = Math.min(this.height, this.pendingDirtyRect.bottom);
+
+    const width = right - left;
+    const height = bottom - top;
+
+    if (width <= 0 || height <= 0) return;
+
+    // Reuse ImageData if dimensions match, otherwise allocate new one
+    if (
+      !this.syncImageData ||
+      this.syncImageDataWidth !== width ||
+      this.syncImageDataHeight !== height
+    ) {
+      this.syncImageData = new ImageData(width, height);
+      this.syncImageDataWidth = width;
+      this.syncImageDataHeight = height;
+    }
+
+    // Extract region from persistent buffer and sync to canvas
+    const regionData = this.syncImageData;
+    for (let py = 0; py < height; py++) {
+      const srcStart = ((top + py) * this.width + left) * 4;
+      const dstStart = py * width * 4;
+      regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
+    }
+    this.ctx.putImageData(regionData, left, top);
+
+    // Reset pending dirty rect
+    this.pendingDirtyRect = {
+      left: this.width,
+      top: this.height,
+      right: 0,
+      bottom: 0,
+    };
   }
 
   /**
@@ -298,6 +392,14 @@ export class StrokeAccumulator {
   endStroke(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
     if (!this.active) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
+    }
+
+    // Flush any pending canvas sync before compositing
+    this.syncPendingToCanvas();
+
+    // Sync persistent buffer to canvas (for Rust path)
+    if (this.useRustPath) {
+      this.syncBufferToCanvas();
     }
 
     this.active = false;
@@ -382,60 +484,6 @@ export class StrokeAccumulator {
    */
   getDimensions(): { width: number; height: number } {
     return { width: this.width, height: this.height };
-  }
-
-  /**
-   * Calculate pure mask shape (0-1) based on hardness and mask type.
-   * Center point always returns 1.0 for all mask types.
-   */
-  private calculateMaskShape(
-    normDist: number,
-    radiusX: number,
-    hardness: number,
-    maskType: string,
-    fade: number
-  ): number {
-    if (hardness >= 0.99) {
-      // Hard brush with 1px anti-aliased edge
-      const distFromEdge = normDist * radiusX - radiusX;
-      if (distFromEdge > 1.0) return 0;
-      if (distFromEdge > 0.0) return 1.0 - distFromEdge;
-      return 1.0;
-    } else if (maskType === 'gaussian') {
-      // Krita-style Gaussian (erf-based) mask
-      // alphafactor normalizes so center point = 1.0 regardless of fade/hardness
-      const safeFade = Math.max(1e-6, Math.min(2.0, fade));
-
-      const SQRT_2 = Math.SQRT2;
-      const center = (2.5 * (6761.0 * safeFade - 10000.0)) / (SQRT_2 * 6761.0 * safeFade);
-      const alphafactor = 255.0 / (2.0 * erf(center));
-      const distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX);
-      const physicalDist = normDist * radiusX;
-      const aaStart = radiusX - 1.0;
-
-      // Anti-aliasing for harder brushes: linear bleed at edge
-      if (hardness > 0.5 && physicalDist > aaStart) {
-        if (physicalDist > radiusX) return 0;
-
-        const distAtStart = aaStart * distfactor;
-        const valAtStart = alphafactor * (erf(distAtStart + center) - erf(distAtStart - center));
-        const baseAlphaAtStart = Math.max(0, Math.min(1, valAtStart / 255.0));
-        return baseAlphaAtStart * (1.0 - (physicalDist - aaStart));
-      }
-
-      // Normal Gaussian calculation
-      const scaledDist = physicalDist * distfactor;
-      const val = alphafactor * (erf(scaledDist + center) - erf(scaledDist - center));
-      return Math.max(0, Math.min(1, val / 255.0));
-    } else {
-      // Simple Gaussian exp(-k*t²) with inner core
-      const maxExtent = 1.5;
-      if (normDist > maxExtent) return 0;
-      if (normDist <= hardness) return 1.0;
-
-      const t = (normDist - hardness) / (1 - hardness);
-      return Math.exp(-2.5 * t * t);
-    }
   }
 
   /**

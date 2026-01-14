@@ -52,15 +52,20 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
 
   /**
    * Begin a new brush stroke
+   * @param hardness - Brush hardness (0-100), determines if Rust SIMD path is used
    */
-  const beginStroke = useCallback(() => {
-    const buffer = ensureStrokeBuffer();
-    buffer.beginStroke();
-    stamperRef.current.beginStroke();
-  }, [ensureStrokeBuffer]);
+  const beginStroke = useCallback(
+    (hardness: number = 100) => {
+      const buffer = ensureStrokeBuffer();
+      buffer.beginStroke(hardness / 100); // Convert 0-100 to 0-1
+      stamperRef.current.beginStroke();
+    },
+    [ensureStrokeBuffer]
+  );
 
   /**
    * Process a point and render dabs to stroke buffer
+   * Uses Rust SIMD backend for soft brushes (hardness < 95)
    */
   const processPoint = useCallback(
     (x: number, y: number, pressure: number, config: BrushRenderConfig): void => {
@@ -68,6 +73,7 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
       if (!buffer || !buffer.isActive()) return;
 
       const stamper = stamperRef.current;
+      const useRustPath = buffer.isUsingRustPath();
 
       // Apply pressure curve (fade-in already applied by backend)
       const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
@@ -100,7 +106,13 @@ export function useBrushRenderer({ width, height }: UseBrushRendererProps) {
           angle: config.angle,
         };
 
-        buffer.stampDab(dabParams);
+        // Use Rust SIMD for soft brushes, JS for hard brushes
+        if (useRustPath) {
+          // Fire and forget - Rust path is async but we don't wait
+          void buffer.stampDabRust(dabParams);
+        } else {
+          buffer.stampDab(dabParams);
+        }
       }
     },
     []

@@ -92,7 +92,7 @@ export function Toolbar() {
           <input
             type="range"
             min="1"
-            max="200"
+            max="800"
             value={currentSize}
             onChange={(e) => setCurrentSize(Number(e.target.value))}
           />

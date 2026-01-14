@@ -470,6 +470,63 @@ pub fn push_pointer_event(
     Ok(())
 }
 
+// ============================================================================
+// Soft Brush SIMD Rendering
+// ============================================================================
+
+use crate::brush::soft_dab::{render_soft_dab, GaussParams};
+
+/// Dirty rectangle from soft dab rendering
+pub type SoftDabResult = (Vec<u8>, (usize, usize, usize, usize));
+
+/// Stamp a soft brush dab using SIMD-optimized Gaussian mask
+///
+/// This command offloads the heavy mask calculation to Rust with SIMD acceleration.
+/// Returns the modified buffer and dirty rectangle.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn stamp_soft_dab(
+    buffer: Vec<u8>,
+    buffer_width: usize,
+    buffer_height: usize,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    hardness: f32,
+    roundness: f32,
+    color: (u8, u8, u8),
+    flow: f32,
+    dab_opacity: f32,
+) -> Result<SoftDabResult, String> {
+    // Validate buffer size
+    let expected_size = buffer_width * buffer_height * 4;
+    if buffer.len() != expected_size {
+        return Err(format!(
+            "Buffer size mismatch: expected {}, got {}",
+            expected_size,
+            buffer.len()
+        ));
+    }
+
+    let mut buffer = buffer;
+    let params = GaussParams::new(hardness, radius, roundness);
+
+    let dirty_rect = render_soft_dab(
+        &mut buffer,
+        buffer_width,
+        buffer_height,
+        cx,
+        cy,
+        radius,
+        &params,
+        color,
+        flow,
+        dab_opacity,
+    );
+
+    Ok((buffer, dirty_rect))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

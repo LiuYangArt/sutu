@@ -13,7 +13,7 @@ export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 export type BrushMaskType = 'gaussian' | 'default';
 
 /** Clamp brush/eraser size to valid range */
-const clampSize = (size: number): number => Math.max(1, Math.min(500, size));
+const clampSize = (size: number): number => Math.max(1, Math.min(800, size));
 
 /**
  * Apply pressure curve transformation

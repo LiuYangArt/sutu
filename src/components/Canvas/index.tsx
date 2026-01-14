@@ -713,7 +713,7 @@ export function Canvas() {
       captureBeforeImage();
 
       if (currentTool === 'brush') {
-        beginBrushStroke();
+        beginBrushStroke(brushHardness);
         processBrushPointWithConfig(canvasX, canvasY, pressure);
       } else {
         // Eraser uses legacy buffer
@@ -737,6 +737,7 @@ export function Canvas() {
       captureBeforeImage,
       beginBrushStroke,
       processBrushPointWithConfig,
+      brushHardness,
     ]
   );
 
