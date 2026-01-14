@@ -134,6 +134,29 @@ export class InstanceBuffer {
   }
 
   /**
+   * Get pending dab data for per-dab loop rendering
+   * Returns array of dab data without clearing the buffer
+   */
+  getDabsData(): DabInstanceData[] {
+    const dabs: DabInstanceData[] = [];
+    for (let i = 0; i < this.pendingCount; i++) {
+      const offset = i * DAB_FLOATS_PER_INSTANCE;
+      dabs.push({
+        x: this.cpuData[offset + 0]!,
+        y: this.cpuData[offset + 1]!,
+        size: this.cpuData[offset + 2]!,
+        hardness: this.cpuData[offset + 3]!,
+        r: this.cpuData[offset + 4]!,
+        g: this.cpuData[offset + 5]!,
+        b: this.cpuData[offset + 6]!,
+        dabOpacity: this.cpuData[offset + 7]!,
+        flow: this.cpuData[offset + 8]!,
+      });
+    }
+    return dabs;
+  }
+
+  /**
    * Current number of pending instances
    */
   get count(): number {
