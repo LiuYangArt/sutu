@@ -1,0 +1,367 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>GPU vs CPU 渲染对比测试</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        padding: 20px;
+        background: #1a1a1a;
+        color: #eee;
+      }
+      .canvas-container {
+        display: flex;
+        gap: 20px;
+        margin-top: 20px;
+      }
+      .canvas-wrapper {
+        text-align: center;
+      }
+      canvas {
+        border: 1px solid #444;
+        background: white;
+      }
+      .controls {
+        background: #2a2a2a;
+        padding: 15px;
+        border-radius: 8px;
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .control-group {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 13px;
+      }
+      input[type='range'] {
+        width: 100px;
+      }
+      select {
+        padding: 6px 10px;
+        border-radius: 4px;
+        background: #333;
+        color: #eee;
+        border: 1px solid #555;
+      }
+      button {
+        padding: 8px 16px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      #results {
+        margin-top: 20px;
+        padding: 15px;
+        background: #2a2a2a;
+        border-radius: 8px;
+      }
+      h3 {
+        margin: 10px 0;
+        color: #ccc;
+      }
+      .param-note {
+        font-size: 12px;
+        color: #888;
+        margin-top: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GPU vs CPU 渲染对比</h1>
+    <p class="param-note" id="modeDescription">测试模式：点/笔触对比</p>
+
+    <div class="controls">
+      <div class="control-group">
+        <label>
+          模式:
+          <select id="testMode">
+            <option value="point">Single Point (5 dabs)</option>
+            <option value="stroke" selected>Stroke Line (笔触)</option>
+          </select>
+        </label>
+        <label>
+          Size: <span id="sizeValue">80</span>
+          <input type="range" id="size" min="20" max="300" value="80" />
+        </label>
+        <label>
+          Hardness: <span id="hardnessValue">0.5</span>
+          <input type="range" id="hardness" min="0" max="1" step="0.01" value="0.5" />
+        </label>
+      </div>
+      <div class="control-group">
+        <label>
+          Flow: <span id="flowValue">0.3</span>
+          <input type="range" id="flow" min="0.1" max="1" step="0.1" value="0.3" />
+        </label>
+        <label>
+          Opacity: <span id="opacityValue">1.0</span>
+          <input type="range" id="opacity" min="0.1" max="1" step="0.1" value="1.0" />
+        </label>
+        <label>
+          Spacing: <span id="spacingValue">25</span>%
+          <input type="range" id="spacing" min="10" max="100" step="5" value="25" />
+        </label>
+        <button id="runTest">运行测试 (Run Test)</button>
+      </div>
+    </div>
+
+    <div class="canvas-container">
+      <div class="canvas-wrapper">
+        <h3>CPU 渲染 (Reference)</h3>
+        <canvas id="cpuCanvas" width="500" height="300"></canvas>
+      </div>
+      <div class="canvas-wrapper">
+        <h3>GPU 渲染 (Target)</h3>
+        <canvas id="gpuCanvas" width="500" height="300"></canvas>
+      </div>
+      <div class="canvas-wrapper">
+        <h3>差异 (Diff > 2)</h3>
+        <canvas id="diffCanvas" width="500" height="300"></canvas>
+      </div>
+    </div>
+
+    <div id="results"></div>
+
+    <script type="module">
+      import { StrokeAccumulator } from '../../src/utils/strokeBuffer.ts';
+      import { GPUContext, GPUStrokeAccumulator } from '../../src/gpu/index.ts';
+
+      const CANVAS_W = 500;
+      const CANVAS_H = 300;
+
+      // UI Elements
+      const els = {
+        testMode: document.getElementById('testMode'),
+        size: document.getElementById('size'),
+        hardness: document.getElementById('hardness'),
+        flow: document.getElementById('flow'),
+        opacity: document.getElementById('opacity'),
+        spacing: document.getElementById('spacing'),
+        sizeValue: document.getElementById('sizeValue'),
+        hardnessValue: document.getElementById('hardnessValue'),
+        flowValue: document.getElementById('flowValue'),
+        opacityValue: document.getElementById('opacityValue'),
+        spacingValue: document.getElementById('spacingValue'),
+        modeDescription: document.getElementById('modeDescription'),
+        runBtn: document.getElementById('runTest'),
+        results: document.getElementById('results'),
+      };
+
+      // Event Listeners
+      const linkInputToLabel = (input, label) => {
+        input.addEventListener('input', (e) => (label.textContent = e.target.value));
+      };
+
+      linkInputToLabel(els.size, els.sizeValue);
+      linkInputToLabel(els.hardness, els.hardnessValue);
+      linkInputToLabel(els.flow, els.flowValue);
+      linkInputToLabel(els.opacity, els.opacityValue);
+      linkInputToLabel(els.spacing, els.spacingValue);
+
+      els.testMode.addEventListener('change', updateModeDescription);
+      els.runBtn.addEventListener('click', runTest);
+
+      function updateModeDescription() {
+        const mode = els.testMode.value;
+        els.modeDescription.textContent =
+          mode === 'point'
+            ? '测试 5 个重叠 dab 的累积效果（用于验证 Alpha Darken）'
+            : '测试水平笔触绘制效果（模拟真实绘画）';
+      }
+
+      // Initialize
+      updateModeDescription();
+
+      async function runTest() {
+        const CONFIG = {
+          mode: els.testMode.value,
+          size: parseFloat(els.size.value),
+          hardness: parseFloat(els.hardness.value),
+          flow: parseFloat(els.flow.value),
+          opacity: parseFloat(els.opacity.value),
+          spacing: parseFloat(els.spacing.value) / 100,
+          color: '#000000',
+        };
+
+        els.results.innerHTML = '<span style="color:#888">Running...</span>';
+
+        try {
+          const dabPositions = generateDabPositions(CONFIG.mode, CONFIG.size, CONFIG.spacing);
+
+          // 1. CPU Reference
+          const cpuResult = await renderCPU(CONFIG, dabPositions);
+
+          // 2. GPU Target
+          const gpuResult = await renderGPU(CONFIG, dabPositions);
+          if (!gpuResult) {
+            els.results.innerHTML = '<span style="color:red">WebGPU not supported</span>';
+            return;
+          }
+
+          // 3. Display Results
+          displayResult('cpuCanvas', cpuResult);
+          displayResult('gpuCanvas', gpuResult);
+
+          // 4. Compare
+          performComparison(cpuResult, gpuResult, dabPositions.length);
+        } catch (e) {
+          console.error(e);
+          els.results.innerHTML = `<span style="color:red">Error: ${e.message}</span>`;
+        }
+      }
+
+      function renderCPU(config, positions) {
+        const canvas = document.createElement('canvas');
+        canvas.width = CANVAS_W;
+        canvas.height = CANVAS_H;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        const accumulator = new StrokeAccumulator(CANVAS_W, CANVAS_H);
+        accumulator.beginStroke(config.hardness);
+
+        stampDabs(accumulator, positions, config);
+        accumulator.endStroke(ctx, config.opacity);
+
+        return canvas;
+      }
+
+      async function renderGPU(config, positions) {
+        const ctxInstance = GPUContext.getInstance();
+        await ctxInstance.initialize();
+        if (!ctxInstance.device) return null;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = CANVAS_W;
+        canvas.height = CANVAS_H;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        const accumulator = new GPUStrokeAccumulator(ctxInstance.device, CANVAS_W, CANVAS_H);
+        accumulator.clear();
+        accumulator.beginStroke();
+
+        stampDabs(accumulator, positions, config);
+        await accumulator.endStroke(ctx, config.opacity);
+
+        return canvas;
+      }
+
+      function stampDabs(accumulator, positions, config) {
+        for (const pos of positions) {
+          accumulator.stampDab({
+            x: pos.x,
+            y: pos.y,
+            size: config.size,
+            flow: config.flow,
+            hardness: config.hardness,
+            color: config.color,
+            dabOpacity: 1.0,
+          });
+        }
+      }
+
+      function displayResult(canvasId, sourceCanvas) {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+        ctx.drawImage(sourceCanvas, 0, 0);
+      }
+
+      function performComparison(cpuCanvas, gpuCanvas, dabCount) {
+        const diffCtx = document.getElementById('diffCanvas').getContext('2d');
+        diffCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+        const cpuCtx = cpuCanvas.getContext('2d');
+        const gpuCtx = gpuCanvas.getContext('2d');
+
+        const result = compareCanvases(cpuCtx, gpuCtx, diffCtx);
+
+        els.results.innerHTML = `
+          <h3>Result (${dabCount} dabs)</h3>
+          <div>Max Diff: <strong>${result.maxDiff}</strong></div>
+          <div>Diff Pixels: ${result.diffPixels} (${result.diffPercent}%)</div>
+          <div style="color: ${result.passed ? '#4CAF50' : '#F44336'}; font-weight: bold;">
+            ${result.passed ? '✓ PASSED (Diff ≤ 2)' : '✗ FAILED'}
+          </div>
+        `;
+      }
+
+      function generateDabPositions(mode, size, spacingPercent) {
+        const positions = [];
+        const y = CANVAS_H / 2;
+
+        if (mode === 'point') {
+          const x = CANVAS_W / 2;
+          for (let i = 0; i < 5; i++) positions.push({ x, y });
+        } else {
+          const step = size * spacingPercent;
+          const startX = size / 2 + 20;
+          const endX = CANVAS_W - size / 2 - 20;
+          for (let x = startX; x <= endX; x += step) positions.push({ x, y });
+        }
+        return positions;
+      }
+
+      function compareCanvases(cpuCtx, gpuCtx, diffCtx) {
+        const cpuData = cpuCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+        const gpuData = gpuCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+        const diffImageData = diffCtx.createImageData(CANVAS_W, CANVAS_H);
+
+        let maxDiff = 0,
+          diffPixels = 0;
+        const threshold = 2;
+
+        for (let i = 0; i < cpuData.data.length; i += 4) {
+          const r1 = cpuData.data[i],
+            g1 = cpuData.data[i + 1],
+            b1 = cpuData.data[i + 2],
+            a1 = cpuData.data[i + 3];
+          const r2 = gpuData.data[i],
+            g2 = gpuData.data[i + 1],
+            b2 = gpuData.data[i + 2],
+            a2 = gpuData.data[i + 3];
+
+          const localMax = Math.max(
+            Math.abs(r1 - r2),
+            Math.abs(g1 - g2),
+            Math.abs(b1 - b2),
+            Math.abs(a1 - a2)
+          );
+          if (localMax > maxDiff) maxDiff = localMax;
+
+          if (localMax > threshold) {
+            diffPixels++;
+            diffImageData.data[i] = 255; // R
+            diffImageData.data[i + 3] = 255; // A
+          } else {
+            // Background for matching pixels
+            diffImageData.data[i] = r1;
+            diffImageData.data[i + 1] = g1;
+            diffImageData.data[i + 2] = b1;
+            diffImageData.data[i + 3] = 50;
+          }
+        }
+
+        diffCtx.putImageData(diffImageData, 0, 0);
+        return {
+          maxDiff,
+          diffPixels,
+          diffPercent: ((diffPixels / (CANVAS_W * CANVAS_H)) * 100).toFixed(4),
+          passed: maxDiff <= threshold,
+        };
+      }
+    </script>
+  </body>
+</html>
