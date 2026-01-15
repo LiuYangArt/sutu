@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-01-15T11:53:59.473Z",
+  "timestamp": "2026-01-15T11:58:11.549Z",
   "scenarios": [
     {
       "scenario": {
@@ -11,17 +11,17 @@
         "strokeSpeed": "fast"
       },
       "fps": {
-        "fps": 59.739460885235225,
-        "avgFrameTime": 16.73935427574561,
-        "minFrameTime": 3.399999998509884,
+        "fps": 59.955296198628176,
+        "avgFrameTime": 16.67909364815849,
+        "minFrameTime": 0.6000000014901161,
         "maxFrameTime": 111.29999999701977,
-        "frameTimeStdDev": 3.059356820471724,
-        "p99FrameTime": 18,
-        "droppedFrames": 2,
+        "frameTimeStdDev": 1.257488467292378,
+        "p99FrameTime": 17.899999998509884,
+        "droppedFrames": 8,
         "consecutiveDrops": 1
       },
       "latency": {
-        "avgInputLatency": 5.600000001490116,
+        "avgInputLatency": 5.300000004470348,
         "avgCpuEncodeTime": 0,
         "avgGpuExecuteTime": 0,
         "avgTotalRenderLatency": 0,
@@ -29,12 +29,12 @@
         "p99RenderLatency": 0
       },
       "lagometer": {
-        "avgLagDistance": 1367.3549869537344,
-        "maxLagDistance": 1367.3549869537344,
+        "avgLagDistance": 1537.7775566200157,
+        "maxLagDistance": 1537.7775566200157,
         "lagExceedCount": 1,
         "lagExceedThreshold": 20
       },
-      "duration": 315.69999999552965
+      "duration": 320.59999999403954
     },
     {
       "scenario": {
@@ -46,13 +46,13 @@
         "strokeSpeed": "medium"
       },
       "fps": {
-        "fps": 59.76161234006291,
-        "avgFrameTime": 16.733149606300387,
-        "minFrameTime": 3.399999998509884,
+        "fps": 59.95558303667143,
+        "avgFrameTime": 16.67901385244401,
+        "minFrameTime": 0.6000000014901161,
         "maxFrameTime": 111.29999999701977,
-        "frameTimeStdDev": 2.9074266026167472,
+        "frameTimeStdDev": 1.25304858890406,
         "p99FrameTime": 17.900000005960464,
-        "droppedFrames": 2,
+        "droppedFrames": 8,
         "consecutiveDrops": 1
       },
       "latency": {
@@ -69,7 +69,7 @@
         "lagExceedCount": 0,
         "lagExceedThreshold": 60
       },
-      "duration": 1445.7000000029802
+      "duration": 1441.2999999970198
     },
     {
       "scenario": {
@@ -81,30 +81,30 @@
         "strokeSpeed": "slow"
       },
       "fps": {
-        "fps": 59.806494815990455,
-        "avgFrameTime": 16.720592020594896,
-        "minFrameTime": 3.399999998509884,
+        "fps": 59.95628165318328,
+        "avgFrameTime": 16.67881950692829,
+        "minFrameTime": 0.6000000014901161,
         "maxFrameTime": 111.29999999701977,
-        "frameTimeStdDev": 2.6400003235472336,
+        "frameTimeStdDev": 1.2496278894019661,
         "p99FrameTime": 17.900000005960464,
-        "droppedFrames": 2,
+        "droppedFrames": 8,
         "consecutiveDrops": 1
       },
       "latency": {
-        "avgInputLatency": 5.299999997019768,
-        "avgCpuEncodeTime": 0,
-        "avgGpuExecuteTime": 0,
-        "avgTotalRenderLatency": 0,
-        "maxRenderLatency": 0,
-        "p99RenderLatency": 0
+        "avgInputLatency": 12.449999999565383,
+        "avgCpuEncodeTime": 0.034722222222222224,
+        "avgGpuExecuteTime": 6.949999999254942,
+        "avgTotalRenderLatency": 7.050000000745058,
+        "maxRenderLatency": 8.5,
+        "p99RenderLatency": 8.5
       },
       "lagometer": {
-        "avgLagDistance": 0,
-        "maxLagDistance": 0,
-        "lagExceedCount": 0,
+        "avgLagDistance": 30.097792711494566,
+        "maxLagDistance": 1990.7156176637031,
+        "lagExceedCount": 1,
         "lagExceedThreshold": 210
       },
-      "duration": 4118
+      "duration": 4120.39999999851
     },
     {
       "scenario": {
@@ -116,17 +116,17 @@
         "strokeSpeed": "fast"
       },
       "fps": {
-        "fps": 59.81112663954473,
-        "avgFrameTime": 16.719297163996906,
-        "minFrameTime": 3.399999998509884,
+        "fps": 59.95642333196355,
+        "avgFrameTime": 16.678780094390437,
+        "minFrameTime": 0.6000000014901161,
         "maxFrameTime": 111.29999999701977,
-        "frameTimeStdDev": 2.5884103351283096,
-        "p99FrameTime": 18.099999994039536,
-        "droppedFrames": 2,
+        "frameTimeStdDev": 1.2508737060208097,
+        "p99FrameTime": 17.900000005960464,
+        "droppedFrames": 8,
         "consecutiveDrops": 1
       },
       "latency": {
-        "avgInputLatency": 5.299999997019768,
+        "avgInputLatency": 5.0999999940395355,
         "avgCpuEncodeTime": 0,
         "avgGpuExecuteTime": 0,
         "avgTotalRenderLatency": 0,
@@ -134,17 +134,17 @@
         "p99RenderLatency": 0
       },
       "lagometer": {
-        "avgLagDistance": 0,
-        "maxLagDistance": 0,
-        "lagExceedCount": 0,
+        "avgLagDistance": 1946.2820396682148,
+        "maxLagDistance": 1946.2820396682148,
+        "lagExceedCount": 1,
         "lagExceedThreshold": 410
       },
-      "duration": 523
+      "duration": 525.2999999970198
     }
   ],
   "summary": {
-    "avgFps": 59.77967367020833,
-    "avgRenderLatency": 0,
-    "maxVisualLag": 1367.3549869537344
+    "avgFps": 59.95589605511161,
+    "avgRenderLatency": 1.7625000001862645,
+    "maxVisualLag": 1990.7156176637031
   }
 }

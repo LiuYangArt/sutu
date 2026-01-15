@@ -9,6 +9,8 @@
     "core:event:allow-listen",
     "core:event:allow-emit",
     "dialog:default",
-    "fs:default"
+    "dialog:allow-save",
+    "fs:default",
+    "fs:allow-write-text-file"
   ]
 }
