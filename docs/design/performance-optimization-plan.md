@@ -15,6 +15,20 @@
 
 > ⚠️ 自动化 Benchmark 在 App 中采样存在问题，上述 App 数据来自实时面板截图。
 
+## 📝 App Benchmark Context
+
+用户补充测试环境信息：
+
+- **Device**: 800px 笔刷 + 4K 屏幕 (3840x2160)
+- **Impact**:
+  - **GPU Load**: 800px 笔刷每个点覆盖 ~50万像素，GPU 填充率压力巨大。
+  - **Visual Lag 感知**: 700px 在 4K 屏上约占 **18%** 宽度。虽然数值大，但在高分屏上感知相对较小（相当于 1080p 下的 350px）。
+
+**新增归一化指标**：
+
+- `lagAsScreenPercent`: 滞后距离占屏幕宽度的百分比
+- `lagAsBrushRadii`: 滞后距离是笔刷半径的多少倍
+
 ---
 
 ## 🔍 问题诊断

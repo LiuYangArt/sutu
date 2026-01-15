@@ -22,6 +22,8 @@ export class LagometerMonitor {
         maxLagDistance: 0,
         lagExceedCount: 0,
         lagExceedThreshold: this.brushRadius + this.lagExceedMargin,
+        lagAsScreenPercent: 0,
+        lagAsBrushRadii: 0,
       };
     }
 
@@ -41,6 +43,9 @@ export class LagometerMonitor {
       maxLagDistance: max,
       lagExceedCount: exceedCount,
       lagExceedThreshold: threshold,
+      // Normalized metrics
+      lagAsScreenPercent: (max / window.innerWidth) * 100,
+      lagAsBrushRadii: this.brushRadius > 0 ? max / this.brushRadius : 0,
     };
   }
 

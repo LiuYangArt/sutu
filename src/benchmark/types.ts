@@ -31,6 +31,9 @@ export interface LagometerStats {
   maxLagDistance: number; // Peak lag distance
   lagExceedCount: number; // Number of times threshold was exceeded
   lagExceedThreshold: number; // Threshold (brush radius + N pixels)
+  // Normalized metrics
+  lagAsScreenPercent: number; // Max lag as percentage of screen width
+  lagAsBrushRadii: number; // Max lag as multiple of brush radius
 }
 
 export interface LatencyProfilerStats {
