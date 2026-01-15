@@ -198,17 +198,34 @@ export class BenchmarkRunner {
   }
 }
 
-// Export report as JSON file
-export function downloadBenchmarkReport(report: BenchmarkReport): void {
+// Export report as JSON file using Tauri fs API
+export async function downloadBenchmarkReport(report: BenchmarkReport): Promise<void> {
   const content = JSON.stringify(report, null, 2);
-  const blob = new Blob([content], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `benchmark-${new Date().toISOString().split('T')[0]}.json`;
-  // Must append to DOM for Tauri/some browsers
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const filename = `benchmark-${new Date().toISOString().split('T')[0]}.json`;
+
+  try {
+    // Try Tauri dialog + fs API
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+
+    if (path) {
+      await writeTextFile(path, content);
+    }
+  } catch {
+    // Fallback to browser download
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 }
