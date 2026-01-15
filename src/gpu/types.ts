@@ -118,9 +118,12 @@ export const BATCH_TIME_THRESHOLD_MS = 4; // Flush after N ms
 /**
  * Calculate effective radius for soft brush quad expansion.
  * Must match brush.wgsl vertex shader logic.
+ *
+ * Uses larger geometric expansion (2.5x) to prevent edge clipping
+ * while Fragment Shader keeps original fade (2.0x) for Gaussian curve shape.
  */
 export function calculateEffectiveRadius(radius: number, hardness: number): number {
   if (hardness >= 0.99) return radius;
-  const fade = (1.0 - hardness) * 2.0;
-  return radius * (1.0 + fade);
+  const geometricFade = (1.0 - hardness) * 2.5;
+  return radius * Math.max(1.5, 1.0 + geometricFade);
 }
