@@ -16,6 +16,9 @@ export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
+  // Phase 2.6: Lock for serializing brush stroke operations to prevent race conditions
+  // Ensures PointerDown fully completes before PointerUp or next PointerDown
+  const beginStrokePromiseRef = useRef<Promise<void> | null>(null);
   const isZoomingRef = useRef(false);
   const zoomStartRef = useRef<{ x: number; y: number; startScale: number } | null>(null);
   const strokeBufferRef = useRef<StrokeBuffer>(new StrokeBuffer(2));
@@ -711,12 +714,33 @@ export function Canvas() {
       captureBeforeImage();
 
       if (currentTool === 'brush') {
-        // beginBrushStroke is async (for rendering lock)
-        // We must await it before processPoint to avoid race condition
-        (async () => {
-          await beginBrushStroke(brushHardness);
-          processBrushPointWithConfig(canvasX, canvasY, pressure);
+        // Phase 2.6: Use Promise chain to serialize brush stroke operations
+        // This prevents race conditions when rapidly starting new strokes
+        const previousPromise = beginStrokePromiseRef.current;
+
+        const currentTask = (async () => {
+          try {
+            // 1. Wait for previous task to complete (with error catching to prevent deadlock)
+            if (previousPromise) {
+              await previousPromise.catch((e) =>
+                console.warn('[Canvas] Previous stroke failed:', e)
+              );
+            }
+
+            // 2. Execute current task
+            await beginBrushStroke(brushHardness);
+
+            // 3. Only process first point after begin completes (ensures correct timing)
+            processBrushPointWithConfig(canvasX, canvasY, pressure);
+          } catch (error) {
+            console.error('[Canvas] Failed to start stroke:', error);
+            // Reset drawing state on error to prevent stuck state
+            isDrawingRef.current = false;
+          }
         })();
+
+        // Form promise chain for serialization
+        beginStrokePromiseRef.current = currentTask;
       } else {
         // Eraser uses legacy buffer
         strokeBufferRef.current.addPoint({
@@ -839,6 +863,14 @@ export function Canvas() {
   // Finish the current stroke properly (used by PointerUp and Alt key)
   const finishCurrentStroke = useCallback(async () => {
     if (!isDrawingRef.current) return;
+
+    // Phase 2.6: Ensure PointerDown completes before ending stroke
+    // This prevents "No active stroke" error from finishing before begin completes
+    if (beginStrokePromiseRef.current) {
+      await beginStrokePromiseRef.current.catch((e) =>
+        console.warn('[Canvas] Begin stroke failed during finish:', e)
+      );
+    }
 
     // 清理 WinTab 缓冲区
     clearPointBuffer();
