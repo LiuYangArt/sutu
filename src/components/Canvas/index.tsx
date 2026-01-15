@@ -16,9 +16,13 @@ export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
-  // Phase 2.6: Lock for serializing brush stroke operations to prevent race conditions
-  // Ensures PointerDown fully completes before PointerUp or next PointerDown
-  const beginStrokePromiseRef = useRef<Promise<void> | null>(null);
+
+  // Phase 2.7: State machine + input buffering for brush strokes
+  // Solves the race condition where PointerMove/Up arrives before beginStroke completes
+  type StrokeState = 'idle' | 'starting' | 'active' | 'finishing';
+  const strokeStateRef = useRef<StrokeState>('idle');
+  const pendingPointsRef = useRef<Array<{ x: number; y: number; pressure: number }>>([]);
+  const pendingEndRef = useRef(false); // Flag: PointerUp arrived during 'starting' phase
   const isZoomingRef = useRef(false);
   const zoomStartRef = useRef<{ x: number; y: number; startScale: number } | null>(null);
   const strokeBufferRef = useRef<StrokeBuffer>(new StrokeBuffer(2));
@@ -660,6 +664,69 @@ export function Canvas() {
     ]
   );
 
+  // Internal stroke finishing logic (called after state machine validation)
+  // Moved before handlePointerDown to avoid circular dependency
+  const finishCurrentStrokeInternal = useCallback(async () => {
+    // 清理 WinTab 缓冲区
+    clearPointBuffer();
+
+    // For brush tool, composite stroke buffer to layer with opacity ceiling
+    if (currentTool === 'brush') {
+      const layerCtx = getActiveLayerCtx();
+      if (layerCtx) {
+        await endBrushStroke(layerCtx);
+      }
+      compositeAndRender();
+    } else {
+      // For eraser, use the legacy stroke buffer
+      const remainingPoints = strokeBufferRef.current.finish();
+      if (remainingPoints.length > 0) {
+        drawPoints(remainingPoints);
+      }
+    }
+
+    // Save stroke to history (uses beforeImage captured at stroke start)
+    saveStrokeToHistory();
+    if (activeLayerId) {
+      updateThumbnail(activeLayerId);
+    }
+
+    isDrawingRef.current = false;
+    strokeStateRef.current = 'idle'; // Reset state machine
+  }, [
+    currentTool,
+    getActiveLayerCtx,
+    endBrushStroke,
+    compositeAndRender,
+    drawPoints,
+    saveStrokeToHistory,
+    activeLayerId,
+    updateThumbnail,
+  ]);
+
+  // Finish the current stroke properly (used by PointerUp and Alt key)
+  // Phase 2.7: Uses state machine to handle starting/active/finishing states
+  const finishCurrentStroke = useCallback(async () => {
+    if (!isDrawingRef.current) return;
+
+    const state = strokeStateRef.current;
+
+    // Case 1: Still in 'starting' phase - mark pendingEnd, let PointerDown callback handle it
+    if (state === 'starting') {
+      pendingEndRef.current = true;
+      return;
+    }
+
+    // Case 2: In 'active' phase - transition to 'finishing' and complete
+    if (state === 'active') {
+      strokeStateRef.current = 'finishing';
+      await finishCurrentStrokeInternal();
+      return;
+    }
+
+    // Case 3: 'idle' or 'finishing' - ignore (already handled or never started)
+  }, [finishCurrentStrokeInternal]);
+
   // 指针事件处理
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -714,33 +781,44 @@ export function Canvas() {
       captureBeforeImage();
 
       if (currentTool === 'brush') {
-        // Phase 2.6: Use Promise chain to serialize brush stroke operations
-        // This prevents race conditions when rapidly starting new strokes
-        const previousPromise = beginStrokePromiseRef.current;
+        // Phase 2.7: State machine + input buffering
+        // Enter 'starting' state and buffer the first point
+        strokeStateRef.current = 'starting';
+        pendingPointsRef.current = [{ x: canvasX, y: canvasY, pressure }];
+        pendingEndRef.current = false;
 
-        const currentTask = (async () => {
+        // Async: wait for GPU ready, then replay buffered points
+        (async () => {
           try {
-            // 1. Wait for previous task to complete (with error catching to prevent deadlock)
-            if (previousPromise) {
-              await previousPromise.catch((e) =>
-                console.warn('[Canvas] Previous stroke failed:', e)
-              );
-            }
-
-            // 2. Execute current task
             await beginBrushStroke(brushHardness);
 
-            // 3. Only process first point after begin completes (ensures correct timing)
-            processBrushPointWithConfig(canvasX, canvasY, pressure);
+            // Check if we were cancelled or already moved to different state
+            if (strokeStateRef.current !== 'starting') {
+              return;
+            }
+
+            // Transition to 'active' state
+            strokeStateRef.current = 'active';
+
+            // Replay all buffered points (including the first one from PointerDown)
+            for (const pt of pendingPointsRef.current) {
+              processBrushPointWithConfig(pt.x, pt.y, pt.pressure);
+            }
+            pendingPointsRef.current = []; // Clear buffer
+
+            // If PointerUp arrived during 'starting', finish now
+            if (pendingEndRef.current) {
+              strokeStateRef.current = 'finishing';
+              await finishCurrentStrokeInternal();
+            }
           } catch (error) {
             console.error('[Canvas] Failed to start stroke:', error);
-            // Reset drawing state on error to prevent stuck state
+            // Reset state on error to prevent stuck
+            strokeStateRef.current = 'idle';
+            pendingPointsRef.current = [];
             isDrawingRef.current = false;
           }
         })();
-
-        // Form promise chain for serialization
-        beginStrokePromiseRef.current = currentTask;
       } else {
         // Eraser uses legacy buffer
         strokeBufferRef.current.addPoint({
@@ -764,6 +842,7 @@ export function Canvas() {
       beginBrushStroke,
       processBrushPointWithConfig,
       brushHardness,
+      finishCurrentStrokeInternal,
     ]
   );
 
@@ -836,9 +915,17 @@ export function Canvas() {
           tabletState.currentPoint
         );
 
-        // For brush tool, use the new three-level pipeline
+        // For brush tool, use state machine + input buffering
         if (currentTool === 'brush') {
-          processBrushPointWithConfig(canvasX, canvasY, pressure);
+          const state = strokeStateRef.current;
+          if (state === 'starting') {
+            // Buffer points during 'starting' phase, replay after beginStroke completes
+            pendingPointsRef.current.push({ x: canvasX, y: canvasY, pressure });
+          } else if (state === 'active') {
+            // Normal processing in 'active' phase
+            processBrushPointWithConfig(canvasX, canvasY, pressure);
+          }
+          // Ignore in 'idle' or 'finishing' state
           continue;
         }
 
@@ -859,54 +946,6 @@ export function Canvas() {
     },
     [isPanning, pan, drawPoints, scale, setScale, currentTool, processBrushPointWithConfig]
   );
-
-  // Finish the current stroke properly (used by PointerUp and Alt key)
-  const finishCurrentStroke = useCallback(async () => {
-    if (!isDrawingRef.current) return;
-
-    // Phase 2.6: Ensure PointerDown completes before ending stroke
-    // This prevents "No active stroke" error from finishing before begin completes
-    if (beginStrokePromiseRef.current) {
-      await beginStrokePromiseRef.current.catch((e) =>
-        console.warn('[Canvas] Begin stroke failed during finish:', e)
-      );
-    }
-
-    // 清理 WinTab 缓冲区
-    clearPointBuffer();
-
-    // For brush tool, composite stroke buffer to layer with opacity ceiling
-    if (currentTool === 'brush') {
-      const layerCtx = getActiveLayerCtx();
-      if (layerCtx) {
-        await endBrushStroke(layerCtx);
-      }
-      compositeAndRender();
-    } else {
-      // For eraser, use the legacy stroke buffer
-      const remainingPoints = strokeBufferRef.current.finish();
-      if (remainingPoints.length > 0) {
-        drawPoints(remainingPoints);
-      }
-    }
-
-    // Save stroke to history (uses beforeImage captured at stroke start)
-    saveStrokeToHistory();
-    if (activeLayerId) {
-      updateThumbnail(activeLayerId);
-    }
-
-    isDrawingRef.current = false;
-  }, [
-    currentTool,
-    getActiveLayerCtx,
-    endBrushStroke,
-    compositeAndRender,
-    drawPoints,
-    saveStrokeToHistory,
-    activeLayerId,
-    updateThumbnail,
-  ]);
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {

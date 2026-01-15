@@ -1,7 +1,7 @@
 # 抬笔闪烁问题调研与修复计划
 
 > **日期**: 2026-01-15
-> **状态**: 🔧 Phase 2.7 待实施（修复 PointerMove 竞态）
+> **状态**: ✅ Phase 2.7 已完成（待测试验证）
 > **优先级**: P1
 > **关联**: [gpu-rendering-fix-plan.md](./gpu-rendering-fix-plan.md)
 
@@ -616,7 +616,7 @@ const beginStroke = useCallback(async (hardness: number = 100): Promise<void> =>
   // ...
 ```
 
-### Phase 2.7: 修复 PointerMove 竞态 (待实施)
+### Phase 2.7: 修复 PointerMove 竞态 ✅ 已完成
 
 > Phase 2.6 实施后测试发现：快速频繁下笔时仍偶尔出现笔触丢失
 
