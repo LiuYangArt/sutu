@@ -9,12 +9,12 @@
 
 ## 问题概述
 
-| 项目     | 描述                                                                      |
-| -------- | ------------------------------------------------------------------------- |
-| 现象     | 画完一笔抬起笔时，画面出现短暂闪烁（笔触消失后又出现，或颜色/透明度跳变） |
-| 影响范围 | 仅 GPU 渲染模式                                                           |
-| 复现条件 | 任意笔刷参数，低 Flow 时更明显                                            |
-| **新问题** | **Phase 2.5 后仍存在：偶尔笔触画不出来、方块闪一下** |
+| 项目       | 描述                                                                      |
+| ---------- | ------------------------------------------------------------------------- |
+| 现象       | 画完一笔抬起笔时，画面出现短暂闪烁（笔触消失后又出现，或颜色/透明度跳变） |
+| 影响范围   | 仅 GPU 渲染模式                                                           |
+| 复现条件   | 任意笔刷参数，低 Flow 时更明显                                            |
+| **新问题** | **Phase 2.5 后仍存在：偶尔笔触画不出来、方块闪一下**                      |
 
 ---
 
@@ -114,6 +114,7 @@ compositeToLayer(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
 ```
 
 **竞态条件场景**：
+
 1. 用户抬笔，调用 `await gpuBuffer.prepareEndStroke()`
 2. 在 `await` 期间，用户快速开始新笔触
 3. `beginStroke()` → `clear()` → `this.active = false`
@@ -131,11 +132,12 @@ compositeToLayer(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
 ```typescript
 if (this.previewReadbackBuffer.mapState !== 'unmapped') {
   console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, skipping update');
-  return;  // 跳过更新，previewCanvas 数据不完整！
+  return; // 跳过更新，previewCanvas 数据不完整！
 }
 ```
 
 当 buffer 正在被 map 时：
+
 1. `updatePreview()` 跳过，没有创建 `currentPreviewPromise`
 2. `prepareEndStroke()` 中 `if (this.currentPreviewPromise)` 不成立，不等待
 3. `previewNeedsUpdate` 可能为 false（被之前跳过的调用清除）
@@ -366,6 +368,7 @@ async prepareEndStroke(): Promise<void> {
 > **Review 发现的深层竞态问题**：即使移除了 `!this.active` 检查，如果 Stroke 2 在 Stroke 1 的 `await prepareEndStroke()` 期间开始，Stroke 2 的 `clear()` 会清空 `previewCanvas`，导致 Stroke 1 合成空白画布。
 
 **场景时序**：
+
 ```
 Stroke 1: await prepareEndStroke() → [等待 GPU readback...]
 Stroke 2: handlePointerDown → beginStroke() → clear() → 清空 previewCanvas!
@@ -533,29 +536,16 @@ async endStroke(...) {
 ```
 
 **竞态场景**：
-```
-时间线:
-t0: 点击1 → fire-and-forget IIFE 开始执行
-t1: IIFE 等待 beginStroke() (可能等待 finishingPromise)
-t2: 点击2 → 新的 IIFE 立即开始，与点击1的 IIFE 并发
-t3: 两个 processPoint 可能几乎同时执行，导致状态混乱
-```
 
-**问题 1**：Canvas 层没有锁保护
-- `useBrushRenderer` 内部有 `finishingPromise` 锁
-- 但 `Canvas/index.tsx` 调用时没有外部锁
-- 快速点击时，多个 `beginStroke` 可能并发执行
-
-**问题 2**：调试日志缺失
-- 无法诊断 `beginStroke` 是否在等待
-- 无法确认 `processPoint` 的执行时机
-- 无法追踪 `updatePreview` 的跳过情况
+1. **"方块闪一下"**：上一笔还在 `prepareEndStroke`（准备合成），新的一笔 `beginStroke` -> `clear()` 已经执行。上一笔合成时发现 Preview 被清空，导致闪烁。
+2. **"笔触丢失"**：快速点击触发两次 Handler，并发执行导致某个点被丢弃。
+3. **"死锁/卡死"**：如果 `beginStroke` 报错（如 Context Lost），且没有 catch，后续点击因为等待锁而无限挂起。
 
 #### 修复方案
 
-**优化 9: 将锁提升到 Canvas 层**
+**优化 9: 提升锁到 Canvas 层 (带错误处理)**
 
-在 `Canvas/index.tsx` 中添加 `beginStrokePromise` 锁：
+在 `Canvas/index.tsx` 中添加 `beginStrokePromise` 锁，并增加 `try-catch` 防止死锁：
 
 ```typescript
 // Canvas/index.tsx
@@ -566,55 +556,64 @@ const handlePointerDown = useCallback(
     // ... 前置逻辑 ...
 
     if (currentTool === 'brush') {
-      // 等待上一个 beginStroke + processPoint 完成
-      if (beginStrokePromiseRef.current) {
-        await beginStrokePromiseRef.current;
-      }
+      const previousPromise = beginStrokePromiseRef.current;
 
-      // 创建新的 Promise 并执行
-      beginStrokePromiseRef.current = (async () => {
-        await beginBrushStroke(brushHardness);
-        processBrushPointWithConfig(canvasX, canvasY, pressure);
+      const currentTask = (async () => {
+        try {
+          // 1. 等待上一个任务完成（无论成功失败，防止死锁）
+          if (previousPromise) {
+            await previousPromise.catch((e) => console.warn('Previous stroke failed:', e));
+          }
+
+          // 2. 执行当前任务
+          await beginBrushStroke(brushHardness);
+
+          // 3. 只有 begin 成功后才处理点，确保时序正确
+          processBrushPointWithConfig(canvasX, canvasY, pressure);
+        } catch (error) {
+          console.error('Failed to start stroke:', error);
+          // 可选：重置状态或降级处理
+        }
       })();
+
+      // 形成链条
+      beginStrokePromiseRef.current = currentTask;
+
+      // 等待当前任务（虽然事件处理本身不阻塞，但这保证逻辑串行）
+      await currentTask;
     }
   },
   [beginBrushStroke, processBrushPointWithConfig, brushHardness]
 );
 ```
 
-**优化 10: 添加调试日志**
+**优化 10: 串行化 PointerUp (防止追尾)**
 
-在关键位置添加日志：
+确保 `PointerUp` 不会在 `PointerDown` 完成前执行，防止 "No active stroke" 错误：
 
 ```typescript
-// GPUStrokeAccumulator.ts
-private debugLog(message: string, data?: any) {
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[GPUStrokeAccumulator ${performance.now().toFixed(0)}ms] ${message}`, data ?? '');
-  }
-}
+const handlePointerUp = useCallback(
+  async (e: React.PointerEvent) => {
+    // 关键：确保 PointerDown 的逻辑全部跑完
+    if (beginStrokePromiseRef.current) {
+      await beginStrokePromiseRef.current;
+    }
 
-beginStroke(): void {
-  this.debugLog('beginStroke', { active: this.active });
-  // ...
-}
+    finishCurrentStroke();
+  },
+  [finishCurrentStroke]
+);
+```
 
-stampDab(params: GPUDabParams): void {
-  if (!this.active) {
-    this.debugLog('stampDab SKIPPED - not active', { params });
-    return;
-  }
-  // ...
-}
+**优化 11: 添加调试日志**
 
+在关键位置添加日志，用于验证锁机制是否生效及排查死锁：
+
+```typescript
 // useBrushRenderer.ts
 const beginStroke = useCallback(async (hardness: number = 100): Promise<void> => {
-  console.log(`[useBrushRenderer] beginStroke START, waiting: ${!!finishingPromiseRef.current}`);
-  if (finishingPromiseRef.current) {
-    await finishingPromiseRef.current;
-  }
+  console.log(`[useBrushRenderer] beginStroke START`);
   // ...
-  console.log(`[useBrushRenderer] beginStroke DONE`);
 }, []);
 ```
 
@@ -640,7 +639,7 @@ const beginStroke = useCallback(async (hardness: number = 100): Promise<void> =>
 | ------------------------------------------- | ----------------------------------------------------------------- |
 | `src/gpu/GPUStrokeAccumulator.ts`           | 拆分 `endStroke()` 为 `prepareEndStroke()` + `compositeToLayer()` |
 | `src/components/Canvas/useBrushRenderer.ts` | 修改调用链，使用新的两步 API                                      |
-| `src/components/Canvas/index.tsx`           | **Phase 2.6**: 添加 `beginStrokePromise` 锁                      |
+| `src/components/Canvas/index.tsx`           | **Phase 2.6**: 添加 `beginStrokePromise` 锁                       |
 
 ---
 
