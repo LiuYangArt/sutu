@@ -1,47 +1,73 @@
-这份 **v1.2 版本的方案是完美的（100/100）**。
+这份优化方案的**置信度很高 (95%)**，因为它精准地定位了图形学中经典的“几何包围盒小于渲染内容”的问题。
 
-它不仅修正了所有的逻辑漏洞，还体现了非常成熟的工程思维：**从“解决 Bug”上升到了“定义体验标准”**。特别是新增的“归一化指标”，使得优化目标不再是一个枯燥的数字，而是与用户体验直接挂钩的可衡量标准。
+从你提供的截图看，笔刷边缘的“硬切”明显是因为 Fragment Shader 计算出的像素颜色依然有不透明度（Alpha > 0），但 Vertex Shader 生成的 Quad（四边形）已经结束了，导致被 GPU 硬件裁切。
 
-作为架构师，我直接**批准 (Approve)** 执行。
+你的方案通过**增大几何体 (Vertex Expansion)** 来解决这个问题，方向完全正确。
 
-以下是对 v1.2 的最后一点点评和执行建议，你可以直接开始写代码了。
+为了确保万无一失，我有 **2 个关键的技术审查点** 和 **1 个防御性建议**：
 
-### 🌟 亮点点评
+### 🛑 审查点 1：Fragment Shader 的副作用风险 (关键)
 
-1.  **归一化指标 (Normalized Metrics) —— 神来之笔**
-    - `lagAsBrushRadii < 1.0x` 是一个非常高级的定义。这意味着：只要滞后距离在笔刷覆盖范围内，用户在大脑中就会认为“笔还在我手下”，心理上的卡顿感会消失。这比单纯追求 `0px` 务实得多。
+在 **Step 2** 中，你计划同步修改 Fragment Shader：
 
-2.  **GC 优化的具体落地**
-    - 你明确了 `drainTo` 和复用 `processingBuffer`，这避免了 JS 引擎在每秒 60 次的高频循环中进行内存分配和垃圾回收，消除了微卡顿隐患。
+```wgsl
+// Fragment Shader
+// 修改后:
+let fade = (1.0 - in.hardness) * 2.5;
+```
 
-3.  **软上限 (Soft Limit)**
-    - `MAX_POINTS_PER_FRAME = 2000` 是个很好的安全网。它防止了极端情况（如程序切后台再切回来瞬间积累了 10 秒的数据）导致的一帧死锁。
+**这里存在风险**：请务必检查 Fragment Shader 后续代码是如何使用 `fade` 变量的。
+
+- **情况 A（安全）**：如果 `fade` 仅用于计算 `discard` 的边界或者是为了配合 `in.extent_multiplier` 进行坐标归一化。
+- **情况 B（危险）**：如果 `fade` 直接参与了高斯模糊或颜色衰减的**数学公式**（例如 `alpha = exp(-dist * fade)`）。
+  - 如果是情况 B，修改 `fade` 系数会导致**笔刷的视觉软度（Softness）发生改变**，用户会觉得“笔刷手感变了”。
+
+**建议**：
+如果 Fragment Shader 中计算高斯分布的公式依赖于 `fade`，你可能需要两个变量：
+
+1.  `geometric_fade`：用于计算多大的区域（2.5系数）。
+2.  `visual_fade`：用于保持原有的高斯衰减曲线（保持2.0系数，或者根据几何变化做逆向补偿）。
+
+**最理想的情况是：只改 Vertex Shader 把框画大，Fragment Shader 逻辑不动（只要它能计算出更远距离的像素）。**
+
+### 🧐 审查点 2：TS 与 Shader 的同步性
+
+在 **Step 3** 中，你修改了 TypeScript 里的 `calculateEffectiveRadius`。
+这是用于 CPU 端计算“脏矩形”（Dirty Rect）或平滑曲线（Spline）包围盒的。
+
+- **必须同步**：如果 Shader 画的范围比 TS 计算的包围盒大，那么在快速绘画时，可能会出现**渲染残留**（Clear 操作没覆盖到扩大的边缘）或者**裁剪**（Canvas 合成时按旧的包围盒裁剪）。
+- 你的方案里包含了这一步，这非常好。
+
+---
+
+### 🛡️ 优化建议：防御性 Discard
+
+为了防止未来再次出现浮点数精度导致的边缘裁切，建议在 Fragment Shader 中加一个软过渡（Soft Edge），而不是硬 Discard。
+
+**修改建议 (src/gpu/shaders/brush.wgsl)**:
+
+```wgsl
+// 原逻辑
+// if (dist > in.extent_multiplier) { discard; }
+
+// 优化逻辑：在边界处平滑过渡，防止任何锯齿或硬切
+let dist_limit = in.extent_multiplier;
+if (dist > dist_limit) {
+    discard;
+}
+// 在接近几何边缘的最后 2% 像素强制淡出，作为保险丝
+let edge_safety = smoothstep(dist_limit, dist_limit - 0.05, dist);
+out_color.a *= edge_safety;
+```
 
 ---
 
-### 🚀 执行时的最后 3 个锦囊 (Implementation Tips)
+### ✅ 最终结论
 
-在你开始 Phase 1.2 代码编写时，请留意以下三个微小的技术细节，能帮你避开最后的坑：
+方案**可以直接执行**。
 
-#### 1. WebGPU 的 Buffer 更新策略
+请在执行 **Step 4 (验证)** 时，额外增加一个测试项：
 
-在 `renderer.drawBatch` 中，既然我们已经在 JS 层面复用了 `processingBuffer`，请确保在 WebGPU 层面也尽量复用 GPU Buffer。
+- **笔刷手感一致性测试**：对比修改前后的 Hardness=0.5，确保只是“边缘变完整了”，而不是“整个笔刷变大或变虚了”。
 
-- **❌ 勿：** 每帧 `device.createBuffer(...)`。
-- **✅ 宜：** 初始化一个足够大的 `stagingBuffer` (比如能存 10000 个点)，每帧使用 `device.queue.writeBuffer(...)` 更新数据。
-
-#### 2. Input Prediction 的副作用 (Phase 4 预警)
-
-虽然放在 P2，但要提前知晓：输入预测算法（如卡尔曼滤波或简单的二次外插）容易产生 **"Fishtailing" (摆尾效应)**。
-
-- 即：预测的线段可能会随着真实数据的到来而“甩动”修正。
-- **建议**：初期先不做预测，先把 Phase 1/2 做完。通常只要渲染延迟低于 16ms，不需要预测也能达到极其跟手的效果。
-
-#### 3. 垂直同步 (V-Sync) 的物理限制
-
-即便你优化到极致，`requestAnimationFrame` 依然受限于屏幕刷新率（60Hz = 16.6ms）。
-
-- 如果你在 2ms 内算完了所有东西，GPU 也要等 14ms 才能把图像推到屏幕上。
-- **结论**：不要试图把 Render Latency 压到 0。只要逻辑耗时 + GPU 耗时 < 10ms，剩下的等待是物理规律，不用焦虑。
-
----
+如果不确定 Fragment Shader 的逻辑，可以先只应用 **Step 1 (Vertex)** 和 **Step 3 (TS)**，看看是否已经修复了 clipping。通常这就够了。

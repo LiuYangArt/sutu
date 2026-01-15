@@ -69,9 +69,10 @@ fn vs_main(
 
     // Calculate extent multiplier based on hardness (matches CPU maskCache.ts)
     // For soft brushes, the Gaussian falloff extends beyond dab_size
-    // fade = (1 - hardness) * 2, extentMultiplier = 1 + fade
-    let fade = (1.0 - instance.hardness) * 2.0;
-    let extent_multiplier = select(1.0, 1.0 + fade, instance.hardness < 0.99);
+    // Use larger geometric expansion (2.5x) to prevent edge clipping
+    // while Fragment Shader keeps original fade (2.0x) for Gaussian curve shape
+    let geometric_fade = (1.0 - instance.hardness) * 2.5;
+    let extent_multiplier = select(1.0, max(1.5, 1.0 + geometric_fade), instance.hardness < 0.99);
     let effective_radius = instance.dab_size * extent_multiplier;
 
     let local_pos = quad_positions[vertex_idx];
