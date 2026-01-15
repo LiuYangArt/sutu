@@ -3,7 +3,6 @@ import { LatencyMeasurement, LatencyProfilerStats } from './types';
 export class LatencyProfiler {
   private measurements: LatencyMeasurement[] = [];
   private device?: GPUDevice;
-  private sampleInterval: number = 50; // Sample GPU every 50 points
   private currentMeasurement: LatencyMeasurement | null = null;
   private isEnabled: boolean = false;
 
@@ -74,8 +73,8 @@ export class LatencyProfiler {
 
   // Sampling strategy: every N points, skip cold start
   shouldSampleGpu(pointIndex: number): boolean {
-    // Skip first 100 points to avoid cold start GPU delays
-    return pointIndex >= 100 && pointIndex % this.sampleInterval === 0;
+    // Skip first 20 points (cold start), then sample every 20 points
+    return pointIndex >= 20 && pointIndex % 20 === 0;
   }
 
   // Get statistics

@@ -1,0 +1,150 @@
+{
+  "timestamp": "2026-01-15T11:53:59.473Z",
+  "scenarios": [
+    {
+      "scenario": {
+        "name": "Small Fast",
+        "brushSize": 20,
+        "hardness": 100,
+        "inputFrequency": 240,
+        "strokeLength": 500,
+        "strokeSpeed": "fast"
+      },
+      "fps": {
+        "fps": 59.739460885235225,
+        "avgFrameTime": 16.73935427574561,
+        "minFrameTime": 3.399999998509884,
+        "maxFrameTime": 111.29999999701977,
+        "frameTimeStdDev": 3.059356820471724,
+        "p99FrameTime": 18,
+        "droppedFrames": 2,
+        "consecutiveDrops": 1
+      },
+      "latency": {
+        "avgInputLatency": 5.600000001490116,
+        "avgCpuEncodeTime": 0,
+        "avgGpuExecuteTime": 0,
+        "avgTotalRenderLatency": 0,
+        "maxRenderLatency": 0,
+        "p99RenderLatency": 0
+      },
+      "lagometer": {
+        "avgLagDistance": 1367.3549869537344,
+        "maxLagDistance": 1367.3549869537344,
+        "lagExceedCount": 1,
+        "lagExceedThreshold": 20
+      },
+      "duration": 315.69999999552965
+    },
+    {
+      "scenario": {
+        "name": "Medium Soft",
+        "brushSize": 100,
+        "hardness": 50,
+        "inputFrequency": 120,
+        "strokeLength": 800,
+        "strokeSpeed": "medium"
+      },
+      "fps": {
+        "fps": 59.76161234006291,
+        "avgFrameTime": 16.733149606300387,
+        "minFrameTime": 3.399999998509884,
+        "maxFrameTime": 111.29999999701977,
+        "frameTimeStdDev": 2.9074266026167472,
+        "p99FrameTime": 17.900000005960464,
+        "droppedFrames": 2,
+        "consecutiveDrops": 1
+      },
+      "latency": {
+        "avgInputLatency": 5.399999998509884,
+        "avgCpuEncodeTime": 0,
+        "avgGpuExecuteTime": 0,
+        "avgTotalRenderLatency": 0,
+        "maxRenderLatency": 0,
+        "p99RenderLatency": 0
+      },
+      "lagometer": {
+        "avgLagDistance": 0,
+        "maxLagDistance": 0,
+        "lagExceedCount": 0,
+        "lagExceedThreshold": 60
+      },
+      "duration": 1445.7000000029802
+    },
+    {
+      "scenario": {
+        "name": "Large Soft",
+        "brushSize": 400,
+        "hardness": 20,
+        "inputFrequency": 60,
+        "strokeLength": 600,
+        "strokeSpeed": "slow"
+      },
+      "fps": {
+        "fps": 59.806494815990455,
+        "avgFrameTime": 16.720592020594896,
+        "minFrameTime": 3.399999998509884,
+        "maxFrameTime": 111.29999999701977,
+        "frameTimeStdDev": 2.6400003235472336,
+        "p99FrameTime": 17.900000005960464,
+        "droppedFrames": 2,
+        "consecutiveDrops": 1
+      },
+      "latency": {
+        "avgInputLatency": 5.299999997019768,
+        "avgCpuEncodeTime": 0,
+        "avgGpuExecuteTime": 0,
+        "avgTotalRenderLatency": 0,
+        "maxRenderLatency": 0,
+        "p99RenderLatency": 0
+      },
+      "lagometer": {
+        "avgLagDistance": 0,
+        "maxLagDistance": 0,
+        "lagExceedCount": 0,
+        "lagExceedThreshold": 210
+      },
+      "duration": 4118
+    },
+    {
+      "scenario": {
+        "name": "Stress Test",
+        "brushSize": 800,
+        "hardness": 0,
+        "inputFrequency": 240,
+        "strokeLength": 1000,
+        "strokeSpeed": "fast"
+      },
+      "fps": {
+        "fps": 59.81112663954473,
+        "avgFrameTime": 16.719297163996906,
+        "minFrameTime": 3.399999998509884,
+        "maxFrameTime": 111.29999999701977,
+        "frameTimeStdDev": 2.5884103351283096,
+        "p99FrameTime": 18.099999994039536,
+        "droppedFrames": 2,
+        "consecutiveDrops": 1
+      },
+      "latency": {
+        "avgInputLatency": 5.299999997019768,
+        "avgCpuEncodeTime": 0,
+        "avgGpuExecuteTime": 0,
+        "avgTotalRenderLatency": 0,
+        "maxRenderLatency": 0,
+        "p99RenderLatency": 0
+      },
+      "lagometer": {
+        "avgLagDistance": 0,
+        "maxLagDistance": 0,
+        "lagExceedCount": 0,
+        "lagExceedThreshold": 410
+      },
+      "duration": 523
+    }
+  ],
+  "summary": {
+    "avgFps": 59.77967367020833,
+    "avgRenderLatency": 0,
+    "maxVisualLag": 1367.3549869537344
+  }
+}

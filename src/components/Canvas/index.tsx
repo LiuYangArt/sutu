@@ -26,6 +26,7 @@ declare global {
       latencyProfiler: LatencyProfiler;
       fpsCounter: FPSCounter;
       lagometer: LagometerMonitor;
+      resetForScenario: () => void;
     };
   }
 }
@@ -66,6 +67,12 @@ export function Canvas() {
       latencyProfiler: latencyProfilerRef.current,
       fpsCounter: fpsCounterRef.current,
       lagometer: lagometerRef.current,
+      // Reset function for benchmark runner
+      resetForScenario: () => {
+        pointIndexRef.current = 0;
+        prevProcessedPosRef.current = null;
+        lastInputPosRef.current = null;
+      },
     };
   }, []);
 
