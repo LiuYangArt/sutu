@@ -159,9 +159,16 @@ export class LayerRenderer {
   }
 
   /**
-   * Composite all visible layers to the output canvas
+   * Composite all visible layers to the output canvas.
+   * Optionally inserts a preview overlay after the active layer.
+   *
+   * @param preview - Optional preview config to insert after active layer
    */
-  composite(): HTMLCanvasElement {
+  composite(preview?: {
+    activeLayerId: string;
+    canvas: HTMLCanvasElement;
+    opacity: number;
+  }): HTMLCanvasElement {
     // Clear composite canvas
     this.compositeCtx.clearRect(0, 0, this.width, this.height);
 
@@ -170,11 +177,22 @@ export class LayerRenderer {
       const layer = this.layers.get(id);
       if (!layer || !layer.visible) continue;
 
+      // Draw the layer
       this.compositeCtx.save();
       this.compositeCtx.globalAlpha = layer.opacity / 100;
       this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
       this.compositeCtx.drawImage(layer.canvas, 0, 0);
       this.compositeCtx.restore();
+
+      // Insert preview after active layer (if provided)
+      if (preview && id === preview.activeLayerId && preview.opacity > 0) {
+        this.compositeCtx.save();
+        this.compositeCtx.globalAlpha = preview.opacity;
+        // Preview uses the same blend mode as the active layer
+        this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
+        this.compositeCtx.drawImage(preview.canvas, 0, 0);
+        this.compositeCtx.restore();
+      }
     }
 
     return this.compositeCanvas;

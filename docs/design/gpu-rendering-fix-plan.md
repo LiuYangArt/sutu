@@ -86,10 +86,20 @@ GPU 当前工作方式 (错误):
 
 ### P1: Preview/Composite 数据流不一致
 
-| 问题                    | 现象                         | 根因                                     |
-| ----------------------- | ---------------------------- | ---------------------------------------- |
-| 抬笔闪烁                | 画完一笔时画面闪烁           | Preview/Composite 使用不同 readback 时机 |
-| **多图层 Preview 层序** | 在下层绘制时笔触显示在最上层 | Preview canvas 独立于图层，合成时才归位  |
+| 问题                        | 现象                         | 根因                                     | 状态        |
+| --------------------------- | ---------------------------- | ---------------------------------------- | ----------- |
+| **抬笔闪烁**                | 画完一笔时画面闪烁           | Preview/Composite 使用不同 readback 时机 | ⚠️ 仍有问题 |
+| ~~**多图层 Preview 层序**~~ | 在下层绘制时笔触显示在最上层 | Preview canvas 独立于图层，合成时才归位  | ✅ 已修复   |
+
+> [!WARNING]
+> **抬笔闪烁问题 (2026-01-15)**: 经验证，抬笔闪烁仍未完全解决。
+> 可能原因：GPU readback 异步时序问题，Preview 和 endStroke 使用的数据不完全同步。
+> 需要进一步调查。
+
+> [!NOTE]
+> **多图层层序修复 (2026-01-15)**: 扩展 `LayerRenderer.composite()` 方法支持可选 preview 参数，
+> 在合成时将预览插入到当前绘制图层的正确位置（该图层之后、上层图层之前）。
+> 预览现在使用与当前图层相同的混合模式，确保视觉一致性。
 
 ![多图层层序问题](file:///C:/Users/LiuYang/.gemini/antigravity/brain/5d626d11-482b-4676-90e8-74edd39d9a68/uploaded_image_1768404332123.png)
 
@@ -307,13 +317,13 @@ expect(gpuResult).toBeCloseTo(cpuResult, 5); // 5 位精度
    - Phase 0.1: GPU/CPU 切换功能（✅ 已完成）
    - Phase 0.2: 视觉对比测试（✅ 已完成，见 [gpu-cpu-comparison.html](file:///f:/CodeProjects/PaintBoard/tests/visual/gpu-cpu-comparison.html)）
 2. **紧急（阻塞其他修复）**:
-   - **解决 GPU Instancing 累积问题** - 这是最关键的架构问题，不解决其他 shader 修复都没有意义
-   - 推荐方案：Compute Shader 或 多 Pass
+   - ~~**解决 GPU Instancing 累积问题**~~ ✅ 已完成（Per-dab Loop + Ping-Pong）
 3. **短期**:
-   - Phase 1.1: 颜色空间对齐
-   - Phase 1.2-1.5: Shader 修复
+   - Phase 1.1: 颜色空间对齐 ✅ 已完成
+   - Phase 1.2-1.5: Shader 修复 ✅ 已完成
 4. **中期**:
-   - Phase 2: Overlay 架构 + Grab Pass
+   - ~~Phase 2: Overlay 架构~~（✅ 已完成：Layer-Aware Preview 合成）
+   - Grab Pass（待定：仅当 Multiply/Overlay 预览有问题时实现）
 5. **持续**:
    - Phase 3: 验证 + CI 集成
 

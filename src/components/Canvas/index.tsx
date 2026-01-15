@@ -556,7 +556,7 @@ export function Canvas() {
     pressureCurve,
   ]);
 
-  // Composite with stroke buffer preview overlay
+  // Composite with stroke buffer preview overlay at correct layer position
   const compositeAndRenderWithPreview = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
@@ -564,28 +564,22 @@ export function Canvas() {
 
     if (!canvas || !ctx || !renderer) return;
 
-    // Composite all layers
-    const compositeCanvas = renderer.composite();
+    // Build preview config if stroke is active
+    const preview =
+      isStrokeActive() && activeLayerId
+        ? (() => {
+            const previewCanvas = getPreviewCanvas();
+            return previewCanvas
+              ? { activeLayerId, canvas: previewCanvas, opacity: getPreviewOpacity() }
+              : undefined;
+          })()
+        : undefined;
 
-    // Clear and draw composite to display canvas
+    // Composite with optional preview
+    const compositeCanvas = renderer.composite(preview);
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(compositeCanvas, 0, 0);
-
-    // Overlay stroke buffer preview if stroke is active
-    // Uses getPreviewOpacity() to ensure preview matches endStroke result exactly.
-    if (isStrokeActive()) {
-      const previewCanvas = getPreviewCanvas();
-      if (previewCanvas) {
-        ctx.save();
-        // getPreviewOpacity() returns:
-        // - Hard brush: 1.0 (opacity already baked into buffer as ceiling)
-        // - Soft brush: maxEffectiveOpacity (opacity * max pressure during stroke)
-        ctx.globalAlpha = getPreviewOpacity();
-        ctx.drawImage(previewCanvas, 0, 0);
-        ctx.restore();
-      }
-    }
-  }, [width, height, isStrokeActive, getPreviewCanvas, getPreviewOpacity]);
+  }, [width, height, isStrokeActive, getPreviewCanvas, getPreviewOpacity, activeLayerId]);
 
   // Process a single point through the brush renderer (for brush tool)
   const processBrushPointWithConfig = useCallback(
