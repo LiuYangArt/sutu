@@ -44,7 +44,7 @@ export interface UseBrushRendererProps {
 }
 
 export interface UseBrushRendererResult {
-  beginStroke: (hardness?: number) => void;
+  beginStroke: (hardness?: number) => Promise<void>;
   processPoint: (x: number, y: number, pressure: number, config: BrushRenderConfig) => void;
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -71,6 +71,11 @@ export function useBrushRenderer({
 
   // Shared stamper (generates dab positions)
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
+
+  // Optimization 7: Finishing lock to prevent "tailgating" race condition
+  // When stroke 2 starts during stroke 1's await prepareEndStroke(),
+  // stroke 2's clear() would wipe stroke 1's previewCanvas before composite.
+  const finishingPromiseRef = useRef<Promise<void> | null>(null);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -131,9 +136,16 @@ export function useBrushRenderer({
 
   /**
    * Begin a new brush stroke
+   * Optimization 7: Wait for previous stroke to finish before starting new one
+   * This prevents "tailgating" where new stroke's clear() wipes previous stroke's data
    */
   const beginStroke = useCallback(
-    (hardness: number = 100) => {
+    async (hardness: number = 100): Promise<void> => {
+      // Optimization 7: Wait for previous stroke to finish
+      if (finishingPromiseRef.current) {
+        await finishingPromiseRef.current;
+      }
+
       stamperRef.current.beginStroke();
 
       if (backend === 'gpu' && gpuBufferRef.current) {
@@ -206,6 +218,8 @@ export function useBrushRenderer({
    * For GPU backend, uses atomic transaction pattern:
    * 1. Async: prepareEndStroke() - flush dabs, wait for GPU/preview ready
    * 2. Sync: compositeToLayer() + clear() - in same JS task to prevent flicker
+   *
+   * Optimization 7: Uses finishing lock to prevent tailgating race condition
    */
   const endStroke = useCallback(
     async (layerCtx: CanvasRenderingContext2D): Promise<void> => {
@@ -214,13 +228,23 @@ export function useBrushRenderer({
       if (backend === 'gpu' && gpuBufferRef.current) {
         const gpuBuffer = gpuBufferRef.current;
 
-        // 1. Async: wait for GPU and preview to be ready
-        await gpuBuffer.prepareEndStroke();
+        // Optimization 7: Create finishing lock promise
+        // This prevents new stroke from starting (and calling clear()) during our async work
+        finishingPromiseRef.current = (async () => {
+          try {
+            // 1. Async: wait for GPU and preview to be ready
+            await gpuBuffer.prepareEndStroke();
 
-        // 2. Sync atomic transaction: composite + clear in same JS task
-        // This prevents browser paint between composite and clear (no flicker)
-        gpuBuffer.compositeToLayer(layerCtx, 1.0);
-        gpuBuffer.clear();
+            // 2. Sync atomic transaction: composite + clear in same JS task
+            // This prevents browser paint between composite and clear (no flicker)
+            gpuBuffer.compositeToLayer(layerCtx, 1.0);
+            gpuBuffer.clear();
+          } finally {
+            finishingPromiseRef.current = null;
+          }
+        })();
+
+        await finishingPromiseRef.current;
       } else if (cpuBufferRef.current) {
         cpuBufferRef.current.endStroke(layerCtx, 1.0);
       }

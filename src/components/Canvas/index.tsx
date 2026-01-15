@@ -711,7 +711,8 @@ export function Canvas() {
       captureBeforeImage();
 
       if (currentTool === 'brush') {
-        beginBrushStroke(brushHardness);
+        // beginBrushStroke is async (for rendering lock), but we don't await in event handler
+        void beginBrushStroke(brushHardness);
         processBrushPointWithConfig(canvasX, canvasY, pressure);
       } else {
         // Eraser uses legacy buffer

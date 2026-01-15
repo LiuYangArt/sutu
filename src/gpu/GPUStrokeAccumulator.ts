@@ -376,9 +376,11 @@ export class GPUStrokeAccumulator {
   /**
    * Async update preview canvas from GPU texture
    * Uses Promise storage and buffer state guard to prevent race conditions
+   * Optimization 5: Mark retry when buffer busy instead of silent skip
+   * Optimization 8: Handle buffer deadlock defense
    */
   private async updatePreview(): Promise<void> {
-    // Optimization 1: If already running, return existing promise
+    // Optimization 1: If already running, return existing promise (most efficient wait)
     if (this.currentPreviewPromise) {
       return this.currentPreviewPromise;
     }
@@ -387,9 +389,19 @@ export class GPUStrokeAccumulator {
       return;
     }
 
-    // Buffer state guard: prevent mapping if already mapped
+    // Optimization 8: If buffer is mapped but no promise (shouldn't happen), try to unmap
+    if (this.previewReadbackBuffer.mapState === 'mapped') {
+      try {
+        this.previewReadbackBuffer.unmap();
+      } catch {
+        // Ignore unmap errors
+      }
+    }
+
+    // Optimization 5: If buffer is pending, mark retry instead of silent skip
     if (this.previewReadbackBuffer.mapState !== 'unmapped') {
-      console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, skipping update');
+      console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, will retry');
+      this.previewNeedsUpdate = true; // Ensure next call will retry
       return;
     }
 
@@ -475,6 +487,7 @@ export class GPUStrokeAccumulator {
    * Prepare for end stroke - flush remaining dabs and wait for GPU/preview ready
    * This is the async part that can be awaited before the sync composite
    * Optimization 2: Split async preparation from sync composite for atomic transaction
+   * Optimization 6: Always execute updatePreview to ensure data completeness
    */
   async prepareEndStroke(): Promise<void> {
     if (!this.active) {
@@ -498,22 +511,22 @@ export class GPUStrokeAccumulator {
       await this.currentPreviewPromise;
     }
 
-    // If preview needs update after GPU work done, do it now
-    if (this.previewNeedsUpdate) {
-      await this.updatePreview();
-    }
+    // Optimization 6: Always execute updatePreview to ensure final batch is readback
+    // Even if previewNeedsUpdate is false, we need to guarantee data completeness
+    await this.updatePreview();
   }
 
   /**
    * Composite stroke to layer - synchronous operation
    * Must be called after prepareEndStroke() completes
    * Optimization 2: This is the sync part that should be in same JS task as clear()
+   * Optimization 4: Removed !this.active check - caller guarantees correctness
    * @returns The dirty rectangle that was modified
    */
   compositeToLayer(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
-    if (!this.active) {
-      return { left: 0, top: 0, right: 0, bottom: 0 };
-    }
+    // Optimization 4: No active check here - caller (useBrushRenderer) guarantees
+    // this is called immediately after prepareEndStroke() in same sync block.
+    // The old check caused stroke loss when user started new stroke during await.
 
     // Composite from previewCanvas (not GPU texture) to ensure WYSIWYG
     this.compositeFromPreview(layerCtx, opacity);
