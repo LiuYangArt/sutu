@@ -489,6 +489,8 @@
 - [ ] 补充单元测试覆盖率到 80%
 - [ ] 添加集成测试
 - [ ] 性能基准测试（Criterion）
+- [x] 性能基准测试系统 (Done #59) - 详见 `docs/design/benchmark-plan.md`
+
 - [ ] 修复 Clippy 警告
 
 ### 文档

@@ -21,6 +21,7 @@ import {
   type ChaosTestResult,
   type DiagnosticHooks,
 } from '../../test';
+import { LatencyProfilerStats, FrameStats } from '@/benchmark/types';
 import './DebugPanel.css';
 
 interface DebugPanelProps {
@@ -42,7 +43,35 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [runningTest, setRunningTest] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [expandedResult, setExpandedResult] = useState<number | null>(null);
+
   const diagnosticsRef = useRef<DiagnosticHooks | null>(null);
+
+  // Benchmark Stats
+  const [benchmarkStats, setBenchmarkStats] = useState<{
+    latency: LatencyProfilerStats;
+    fps: FrameStats;
+  } | null>(null);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const bench = (
+        window as unknown as {
+          __benchmark?: {
+            latencyProfiler: { getStats: () => LatencyProfilerStats };
+            fpsCounter: { getStats: () => FrameStats };
+          };
+        }
+      ).__benchmark;
+
+      if (bench) {
+        setBenchmarkStats({
+          latency: bench.latencyProfiler.getStats(),
+          fps: bench.fpsCounter.getStats(),
+        });
+      }
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     diagnosticsRef.current = installDiagnosticHooks();
@@ -220,6 +249,45 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
             </div>
           </div>
         )}
+
+        <div className="debug-section">
+          <h3>Performance Benchmark</h3>
+          {benchmarkStats ? (
+            <div className="benchmark-stats">
+              <div className="stat-row">
+                <span className="stat-label">FPS:</span>
+                <span className="stat-value">{benchmarkStats.fps.fps.toFixed(1)}</span>
+                <span className="stat-sub">
+                  (min: {benchmarkStats.fps.minFrameTime.toFixed(1)}ms)
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Dropped:</span>
+                <span className="stat-value">{benchmarkStats.fps.droppedFrames}</span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Render Latency (Avg):</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.avgTotalRenderLatency.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Render Latency (P99):</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.p99RenderLatency.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Input Latency:</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.avgInputLatency.toFixed(2)}ms
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="stat-placeholder">Benchmarks initializing...</div>
+          )}
+        </div>
 
         <div className="debug-section">
           <h3>Actions</h3>
