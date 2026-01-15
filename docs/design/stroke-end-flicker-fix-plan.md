@@ -1,7 +1,7 @@
 # 抬笔闪烁问题调研与修复计划
 
 > **日期**: 2026-01-15
-> **状态**: ✅ Phase 2.5 已完成，待验证
+> **状态**: 🔧 Phase 2.6 进行中（修复 Canvas 层竞态）
 > **优先级**: P1
 > **关联**: [gpu-rendering-fix-plan.md](./gpu-rendering-fix-plan.md)
 
@@ -14,6 +14,7 @@
 | 现象     | 画完一笔抬起笔时，画面出现短暂闪烁（笔触消失后又出现，或颜色/透明度跳变） |
 | 影响范围 | 仅 GPU 渲染模式                                                           |
 | 复现条件 | 任意笔刷参数，低 Flow 时更明显                                            |
+| **新问题** | **Phase 2.5 后仍存在：偶尔笔触画不出来、方块闪一下** |
 
 ---
 
@@ -515,6 +516,108 @@ async endStroke(...) {
 - [x] **优化 8**: Buffer 状态死锁防御
   - 如果 buffer 是 `mapped` 状态但没有 promise，尝试 unmap
 
+### Phase 2.6: 修复 Canvas 层竞态 (进行中)
+
+> Phase 2.5 实施后仍存在问题：偶尔笔触画不出来、方块闪一下
+
+#### 问题分析
+
+**根本原因**：`Canvas/index.tsx` 中 `handlePointerDown` 使用 fire-and-forget 异步调用：
+
+```typescript
+// 当前代码 - 有问题
+(async () => {
+  await beginBrushStroke(brushHardness);
+  processBrushPointWithConfig(canvasX, canvasY, pressure);
+})();
+```
+
+**竞态场景**：
+```
+时间线:
+t0: 点击1 → fire-and-forget IIFE 开始执行
+t1: IIFE 等待 beginStroke() (可能等待 finishingPromise)
+t2: 点击2 → 新的 IIFE 立即开始，与点击1的 IIFE 并发
+t3: 两个 processPoint 可能几乎同时执行，导致状态混乱
+```
+
+**问题 1**：Canvas 层没有锁保护
+- `useBrushRenderer` 内部有 `finishingPromise` 锁
+- 但 `Canvas/index.tsx` 调用时没有外部锁
+- 快速点击时，多个 `beginStroke` 可能并发执行
+
+**问题 2**：调试日志缺失
+- 无法诊断 `beginStroke` 是否在等待
+- 无法确认 `processPoint` 的执行时机
+- 无法追踪 `updatePreview` 的跳过情况
+
+#### 修复方案
+
+**优化 9: 将锁提升到 Canvas 层**
+
+在 `Canvas/index.tsx` 中添加 `beginStrokePromise` 锁：
+
+```typescript
+// Canvas/index.tsx
+const beginStrokePromiseRef = useRef<Promise<void> | null>(null);
+
+const handlePointerDown = useCallback(
+  async (e: React.PointerEvent) => {
+    // ... 前置逻辑 ...
+
+    if (currentTool === 'brush') {
+      // 等待上一个 beginStroke + processPoint 完成
+      if (beginStrokePromiseRef.current) {
+        await beginStrokePromiseRef.current;
+      }
+
+      // 创建新的 Promise 并执行
+      beginStrokePromiseRef.current = (async () => {
+        await beginBrushStroke(brushHardness);
+        processBrushPointWithConfig(canvasX, canvasY, pressure);
+      })();
+    }
+  },
+  [beginBrushStroke, processBrushPointWithConfig, brushHardness]
+);
+```
+
+**优化 10: 添加调试日志**
+
+在关键位置添加日志：
+
+```typescript
+// GPUStrokeAccumulator.ts
+private debugLog(message: string, data?: any) {
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[GPUStrokeAccumulator ${performance.now().toFixed(0)}ms] ${message}`, data ?? '');
+  }
+}
+
+beginStroke(): void {
+  this.debugLog('beginStroke', { active: this.active });
+  // ...
+}
+
+stampDab(params: GPUDabParams): void {
+  if (!this.active) {
+    this.debugLog('stampDab SKIPPED - not active', { params });
+    return;
+  }
+  // ...
+}
+
+// useBrushRenderer.ts
+const beginStroke = useCallback(async (hardness: number = 100): Promise<void> => {
+  console.log(`[useBrushRenderer] beginStroke START, waiting: ${!!finishingPromiseRef.current}`);
+  if (finishingPromiseRef.current) {
+    await finishingPromiseRef.current;
+  }
+  // ...
+  console.log(`[useBrushRenderer] beginStroke DONE`);
+}, []);
+```
+
 ### Phase 3: 验证 (1 hour)
 
 - [ ] 手动测试各种笔刷参数
@@ -537,7 +640,7 @@ async endStroke(...) {
 | ------------------------------------------- | ----------------------------------------------------------------- |
 | `src/gpu/GPUStrokeAccumulator.ts`           | 拆分 `endStroke()` 为 `prepareEndStroke()` + `compositeToLayer()` |
 | `src/components/Canvas/useBrushRenderer.ts` | 修改调用链，使用新的两步 API                                      |
-| `src/components/Canvas/index.tsx`           | 验证事件处理的时序正确性                                          |
+| `src/components/Canvas/index.tsx`           | **Phase 2.6**: 添加 `beginStrokePromise` 锁                      |
 
 ---
 
