@@ -1,7 +1,7 @@
 # 抬笔闪烁问题调研与修复计划
 
 > **日期**: 2026-01-15
-> **状态**: ✅ 已实施
+> **状态**: 🔧 修复中（Phase 2.5 进行中）
 > **优先级**: P1
 > **关联**: [gpu-rendering-fix-plan.md](./gpu-rendering-fix-plan.md)
 
@@ -95,6 +95,52 @@ private async updatePreviewSync(): Promise<void> {
 
 就会产生视觉跳变。
 
+#### 问题 3: 笔触偶尔丢失（方案 A 实施后发现）
+
+**现象**: 画完笔触后偶尔丢失整个笔触，画布上没有任何痕迹。
+
+**根因分析**:
+
+`compositeToLayer()` 中有 `!this.active` 检查会提前返回：
+
+```typescript
+compositeToLayer(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
+  if (!this.active) {
+    return { left: 0, top: 0, right: 0, bottom: 0 };  // 跳过合成！
+  }
+  // ...
+}
+```
+
+**竞态条件场景**：
+1. 用户抬笔，调用 `await gpuBuffer.prepareEndStroke()`
+2. 在 `await` 期间，用户快速开始新笔触
+3. `beginStroke()` → `clear()` → `this.active = false`
+4. `prepareEndStroke()` 完成后，`compositeToLayer()` 因 `!this.active` 跳过合成
+5. 第一笔触丢失
+
+#### 问题 4: 方块残留（方案 A 实施后发现）
+
+**现象**: 在抬笔位置留下一个矩形方块，而不是完整的笔触。
+
+**根因分析**:
+
+`updatePreview()` 中的 buffer 状态守卫会跳过更新：
+
+```typescript
+if (this.previewReadbackBuffer.mapState !== 'unmapped') {
+  console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, skipping update');
+  return;  // 跳过更新，previewCanvas 数据不完整！
+}
+```
+
+当 buffer 正在被 map 时：
+1. `updatePreview()` 跳过，没有创建 `currentPreviewPromise`
+2. `prepareEndStroke()` 中 `if (this.currentPreviewPromise)` 不成立，不等待
+3. `previewNeedsUpdate` 可能为 false（被之前跳过的调用清除）
+4. `compositeFromPreview()` 使用不完整的 previewCanvas 数据
+5. 结果：只有部分脏区有数据，显示为方块
+
 #### 时序图示
 
 ```
@@ -121,7 +167,7 @@ compositeAndRender (无preview)                                   ▓▓
 
 ## 修复方案对比
 
-### 方案 A: 复用最后一帧 preview 数据 (推荐 ⭐)
+### 方案 A: 复用最后一帧 preview 数据 (推荐 ⭐) ✅ 已实施
 
 **核心思想**: 确保 endStroke 使用的数据与最后一帧 preview 完全一致，不做额外 readback。
 
@@ -153,7 +199,7 @@ async endStroke(layerCtx: CanvasRenderingContext2D, opacity: number): Promise<Re
 }
 ```
 
-#### 优化 1: Promise 等待 + Buffer 状态守卫
+#### 优化 1: Promise 等待 + Buffer 状态守卫 ✅ 已实施
 
 使用 `while + setTimeout` 是一种"自旋锁"式写法，可能引入 1ms-4ms 不确定延迟。改用 Promise 存储，并增加 **mapState 检查** 防止极速点击时的冲突：
 
@@ -193,7 +239,7 @@ if (this.currentPreviewPromise) {
 }
 ```
 
-#### 优化 2: 原子化事务提交
+#### 优化 2: 原子化事务提交 ✅ 已实施
 
 > [!WARNING]
 > **时序漏洞**: 如果在 `await endStroke()` 和 `requestAnimationFrame` 之间浏览器插入一次 Paint，用户会看到"双重叠加"（Layer + Preview 同时显示，画面变深）。
@@ -239,7 +285,7 @@ const handlePointerUp = async () => {
 
 _这样做确保在任何时刻，画面要么是 "Preview 模式"，要么是 "Layer 模式"，绝不会出现中间态。_
 
-#### 优化 3: Context Lost 防御
+#### 优化 3: Context Lost 防御 ✅ 已实施
 
 在 `await` 异步操作期间，设备可能丢失（显存压力大时）：
 
@@ -258,6 +304,138 @@ async endStroke(...) {
 | 简单，减少一次 readback | 依赖 updatePreview() 正确执行 |
 | 保证 WYSIWYG            | -                             |
 | 无额外内存开销          | -                             |
+
+#### 优化 4: 修复问题 3 - 移除 compositeToLayer 中的 active 检查
+
+由于 `compositeToLayer` 只在 `prepareEndStroke` 之后同步调用，调用层保证正确性，不需要再检查 active 状态：
+
+```typescript
+compositeToLayer(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
+  // 移除 if (!this.active) 检查
+  // 调用层保证在 prepareEndStroke 后立即同步调用
+
+  this.compositeFromPreview(layerCtx, opacity);
+  this.active = false;
+  return { ... };
+}
+```
+
+#### 优化 5: 修复问题 4 - updatePreview 在 buffer 忙时标记需要重试
+
+当 buffer 正在 map 时，不应该静默跳过，而应该标记需要重试：
+
+```typescript
+private async updatePreview(): Promise<void> {
+  if (this.currentPreviewPromise) {
+    return this.currentPreviewPromise;
+  }
+
+  if (!this.previewReadbackBuffer) {
+    return;
+  }
+
+  // 修复：如果 buffer 正在 map，标记需要重试而非跳过
+  if (this.previewReadbackBuffer.mapState !== 'unmapped') {
+    console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, will retry');
+    this.previewNeedsUpdate = true;  // 确保下次会重试
+    return;
+  }
+
+  // ... 其余逻辑不变
+}
+```
+
+#### 优化 6: prepareEndStroke 强制执行 updatePreview
+
+确保 `prepareEndStroke` 始终等待 preview 数据完整：
+
+```typescript
+async prepareEndStroke(): Promise<void> {
+  // ... 现有逻辑 ...
+
+  // 修复：始终执行 updatePreview 确保数据完整
+  // 即使 previewNeedsUpdate 为 false，也要确保最后一批 dab 已经 readback
+  await this.updatePreview();
+}
+```
+
+#### 优化 7: 渲染锁防止"追尾"（关键！）
+
+> [!IMPORTANT]
+> **Review 发现的深层竞态问题**：即使移除了 `!this.active` 检查，如果 Stroke 2 在 Stroke 1 的 `await prepareEndStroke()` 期间开始，Stroke 2 的 `clear()` 会清空 `previewCanvas`，导致 Stroke 1 合成空白画布。
+
+**场景时序**：
+```
+Stroke 1: await prepareEndStroke() → [等待 GPU readback...]
+Stroke 2: handlePointerDown → beginStroke() → clear() → 清空 previewCanvas!
+Stroke 1: compositeToLayer() → 合成的是空白画布 → 笔触丢失
+```
+
+**解决方案**：在调用层添加"渲染锁"，确保上一笔完成前不能开始新笔：
+
+```typescript
+// useBrushRenderer.ts 或 Canvas/index.tsx
+
+let finishingPromise: Promise<void> | null = null;
+
+const handlePointerDown = async (e) => {
+  // 防止"追尾"：如果上一笔还在收尾，等它做完再开始新的一笔
+  if (finishingPromise) {
+    await finishingPromise;
+  }
+
+  brush.beginStroke(e);
+};
+
+const handlePointerUp = async () => {
+  // 创建一个锁 Promise
+  finishingPromise = (async () => {
+    try {
+      await brush.prepareEndStroke();
+      // 此时已拿到数据，进入同步提交阶段
+      brush.compositeToLayer();
+      brush.clear();
+      render();
+    } finally {
+      finishingPromise = null;
+    }
+  })();
+
+  await finishingPromise;
+};
+```
+
+#### 优化 8: Buffer 状态死锁防御
+
+**隐患**：如果 Buffer 因异常一直处于 `mapped` 状态，`updatePreview` 会直接返回，`prepareEndStroke` 认为完事了但实际没读到数据。
+
+**解决方案**：`updatePreview` 在 buffer 忙时应该等待现有 Promise，而不是放弃：
+
+```typescript
+private async updatePreview(): Promise<void> {
+  // 1. 如果正在进行中，直接复用 Promise (最高效的等待)
+  if (this.currentPreviewPromise) {
+    return this.currentPreviewPromise;
+  }
+
+  // 2. 如果已经 mapped 但没有 promise (理论不该发生)，尝试 unmap
+  if (this.previewReadbackBuffer.mapState === 'mapped') {
+    try {
+      this.previewReadbackBuffer.unmap();
+    } catch {
+      // 忽略 unmap 错误
+    }
+  }
+
+  // 3. 如果是 pending 状态，标记需要重试
+  if (this.previewReadbackBuffer.mapState !== 'unmapped') {
+    this.previewNeedsUpdate = true;
+    return;
+  }
+
+  // 4. 正常流程 ...
+}
+```
 
 ### 方案 B: 双缓冲 readback buffer
 
@@ -299,26 +477,43 @@ async endStroke(...) {
 
 ## 实施计划
 
-### Phase 1: 诊断验证 (30 min)
+### Phase 1: 诊断验证 (30 min) ✅ 已完成
 
-- [ ] 添加调试日志，记录 `updatePreview()` 和 `updatePreviewSync()` 的调用时序
-- [ ] 确认闪烁的具体表现（消失、颜色跳变、位置偏移）
-- [ ] 对比 CPU 模式是否有同样问题（预期没有）
+- [x] 添加调试日志，记录 `updatePreview()` 和 `updatePreviewSync()` 的调用时序
+- [x] 确认闪烁的具体表现（消失、颜色跳变、位置偏移）
+- [x] 对比 CPU 模式是否有同样问题（预期没有）
 
-### Phase 2: 实施方案 A (2 hour)
+### Phase 2: 实施方案 A (2 hour) ✅ 已完成
 
-- [ ] **核心修复**: 拆分 `endStroke()` 为 `prepareEndStroke()` + `compositeToLayer()`
-- [ ] 移除 `updatePreviewSync()` 调用
-- [ ] **优化 1**: Promise 等待 + Buffer 状态守卫
+- [x] **核心修复**: 拆分 `endStroke()` 为 `prepareEndStroke()` + `compositeToLayer()`
+- [x] 移除 `updatePreviewSync()` 调用
+- [x] **优化 1**: Promise 等待 + Buffer 状态守卫
   - 添加 `currentPreviewPromise` 字段
   - 重构 `updatePreview()` 存储 Promise 并检查 `mapState`
   - 添加 try-catch 错误处理
-- [ ] **优化 2**: 原子化事务提交
+- [x] **优化 2**: 原子化事务提交
   - 修改调用层使用 `prepareEndStroke()` + 同步 `compositeToLayer()` + `clear()`
   - 确保三步操作在同一同步代码块内，中间无 await
-- [ ] **优化 3**: Context Lost 防御
+- [x] **优化 3**: Context Lost 防御
   - 添加 `device.lost` 检查
-- [ ] 添加防御性检查确保 `previewCanvas` 数据有效
+- [x] 添加防御性检查确保 `previewCanvas` 数据有效
+
+### Phase 2.5: 修复新发现的问题 (1 hour) 🔧 进行中
+
+> 实施方案 A 后发现笔触丢失和方块残留问题
+
+- [ ] **优化 4**: 移除 `compositeToLayer` 中的 `!this.active` 检查
+  - 调用层保证正确性，不需要再检查 active 状态
+- [ ] **优化 5**: `updatePreview` 在 buffer 忙时标记需要重试
+  - 设置 `this.previewNeedsUpdate = true` 而非静默跳过
+- [ ] **优化 6**: `prepareEndStroke` 始终执行 `updatePreview`
+  - 即使 `previewNeedsUpdate` 为 false 也要确保数据完整
+- [ ] **优化 7**: 添加"渲染锁"防止追尾（关键！）
+  - 在 `useBrushRenderer` 中添加 `finishingPromise` 锁
+  - `beginStroke` 前等待上一笔完成
+  - 确保 Stroke 2 的 `clear()` 不会清空 Stroke 1 的数据
+- [ ] **优化 8**: Buffer 状态死锁防御
+  - 如果 buffer 是 `mapped` 状态但没有 promise，尝试 unmap
 
 ### Phase 3: 验证 (1 hour)
 
