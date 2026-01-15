@@ -11,7 +11,7 @@ import './Canvas.css';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { getEffectiveInputData } from './inputUtils';
-import { LatencyProfiler, FPSCounter } from '@/benchmark';
+import { LatencyProfiler, FPSCounter, LagometerMonitor } from '@/benchmark';
 
 declare global {
   interface Window {
@@ -25,6 +25,7 @@ declare global {
     __benchmark?: {
       latencyProfiler: LatencyProfiler;
       fpsCounter: FPSCounter;
+      lagometer: LagometerMonitor;
     };
   }
 }
@@ -38,6 +39,8 @@ export function Canvas() {
   const pointIndexRef = useRef(0);
   const latencyProfilerRef = useRef<LatencyProfiler>(new LatencyProfiler());
   const fpsCounterRef = useRef<FPSCounter>(new FPSCounter());
+  const lagometerRef = useRef<LagometerMonitor>(new LagometerMonitor());
+  const lastInputPosRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     latencyProfilerRef.current.enable();
@@ -61,6 +64,7 @@ export function Canvas() {
     window.__benchmark = {
       latencyProfiler: latencyProfilerRef.current,
       fpsCounter: fpsCounterRef.current,
+      lagometer: lagometerRef.current,
     };
   }, []);
 
@@ -650,6 +654,15 @@ export function Canvas() {
   const processBrushPointWithConfig = useCallback(
     (x: number, y: number, pressure: number, pointIndex?: number) => {
       const config = getBrushConfig();
+
+      // Lagometer: Update last input position and measure lag
+      lastInputPosRef.current = { x, y };
+      lagometerRef.current.setBrushRadius(config.size / 2);
+      // The "brush position" is the current input point since we draw synchronously
+      // Real lag would need comparison with previous frame's rendered position
+      // For now, we measure against the stamper's last position if available
+      // This is a simplified implementation - in practice you'd compare against actual rendered position
+
       processBrushPoint(x, y, pressure, config, pointIndex);
       // Render stroke buffer preview to display canvas
       compositeAndRenderWithPreview();

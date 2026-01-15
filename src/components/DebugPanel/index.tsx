@@ -21,7 +21,7 @@ import {
   type ChaosTestResult,
   type DiagnosticHooks,
 } from '../../test';
-import { LatencyProfilerStats, FrameStats } from '@/benchmark/types';
+import { LatencyProfilerStats, FrameStats, LagometerStats } from '@/benchmark/types';
 import './DebugPanel.css';
 
 interface DebugPanelProps {
@@ -46,10 +46,19 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
 
   const diagnosticsRef = useRef<DiagnosticHooks | null>(null);
 
+  // Drag state for movable panel
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(
+    null
+  );
+  const panelRef = useRef<HTMLDivElement>(null);
+
   // Benchmark Stats
   const [benchmarkStats, setBenchmarkStats] = useState<{
     latency: LatencyProfilerStats;
     fps: FrameStats;
+    lagometer: LagometerStats;
   } | null>(null);
 
   useEffect(() => {
@@ -59,6 +68,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
           __benchmark?: {
             latencyProfiler: { getStats: () => LatencyProfilerStats };
             fpsCounter: { getStats: () => FrameStats };
+            lagometer: { getStats: () => LagometerStats };
           };
         }
       ).__benchmark;
@@ -67,6 +77,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         setBenchmarkStats({
           latency: bench.latencyProfiler.getStats(),
           fps: bench.fpsCounter.getStats(),
+          lagometer: bench.lagometer.getStats(),
         });
       }
     }, 500);
@@ -190,9 +201,53 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     }
   }
 
+  // Drag handlers
+  const handleDragStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const rect = panel.getBoundingClientRect();
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panelX: rect.left,
+      panelY: rect.top,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handleDragMove = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current || !dragStartRef.current) return;
+    const deltaX = e.clientX - dragStartRef.current.x;
+    const deltaY = e.clientY - dragStartRef.current.y;
+    setPosition({
+      x: dragStartRef.current.panelX + deltaX,
+      y: dragStartRef.current.panelY + deltaY,
+    });
+  };
+
+  const handleDragEnd = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  // Calculate panel style
+  const panelStyle: React.CSSProperties = position
+    ? { left: position.x, top: position.y, right: 'auto' }
+    : {};
+
   return (
-    <div className="debug-panel">
-      <div className="debug-panel-header">
+    <div className="debug-panel" ref={panelRef} style={panelStyle}>
+      <div
+        className="debug-panel-header"
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
+        onPointerCancel={handleDragEnd}
+      >
         <div className="debug-panel-title">
           <Bug size={18} />
           <span>Debug Panel</span>
@@ -258,12 +313,19 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
                 <span className="stat-label">FPS:</span>
                 <span className="stat-value">{benchmarkStats.fps.fps.toFixed(1)}</span>
                 <span className="stat-sub">
-                  (min: {benchmarkStats.fps.minFrameTime.toFixed(1)}ms)
+                  (σ: {benchmarkStats.fps.frameTimeStdDev.toFixed(2)}ms)
                 </span>
               </div>
               <div className="stat-row">
                 <span className="stat-label">Dropped:</span>
                 <span className="stat-value">{benchmarkStats.fps.droppedFrames}</span>
+                <span className="stat-sub">
+                  (max consec: {benchmarkStats.fps.consecutiveDrops})
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">P99 Frame:</span>
+                <span className="stat-value">{benchmarkStats.fps.p99FrameTime.toFixed(2)}ms</span>
               </div>
               <div className="stat-row">
                 <span className="stat-label">Render Latency (Avg):</span>
@@ -281,6 +343,12 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
                 <span className="stat-label">Input Latency:</span>
                 <span className="stat-value">
                   {benchmarkStats.latency.avgInputLatency.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Visual Lag (Max):</span>
+                <span className="stat-value">
+                  {benchmarkStats.lagometer.maxLagDistance.toFixed(1)}px
                 </span>
               </div>
             </div>
