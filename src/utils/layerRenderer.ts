@@ -159,45 +159,20 @@ export class LayerRenderer {
   }
 
   /**
-   * Composite all visible layers to the output canvas
+   * Composite all visible layers to the output canvas.
+   * Optionally inserts a preview overlay after the active layer.
+   *
+   * @param preview - Optional preview config to insert after active layer
    */
-  composite(): HTMLCanvasElement {
+  composite(preview?: {
+    activeLayerId: string;
+    canvas: HTMLCanvasElement;
+    opacity: number;
+  }): HTMLCanvasElement {
     // Clear composite canvas
     this.compositeCtx.clearRect(0, 0, this.width, this.height);
 
     // Draw layers in order (bottom to top)
-    for (const id of this.layerOrder) {
-      const layer = this.layers.get(id);
-      if (!layer || !layer.visible) continue;
-
-      this.compositeCtx.save();
-      this.compositeCtx.globalAlpha = layer.opacity / 100;
-      this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
-      this.compositeCtx.drawImage(layer.canvas, 0, 0);
-      this.compositeCtx.restore();
-    }
-
-    return this.compositeCanvas;
-  }
-
-  /**
-   * Composite all visible layers with a preview overlay at the correct layer position.
-   * The preview is inserted AFTER the active layer, so it appears above that layer
-   * but below layers that are stacked on top of it.
-   *
-   * @param activeLayerId - The layer being drawn on (preview inserted after this)
-   * @param previewCanvas - The stroke preview canvas to overlay
-   * @param previewOpacity - Opacity for the preview (0-1)
-   */
-  compositeWithPreview(
-    activeLayerId: string,
-    previewCanvas: HTMLCanvasElement,
-    previewOpacity: number
-  ): HTMLCanvasElement {
-    // Clear composite canvas
-    this.compositeCtx.clearRect(0, 0, this.width, this.height);
-
-    // Draw layers in order (bottom to top), inserting preview after active layer
     for (const id of this.layerOrder) {
       const layer = this.layers.get(id);
       if (!layer || !layer.visible) continue;
@@ -209,13 +184,13 @@ export class LayerRenderer {
       this.compositeCtx.drawImage(layer.canvas, 0, 0);
       this.compositeCtx.restore();
 
-      // Insert preview AFTER the active layer
-      if (id === activeLayerId && previewOpacity > 0) {
+      // Insert preview after active layer (if provided)
+      if (preview && id === preview.activeLayerId && preview.opacity > 0) {
         this.compositeCtx.save();
-        this.compositeCtx.globalAlpha = previewOpacity;
+        this.compositeCtx.globalAlpha = preview.opacity;
         // Preview uses the same blend mode as the active layer
         this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
-        this.compositeCtx.drawImage(previewCanvas, 0, 0);
+        this.compositeCtx.drawImage(preview.canvas, 0, 0);
         this.compositeCtx.restore();
       }
     }

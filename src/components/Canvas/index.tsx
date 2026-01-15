@@ -564,24 +564,19 @@ export function Canvas() {
 
     if (!canvas || !ctx || !renderer) return;
 
-    // Check if stroke is active and we have a preview
-    if (isStrokeActive() && activeLayerId) {
-      const previewCanvas = getPreviewCanvas();
-      if (previewCanvas) {
-        // Use layer-aware compositing to insert preview at correct position
-        const compositeCanvas = renderer.compositeWithPreview(
-          activeLayerId,
-          previewCanvas,
-          getPreviewOpacity()
-        );
-        ctx.clearRect(0, 0, width, height);
-        ctx.drawImage(compositeCanvas, 0, 0);
-        return;
-      }
-    }
+    // Build preview config if stroke is active
+    const preview =
+      isStrokeActive() && activeLayerId
+        ? (() => {
+            const previewCanvas = getPreviewCanvas();
+            return previewCanvas
+              ? { activeLayerId, canvas: previewCanvas, opacity: getPreviewOpacity() }
+              : undefined;
+          })()
+        : undefined;
 
-    // Fallback: standard composite without preview
-    const compositeCanvas = renderer.composite();
+    // Composite with optional preview
+    const compositeCanvas = renderer.composite(preview);
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(compositeCanvas, 0, 0);
   }, [width, height, isStrokeActive, getPreviewCanvas, getPreviewOpacity, activeLayerId]);
