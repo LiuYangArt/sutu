@@ -1,8 +1,8 @@
 .debug-panel {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 100px;
+  right: 20px;
+  /* transform removed - will use left/top for dragging */
   width: 400px;
   max-height: 600px;
   background: #1e1e2e;
@@ -24,6 +24,12 @@
   border-bottom: 1px solid #45475a;
   background: #313244;
   border-radius: 12px 12px 0 0;
+  cursor: grab;
+  user-select: none;
+}
+
+.debug-panel-header:active {
+  cursor: grabbing;
 }
 
 .debug-panel-title {

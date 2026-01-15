@@ -12,6 +12,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
 import { applyPressureCurve, PressureCurve, RenderMode } from '@/stores/tool';
+import { LatencyProfiler } from '@/benchmark';
 import {
   GPUContext,
   GPUStrokeAccumulator,
@@ -41,11 +42,19 @@ export interface UseBrushRendererProps {
   height: number;
   /** User-selected render mode */
   renderMode: RenderMode;
+  /** Optional LatencyProfiler for benchmarking */
+  benchmarkProfiler?: LatencyProfiler;
 }
 
 export interface UseBrushRendererResult {
   beginStroke: (hardness?: number) => Promise<void>;
-  processPoint: (x: number, y: number, pressure: number, config: BrushRenderConfig) => void;
+  processPoint: (
+    x: number,
+    y: number,
+    pressure: number,
+    config: BrushRenderConfig,
+    pointIndex?: number
+  ) => void;
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
   getPreviewOpacity: () => number;
@@ -60,6 +69,7 @@ export function useBrushRenderer({
   width,
   height,
   renderMode,
+  benchmarkProfiler,
 }: UseBrushRendererProps): UseBrushRendererResult {
   const [gpuAvailable, setGpuAvailable] = useState(false);
 
@@ -92,6 +102,7 @@ export function useBrushRenderer({
         if (supported && ctx.device) {
           gpuBufferRef.current = new GPUStrokeAccumulator(ctx.device, width, height);
           setGpuAvailable(true);
+          benchmarkProfiler?.setDevice(ctx.device);
         } else {
           reportGPUFallback('WebGPU initialization failed');
         }
@@ -162,7 +173,18 @@ export function useBrushRenderer({
    * Process a point and render dabs to stroke buffer
    */
   const processPoint = useCallback(
-    (x: number, y: number, pressure: number, config: BrushRenderConfig): void => {
+    (
+      x: number,
+      y: number,
+      pressure: number,
+      config: BrushRenderConfig,
+      pointIndex?: number
+    ): void => {
+      // Start CPU encode timing
+      if (pointIndex !== undefined) {
+        benchmarkProfiler?.markCpuEncodeStart();
+      }
+
       const stamper = stamperRef.current;
 
       // Apply pressure curve
@@ -207,8 +229,21 @@ export function useBrushRenderer({
           }
         }
       }
+
+      // End CPU encode timing and trigger GPU sample if needed
+      if (pointIndex !== undefined && benchmarkProfiler) {
+        // Force flush if this is a sample point to ensure accurate GPU timing
+        if (
+          backend === 'gpu' &&
+          gpuBufferRef.current &&
+          benchmarkProfiler.shouldSampleGpu(pointIndex)
+        ) {
+          gpuBufferRef.current.flush();
+        }
+        void benchmarkProfiler.markRenderSubmit(pointIndex);
+      }
     },
-    [backend]
+    [backend, benchmarkProfiler]
   );
 
   /**

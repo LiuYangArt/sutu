@@ -9,6 +9,7 @@ import {
   Download,
   ChevronDown,
   ChevronUp,
+  Timer,
 } from 'lucide-react';
 import {
   InputSimulator,
@@ -21,6 +22,13 @@ import {
   type ChaosTestResult,
   type DiagnosticHooks,
 } from '../../test';
+import { LatencyProfilerStats, FrameStats, LagometerStats } from '@/benchmark/types';
+import {
+  BenchmarkRunner,
+  DEFAULT_SCENARIOS,
+  downloadBenchmarkReport,
+  type BenchmarkReport,
+} from '@/benchmark';
 import './DebugPanel.css';
 
 interface DebugPanelProps {
@@ -42,7 +50,44 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [runningTest, setRunningTest] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [expandedResult, setExpandedResult] = useState<number | null>(null);
+
   const diagnosticsRef = useRef<DiagnosticHooks | null>(null);
+
+  // Drag state for movable panel
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(
+    null
+  );
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Benchmark Stats
+  const [benchmarkStats, setBenchmarkStats] = useState<{
+    latency: LatencyProfilerStats;
+    fps: FrameStats;
+    lagometer: LagometerStats;
+  } | null>(null);
+
+  // Calculate panel style
+  const panelStyle: React.CSSProperties = position
+    ? { left: position.x, top: position.y, right: 'auto' }
+    : {};
+
+  const getBenchmarkApi = () => window.__benchmark;
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const bench = getBenchmarkApi();
+      if (bench) {
+        setBenchmarkStats({
+          latency: bench.latencyProfiler.getStats(),
+          fps: bench.fpsCounter.getStats(),
+          lagometer: bench.lagometer.getStats(),
+        });
+      }
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     diagnosticsRef.current = installDiagnosticHooks();
@@ -132,21 +177,76 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     if (!canvas) return;
     canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     diagnosticsRef.current?.reset();
+
+    // Also reset benchmark stats
+    const bench = getBenchmarkApi();
+    bench?.latencyProfiler.reset();
+    bench?.lagometer.reset();
   }, [canvas]);
 
-  const exportResults = useCallback(() => {
-    const content = results
-      .map((r) => `[${r.timestamp.toISOString()}] ${r.name}: ${r.status}\n${r.report || ''}`)
-      .join('\n\n---\n\n');
+  // Benchmark report state
+  const [lastReport, setLastReport] = useState<BenchmarkReport | null>(null);
 
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `debug-report-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [results]);
+  const runBenchmark = useCallback(async () => {
+    if (!canvas || runningTest) return;
+
+    setRunningTest('benchmark');
+    setProgress(0);
+    addResult('Benchmark Suite', 'running');
+
+    const bench = getBenchmarkApi();
+
+    if (!bench) {
+      addResult('Benchmark Suite', 'failed', 'Benchmark not initialized');
+      setRunningTest(null);
+      return;
+    }
+
+    try {
+      const runner = new BenchmarkRunner(canvas);
+      runner.setProgressCallback((p, name) => {
+        setProgress(p);
+        if (name !== 'Complete') {
+          setRunningTest(`benchmark: ${name}`);
+        }
+      });
+
+      const report = await runner.runScenarios(DEFAULT_SCENARIOS, {
+        latencyProfiler: bench.latencyProfiler,
+        fpsCounter: bench.fpsCounter,
+        lagometer: bench.lagometer,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any);
+
+      setLastReport(report);
+
+      const summary = `Avg FPS: ${report.summary.avgFps.toFixed(1)}\nAvg Latency: ${report.summary.avgRenderLatency.toFixed(2)}ms\nMax Lag: ${report.summary.maxVisualLag.toFixed(1)}px`;
+      addResult('Benchmark Suite', 'passed', summary);
+    } catch (e) {
+      addResult('Benchmark Suite', 'failed', String(e));
+    } finally {
+      setRunningTest(null);
+      setProgress(0);
+    }
+  }, [canvas, runningTest, addResult]);
+
+  const exportReport = useCallback(() => {
+    if (lastReport) {
+      downloadBenchmarkReport(lastReport);
+    } else if (results.length > 0) {
+      // Fallback to test results export
+      const content = results
+        .map((r) => `[${r.timestamp.toISOString()}] ${r.name}: ${r.status}\n${r.report || ''}`)
+        .join('\n\n---\n\n');
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `debug-report-${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }, [lastReport, results]);
 
   function getStatusIcon(status: TestStatus) {
     switch (status) {
@@ -161,9 +261,48 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     }
   }
 
+  // Drag handlers
+  const handleDragStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const rect = panel.getBoundingClientRect();
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panelX: rect.left,
+      panelY: rect.top,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handleDragMove = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current || !dragStartRef.current) return;
+    const deltaX = e.clientX - dragStartRef.current.x;
+    const deltaY = e.clientY - dragStartRef.current.y;
+    setPosition({
+      x: dragStartRef.current.panelX + deltaX,
+      y: dragStartRef.current.panelY + deltaY,
+    });
+  };
+
+  const handleDragEnd = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
   return (
-    <div className="debug-panel">
-      <div className="debug-panel-header">
+    <div className="debug-panel" ref={panelRef} style={panelStyle}>
+      <div
+        className="debug-panel-header"
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
+        onPointerCancel={handleDragEnd}
+      >
         <div className="debug-panel-title">
           <Bug size={18} />
           <span>Debug Panel</span>
@@ -222,13 +361,80 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         )}
 
         <div className="debug-section">
+          <h3>Performance Benchmark</h3>
+          {benchmarkStats ? (
+            <div className="benchmark-stats">
+              <div className="stat-row">
+                <span className="stat-label">FPS:</span>
+                <span className="stat-value">{benchmarkStats.fps.fps.toFixed(1)}</span>
+                <span className="stat-sub">
+                  (σ: {benchmarkStats.fps.frameTimeStdDev.toFixed(2)}ms)
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Dropped:</span>
+                <span className="stat-value">{benchmarkStats.fps.droppedFrames}</span>
+                <span className="stat-sub">
+                  (max consec: {benchmarkStats.fps.consecutiveDrops})
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">P99 Frame:</span>
+                <span className="stat-value">{benchmarkStats.fps.p99FrameTime.toFixed(2)}ms</span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Render Latency (Avg):</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.avgTotalRenderLatency.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Render Latency (P99):</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.p99RenderLatency.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Input Latency:</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.avgInputLatency.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">Visual Lag (Max):</span>
+                <span className="stat-value">
+                  {benchmarkStats.lagometer.maxLagDistance.toFixed(1)}px
+                </span>
+                <span className="stat-sub">
+                  ({benchmarkStats.lagometer.lagAsScreenPercent.toFixed(1)}%,{' '}
+                  {benchmarkStats.lagometer.lagAsBrushRadii.toFixed(1)}x)
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="stat-placeholder">Benchmarks initializing...</div>
+          )}
+        </div>
+
+        <div className="debug-section">
           <h3>Actions</h3>
           <div className="debug-button-row">
+            <button
+              className="debug-btn"
+              onClick={runBenchmark}
+              disabled={!!runningTest}
+              title="Run automated benchmark with different brush sizes"
+            >
+              <Timer size={16} />
+              <span>Run Benchmark</span>
+            </button>
+          </div>
+          <div className="debug-button-row" style={{ marginTop: '8px' }}>
             <button
               className="debug-btn secondary"
               onClick={clearCanvas}
               disabled={!!runningTest}
-              title="Clear the canvas"
+              title="Clear canvas and reset stats"
             >
               <RotateCcw size={16} />
               <span>Clear</span>
@@ -236,9 +442,9 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
 
             <button
               className="debug-btn secondary"
-              onClick={exportResults}
-              disabled={results.length === 0}
-              title="Export test results"
+              onClick={exportReport}
+              disabled={!lastReport && results.length === 0}
+              title="Export benchmark report"
             >
               <Download size={16} />
               <span>Export</span>

@@ -246,6 +246,13 @@ export class GPUStrokeAccumulator {
   }
 
   /**
+   * Force flush pending dabs to GPU (used for benchmarking)
+   */
+  flush(): void {
+    this.flushBatch();
+  }
+
+  /**
    * Flush pending dabs to GPU using per-dab loop with optimized partial copies.
    * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
    */

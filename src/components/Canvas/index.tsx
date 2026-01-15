@@ -11,6 +11,7 @@ import './Canvas.css';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { getEffectiveInputData } from './inputUtils';
+import { LatencyProfiler, FPSCounter, LagometerMonitor } from '@/benchmark';
 
 declare global {
   interface Window {
@@ -29,13 +30,56 @@ export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
 
+  // Benchmark
+  const pointIndexRef = useRef(0);
+  const latencyProfilerRef = useRef<LatencyProfiler>(new LatencyProfiler());
+  const fpsCounterRef = useRef<FPSCounter>(new FPSCounter());
+  const lagometerRef = useRef<LagometerMonitor>(new LagometerMonitor());
+  const lastInputPosRef = useRef<{ x: number; y: number } | null>(null);
+  const prevProcessedPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    latencyProfilerRef.current.enable();
+    const fpsCounter = fpsCounterRef.current;
+    fpsCounter.start();
+
+    let id: number;
+    const loop = () => {
+      fpsCounter.tick();
+      id = requestAnimationFrame(loop);
+    };
+    id = requestAnimationFrame(loop);
+    return () => {
+      fpsCounter.stop();
+      cancelAnimationFrame(id);
+    };
+  }, []);
+
+  // Expose for debug panel
+  useEffect(() => {
+    window.__benchmark = {
+      latencyProfiler: latencyProfilerRef.current,
+      fpsCounter: fpsCounterRef.current,
+      lagometer: lagometerRef.current,
+      // Reset function for benchmark runner
+      resetForScenario: () => {
+        pointIndexRef.current = 0;
+        prevProcessedPosRef.current = null;
+        lastInputPosRef.current = null;
+      },
+    };
+  }, []);
+
   // Phase 2.7: State machine for brush strokes
   // Solves race conditions where input events arrive before initialization completes
   type StrokeState = 'idle' | 'starting' | 'active' | 'finishing';
 
   // State machine refs
+  // State machine refs
   const strokeStateRef = useRef<StrokeState>('idle');
-  const pendingPointsRef = useRef<Array<{ x: number; y: number; pressure: number }>>([]);
+  const pendingPointsRef = useRef<
+    Array<{ x: number; y: number; pressure: number; pointIndex: number }>
+  >([]);
   const pendingEndRef = useRef(false); // Flag: PointerUp arrived during 'starting' phase
 
   const isZoomingRef = useRef(false);
@@ -137,7 +181,12 @@ export function Canvas() {
     isStrokeActive,
     backend: _activeBackend,
     gpuAvailable: _gpuAvailable,
-  } = useBrushRenderer({ width, height, renderMode });
+  } = useBrushRenderer({
+    width,
+    height,
+    renderMode,
+    benchmarkProfiler: latencyProfilerRef.current,
+  });
 
   // Tablet store: We use getState() directly in event handlers for real-time data
   // No need to subscribe to state changes here since we sync-read in handlers
@@ -605,9 +654,24 @@ export function Canvas() {
 
   // Process a single point through the brush renderer (for brush tool)
   const processBrushPointWithConfig = useCallback(
-    (x: number, y: number, pressure: number) => {
+    (x: number, y: number, pressure: number, pointIndex?: number) => {
       const config = getBrushConfig();
-      processBrushPoint(x, y, pressure, config);
+
+      // Lagometer: Update last input position and measure lag
+      lastInputPosRef.current = { x, y };
+      lagometerRef.current.setBrushRadius(config.size / 2);
+
+      // Measure visual lag: distance between current input and previous processed point
+      // This reflects input sampling density and any buffering delays
+      if (prevProcessedPosRef.current) {
+        lagometerRef.current.measure(prevProcessedPosRef.current, { x, y });
+      }
+
+      processBrushPoint(x, y, pressure, config, pointIndex);
+
+      // Update previous processed position for next measurement
+      prevProcessedPosRef.current = { x, y };
+
       // Render stroke buffer preview to display canvas
       compositeAndRenderWithPreview();
     },
@@ -763,7 +827,7 @@ export function Canvas() {
       // Replay all buffered points
       const points = pendingPointsRef.current;
       for (const p of points) {
-        processBrushPointWithConfig(p.x, p.y, p.pressure);
+        processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex);
         window.__strokeDiagnostics?.onPointBuffered();
       }
       pendingPointsRef.current = [];
@@ -837,8 +901,11 @@ export function Canvas() {
 
       // Brush Tool: Use State Machine Logic
       if (currentTool === 'brush') {
+        const idx = pointIndexRef.current++;
+        latencyProfilerRef.current.markInputReceived(idx, e.nativeEvent as PointerEvent);
+
         strokeStateRef.current = 'starting';
-        pendingPointsRef.current = [{ x: canvasX, y: canvasY, pressure }];
+        pendingPointsRef.current = [{ x: canvasX, y: canvasY, pressure, pointIndex: idx }];
         pendingEndRef.current = false;
 
         // Start initialization (fire-and-forget)
@@ -944,16 +1011,20 @@ export function Canvas() {
           tabletState.currentPoint
         );
 
+        const idx = pointIndexRef.current++;
+        // Note: evt is PointerEvent here
+        latencyProfilerRef.current.markInputReceived(idx, evt as PointerEvent);
+
         // For brush tool, use state machine + input buffering
         if (currentTool === 'brush') {
           const state = strokeStateRef.current;
           if (state === 'starting') {
             // Buffer points during 'starting' phase, replay after beginStroke completes
-            pendingPointsRef.current.push({ x: canvasX, y: canvasY, pressure });
+            pendingPointsRef.current.push({ x: canvasX, y: canvasY, pressure, pointIndex: idx });
             window.__strokeDiagnostics?.onPointBuffered(); // Telemetry: Buffered point
           } else if (state === 'active') {
             // Normal processing in 'active' phase
-            processBrushPointWithConfig(canvasX, canvasY, pressure);
+            processBrushPointWithConfig(canvasX, canvasY, pressure, idx);
             window.__strokeDiagnostics?.onPointBuffered(); // Telemetry: Processed point
           }
           // Ignore in 'idle' or 'finishing' state
