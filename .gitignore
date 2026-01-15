@@ -87,3 +87,4 @@ run_claude_pwsh.bat
 *.txt
 *-cwd
 .agent/skills/99-evolution/hooks/settings.example.json
+test-results/.last-run.json

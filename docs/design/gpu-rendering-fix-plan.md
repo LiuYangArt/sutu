@@ -95,6 +95,7 @@ GPU 当前工作方式 (错误):
 > **抬笔闪烁问题 (2026-01-15)**: 经验证，抬笔闪烁仍未完全解决。
 > 可能原因：GPU readback 异步时序问题，Preview 和 endStroke 使用的数据不完全同步。
 > 需要进一步调查。
+> 参考 @stroke-end-flicker-fix-plan.md
 
 > [!NOTE]
 > **多图层层序修复 (2026-01-15)**: 扩展 `LayerRenderer.composite()` 方法支持可选 preview 参数，

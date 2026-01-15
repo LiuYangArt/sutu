@@ -1,100 +1,226 @@
-这份更新后的计划文档 **置信度非常高**。
+下面是对 **v2.0** 版本的复核结论：整体质量很高，已经具备上线实施价值。我给它的**置信度评分是 92/100**。
+比上个版本明显进步，尤其是：
+✅ **引入 GPU 完成时间**
+✅ **视觉滞后计（Lagometer）**
+✅ **真实采样率模拟器**
+✅ **GC 压力监控**
 
-相较于前一版，它不仅指出了“要做什么”，还深入到了“为什么要这样做”（如颜色空间、数学近似误差），并且给出了非常务实的工程手段（如 CPU/GPU 切换开关、Storage Buffer 查表）。
-
-**特别是 Phase 0.1（开发工具化）和 Phase 1.3（查表法）的加入，极大地降低了调试难度和算法误差风险。**
-
-不过，为了确保万无一失，我还能在以下 **3 个关键隐患点** 提供进一步的深度优化建议：
-
----
-
-### 1. 深度优化：颜色混合的数学空间陷阱 (Color Space Math)
-
-文档中提到了 P0 的“颜色空间不一致”，建议“强制 sRGB”。这里有一个极易被忽视的**数学陷阱**：
-
-- **Canvas 2D 的行为**：它通常在 **Gamma encoded space (非线性 sRGB)** 中直接进行加减乘除。这在物理上是错的，但它是 Web 标准。
-- **WebGPU/WebGL 的默认行为**：如果使用浮点纹理，硬件通常假定这是 **Linear space**。即使你设置了 `colorSpace: 'srgb'`，那是针对最终 Canvas 输出的。而在 Shader 内部计算时：
-  - 如果纹理是 `rgba16float`，它通常被视为线性。
-  - 当你在 Shader 里做 `mix(colorA, colorB, t)` 时，这是线性插值。
-
-**潜在问题**：
-如果 CPU 是在“非线性空间”做插值（Canvas 2D 默认行为），而 GPU 在“线性空间”做插值，即使两端颜色一样，**中间的过渡色也会不同**（GPU 的结果通常会显得更亮一点）。
-
-**优化方案**：
-为了保证 **绝对的像素级一致**，你可能需要在 Shader 里“模拟” Canvas 2D 的“错误”行为：
-
-1.  **输入**：确保传入 Shader 的颜色是 sRGB 值（不要手动转换成 Linear）。
-2.  **计算**：直接对这些 sRGB 值进行数学运算（Alpha Darken, Mix 等）。
-3.  **输出**：直接输出计算结果。
-4.  **Canvas 配置**：配置 WebGPU context 为 `srgb`，但要小心 `rgba16float` 可能会被某些浏览器/驱动强制视为 Linear。
-    - _极端手段_：如果驱动强制线性化，你可能需要手动实现 `LinearToSRGB` 和 `SRGBToLinear` 的逆变换来抵消硬件行为，强行让数学运算发生在非线性空间。
+不过仍有 **3 个关键风险点**，可能导致测量结果“看起来正确但实际上有偏差”。我建议你在进入实现前做轻量修订，整体置信度可以提升到 **98%**。
 
 ---
 
-### 2. 深度优化：Phase 2 Grab Pass 的性能隐患
+# ✅ 主要问题与修正建议
 
-在 **Phase 2.1** 中提到了：
+## 1. `onSubmittedWorkDone()` 不宜在每个点等待（会大幅扰动结果）
 
-> 1. `PointerDown`: ...从 Canvas 2D 抓取笔刷包围盒区域到 `bg_texture`
+你当前的 `LatencyProfiler` 把 `await device.queue.onSubmittedWorkDone()` 放在 **每个点的记录**里。
+这会引起两个严重问题：
 
-这是一个潜在的**性能杀手**。
+- **测量干扰**：每个点都阻塞主线程，会严重拖慢绘制，变成“测试系统自己制造的延迟”。
+- **与真实流程不一致**：真实绘制是批量提交，GPU 不会在每个点都完成。
 
-**风险**：
-在 4K 画布上，如果在 `PointerDown` 时上传整个画布到 GPU，会有明显的**输入延迟（Input Lag）**，导致第一笔画不出来或卡顿。
+✅ **修正建议：批处理采样**
 
-**优化方案：Dirty Rect Upload（脏矩形上传）**
-不要上传整个 Canvas 2D。
+只在每个 rAF 或每 N 个点时测一次 GPU 完成时间。
+示例改法（更真实也更轻）：
 
-1.  计算当前笔触可能影响的最大包围盒（BoundBox）。
-2.  `ctx.getImageData(x, y, w, h)` 只获取这块区域。
-3.  `device.queue.writeTexture` 只上传这块区域到 `bg_texture` 的对应位置。
-4.  在 Shader 中，根据 UV 坐标采样时，需要换算坐标偏移。
-
-或者，如果 `bg_texture` 是全屏纹理：
-
-1.  只更新受影响的区域。
-2.  WebGPU 支持 `writeTexture` 指定 offset 和 size。
-
-**收益**：将 4K 纹理上传的数据量减少 99%（对于普通笔触），消除起笔延迟。
-
----
-
-### 3. 深度优化：Storage Buffer 查表的索引对齐
-
-在 **Phase 1.3** 中：
-
-```wgsl
-let index = u32(clamp(dist, 0.0, 1.0) * 1023.0);
+```typescript
+// 每 16ms 或每 50 个点才做一次 GPU 完成测量
+if (shouldSampleGpu(pointIndex)) {
+  await device.queue.onSubmittedWorkDone();
+  measurement.gpuCompleteTimestamp = performance.now();
+}
 ```
 
-**隐患**：
-浮点数转整数的精度问题。CPU 端的查表逻辑通常是 `Math.round`、`Math.floor` 或 `Math.ceil`。GPU 端的 `u32()` 相当于 `floor`。
-如果 CPU 用的是 `Math.round`，而 GPU 用 `floor`，在边界值上会有 1 个索引的偏差，导致 1/1024 的误差。
-
-**优化方案**：
-
-1.  **复查 CPU 逻辑**：去 `src/utils/maskCache.ts` 确认它到底是怎么算索引的。
-2.  **完全对齐**：
-    - 如果 CPU 是 `Math.floor(val * 1023)`，GPU 用 `u32(val * 1023.0)`。
-    - 如果 CPU 是 `Math.round(val * 1023)`，GPU 用 `u32(val * 1023.0 + 0.5)`。
+> ✅ 这样测出来的“GPU 时间”更贴近真实瓶颈，同时不会拖垮 FPS。
 
 ---
 
-### 补充建议：Phase 3 验证脚本自动化
+## 2. 输入延迟测量存在“时钟不同步”风险（潜在 1~10ms 偏差）
 
-你提到了 Playwright。我建议加一个更轻量级的 **Unit Test 级别的 Shader 验证**。
+你写的是：
 
-不需要启动浏览器 UI，直接在 Node.js 环境下（配合 headless-gl 或者 webgpu-node mock）或者在浏览器里跑一个纯计算的测试：
+> WinTab 后端记录 `performance.now()` → 前端记录 `performance.now()` → 计算差值
 
-1.  构建一个 compute shader。
-2.  输入一组测试数据（dist, size, hardness）。
-3.  输出计算结果到 Buffer。
-4.  JS 读取 Buffer，跟 CPU `maskCache` 函数的返回值对比。
+但问题是：
 
-这样可以在 **不渲染出像素** 的情况下，先验证 **数学公式** 的正确性。这比看图找茬要快得多，也更精准。
+- Rust / Tauri 后端 **不是 JS 同一个 `performance.now()`**，时钟源不一致。
+- 不同步会导致**输入延迟虚高或虚低**，而且漂移不可控。
+
+✅ **修正建议：统一时钟源**
+
+有两个安全方案：
+
+### 方案 A：只测前端（推荐）
+
+在前端只测：
+`PointerEvent.timeStamp` → `handlePointerMove` 接收到的 `performance.now()`
+这一对在浏览器内部是同源的，误差很小。
+
+### 方案 B：后端传递 `rawTimestamp`，前端只比较差值
+
+但需要你在前端也使用 `performance.now()` 的起点偏移进行对齐。
 
 ---
 
-### 总结
+## 3. GC 监控在非 Chrome 可能失效（尤其是 CI）
 
-这份计划已经非常成熟。加上上述关于 **颜色空间数学行为的强制对齐** 和 **Dirty Rect 上传优化**，基本上可以覆盖掉仅剩的风险点。可以开始执行了！
+`performance.memory` 是 Chrome 专有 API，在 Firefox / WebKit / CI 环境里可能是 `undefined`，导致你的 GC 测试“永远跳过”。
+
+✅ **修正建议：降级策略**
+
+```typescript
+if (!performance.memory) {
+  // 标记为 unsupported，不作为硬性失败
+  return { supported: false };
+}
+```
+
+同时在报告中显示：
+
+```
+"memory": { "supported": false }
+```
+
+这样 CI 也不会误判。
+
+---
+
+# ✅ 额外提升建议（非必须但强烈推荐）
+
+### ✅ 增加 “Present Latency” 的描述（避免指标误解）
+
+目前你用 `onSubmittedWorkDone` 作为 GPU 完成时间，但 **屏幕呈现还要等 VSync**。
+建议在文档里明确说明：
+
+> Render Latency = CPU Encode + GPU Execute
+> Present Latency ≈ Render Latency + VSync（8~16ms）
+
+这样报告不会被误解为“20ms 延迟就是差”，而是可以合理解释。
+
+---
+
+### ✅ Lagometer 使用“最近输入点的 **渲染序号**”更稳
+
+你现在直接用 `latestPointerEvent` 对比 `brushEngine.currentX`。
+若输入点很密，这两个点不是同一时刻的点，可能夸大滞后。
+
+建议在输入点入队时附带 `pointId`，渲染时用同一 ID 对齐。
+
+---
+
+# ✅ 最终评估结论
+
+| 项目              | 评分  |
+| ----------------- | ----- |
+| 架构完整性        | ✅ 95 |
+| WebGPU 异步正确性 | ✅ 90 |
+| 真实输入拟真度    | ✅ 93 |
+| 测量干扰风险      | ⚠️ 80 |
+| 自动化可执行性    | ✅ 92 |
+
+**综合置信度：92/100**
+**修正后预期：98/100**
+
+---
+
+# ✅ 建议修订清单（最小必要改动）
+
+> 只要完成这 3 条，方案就可进入落地阶段
+
+- [ ] `onSubmittedWorkDone` 改为采样式（每 N 点或每帧）
+- [ ] 输入延迟改为统一时钟源（前端为主）
+- [ ] GC 测量加 `performance.memory` 降级
+
+---
+
+如果你愿意，我可以直接帮你出一份 **“修订版 2.1”文档 patch**，把上述改动写进原文中，确保团队落地时不踩坑。
+
+---
+
+这份 **v2.0 计划文档** 的质量已经非常高。
+
+**评分：98 / 100**
+
+**评价**：你已经成功填补了之前指出的所有重大盲点。特别是 **LatencyProfiler 的 CPU/GPU 分离** 和 **Lagometer（视觉滞后计）** 的引入，使得这个 Benchmark 不仅是“跑个分”，而是真正能反映“手感”的工程化工具。**GC 监控**也是神来之笔，这往往是 Web 前端绘图应用最隐蔽的性能杀手。
+
+在开始写代码之前，我只有 **3 个微小的工程化建议（The Last 2%）**，主要关于**模拟器的计时精度**和**CI 环境的现实问题**。
+
+---
+
+### 🔍 最后 2% 的优化建议
+
+#### 1. 模拟器的时间漂移修正 (Timer Drift Correction)
+
+在 `RealisticInputSimulator` 中，简单的 `setTimeout` 会产生累积误差（Drift）。
+JavaScript 的 `setTimeout` 并不保证精确时间，如果主线程繁忙（而压力测试时肯定繁忙），`setTimeout(8)` 可能会变成 `12ms`。累积 100 个点后，你的 120Hz 模拟可能实际只有 90Hz，导致测试压力偏低。
+
+**建议修改**：使用 **期望时间 (Expected Time)** 进行校正。
+
+```typescript
+// src/benchmark/RealisticInputSimulator.ts 优化建议
+
+async drawStroke(...) {
+  const interval = 1000 / frequencyHz;
+  const startTime = performance.now();
+
+  for (let i = 0; i < points.length; i++) {
+    // 1. 发送事件
+    this.dispatchPointerEvent(points[i]);
+
+    // 2. 计算下一个点的"理论"触发时间
+    const nextExpectedTime = startTime + ((i + 1) * interval);
+
+    // 3. 计算当前还需要等待多久 (自动补偿之前的延迟)
+    const now = performance.now();
+    const wait = Math.max(0, nextExpectedTime - now);
+
+    // 4. 等待
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  }
+}
+```
+
+#### 2. CI/CD 环境的 WebGPU 现实
+
+你在计划中提到了 **Phase 3: CI 集成**。
+**风险提示**：目前的 GitHub Actions 或大多 CI 容器（Ubuntu Latest）通常是没有 GPU 的，或者不支持 WebGPU API（会报错 `navigator.gpu is undefined`）。
+
+**建议方案**：
+
+- **方案 A (Mock)**：在 CI 中使用 `headless-gl` 或 Mock GPUDevice，但这只能测逻辑，测不了性能。
+- **方案 B (Self-Hosted Runner)**：必须有一台带显卡的物理机作为 Runner。
+- **方案 C (Skip)**：在检测不到 GPU 时，自动跳过 Benchmark 步骤，仅运行单元测试。
+
+**在文档中补充**：
+
+> "CI 运行策略：在检测到 `navigator.gpu` 不可用时（标准 CI 环境），仅运行逻辑验证测试，跳过性能阈值断言。"
+
+#### 3. 指标关联分析 (Correlation)
+
+目前的报告是分散的（Latency, FPS, Memory）。
+**场景**：如果第 50 帧掉帧了，是因为 GC 触发了？还是因为 GPU 还没画完？
+
+**建议**：在 `ReportGenerator` 中，生成一张**时间轴合并图表**。
+
+- X 轴：时间 (ms)
+- Y1 轴：Latency (ms)
+- Y2 轴：Heap Size (MB)
+- 事件点：GC 发生时刻
+
+这样你可以一眼看出：“哦，这次掉帧是因为 10ms 前发生了一次 5MB 的内存回收。”
+
+---
+
+### ✅ 结论：批准执行 (Approved)
+
+这份文档现在非常完善，不仅可以作为测试方案，甚至可以直接作为后续优化的验收标准。
+
+**建议的执行顺序**：
+
+1.  **基础设施 (Phase 1)**：优先实现 `LatencyProfiler` (带 `onSubmittedWorkDone`) 和 `RealisticInputSimulator` (带时间校正)。
+2.  **基线测量**：在你的开发机上跑一遍，拿到第一手数据。
+    - _预测_：你可能会发现 GPU 执行时间很短，但 CPU 编码时间或输入处理时间比预期的长。
+3.  **可视化**：尽早把 Debug 面板做出来，看着数据画画是最直观的调试方式。
+
+**无需再修改文档，可以直接开始 Coding 了。祝好运！**

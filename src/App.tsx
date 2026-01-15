@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
 import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { TabletPanel } from './components/TabletPanel';
@@ -6,6 +6,9 @@ import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
 import { PanelLayer } from './components/UI/PanelLayer';
 import { usePanelStore } from './stores/panel';
+
+// Lazy load DebugPanel (only used in dev mode)
+const DebugPanel = lazy(() => import('./components/DebugPanel'));
 
 // Check if running in Tauri environment
 const isTauri = () => {
@@ -25,6 +28,7 @@ const waitForTauri = async (maxRetries = 50, interval = 100): Promise<boolean> =
 
 function App() {
   const [isReady, setIsReady] = useState(false);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const initDocument = useDocumentStore((s) => s.initDocument);
   const tabletInitializedRef = useRef(false);
 
@@ -32,6 +36,24 @@ function App() {
   const initTablet = useTabletStore((s) => s.init);
   const startTablet = useTabletStore((s) => s.start);
   const cleanupTablet = useTabletStore((s) => s.cleanup);
+
+  // Toggle debug panel with Shift+Ctrl+D
+  const handleDebugShortcut = useCallback((e: KeyboardEvent) => {
+    if (e.shiftKey && e.ctrlKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault();
+      setShowDebugPanel((prev) => !prev);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleDebugShortcut);
+    return () => window.removeEventListener('keydown', handleDebugShortcut);
+  }, [handleDebugShortcut]);
+
+  // Get canvas ref for debug panel
+  const getCanvasElement = useCallback((): HTMLCanvasElement | null => {
+    return document.querySelector('canvas[data-testid="main-canvas"]');
+  }, []);
 
   // Initialize tablet at App level (runs once)
   useEffect(() => {
@@ -148,6 +170,12 @@ function App() {
       </main>
       <PanelLayer />
       <TabletPanel />
+      {/* Debug Panel - dev mode only */}
+      {showDebugPanel && (
+        <Suspense fallback={null}>
+          <DebugPanel canvas={getCanvasElement()} onClose={() => setShowDebugPanel(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

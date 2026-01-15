@@ -54,6 +54,12 @@ export class GPUStrokeAccumulator {
   private previewUpdatePending: boolean = false;
   private previewNeedsUpdate: boolean = false; // Flag to ensure final update
 
+  // Promise-based preview update tracking (optimization 1)
+  private currentPreviewPromise: Promise<void> | null = null;
+
+  // Device lost state tracking (optimization 3)
+  private deviceLost: boolean = false;
+
   // Cached color blend mode to avoid redundant updates
   private cachedColorBlendMode: ColorBlendMode = 'linear';
 
@@ -87,6 +93,12 @@ export class GPUStrokeAccumulator {
 
     // Initialize profiler
     void this.profiler.init(device);
+
+    // Setup device lost handler (optimization 3)
+    void this.device.lost.then((info) => {
+      console.warn('[GPUStrokeAccumulator] GPU device lost:', info.message);
+      this.deviceLost = true;
+    });
   }
 
   private createReadbackBuffer(): void {
@@ -363,98 +375,163 @@ export class GPUStrokeAccumulator {
 
   /**
    * Async update preview canvas from GPU texture
+   * Uses Promise storage and buffer state guard to prevent race conditions
+   * Optimization 5: Mark retry when buffer busy instead of silent skip
+   * Optimization 8: Handle buffer deadlock defense
    */
   private async updatePreview(): Promise<void> {
-    if (this.previewUpdatePending || !this.previewReadbackBuffer) {
+    // Optimization 1: If already running, return existing promise (most efficient wait)
+    if (this.currentPreviewPromise) {
+      return this.currentPreviewPromise;
+    }
+
+    if (!this.previewReadbackBuffer) {
       return;
     }
 
-    this.previewUpdatePending = true;
-    this.previewNeedsUpdate = false;
-
-    try {
-      // Copy current texture to preview readback buffer
-      const encoder = this.device.createCommandEncoder();
-      encoder.copyTextureToBuffer(
-        { texture: this.pingPongBuffer.source },
-        { buffer: this.previewReadbackBuffer, bytesPerRow: this.readbackBytesPerRow },
-        [this.width, this.height]
-      );
-      this.device.queue.submit([encoder.finish()]);
-
-      // Wait for GPU and map buffer
-      await this.previewReadbackBuffer.mapAsync(GPUMapMode.READ);
-      const gpuData = new Float32Array(this.previewReadbackBuffer.getMappedRange());
-
-      // Get dirty rect bounds
-      const rect = {
-        left: Math.max(0, this.dirtyRect.left),
-        top: Math.max(0, this.dirtyRect.top),
-        right: Math.min(this.width, this.dirtyRect.right),
-        bottom: Math.min(this.height, this.dirtyRect.bottom),
-      };
-
-      const rectWidth = rect.right - rect.left;
-      const rectHeight = rect.bottom - rect.top;
-
-      if (rectWidth > 0 && rectHeight > 0) {
-        // Create ImageData for the dirty region
-        const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
-        const floatsPerRow = this.readbackBytesPerRow / 4;
-
-        for (let py = 0; py < rectHeight; py++) {
-          for (let px = 0; px < rectWidth; px++) {
-            const bufferX = rect.left + px;
-            const bufferY = rect.top + py;
-            const srcIdx = bufferY * floatsPerRow + bufferX * 4;
-            const dstIdx = (py * rectWidth + px) * 4;
-
-            // Convert float (0-1) to uint8 (0-255)
-            imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
-            imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
-            imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
-            imageData.data[dstIdx + 3] = Math.round((gpuData[srcIdx + 3] ?? 0) * 255);
-          }
-        }
-
-        this.previewCtx.putImageData(imageData, rect.left, rect.top);
-      }
-
-      this.previewReadbackBuffer.unmap();
-    } catch {
-      // Ignore errors during preview update
-    } finally {
-      this.previewUpdatePending = false;
-      // If more updates were requested while we were updating, do another round
-      if (this.previewNeedsUpdate) {
-        void this.updatePreview();
+    // Optimization 8: If buffer is mapped but no promise (shouldn't happen), try to unmap
+    if (this.previewReadbackBuffer.mapState === 'mapped') {
+      try {
+        this.previewReadbackBuffer.unmap();
+      } catch {
+        // Ignore unmap errors
       }
     }
+
+    // Optimization 5: If buffer is pending, mark retry instead of silent skip
+    if (this.previewReadbackBuffer.mapState !== 'unmapped') {
+      console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, will retry');
+      this.previewNeedsUpdate = true; // Ensure next call will retry
+      return;
+    }
+
+    this.previewNeedsUpdate = false;
+
+    // Store the promise for concurrent access
+    this.currentPreviewPromise = (async () => {
+      try {
+        // Copy current texture to preview readback buffer
+        const encoder = this.device.createCommandEncoder();
+        encoder.copyTextureToBuffer(
+          { texture: this.pingPongBuffer.source },
+          { buffer: this.previewReadbackBuffer!, bytesPerRow: this.readbackBytesPerRow },
+          [this.width, this.height]
+        );
+        this.device.queue.submit([encoder.finish()]);
+
+        // Wait for GPU and map buffer
+        await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ);
+        const gpuData = new Float32Array(this.previewReadbackBuffer!.getMappedRange());
+
+        // Get dirty rect bounds
+        const rect = {
+          left: Math.max(0, this.dirtyRect.left),
+          top: Math.max(0, this.dirtyRect.top),
+          right: Math.min(this.width, this.dirtyRect.right),
+          bottom: Math.min(this.height, this.dirtyRect.bottom),
+        };
+
+        const rectWidth = rect.right - rect.left;
+        const rectHeight = rect.bottom - rect.top;
+
+        if (rectWidth > 0 && rectHeight > 0) {
+          // Create ImageData for the dirty region
+          const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
+          const floatsPerRow = this.readbackBytesPerRow / 4;
+
+          for (let py = 0; py < rectHeight; py++) {
+            for (let px = 0; px < rectWidth; px++) {
+              const bufferX = rect.left + px;
+              const bufferY = rect.top + py;
+              const srcIdx = bufferY * floatsPerRow + bufferX * 4;
+              const dstIdx = (py * rectWidth + px) * 4;
+
+              // Convert float (0-1) to uint8 (0-255)
+              imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
+              imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
+              imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
+              imageData.data[dstIdx + 3] = Math.round((gpuData[srcIdx + 3] ?? 0) * 255);
+            }
+          }
+
+          this.previewCtx.putImageData(imageData, rect.left, rect.top);
+        }
+
+        this.previewReadbackBuffer!.unmap();
+      } catch (e) {
+        console.error('[GPUStrokeAccumulator] Preview update failed:', e);
+      } finally {
+        this.currentPreviewPromise = null;
+        this.previewUpdatePending = false;
+        // If more updates were requested while we were updating, do another round
+        if (this.previewNeedsUpdate) {
+          void this.updatePreview();
+        }
+      }
+    })();
+
+    await this.currentPreviewPromise;
   }
 
   /**
-   * End stroke and composite to layer
+   * End stroke and composite to layer (legacy API for backward compatibility)
    * Uses previewCanvas as source to ensure WYSIWYG (preview = composite)
    * @returns The dirty rectangle that was modified
    */
   async endStroke(layerCtx: CanvasRenderingContext2D, opacity: number): Promise<Rect> {
+    await this.prepareEndStroke();
+    return this.compositeToLayer(layerCtx, opacity);
+  }
+
+  /**
+   * Prepare for end stroke - flush remaining dabs and wait for GPU/preview ready
+   * This is the async part that can be awaited before the sync composite
+   * Optimization 2: Split async preparation from sync composite for atomic transaction
+   * Optimization 6: Always execute updatePreview to ensure data completeness
+   */
+  async prepareEndStroke(): Promise<void> {
     if (!this.active) {
-      return { left: 0, top: 0, right: 0, bottom: 0 };
+      return;
+    }
+
+    // Optimization 3: Context Lost defense
+    if (this.deviceLost) {
+      console.warn('[GPUStrokeAccumulator] GPU device lost during prepareEndStroke');
+      return;
     }
 
     // Flush any remaining dabs
     this.flushBatch();
 
-    this.active = false;
-
     // Wait for GPU to complete all submitted work
     await this.device.queue.onSubmittedWorkDone();
 
-    // Wait for preview to be fully updated (WYSIWYG: use same data as preview)
-    await this.waitForPreviewReady();
+    // Wait for any in-progress preview update to complete (using Promise, not polling)
+    if (this.currentPreviewPromise) {
+      await this.currentPreviewPromise;
+    }
+
+    // Optimization 6: Always execute updatePreview to ensure final batch is readback
+    // Even if previewNeedsUpdate is false, we need to guarantee data completeness
+    await this.updatePreview();
+  }
+
+  /**
+   * Composite stroke to layer - synchronous operation
+   * Must be called after prepareEndStroke() completes
+   * Optimization 2: This is the sync part that should be in same JS task as clear()
+   * Optimization 4: Removed !this.active check - caller guarantees correctness
+   * @returns The dirty rectangle that was modified
+   */
+  compositeToLayer(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
+    // Optimization 4: No active check here - caller (useBrushRenderer) guarantees
+    // this is called immediately after prepareEndStroke() in same sync block.
+    // The old check caused stroke loss when user started new stroke during await.
 
     // Composite from previewCanvas (not GPU texture) to ensure WYSIWYG
     this.compositeFromPreview(layerCtx, opacity);
+
+    this.active = false;
 
     // Return clamped dirty rect
     return {
@@ -463,82 +540,6 @@ export class GPUStrokeAccumulator {
       right: Math.min(this.width, this.dirtyRect.right),
       bottom: Math.min(this.height, this.dirtyRect.bottom),
     };
-  }
-
-  /**
-   * Wait for preview canvas to be fully updated
-   * This ensures WYSIWYG - preview and composite use same data
-   */
-  private async waitForPreviewReady(): Promise<void> {
-    // If preview update is pending, wait for it to complete
-    while (this.previewUpdatePending || this.previewNeedsUpdate) {
-      // Trigger update if needed
-      if (this.previewNeedsUpdate && !this.previewUpdatePending) {
-        void this.updatePreview();
-      }
-      // Small delay to allow async update to progress
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-
-    // Do a final synchronous update to ensure previewCanvas matches GPU texture
-    await this.updatePreviewSync();
-  }
-
-  /**
-   * Synchronous preview update for endStroke
-   * Reads GPU texture and updates previewCanvas
-   */
-  private async updatePreviewSync(): Promise<void> {
-    if (!this.previewReadbackBuffer) return;
-
-    // Copy current texture to preview readback buffer
-    const encoder = this.device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture: this.pingPongBuffer.source },
-      { buffer: this.previewReadbackBuffer, bytesPerRow: this.readbackBytesPerRow },
-      [this.width, this.height]
-    );
-    this.device.queue.submit([encoder.finish()]);
-
-    // Wait for GPU and map buffer
-    await this.previewReadbackBuffer.mapAsync(GPUMapMode.READ);
-    const gpuData = new Float32Array(this.previewReadbackBuffer.getMappedRange());
-
-    // Get dirty rect bounds
-    const rect = {
-      left: Math.max(0, this.dirtyRect.left),
-      top: Math.max(0, this.dirtyRect.top),
-      right: Math.min(this.width, this.dirtyRect.right),
-      bottom: Math.min(this.height, this.dirtyRect.bottom),
-    };
-
-    const rectWidth = rect.right - rect.left;
-    const rectHeight = rect.bottom - rect.top;
-
-    if (rectWidth > 0 && rectHeight > 0) {
-      // Create ImageData for the dirty region
-      const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
-      const floatsPerRow = this.readbackBytesPerRow / 4;
-
-      for (let py = 0; py < rectHeight; py++) {
-        for (let px = 0; px < rectWidth; px++) {
-          const bufferX = rect.left + px;
-          const bufferY = rect.top + py;
-          const srcIdx = bufferY * floatsPerRow + bufferX * 4;
-          const dstIdx = (py * rectWidth + px) * 4;
-
-          // Convert float (0-1) to uint8 (0-255)
-          imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
-          imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
-          imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
-          imageData.data[dstIdx + 3] = Math.round((gpuData[srcIdx + 3] ?? 0) * 255);
-        }
-      }
-
-      this.previewCtx.putImageData(imageData, rect.left, rect.top);
-    }
-
-    this.previewReadbackBuffer.unmap();
   }
 
   /**
