@@ -35,8 +35,9 @@ export function Canvas() {
   const latencyProfilerRef = useRef<LatencyProfiler>(new LatencyProfiler());
   const fpsCounterRef = useRef<FPSCounter>(new FPSCounter());
   const lagometerRef = useRef<LagometerMonitor>(new LagometerMonitor());
+  // Visual Lag tracking: input position vs rendered position
   const lastInputPosRef = useRef<{ x: number; y: number } | null>(null);
-  const prevProcessedPosRef = useRef<{ x: number; y: number } | null>(null);
+  const lastRenderedPosRef = useRef<{ x: number; y: number } | null>(null);
 
   // Performance optimization: Input queue for batch processing
   // Points are queued here and processed in RAF loop, avoiding per-point composite
@@ -59,7 +60,7 @@ export function Canvas() {
       // Reset function for benchmark runner
       resetForScenario: () => {
         pointIndexRef.current = 0;
-        prevProcessedPosRef.current = null;
+        lastRenderedPosRef.current = null;
         lastInputPosRef.current = null;
         inputQueueRef.current = [];
       },
@@ -70,7 +71,6 @@ export function Canvas() {
   // Solves race conditions where input events arrive before initialization completes
   type StrokeState = 'idle' | 'starting' | 'active' | 'finishing';
 
-  // State machine refs
   // State machine refs
   const strokeStateRef = useRef<StrokeState>('idle');
   const pendingPointsRef = useRef<
@@ -653,20 +653,12 @@ export function Canvas() {
   const processSinglePoint = useCallback(
     (x: number, y: number, pressure: number, pointIndex?: number) => {
       const config = getBrushConfig();
-
-      // Lagometer: Update last input position and measure lag
-      lastInputPosRef.current = { x, y };
       lagometerRef.current.setBrushRadius(config.size / 2);
-
-      // Measure visual lag: distance between current input and previous processed point
-      if (prevProcessedPosRef.current) {
-        lagometerRef.current.measure(prevProcessedPosRef.current, { x, y });
-      }
 
       processBrushPoint(x, y, pressure, config, pointIndex);
 
-      // Update previous processed position for next measurement
-      prevProcessedPosRef.current = { x, y };
+      // Track last rendered position for Visual Lag measurement
+      lastRenderedPosRef.current = { x, y };
     },
     [getBrushConfig, processBrushPoint]
   );
@@ -694,6 +686,14 @@ export function Canvas() {
       // Batch process all queued points (with soft limit)
       const queue = inputQueueRef.current;
       if (queue.length > 0) {
+        // Visual Lag: measure distance from last queued point (newest input)
+        // to last rendered point (before this batch)
+        const lastQueuedPoint = queue[queue.length - 1]!;
+        const renderedPosBefore = lastRenderedPosRef.current;
+        if (renderedPosBefore) {
+          lagometerRef.current.measure(renderedPosBefore, lastQueuedPoint);
+        }
+
         const count = Math.min(queue.length, MAX_POINTS_PER_FRAME);
 
         // Drain and process points
@@ -702,12 +702,8 @@ export function Canvas() {
           processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
         }
 
-        // Remove processed points from queue
-        if (count === queue.length) {
-          inputQueueRef.current = [];
-        } else {
-          inputQueueRef.current = queue.slice(count);
-        }
+        // Clear processed points from queue
+        inputQueueRef.current = count === queue.length ? [] : queue.slice(count);
 
         needsRenderRef.current = true;
       }
@@ -830,7 +826,10 @@ export function Canvas() {
     }
 
     isDrawingRef.current = false;
-    strokeStateRef.current = 'idle'; // Reset state machine
+    strokeStateRef.current = 'idle';
+    // Reset position tracking to avoid cross-stroke lag measurements
+    lastInputPosRef.current = null;
+    lastRenderedPosRef.current = null;
     window.__strokeDiagnostics?.onStrokeEnd();
   }, [
     currentTool,
@@ -1085,6 +1084,8 @@ export function Canvas() {
           } else if (state === 'active') {
             // Queue point for batch processing in RAF loop (performance optimization)
             inputQueueRef.current.push({ x: canvasX, y: canvasY, pressure, pointIndex: idx });
+            // Track latest input position for Visual Lag measurement
+            lastInputPosRef.current = { x: canvasX, y: canvasY };
             window.__strokeDiagnostics?.onPointBuffered(); // Telemetry: Queued point
           }
           // Ignore in 'idle' or 'finishing' state
