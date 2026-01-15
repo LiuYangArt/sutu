@@ -556,7 +556,7 @@ export function Canvas() {
     pressureCurve,
   ]);
 
-  // Composite with stroke buffer preview overlay
+  // Composite with stroke buffer preview overlay at correct layer position
   const compositeAndRenderWithPreview = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
@@ -564,28 +564,27 @@ export function Canvas() {
 
     if (!canvas || !ctx || !renderer) return;
 
-    // Composite all layers
-    const compositeCanvas = renderer.composite();
-
-    // Clear and draw composite to display canvas
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(compositeCanvas, 0, 0);
-
-    // Overlay stroke buffer preview if stroke is active
-    // Uses getPreviewOpacity() to ensure preview matches endStroke result exactly.
-    if (isStrokeActive()) {
+    // Check if stroke is active and we have a preview
+    if (isStrokeActive() && activeLayerId) {
       const previewCanvas = getPreviewCanvas();
       if (previewCanvas) {
-        ctx.save();
-        // getPreviewOpacity() returns:
-        // - Hard brush: 1.0 (opacity already baked into buffer as ceiling)
-        // - Soft brush: maxEffectiveOpacity (opacity * max pressure during stroke)
-        ctx.globalAlpha = getPreviewOpacity();
-        ctx.drawImage(previewCanvas, 0, 0);
-        ctx.restore();
+        // Use layer-aware compositing to insert preview at correct position
+        const compositeCanvas = renderer.compositeWithPreview(
+          activeLayerId,
+          previewCanvas,
+          getPreviewOpacity()
+        );
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(compositeCanvas, 0, 0);
+        return;
       }
     }
-  }, [width, height, isStrokeActive, getPreviewCanvas, getPreviewOpacity]);
+
+    // Fallback: standard composite without preview
+    const compositeCanvas = renderer.composite();
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(compositeCanvas, 0, 0);
+  }, [width, height, isStrokeActive, getPreviewCanvas, getPreviewOpacity, activeLayerId]);
 
   // Process a single point through the brush renderer (for brush tool)
   const processBrushPointWithConfig = useCallback(
