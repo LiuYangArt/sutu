@@ -68,18 +68,16 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     lagometer: LagometerStats;
   } | null>(null);
 
+  // Calculate panel style
+  const panelStyle: React.CSSProperties = position
+    ? { left: position.x, top: position.y, right: 'auto' }
+    : {};
+
+  const getBenchmarkApi = () => window.__benchmark;
+
   useEffect(() => {
     const timer = setInterval(() => {
-      const bench = (
-        window as unknown as {
-          __benchmark?: {
-            latencyProfiler: { getStats: () => LatencyProfilerStats };
-            fpsCounter: { getStats: () => FrameStats };
-            lagometer: { getStats: () => LagometerStats };
-          };
-        }
-      ).__benchmark;
-
+      const bench = getBenchmarkApi();
       if (bench) {
         setBenchmarkStats({
           latency: bench.latencyProfiler.getStats(),
@@ -179,15 +177,9 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     if (!canvas) return;
     canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     diagnosticsRef.current?.reset();
+
     // Also reset benchmark stats
-    const bench = (
-      window as unknown as {
-        __benchmark?: {
-          latencyProfiler: { reset: () => void };
-          lagometer: { reset: () => void };
-        };
-      }
-    ).__benchmark;
+    const bench = getBenchmarkApi();
     bench?.latencyProfiler.reset();
     bench?.lagometer.reset();
   }, [canvas]);
@@ -202,15 +194,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     setProgress(0);
     addResult('Benchmark Suite', 'running');
 
-    const bench = (
-      window as unknown as {
-        __benchmark?: {
-          latencyProfiler: { reset: () => void; getStats: () => LatencyProfilerStats };
-          fpsCounter: { getStats: () => FrameStats };
-          lagometer: { reset: () => void; getStats: () => LagometerStats };
-        };
-      }
-    ).__benchmark;
+    const bench = getBenchmarkApi();
 
     if (!bench) {
       addResult('Benchmark Suite', 'failed', 'Benchmark not initialized');
@@ -309,11 +293,6 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     isDraggingRef.current = false;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   };
-
-  // Calculate panel style
-  const panelStyle: React.CSSProperties = position
-    ? { left: position.x, top: position.y, right: 'auto' }
-    : {};
 
   return (
     <div className="debug-panel" ref={panelRef} style={panelStyle}>

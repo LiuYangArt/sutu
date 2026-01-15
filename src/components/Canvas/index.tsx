@@ -22,12 +22,6 @@ declare global {
       onPointDropped: () => void;
       onStrokeEnd: () => void;
     };
-    __benchmark?: {
-      latencyProfiler: LatencyProfiler;
-      fpsCounter: FPSCounter;
-      lagometer: LagometerMonitor;
-      resetForScenario: () => void;
-    };
   }
 }
 

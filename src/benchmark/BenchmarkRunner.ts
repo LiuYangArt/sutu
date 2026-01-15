@@ -102,8 +102,7 @@ export class BenchmarkRunner {
       profilers.lagometer.reset();
 
       // Reset Canvas-side state (pointIndex, prevProcessedPos)
-      const bench = (globalThis as { __benchmark?: { resetForScenario?: () => void } }).__benchmark;
-      bench?.resetForScenario?.();
+      window.__benchmark?.resetForScenario?.();
 
       // Configure brush settings
       this.applyBrushSettings(scenario);

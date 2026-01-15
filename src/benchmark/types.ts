@@ -44,3 +44,22 @@ export interface LatencyProfilerStats {
   maxRenderLatency: number;
   p99RenderLatency: number;
 }
+
+declare global {
+  interface Window {
+    __benchmark?: {
+      latencyProfiler: {
+        getStats: () => LatencyProfilerStats;
+        reset: () => void;
+      };
+      fpsCounter: {
+        getStats: () => FrameStats;
+      };
+      lagometer: {
+        getStats: () => LagometerStats;
+        reset: () => void;
+      };
+      resetForScenario?: () => void;
+    };
+  }
+}
