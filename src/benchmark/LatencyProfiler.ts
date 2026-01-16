@@ -1,15 +1,10 @@
 import { LatencyMeasurement, LatencyProfilerStats } from './types';
 
-// Q3: Map to track queue enter times by point index
-type QueueTimeMap = Map<number, number>;
-
 export class LatencyProfiler {
   private measurements: LatencyMeasurement[] = [];
   private device?: GPUDevice;
   private currentMeasurement: LatencyMeasurement | null = null;
   private isEnabled: boolean = false;
-  // Q3: Track when points enter the queue for latency segment analysis
-  private queueEnterTimes: QueueTimeMap = new Map();
 
   constructor(device?: GPUDevice) {
     this.device = device;
@@ -22,7 +17,6 @@ export class LatencyProfiler {
   enable() {
     this.isEnabled = true;
     this.measurements = [];
-    this.queueEnterTimes.clear();
   }
 
   disable() {
@@ -33,12 +27,9 @@ export class LatencyProfiler {
   markInputReceived(pointIndex: number, event: PointerEvent): void {
     if (!this.isEnabled) return;
 
-    // Q3: Record when point enters the queue (right after event received)
-    this.queueEnterTimes.set(pointIndex, performance.now());
-
     this.currentMeasurement = {
-      inputTimestamp: event.timeStamp, // Use event timestamp for same origin
-      queueEnterTime: performance.now(), // Q3: Track queue entry time
+      inputTimestamp: event.timeStamp,
+      queueEnterTime: performance.now(),
       cpuEncodeStart: 0,
       cpuEncodeEnd: 0,
       pointIndex,
@@ -183,9 +174,9 @@ export class LatencyProfiler {
 
     return {
       avgInputLatency: totalInputLatency / this.measurements.length,
-      avgQueueWaitTime: queueWaitCount > 0 ? totalQueueWaitTime / queueWaitCount : 0,
-      avgCpuEncodeTime: totalCpuEncodeTime / this.measurements.length,
-      avgGpuExecuteTime: gpuSampleCount > 0 ? totalGpuExecuteTime / gpuSampleCount : 0,
+      avgQueueWaitTime: segments.queueWait,
+      avgCpuEncodeTime: segments.cpuEncode,
+      avgGpuExecuteTime: segments.gpuExecute,
       avgTotalRenderLatency: totalRenderLatency / count,
       maxRenderLatency:
         renderLatencies.length > 0 ? (renderLatencies[renderLatencies.length - 1] ?? 0) : 0,
@@ -197,6 +188,5 @@ export class LatencyProfiler {
   reset() {
     this.measurements = [];
     this.currentMeasurement = null;
-    this.queueEnterTimes.clear();
   }
 }
