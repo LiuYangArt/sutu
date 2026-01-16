@@ -196,24 +196,14 @@ export class GPUStrokeAccumulator {
 
   /**
    * Sync render scale from store to ping-pong buffer
-   * In auto mode, downsample to 50% for soft large brushes (hardness < 70, size > 300)
+   * Auto mode: downsample to 50% for soft large brushes (hardness < 70, size > 300)
    */
   private syncRenderScale(): void {
-    const mode = useToolStore.getState().gpuRenderScaleMode;
-    const state = useToolStore.getState();
+    const { gpuRenderScaleMode: mode, brushHardness, brushSize } = useToolStore.getState();
 
-    // Compute actual scale based on mode
-    let targetScale = 1.0;
-    if (mode === 'auto') {
-      // Only downsample for soft large brushes
-      const isSoftBrush = state.brushHardness < 70;
-      const isLargeBrush = state.brushSize > 300;
-      if (isSoftBrush && isLargeBrush) {
-        targetScale = 0.5;
-      }
-    }
+    const shouldDownsample = mode === 'auto' && brushHardness < 70 && brushSize > 300;
+    const targetScale = shouldDownsample ? 0.5 : 1.0;
 
-    // Check if we need to update
     if (mode !== this.cachedRenderScaleMode || targetScale !== this.currentRenderScale) {
       this.cachedRenderScaleMode = mode;
       this.currentRenderScale = targetScale;
