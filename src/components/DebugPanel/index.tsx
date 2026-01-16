@@ -416,6 +416,34 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
                   {benchmarkStats.latency.avgInputLatency.toFixed(2)}ms
                 </span>
               </div>
+              {/* Q3: Latency Segment Breakdown */}
+              <div className="stat-row segment-breakdown">
+                <span className="stat-label">├ Event→Queue:</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.segments.inputToQueue.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row segment-breakdown">
+                <span className="stat-label">├ Queue Wait:</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.segments.queueWait.toFixed(2)}ms
+                </span>
+                <span className="stat-sub">
+                  {benchmarkStats.latency.segments.queueWait > 5 ? '⚠️' : ''}
+                </span>
+              </div>
+              <div className="stat-row segment-breakdown">
+                <span className="stat-label">├ CPU Encode:</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.segments.cpuEncode.toFixed(2)}ms
+                </span>
+              </div>
+              <div className="stat-row segment-breakdown">
+                <span className="stat-label">└ GPU Execute:</span>
+                <span className="stat-value">
+                  {benchmarkStats.latency.segments.gpuExecute.toFixed(2)}ms
+                </span>
+              </div>
               <div className="stat-row">
                 <span className="stat-label">Visual Lag (Max):</span>
                 <span className="stat-value">

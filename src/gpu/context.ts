@@ -103,9 +103,6 @@ export class GPUContext {
         limits: device.limits,
       };
 
-      console.log('[GPUContext] WebGPU initialized successfully');
-      console.log('[GPUContext] Features:', Array.from(device.features));
-
       return true;
     } catch (e) {
       console.error('[GPUContext] Initialization failed:', e);
@@ -188,14 +185,14 @@ export function shouldUseGPU(): boolean {
 
   // Linux non-Chrome browsers may have compatibility issues
   if (ua.includes('Linux') && !ua.includes('Chrome')) {
-    console.log('[shouldUseGPU] Linux non-Chrome detected, falling back to Canvas 2D');
+    // console.log('[shouldUseGPU] Linux non-Chrome detected, falling back to Canvas 2D');
     return false;
   }
 
   // Check user preference (allow manual override)
   const preference = localStorage.getItem('paintboard-gpu-enabled');
   if (preference === 'false') {
-    console.log('[shouldUseGPU] GPU disabled by user preference');
+    // console.log('[shouldUseGPU] GPU disabled by user preference');
     return false;
   }
 

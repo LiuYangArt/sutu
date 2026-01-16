@@ -11,6 +11,7 @@ import './Canvas.css';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { getEffectiveInputData } from './inputUtils';
+import { useRawPointerInput, supportsPointerRawUpdate } from './useRawPointerInput';
 import { LatencyProfiler, FPSCounter, LagometerMonitor } from '@/benchmark';
 
 declare global {
@@ -51,6 +52,8 @@ export function Canvas() {
       lagometer: lagometerRef.current,
       // Queue depth monitoring for performance diagnosis
       getQueueDepth: () => inputQueueRef.current.length,
+      // Q1: pointerrawupdate support status
+      supportsPointerRawUpdate,
       // Reset function for benchmark runner
       resetForScenario: () => {
         pointIndexRef.current = 0;
@@ -179,6 +182,21 @@ export function Canvas() {
 
   // Tablet store: We use getState() directly in event handlers for real-time data
   // No need to subscribe to state changes here since we sync-read in handlers
+
+  // Q1 Optimization: Use pointerrawupdate for lower-latency input (1-3ms improvement)
+  const { usingRawInput } = useRawPointerInput({
+    containerRef,
+    canvasRef,
+    scale,
+    isDrawingRef,
+    currentTool,
+    strokeStateRef,
+    pendingPointsRef,
+    inputQueueRef,
+    pointIndexRef,
+    latencyProfiler: latencyProfilerRef.current,
+    onPointBuffered: () => window.__strokeDiagnostics?.onPointBuffered(),
+  });
 
   // Get the active layer's context for drawing
   const getActiveLayerCtx = useCallback(() => {
@@ -1038,6 +1056,12 @@ export function Canvas() {
       // 绘画模式
       if (!isDrawingRef.current) return;
 
+      // Q1 Optimization: Skip brush input if pointerrawupdate is handling it
+      // pointerrawupdate provides lower-latency input (1-3ms improvement)
+      if (currentTool === 'brush' && usingRawInput.current) {
+        return;
+      }
+
       const canvas = canvasRef.current;
       if (!canvas) return;
 
@@ -1095,7 +1119,7 @@ export function Canvas() {
         }
       }
     },
-    [isPanning, pan, drawPoints, scale, setScale, currentTool]
+    [isPanning, pan, drawPoints, scale, setScale, currentTool, usingRawInput]
   );
 
   const handlePointerUp = useCallback(

@@ -40,9 +40,9 @@ export class GPUProfiler {
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       });
 
-      console.log('[GPUProfiler] Timestamp queries enabled');
+      // console.log('[GPUProfiler] Timestamp queries enabled');
     } else {
-      console.log('[GPUProfiler] Timestamp queries not available, using CPU timing');
+      // console.log('[GPUProfiler] Timestamp queries not available, using CPU timing');
     }
   }
 

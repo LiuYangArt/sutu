@@ -257,3 +257,19 @@
 .debug-result-report::-webkit-scrollbar-thumb:hover {
   background: #585b70;
 }
+
+/* Q3: Latency Segment Breakdown Styles */
+.stat-row.segment-breakdown {
+  padding-left: 12px;
+  opacity: 0.85;
+  font-size: 11px;
+}
+
+.stat-row.segment-breakdown .stat-label {
+  font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+  color: #7f849c;
+}
+
+.stat-row.segment-breakdown .stat-value {
+  color: #a6adc8;
+}
