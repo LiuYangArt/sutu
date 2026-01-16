@@ -118,6 +118,7 @@ export function Canvas() {
     setTool,
     showCrosshair,
     renderMode,
+    brushTexture,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
@@ -139,6 +140,7 @@ export function Canvas() {
     setTool: s.setTool,
     showCrosshair: s.showCrosshair,
     renderMode: s.renderMode,
+    brushTexture: s.brushTexture,
   }));
 
   // Get current tool size (brush or eraser)
@@ -617,6 +619,7 @@ export function Canvas() {
       pressureFlowEnabled,
       pressureOpacityEnabled,
       pressureCurve,
+      texture: brushTexture,
     };
   }, [
     currentSize,
@@ -632,6 +635,7 @@ export function Canvas() {
     pressureFlowEnabled,
     pressureOpacityEnabled,
     pressureCurve,
+    brushTexture,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position

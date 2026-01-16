@@ -11,7 +11,7 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
-import { applyPressureCurve, PressureCurve, RenderMode } from '@/stores/tool';
+import { applyPressureCurve, PressureCurve, RenderMode, BrushTexture } from '@/stores/tool';
 import { LatencyProfiler } from '@/benchmark';
 import {
   GPUContext,
@@ -35,6 +35,7 @@ export interface BrushRenderConfig {
   pressureFlowEnabled: boolean;
   pressureOpacityEnabled: boolean;
   pressureCurve: PressureCurve;
+  texture?: BrushTexture | null; // Texture for sampled brushes (from ABR import)
 }
 
 export interface UseBrushRendererProps {
@@ -216,6 +217,7 @@ export function useBrushRenderer({
           dabOpacity,
           roundness: config.roundness / 100,
           angle: config.angle,
+          texture: config.texture ?? undefined,
         };
 
         if (backend === 'gpu' && gpuBufferRef.current) {

@@ -17,6 +17,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { MaskCache, type MaskCacheParams } from './maskCache';
+import { TextureMaskCache } from './textureMaskCache';
+import type { BrushTexture } from '@/stores/tool';
 
 export type MaskType = 'gaussian' | 'default';
 
@@ -31,6 +33,7 @@ export interface DabParams {
   dabOpacity?: number; // Krita-style: multiplier for entire dab (preserves gradient)
   roundness?: number; // Brush roundness (0-1, 1 = circle, <1 = ellipse)
   angle?: number; // Brush angle in degrees (0-360)
+  texture?: BrushTexture; // Texture for sampled brushes (from ABR import)
 }
 
 export interface Rect {
@@ -73,6 +76,9 @@ export class StrokeAccumulator {
 
   // Mask cache for pre-computed brush masks (Krita-style optimization)
   private maskCache: MaskCache = new MaskCache();
+
+  // Texture mask cache for sampled brushes (from ABR import)
+  private textureMaskCache: TextureMaskCache = new TextureMaskCache();
 
   // Canvas sync throttling - sync every N dabs instead of every dab
   private syncCounter: number = 0;
@@ -260,6 +266,7 @@ export class StrokeAccumulator {
       dabOpacity = 1.0,
       roundness = 1,
       angle = 0,
+      texture,
     } = params;
 
     if (size < 1) return;
@@ -268,8 +275,37 @@ export class StrokeAccumulator {
     const rgb = hexToRgb(color);
     let dabDirtyRect: Rect;
 
-    // Fast path for hard brushes - skip mask caching entirely
-    if (hardness >= 0.99) {
+    // Texture brush path - use TextureMaskCache for sampled brushes
+    if (texture) {
+      // Ensure texture is loaded
+      if (!this.textureMaskCache.hasTexture()) {
+        // Try sync loading first (works if image is cached)
+        if (!this.textureMaskCache.setTextureSync(texture)) {
+          // Async loading - skip this dab (texture will be ready for next)
+          void this.textureMaskCache.setTexture(texture);
+          return;
+        }
+      }
+
+      const textureParams = { size, roundness, angle };
+      if (this.textureMaskCache.needsUpdate(textureParams)) {
+        this.textureMaskCache.generateMask(textureParams);
+      }
+
+      dabDirtyRect = this.textureMaskCache.stampToBuffer(
+        this.bufferData,
+        this.width,
+        this.height,
+        x,
+        y,
+        flow,
+        dabOpacity,
+        rgb.r,
+        rgb.g,
+        rgb.b
+      );
+    } else if (hardness >= 0.99) {
+      // Fast path for hard brushes - skip mask caching entirely
       dabDirtyRect = this.maskCache.stampHardBrush(
         this.bufferData,
         this.width,

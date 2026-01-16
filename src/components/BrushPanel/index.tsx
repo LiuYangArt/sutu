@@ -8,6 +8,7 @@ import {
   RenderMode,
   ColorBlendMode,
   GPURenderScaleMode,
+  BrushTexture,
 } from '@/stores/tool';
 import './BrushPanel.css';
 
@@ -158,6 +159,8 @@ export function BrushPanel(): JSX.Element {
     setColorBlendMode,
     gpuRenderScaleMode,
     setGpuRenderScaleMode,
+    setBrushTexture,
+    clearBrushTexture,
   } = useToolStore();
 
   /** Import ABR file */
@@ -194,8 +197,25 @@ export function BrushPanel(): JSX.Element {
     setBrushSpacing(preset.spacing / 100);
     setBrushRoundness(Math.round(preset.roundness));
     setBrushAngle(Math.round(preset.angle));
-    // Note: Texture brushes not yet supported in GPU pipeline
-    console.log('Applied preset:', preset.name);
+
+    // Apply texture if preset has one
+    if (preset.hasTexture && preset.textureData && preset.textureWidth && preset.textureHeight) {
+      const texture: BrushTexture = {
+        data: preset.textureData,
+        width: preset.textureWidth,
+        height: preset.textureHeight,
+      };
+      setBrushTexture(texture);
+      console.log(
+        'Applied textured preset:',
+        preset.name,
+        `${preset.textureWidth}x${preset.textureHeight}`
+      );
+    } else {
+      // Clear texture for procedural brushes
+      clearBrushTexture();
+      console.log('Applied procedural preset:', preset.name);
+    }
   };
 
   return (

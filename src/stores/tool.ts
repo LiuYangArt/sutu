@@ -33,6 +33,21 @@ export type ColorBlendMode = 'srgb' | 'linear';
  */
 export type GPURenderScaleMode = 'auto' | 'off';
 
+/**
+ * Brush texture data for sampled/imported brushes (e.g., from ABR files)
+ * When set, the brush uses this texture instead of procedural mask generation
+ */
+export interface BrushTexture {
+  /** Base64 encoded PNG data */
+  data: string;
+  /** Texture width in pixels */
+  width: number;
+  /** Texture height in pixels */
+  height: number;
+  /** Decoded ImageData (cached after first use) */
+  imageData?: ImageData;
+}
+
 /** Clamp brush/eraser size to valid range */
 const clampSize = (size: number): number => Math.max(1, Math.min(800, size));
 
@@ -77,6 +92,7 @@ interface ToolState {
   brushAngle: number; // Angle: 0-360 degrees
   brushColor: string;
   backgroundColor: string;
+  brushTexture: BrushTexture | null; // Texture for sampled brushes (from ABR import)
 
   // Eraser settings (independent from brush)
   eraserSize: number;
@@ -111,6 +127,8 @@ interface ToolState {
   setBrushAngle: (angle: number) => void;
   setBrushColor: (color: string) => void;
   setBackgroundColor: (color: string) => void;
+  setBrushTexture: (texture: BrushTexture | null) => void;
+  clearBrushTexture: () => void;
   setEraserSize: (size: number) => void;
   // Get current tool's size (brush or eraser)
   getCurrentSize: () => number;
@@ -143,6 +161,7 @@ export const useToolStore = create<ToolState>()(
       brushAngle: 0, // 0 degrees
       brushColor: '#000000',
       backgroundColor: '#ffffff',
+      brushTexture: null, // No texture by default (procedural brush)
       eraserSize: 20,
       pressureSizeEnabled: true,
       pressureFlowEnabled: true, // Pressure affects flow by default
@@ -176,6 +195,10 @@ export const useToolStore = create<ToolState>()(
       setBrushColor: (color) => set({ brushColor: color }),
 
       setBackgroundColor: (color) => set({ backgroundColor: color }),
+
+      setBrushTexture: (texture) => set({ brushTexture: texture }),
+
+      clearBrushTexture: () => set({ brushTexture: null }),
 
       setEraserSize: (size) => set({ eraserSize: clampSize(size) }),
 
