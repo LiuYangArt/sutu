@@ -15,12 +15,6 @@ pub enum AbrError {
     #[error("Unsupported ABR version: {0}")]
     UnsupportedVersion(u16),
 
-    #[error("Unknown descriptor type: {0}")]
-    UnknownDescriptorType(String),
-
-    #[error("Unsupported compression mode: {0}")]
-    UnsupportedCompression(u8),
-
     #[error("Invalid 8BIM block")]
     Invalid8BIMBlock,
 

@@ -11,6 +11,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 
 use super::defaults::AbrDefaults;
 use super::error::AbrError;
+use super::samp::normalize_brush_texture;
 use super::types::{AbrBrush, AbrDynamics, AbrFile, AbrVersion, GrayscaleImage};
 
 /// ABR file header information
@@ -264,8 +265,9 @@ impl AbrParser {
             Self::read_rle_image(cursor, height)?
         };
 
-        // Normalize: ABR uses 0=opaque, 255=transparent, we want the opposite
-        let normalized_data: Vec<u8> = image_data.iter().map(|&p| 255 - p).collect();
+        // Normalize alpha using smart detection
+        let raw_image = GrayscaleImage::new(width, height, image_data);
+        let normalized = normalize_brush_texture(&raw_image);
 
         Ok(AbrBrush {
             name: if name.is_empty() {
@@ -274,7 +276,7 @@ impl AbrParser {
                 name
             },
             uuid: None,
-            tip_image: Some(GrayscaleImage::new(width, height, normalized_data)),
+            tip_image: Some(normalized),
             diameter: width as f32,
             spacing: AbrDefaults::SPACING,
             angle: AbrDefaults::ANGLE,
@@ -363,8 +365,9 @@ impl AbrParser {
             Self::read_rle_image(cursor, height)?
         };
 
-        // Normalize: ABR uses 0=opaque, 255=transparent
-        let normalized_data: Vec<u8> = image_data.iter().map(|&p| 255 - p).collect();
+        // Normalize alpha using smart detection
+        let raw_image = GrayscaleImage::new(width, height, image_data);
+        let normalized = normalize_brush_texture(&raw_image);
 
         // Seek to next brush
         cursor.seek(SeekFrom::Start(next_brush))?;
@@ -372,7 +375,7 @@ impl AbrParser {
         Ok(AbrBrush {
             name: format!("Brush_{}", id + 1),
             uuid: Some(format!("abr-{}", id)),
-            tip_image: Some(GrayscaleImage::new(width, height, normalized_data)),
+            tip_image: Some(normalized),
             diameter: width as f32,
             spacing: AbrDefaults::SPACING,
             angle: AbrDefaults::ANGLE,
