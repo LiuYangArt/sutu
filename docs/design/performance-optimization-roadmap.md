@@ -1,17 +1,17 @@
-# 绘图性能优化路线图 v1.1
+# 绘图性能优化路线图 v1.2
 
-> 基于 `review.md` 分析 + 项目现状调研 (2026-01-16)
+> 基于 `review.md` 分析 + 实测数据 (2026-01-16)
 
 ## 📊 项目当前状态
 
-| 优化项                  | 状态    | 说明                                      |
-| ----------------------- | ------- | ----------------------------------------- |
-| **desynchronized**      | ✅      | `layerRenderer.ts:88`                     |
-| **硬件光标**            | ✅      | ≤128px 使用 SVG CSS cursor (Q2 完成)      |
-| **pointerrawupdate**    | ✅      | `useRawPointerInput.ts` (Q1 完成)         |
-| **GPU Timestamp Query** | ✅      | `profiler.ts` + `context.ts`              |
-| **批量处理**            | ✅      | RAF 循环 + inputQueue                     |
-| **延迟分段剖析**        | ✅      | `LatencyProfiler.segments` (Q3 完成)      |
+| 优化项                  | 状态 | 说明                                 |
+| ----------------------- | ---- | ------------------------------------ |
+| **desynchronized**      | ✅   | `layerRenderer.ts:88`                |
+| **硬件光标**            | ✅   | ≤128px 使用 SVG CSS cursor (Q2 完成) |
+| **pointerrawupdate**    | ✅   | `useRawPointerInput.ts` (Q1 完成)    |
+| **GPU Timestamp Query** | ✅   | `profiler.ts` + `context.ts`         |
+| **批量处理**            | ✅   | RAF 循环 + inputQueue                |
+| **延迟分段剖析**        | ✅   | `LatencyProfiler.segments` (Q3 完成) |
 
 ---
 
@@ -57,10 +57,10 @@ screenBrushSize <= 128;
 
 ```typescript
 segments: {
-  inputToQueue: number;  // Event handler to queue entry
-  queueWait: number;     // Time in queue before processing
-  cpuEncode: number;     // CPU processing time
-  gpuExecute: number;    // GPU execution time (sampled)
+  inputToQueue: number; // Event handler to queue entry
+  queueWait: number; // Time in queue before processing
+  cpuEncode: number; // CPU processing time
+  gpuExecute: number; // GPU execution time (sampled)
 }
 ```
 
@@ -68,15 +68,35 @@ segments: {
 
 ---
 
+## 📈 当前基准数据 (Q3 完成后)
+
+> 测试环境: 4K 画布 + 800px 软笔刷
+
+| 指标                         | 值                | 说明            |
+| ---------------------------- | ----------------- | --------------- |
+| **FPS**                      | 59.8 (σ: 4.92ms)  | 边缘稳定        |
+| **P99 Frame**                | 23.00ms           | 偶发掉帧        |
+| **Render Latency (Avg/P99)** | 15.69ms / 25.30ms |                 |
+| **Input Latency**            | 3.14ms            | ✅ 极低         |
+| **CPU Encode**               | 0.07ms            | ✅ 极低         |
+| **GPU Execute**              | 15.60ms           | ⚠️ 占帧预算 93% |
+| **Visual Lag**               | 0.6x              | ✅ 优秀跟手     |
+
+**结论**: CPU 优化到位，当前瓶颈为 **GPU bound**（填充率 + 带宽）。
+
+---
+
 ## 🔧 Medium Effort (M1-M3)
 
-| ID     | 优化项               | 工作量 | 备注                      |
-| ------ | -------------------- | ------ | ------------------------- |
-| **M1** | 减少 CSS 合成层      | ~2-4h  | 检查多余 transform/filter |
-| **M2** | 局部 Dirty Rect 合成 | ~3-5h  | **4K 屏必做**             |
-| **M3** | 笔刷纹理预生成       | ~4-6h  | GPU ALU 减负              |
+| ID     | 优化项               | 工作量 | 备注                           |
+| ------ | -------------------- | ------ | ------------------------------ |
+| **Q4** | 动态降采样           | ~1-2h  | **Quick Win** 大笔刷填充率减负 |
+| **M3** | 笔刷纹理预生成       | ~4-6h  | GPU 计算减负                   |
+| **M2** | 局部 Dirty Rect 合成 | ~3-5h  | 大笔刷收益有限，小笔刷有效     |
+| **M1** | 减少 CSS 合成层      | ~2-4h  | 检查多余 transform/filter      |
+| --     | 动态 Spacing         | ~2h    | ⏸️ 暂缓                        |
 
-> 📌 **Review 建议**：若 Q1/Q2 后 GPU 耗时仍高，M2 应提权至 P1
+> 📌 **优先级调整**：Q4 最快验证 GPU 降负效果，M3 次之
 
 ---
 
@@ -109,9 +129,9 @@ segments: {
 ## 📋 实施顺序
 
 ```
-Q1 (pointerrawupdate) → Q2 (硬件光标) → Q3 (延迟剖析)
-      ↓ 评估效果后
-M2 (Dirty Rect) → M1 (合成层) → M3 (纹理预生成)
+Q1 (pointerrawupdate) → Q2 (硬件光标) → Q3 (延迟剖析) ✅ 已完成
+      ↓ GPU bound 确认
+Q4 (动态降采样) → M3 (纹理预生成) → M2 (Dirty Rect) → M1 (合成层)
 ```
 
 ---
