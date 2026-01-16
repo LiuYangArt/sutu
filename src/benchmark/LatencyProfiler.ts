@@ -1,10 +1,15 @@
 import { LatencyMeasurement, LatencyProfilerStats } from './types';
 
+// Q3: Map to track queue enter times by point index
+type QueueTimeMap = Map<number, number>;
+
 export class LatencyProfiler {
   private measurements: LatencyMeasurement[] = [];
   private device?: GPUDevice;
   private currentMeasurement: LatencyMeasurement | null = null;
   private isEnabled: boolean = false;
+  // Q3: Track when points enter the queue for latency segment analysis
+  private queueEnterTimes: QueueTimeMap = new Map();
 
   constructor(device?: GPUDevice) {
     this.device = device;
@@ -17,6 +22,7 @@ export class LatencyProfiler {
   enable() {
     this.isEnabled = true;
     this.measurements = [];
+    this.queueEnterTimes.clear();
   }
 
   disable() {
@@ -27,8 +33,12 @@ export class LatencyProfiler {
   markInputReceived(pointIndex: number, event: PointerEvent): void {
     if (!this.isEnabled) return;
 
+    // Q3: Record when point enters the queue (right after event received)
+    this.queueEnterTimes.set(pointIndex, performance.now());
+
     this.currentMeasurement = {
       inputTimestamp: event.timeStamp, // Use event timestamp for same origin
+      queueEnterTime: performance.now(), // Q3: Track queue entry time
       cpuEncodeStart: 0,
       cpuEncodeEnd: 0,
       pointIndex,
@@ -79,51 +89,60 @@ export class LatencyProfiler {
 
   // Get statistics
   getStats(): LatencyProfilerStats {
+    const emptySegments = {
+      inputToQueue: 0,
+      queueWait: 0,
+      cpuEncode: 0,
+      gpuExecute: 0,
+    };
+
     if (this.measurements.length === 0) {
       return {
         avgInputLatency: 0,
+        avgQueueWaitTime: 0,
         avgCpuEncodeTime: 0,
         avgGpuExecuteTime: 0,
         avgTotalRenderLatency: 0,
         maxRenderLatency: 0,
         p99RenderLatency: 0,
+        segments: emptySegments,
       };
     }
 
     let totalInputLatency = 0;
+    let totalQueueWaitTime = 0;
     let totalCpuEncodeTime = 0;
     let totalGpuExecuteTime = 0;
     let gpuSampleCount = 0;
     let totalRenderLatency = 0;
     const renderLatencies: number[] = [];
 
+    // Q3: Segment accumulators
+    let totalInputToQueue = 0;
+    let queueWaitCount = 0;
+
     for (const m of this.measurements) {
       // Input Latency: cpuEncodeStart - inputTimestamp
-      // Note: event.timeStamp might be slightly different base, but usually performance.now() and event.timeStamp are both DOMHighResTimeStamp from navigation start.
-      // However, check if inputTimestamp > cpuEncodeStart (should not happen normally unless clock weirdness).
       const inputLatency = Math.max(0, m.cpuEncodeStart - m.inputTimestamp);
       totalInputLatency += inputLatency;
 
+      // Q3: Calculate queue wait time if available
+      if (m.queueEnterTime !== undefined) {
+        const inputToQueue = Math.max(0, m.queueEnterTime - m.inputTimestamp);
+        const queueWait = Math.max(0, m.cpuEncodeStart - m.queueEnterTime);
+        totalInputToQueue += inputToQueue;
+        totalQueueWaitTime += queueWait;
+        queueWaitCount++;
+      }
+
       const cpuTime = Math.max(0, m.cpuEncodeEnd - m.cpuEncodeStart);
       totalCpuEncodeTime += cpuTime;
-
-      // renderTime calculation removed
 
       if (m.gpuCompleteTimestamp !== undefined) {
         const gpuTime = Math.max(0, m.gpuCompleteTimestamp - m.cpuEncodeEnd);
         totalGpuExecuteTime += gpuTime;
         gpuSampleCount++;
-        // For sampled points, render latency includes GPU time
-        // renderTime += gpuTime;
       }
-
-      // If not sampled, we only know CPU time.
-      // To get "Total Render Latency", ideally we want to estimate GPU time or only count sampled points.
-      // The requirement says "Average Render Latency (CPU+GPU)".
-      // We should probably only use sampled points for the "Total Render Latency" stats to be accurate,
-      // or assume average GPU time for others.
-      // Let's use sampled points for total render latency stats if possible, or mixed.
-      // Current logic: For stats that require GPU time, we use sampled.
     }
 
     // Recalculate render latencies just for sampled points for p99 and max
@@ -154,19 +173,30 @@ export class LatencyProfiler {
     renderLatencies.sort((a, b) => a - b);
     const p99Index = Math.floor(renderLatencies.length * 0.99);
 
+    // Q3: Calculate segment averages for bottleneck identification
+    const segments = {
+      inputToQueue: queueWaitCount > 0 ? totalInputToQueue / queueWaitCount : 0,
+      queueWait: queueWaitCount > 0 ? totalQueueWaitTime / queueWaitCount : 0,
+      cpuEncode: totalCpuEncodeTime / this.measurements.length,
+      gpuExecute: gpuSampleCount > 0 ? totalGpuExecuteTime / gpuSampleCount : 0,
+    };
+
     return {
       avgInputLatency: totalInputLatency / this.measurements.length,
+      avgQueueWaitTime: queueWaitCount > 0 ? totalQueueWaitTime / queueWaitCount : 0,
       avgCpuEncodeTime: totalCpuEncodeTime / this.measurements.length,
       avgGpuExecuteTime: gpuSampleCount > 0 ? totalGpuExecuteTime / gpuSampleCount : 0,
       avgTotalRenderLatency: totalRenderLatency / count,
       maxRenderLatency:
         renderLatencies.length > 0 ? (renderLatencies[renderLatencies.length - 1] ?? 0) : 0,
       p99RenderLatency: renderLatencies.length > 0 ? (renderLatencies[p99Index] ?? 0) : 0,
+      segments,
     };
   }
 
   reset() {
     this.measurements = [];
     this.currentMeasurement = null;
+    this.queueEnterTimes.clear();
   }
 }

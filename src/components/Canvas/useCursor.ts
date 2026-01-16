@@ -37,10 +37,12 @@ export function useCursor({
   const screenBrushSize = currentSize * scale;
 
   // Determine if we should use hardware cursor (SVG)
-  // Windows usually limits cursor size to ~128px, using 64px as safe threshold
+  // Q2 Optimization: Windows limits cursor size to ~128x128px
+  // Increased threshold from 64px to 128px for better brush tracking with larger brushes
+  // Note: If browser silently falls back to software rendering above 128px, this is acceptable
   const shouldUseHardwareCursor =
     (currentTool === 'brush' || currentTool === 'eraser') &&
-    screenBrushSize <= 64 &&
+    screenBrushSize <= 128 &&
     !spacePressed &&
     !isPanning;
 

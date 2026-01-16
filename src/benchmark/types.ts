@@ -1,5 +1,6 @@
 export interface LatencyMeasurement {
   inputTimestamp: number; // PointerEvent.timeStamp (same origin clock)
+  queueEnterTime?: number; // Q3: Time when point entered the input queue
   cpuEncodeStart: number; // CPU encoding start time
   cpuEncodeEnd: number; // CPU encoding end time
   gpuCompleteTimestamp?: number; // GPU actual completion time (only for sampled points)
@@ -38,11 +39,19 @@ export interface LagometerStats {
 
 export interface LatencyProfilerStats {
   avgInputLatency: number;
+  avgQueueWaitTime: number; // Q3: Average time waiting in input queue
   avgCpuEncodeTime: number;
   avgGpuExecuteTime: number; // Only based on sampled points
   avgTotalRenderLatency: number;
   maxRenderLatency: number;
   p99RenderLatency: number;
+  // Q3: Detailed segment breakdown for bottleneck identification
+  segments: {
+    inputToQueue: number; // Event handler to queue entry
+    queueWait: number; // Time in queue before processing
+    cpuEncode: number; // CPU processing time
+    gpuExecute: number; // GPU execution time (sampled)
+  };
 }
 
 declare global {
@@ -60,6 +69,7 @@ declare global {
         reset: () => void;
       };
       getQueueDepth?: () => number; // Queue depth monitoring
+      supportsPointerRawUpdate?: boolean; // Q1: pointerrawupdate support status
       resetForScenario?: () => void;
     };
   }
