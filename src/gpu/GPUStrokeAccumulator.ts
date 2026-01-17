@@ -13,12 +13,7 @@
 
 import type { Rect } from '@/utils/strokeBuffer';
 import type { GPUDabParams, DabInstanceData, TextureDabInstanceData } from './types';
-import {
-  BATCH_SIZE_THRESHOLD,
-  DAB_INSTANCE_SIZE,
-  TEXTURE_DAB_INSTANCE_SIZE,
-  calculateEffectiveRadius,
-} from './types';
+import { DAB_INSTANCE_SIZE, TEXTURE_DAB_INSTANCE_SIZE, calculateEffectiveRadius } from './types';
 import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
 import { TextureInstanceBuffer } from './resources/TextureInstanceBuffer';
@@ -321,11 +316,6 @@ export class GPUStrokeAccumulator {
       this.expandDirtyRectTexture(params.x, params.y, halfSize);
       this.dabsSinceLastFlush++;
 
-      // Only flush when batch size threshold is reached
-      // Time-based flushing is handled by the RAF loop calling flush() per frame
-      // if (this.textureInstanceBuffer.count >= BATCH_SIZE_THRESHOLD) {
-      //   this.flushTextureBatch();
-      // }
       return;
     }
 
@@ -343,32 +333,11 @@ export class GPUStrokeAccumulator {
       flow: params.flow,
     };
 
-    // DEBUG: Log before push
-    const countBefore = this.instanceBuffer.count;
     this.instanceBuffer.push(dabData);
-    const countAfter = this.instanceBuffer.count;
 
     // Dirty rect is in logical coordinates (for preview canvas)
     this.expandDirtyRect(params.x, params.y, radius, params.hardness);
     this.dabsSinceLastFlush++;
-
-    // DEBUG DIAGNOSTIC: Track every stampDab call
-    console.log('[GPUStrokeAccumulator.stampDab]', {
-      active: this.active,
-      countBefore,
-      countAfter,
-      dabsSinceLastFlush: this.dabsSinceLastFlush,
-      batchSize: BATCH_SIZE_THRESHOLD,
-      xy: [params.x, params.y],
-    });
-
-    // Only flush when batch size threshold is reached
-    // Time-based flushing is handled by the RAF loop calling flush() per frame
-    // This prevents splitting dabs from a single processPoint() into multiple batches
-    // if (this.instanceBuffer.count >= BATCH_SIZE_THRESHOLD) {
-    //   console.log('[GPUStrokeAccumulator.stampDab] Threshold reached, flushing...');
-    //   this.flushBatch();
-    // }
   }
 
   /**
@@ -398,21 +367,11 @@ export class GPUStrokeAccumulator {
    * Force flush pending dabs to GPU (used for benchmarking)
    */
   flush(): void {
-    // DEBUG DIAGNOSTIC: Track every flush call
-    console.log(
-      '[GPUStrokeAccumulator.flush] ENTRY, strokeMode:',
-      this.strokeMode,
-      'instanceBuffer.count:',
-      this.instanceBuffer.count
-    );
-
     if (this.strokeMode === 'texture') {
       this.flushTextureBatch();
     } else {
       this.flushBatch();
     }
-
-    console.log('[GPUStrokeAccumulator.flush] EXIT');
   }
 
   /**
@@ -420,44 +379,18 @@ export class GPUStrokeAccumulator {
    * or per-dab Render Pipeline (fallback path).
    */
   private flushBatch(): void {
-    // DEBUG DIAGNOSTIC: Track entry and initial state
-    const countAtEntry = this.instanceBuffer.count;
-    console.log('[GPUStrokeAccumulator.flushBatch] ENTRY', {
-      countAtEntry,
-      active: this.active,
-      dabsSinceLastFlush: this.dabsSinceLastFlush,
-    });
-
     if (this.instanceBuffer.count === 0) {
-      console.log('[GPUStrokeAccumulator.flushBatch] Early return: count === 0');
       return;
     }
 
     this.cpuTimer.start();
 
-    // DEBUG DIAGNOSTIC: Log state BEFORE getDabsData
-    console.log(
-      '[GPUStrokeAccumulator.flushBatch] BEFORE getDabsData, instanceBuffer.count:',
-      this.instanceBuffer.count
-    );
-
     // 1. Get data and upload to GPU
     const dabs = this.instanceBuffer.getDabsData();
     const bbox = this.instanceBuffer.getBoundingBox();
 
-    // DEBUG DIAGNOSTIC: Log what we got from getDabsData
-    console.log('[GPUStrokeAccumulator.flushBatch] getDabsData result', {
-      dabsLength: dabs.length,
-      bbox,
-      instanceBufferCountAfter: this.instanceBuffer.count,
-    });
-
     // Flush uploads to GPU and resets the pending/bbox counters
     const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();
-
-    console.log('[GPUStrokeAccumulator.flushBatch] After instanceBuffer.flush()', {
-      countAfterFlush: this.instanceBuffer.count,
-    });
 
     const encoder = this.device.createCommandEncoder({
       label: 'Brush Batch Encoder',
