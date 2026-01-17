@@ -662,17 +662,17 @@ if (bboxPixels > MAX_PIXELS_PER_BATCH) {
 
 ## 实施检查清单
 
-- [ ] 创建 `ComputeBrushPipeline` 类
-- [ ] 创建 `compute-brush.wgsl` shader
-- [ ] 修改 `GPUStrokeAccumulator.flushBatch()` 使用 compute pipeline
-- [ ] 添加 BindGroup 缓存 (减少 GC)
-- [ ] 添加 Shared Memory 优化
-- [ ] 添加 bbox 像素上限保护
-- [ ] 添加 dab 子批次拆分
-- [ ] 添加全局边界保护
+- [x] 创建 `ComputeBrushPipeline` 类
+- [x] 创建 `compute-brush.wgsl` shader
+- [x] 修改 `GPUStrokeAccumulator.flushBatch()` 使用 compute pipeline
+- [x] 添加 BindGroup 缓存 (减少 GC)
+- [x] 添加 Shared Memory 优化
+- [x] 添加 bbox 像素上限保护
+- [x] 添加 dab 子批次拆分
+- [x] 添加全局边界保护
 - [ ] 添加 WebGPU 特性检测
-- [ ] 添加 fallback 到现有 Render Pipeline
-- [ ] 添加 sRGB/Linear 颜色转换
+- [x] 添加 fallback 到现有 Render Pipeline
+- [x] 添加 sRGB/Linear 颜色转换
 - [ ] 运行 Benchmark 验证 P99 Frame Time (目标 <25ms)
 - [ ] 验证 Alpha Darken 混合正确性 (与 CPU 版本对比)
 - [ ] 精度回归测试 (误差 < 2/255)

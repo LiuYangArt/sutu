@@ -41,11 +41,13 @@ export class PingPongBuffer {
 
   private createTextureDescriptor(width: number, height: number): GPUTextureDescriptor {
     return {
+      label: 'PingPong Texture',
       size: [width, height],
       format: this.format,
       usage:
         GPUTextureUsage.RENDER_ATTACHMENT |
         GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.STORAGE_BINDING | // Required for compute shader write
         GPUTextureUsage.COPY_SRC |
         GPUTextureUsage.COPY_DST,
     };

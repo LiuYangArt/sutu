@@ -25,6 +25,7 @@ import { InstanceBuffer } from './resources/InstanceBuffer';
 import { TextureInstanceBuffer } from './resources/TextureInstanceBuffer';
 import { BrushPipeline } from './pipeline/BrushPipeline';
 import { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
+import { ComputeBrushPipeline } from './pipeline/ComputeBrushPipeline';
 import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/tool';
@@ -34,6 +35,8 @@ export class GPUStrokeAccumulator {
   private pingPongBuffer: PingPongBuffer;
   private instanceBuffer: InstanceBuffer;
   private brushPipeline: BrushPipeline;
+  private computeBrushPipeline: ComputeBrushPipeline;
+  private useComputeShader: boolean = true; // Feature flag for compute shader path
   private profiler: GPUProfiler;
 
   // Texture brush resources (separate from parametric brush)
@@ -94,6 +97,8 @@ export class GPUStrokeAccumulator {
     this.instanceBuffer = new InstanceBuffer(device);
     this.brushPipeline = new BrushPipeline(device);
     this.brushPipeline.updateCanvasSize(width, height);
+    this.computeBrushPipeline = new ComputeBrushPipeline(device);
+    this.computeBrushPipeline.updateCanvasSize(width, height);
     this.profiler = new GPUProfiler();
 
     // Initialize texture brush resources
@@ -173,6 +178,10 @@ export class GPUStrokeAccumulator {
       this.pingPongBuffer.textureWidth,
       this.pingPongBuffer.textureHeight
     );
+    this.computeBrushPipeline.updateCanvasSize(
+      this.pingPongBuffer.textureWidth,
+      this.pingPongBuffer.textureHeight
+    );
     this.textureBrushPipeline.updateCanvasSize(
       this.pingPongBuffer.textureWidth,
       this.pingPongBuffer.textureHeight
@@ -212,6 +221,7 @@ export class GPUStrokeAccumulator {
     const mode = useToolStore.getState().colorBlendMode;
     if (mode !== this.cachedColorBlendMode) {
       this.brushPipeline.updateColorBlendMode(mode);
+      this.computeBrushPipeline.updateColorBlendMode(mode);
       this.textureBrushPipeline.updateColorBlendMode(mode);
       this.cachedColorBlendMode = mode;
     }
@@ -233,6 +243,10 @@ export class GPUStrokeAccumulator {
 
       this.pingPongBuffer.setRenderScale(targetScale);
       this.brushPipeline.updateCanvasSize(
+        this.pingPongBuffer.textureWidth,
+        this.pingPongBuffer.textureHeight
+      );
+      this.computeBrushPipeline.updateCanvasSize(
         this.pingPongBuffer.textureWidth,
         this.pingPongBuffer.textureHeight
       );
@@ -389,8 +403,8 @@ export class GPUStrokeAccumulator {
   }
 
   /**
-   * Flush pending dabs to GPU using per-dab loop with optimized partial copies.
-   * Each dab gets its own render pass to ensure correct Alpha Darken accumulation.
+   * Flush pending dabs to GPU using Compute Shader (optimized path)
+   * or per-dab Render Pipeline (fallback path).
    */
   private flushBatch(): void {
     if (this.instanceBuffer.count === 0) return;
@@ -407,10 +421,65 @@ export class GPUStrokeAccumulator {
       label: 'Brush Batch Encoder',
     });
 
-    // 2. Setup scissor
+    // Try compute shader path first
+    if (this.useComputeShader) {
+      // Copy source to dest for the bbox region (compute shader reads from source, writes to dest)
+      const dr = this.dirtyRect;
+      const copyW = dr.right - dr.left;
+      const copyH = dr.bottom - dr.top;
+      if (copyW > 0 && copyH > 0) {
+        this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
+      }
+
+      // Dispatch compute shader
+      const success = this.computeBrushPipeline.dispatch(
+        encoder,
+        this.pingPongBuffer.source,
+        this.pingPongBuffer.dest,
+        dabs
+      );
+
+      if (success) {
+        // Swap buffers once after compute dispatch
+        this.pingPongBuffer.swap();
+
+        void this.profiler.resolveTimestamps(encoder);
+        this.device.queue.submit([encoder.finish()]);
+
+        const cpuTime = this.cpuTimer.stop();
+        this.profiler.recordFrame({
+          dabCount: dabs.length,
+          cpuTimeMs: cpuTime,
+        });
+
+        this.previewNeedsUpdate = true;
+        if (!this.previewUpdatePending) {
+          void this.updatePreview();
+        }
+        return;
+      }
+
+      // Compute shader failed, fall through to render pipeline
+      console.warn('[GPUStrokeAccumulator] Compute shader failed, falling back to render pipeline');
+    }
+
+    // Fallback: per-dab render pipeline
+    this.flushBatchLegacy(dabs, gpuBatchBuffer, bbox, encoder);
+  }
+
+  /**
+   * Legacy per-dab render pipeline (fallback when compute shader unavailable)
+   */
+  private flushBatchLegacy(
+    dabs: DabInstanceData[],
+    gpuBatchBuffer: GPUBuffer,
+    bbox: { x: number; y: number; width: number; height: number },
+    encoder: GPUCommandEncoder
+  ): void {
+    // Setup scissor
     const scissor = this.computeScissorRect(bbox);
 
-    // 3. Render loop
+    // Render loop
     let prevDabRect: { x: number; y: number; w: number; h: number } | null = null;
 
     for (let i = 0; i < dabs.length; i++) {
@@ -929,6 +998,7 @@ export class GPUStrokeAccumulator {
     this.pingPongBuffer.destroy();
     this.instanceBuffer.destroy();
     this.brushPipeline.destroy();
+    this.computeBrushPipeline.destroy();
     this.textureInstanceBuffer.destroy();
     this.textureBrushPipeline.destroy();
     this.textureAtlas.destroy();
