@@ -12,16 +12,20 @@
  */
 
 import type { Rect } from '@/utils/strokeBuffer';
-import type { GPUDabParams, DabInstanceData } from './types';
+import type { GPUDabParams, DabInstanceData, TextureDabInstanceData } from './types';
 import {
   BATCH_SIZE_THRESHOLD,
   BATCH_TIME_THRESHOLD_MS,
   DAB_INSTANCE_SIZE,
+  TEXTURE_DAB_INSTANCE_SIZE,
   calculateEffectiveRadius,
 } from './types';
 import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
+import { TextureInstanceBuffer } from './resources/TextureInstanceBuffer';
 import { BrushPipeline } from './pipeline/BrushPipeline';
+import { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
+import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/tool';
 
@@ -31,6 +35,14 @@ export class GPUStrokeAccumulator {
   private instanceBuffer: InstanceBuffer;
   private brushPipeline: BrushPipeline;
   private profiler: GPUProfiler;
+
+  // Texture brush resources (separate from parametric brush)
+  private textureInstanceBuffer: TextureInstanceBuffer;
+  private textureBrushPipeline: TextureBrushPipeline;
+  private textureAtlas: TextureAtlas;
+
+  // Current stroke mode: 'parametric' or 'texture'
+  private strokeMode: 'parametric' | 'texture' = 'parametric';
 
   private width: number;
   private height: number;
@@ -83,6 +95,12 @@ export class GPUStrokeAccumulator {
     this.brushPipeline = new BrushPipeline(device);
     this.brushPipeline.updateCanvasSize(width, height);
     this.profiler = new GPUProfiler();
+
+    // Initialize texture brush resources
+    this.textureInstanceBuffer = new TextureInstanceBuffer(device);
+    this.textureBrushPipeline = new TextureBrushPipeline(device);
+    this.textureBrushPipeline.updateCanvasSize(width, height);
+    this.textureAtlas = new TextureAtlas(device);
 
     // Initialize preview canvas
     this.previewCanvas = document.createElement('canvas');
@@ -155,6 +173,10 @@ export class GPUStrokeAccumulator {
       this.pingPongBuffer.textureWidth,
       this.pingPongBuffer.textureHeight
     );
+    this.textureBrushPipeline.updateCanvasSize(
+      this.pingPongBuffer.textureWidth,
+      this.pingPongBuffer.textureHeight
+    );
 
     this.previewCanvas.width = width;
     this.previewCanvas.height = height;
@@ -190,6 +212,7 @@ export class GPUStrokeAccumulator {
     const mode = useToolStore.getState().colorBlendMode;
     if (mode !== this.cachedColorBlendMode) {
       this.brushPipeline.updateColorBlendMode(mode);
+      this.textureBrushPipeline.updateColorBlendMode(mode);
       this.cachedColorBlendMode = mode;
     }
   }
@@ -213,6 +236,10 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.textureWidth,
         this.pingPongBuffer.textureHeight
       );
+      this.textureBrushPipeline.updateCanvasSize(
+        this.pingPongBuffer.textureWidth,
+        this.pingPongBuffer.textureHeight
+      );
       this.recreateReadbackBuffers();
     }
   }
@@ -223,6 +250,8 @@ export class GPUStrokeAccumulator {
   clear(): void {
     this.active = false;
     this.instanceBuffer.clear();
+    this.textureInstanceBuffer.clear();
+    this.strokeMode = 'parametric';
     this.dirtyRect = {
       left: this.width,
       top: this.height,
@@ -244,10 +273,58 @@ export class GPUStrokeAccumulator {
     if (!this.active) return;
 
     const rgb = this.hexToRgb(params.color);
-    const radius = params.size / 2;
-
-    // Scale coordinates and size for lower resolution rendering
     const scale = this.currentRenderScale;
+
+    // Texture brush path - completely separate from parametric brush
+    if (params.texture) {
+      // Set stroke mode on first dab (cannot mix modes within a stroke)
+      if (this.dabsSinceLastFlush === 0 && this.strokeMode === 'parametric') {
+        this.strokeMode = 'texture';
+      }
+
+      // Try to set texture (may need async loading)
+      if (!this.textureAtlas.setTextureSync(params.texture)) {
+        // Texture not ready - trigger async load and skip this dab
+        void this.textureAtlas.setTexture(params.texture);
+        return;
+      }
+
+      const textureDabData: TextureDabInstanceData = {
+        x: params.x * scale,
+        y: params.y * scale,
+        size: params.size * scale, // diameter, not radius
+        roundness: params.roundness ?? 1.0,
+        angle: ((params.angle ?? 0) * Math.PI) / 180, // Convert to radians
+        r: rgb.r / 255,
+        g: rgb.g / 255,
+        b: rgb.b / 255,
+        dabOpacity: params.dabOpacity ?? 1.0,
+        flow: params.flow,
+        texWidth: params.texture.width,
+        texHeight: params.texture.height,
+      };
+
+      this.textureInstanceBuffer.push(textureDabData);
+      // Dirty rect calculation for texture brush
+      const halfSize = params.size / 2;
+      this.expandDirtyRectTexture(params.x, params.y, halfSize);
+      this.dabsSinceLastFlush++;
+
+      // Check if batch should be flushed
+      const now = performance.now();
+      const shouldFlush =
+        this.textureInstanceBuffer.count >= BATCH_SIZE_THRESHOLD ||
+        now - this.lastFlushTime >= BATCH_TIME_THRESHOLD_MS;
+
+      if (shouldFlush) {
+        this.flushTextureBatch();
+        this.lastFlushTime = now;
+      }
+      return;
+    }
+
+    // Parametric brush path (unchanged)
+    const radius = params.size / 2;
     const dabData: DabInstanceData = {
       x: params.x * scale,
       y: params.y * scale,
@@ -277,6 +354,17 @@ export class GPUStrokeAccumulator {
     }
   }
 
+  /**
+   * Expand dirty rect for texture brush (simpler calculation)
+   */
+  private expandDirtyRectTexture(x: number, y: number, halfSize: number): void {
+    const margin = 2;
+    this.dirtyRect.left = Math.min(this.dirtyRect.left, Math.floor(x - halfSize - margin));
+    this.dirtyRect.top = Math.min(this.dirtyRect.top, Math.floor(y - halfSize - margin));
+    this.dirtyRect.right = Math.max(this.dirtyRect.right, Math.ceil(x + halfSize + margin));
+    this.dirtyRect.bottom = Math.max(this.dirtyRect.bottom, Math.ceil(y + halfSize + margin));
+  }
+
   private expandDirtyRect(x: number, y: number, radius: number, hardness: number): void {
     const effectiveRadius = calculateEffectiveRadius(radius, hardness);
     const margin = 2;
@@ -293,7 +381,11 @@ export class GPUStrokeAccumulator {
    * Force flush pending dabs to GPU (used for benchmarking)
    */
   flush(): void {
-    this.flushBatch();
+    if (this.strokeMode === 'texture') {
+      this.flushTextureBatch();
+    } else {
+      this.flushBatch();
+    }
   }
 
   /**
@@ -389,6 +481,125 @@ export class GPUStrokeAccumulator {
     if (!this.previewUpdatePending) {
       void this.updatePreview();
     }
+  }
+
+  /**
+   * Flush pending texture dabs to GPU using per-dab loop.
+   * Similar to flushBatch but uses TextureBrushPipeline.
+   */
+  private flushTextureBatch(): void {
+    if (this.textureInstanceBuffer.count === 0) return;
+
+    const currentTexture = this.textureAtlas.getCurrentTexture();
+    if (!currentTexture) {
+      console.warn('[GPUStrokeAccumulator] No texture available for texture brush');
+      this.textureInstanceBuffer.clear();
+      return;
+    }
+
+    this.cpuTimer.start();
+
+    // 1. Get data and upload to GPU
+    const dabs = this.textureInstanceBuffer.getDabsData();
+    const bbox = this.textureInstanceBuffer.getBoundingBox();
+    const { buffer: gpuBatchBuffer } = this.textureInstanceBuffer.flush();
+
+    const encoder = this.device.createCommandEncoder({
+      label: 'Texture Brush Batch Encoder',
+    });
+
+    // 2. Setup scissor
+    const scissor = this.computeScissorRect(bbox);
+
+    // 3. Render loop
+    let prevDabRect: { x: number; y: number; w: number; h: number } | null = null;
+
+    for (let i = 0; i < dabs.length; i++) {
+      const dab = dabs[i]!;
+      const dabRect = this.computeTextureDabBounds(dab);
+
+      // Partial Copy Logic: Sync Dest with Source
+      if (i === 0) {
+        const dr = this.dirtyRect;
+        const copyW = dr.right - dr.left;
+        const copyH = dr.bottom - dr.top;
+        if (copyW > 0 && copyH > 0) {
+          this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
+        }
+      } else if (prevDabRect) {
+        this.pingPongBuffer.copyRect(
+          encoder,
+          prevDabRect.x,
+          prevDabRect.y,
+          prevDabRect.w,
+          prevDabRect.h
+        );
+      }
+
+      // Render Pass
+      const pass = encoder.beginRenderPass({
+        label: `Texture Dab Pass ${i}`,
+        colorAttachments: [
+          {
+            view: this.pingPongBuffer.dest.createView(),
+            loadOp: 'load',
+            storeOp: 'store',
+          },
+        ],
+        timestampWrites: i === 0 ? this.profiler.getTimestampWrites() : undefined,
+      });
+
+      if (scissor) {
+        pass.setScissorRect(scissor.x, scissor.y, scissor.w, scissor.h);
+      }
+
+      pass.setPipeline(this.textureBrushPipeline.renderPipeline);
+      pass.setBindGroup(
+        0,
+        this.textureBrushPipeline.createBindGroup(this.pingPongBuffer.source, currentTexture)
+      );
+
+      const offset = i * TEXTURE_DAB_INSTANCE_SIZE;
+      pass.setVertexBuffer(0, gpuBatchBuffer, offset, TEXTURE_DAB_INSTANCE_SIZE);
+      pass.draw(6, 1);
+      pass.end();
+
+      this.pingPongBuffer.swap();
+      prevDabRect = dabRect;
+    }
+
+    void this.profiler.resolveTimestamps(encoder);
+    this.device.queue.submit([encoder.finish()]);
+
+    const cpuTime = this.cpuTimer.stop();
+    this.profiler.recordFrame({
+      dabCount: dabs.length,
+      cpuTimeMs: cpuTime,
+    });
+
+    this.previewNeedsUpdate = true;
+    if (!this.previewUpdatePending) {
+      void this.updatePreview();
+    }
+  }
+
+  /**
+   * Calculate bounding box for a texture dab
+   */
+  private computeTextureDabBounds(dab: TextureDabInstanceData): {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } {
+    const margin = 2;
+    const halfSize = dab.size / 2 + margin;
+    return {
+      x: Math.floor(dab.x - halfSize),
+      y: Math.floor(dab.y - halfSize),
+      w: Math.ceil(halfSize * 2),
+      h: Math.ceil(halfSize * 2),
+    };
   }
 
   /**
@@ -560,8 +771,12 @@ export class GPUStrokeAccumulator {
       return;
     }
 
-    // Flush any remaining dabs
-    this.flushBatch();
+    // Flush any remaining dabs (texture or parametric based on stroke mode)
+    if (this.strokeMode === 'texture') {
+      this.flushTextureBatch();
+    } else {
+      this.flushBatch();
+    }
 
     // Wait for GPU to complete all submitted work
     await this.device.queue.onSubmittedWorkDone();
@@ -714,6 +929,9 @@ export class GPUStrokeAccumulator {
     this.pingPongBuffer.destroy();
     this.instanceBuffer.destroy();
     this.brushPipeline.destroy();
+    this.textureInstanceBuffer.destroy();
+    this.textureBrushPipeline.destroy();
+    this.textureAtlas.destroy();
     this.readbackBuffer?.destroy();
     this.previewReadbackBuffer?.destroy();
     this.profiler.destroy();

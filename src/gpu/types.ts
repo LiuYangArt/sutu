@@ -100,14 +100,46 @@ export interface GPUDabParams {
   dabOpacity?: number;
   roundness?: number;
   angle?: number;
+  /** Texture for sampled brushes (from ABR import) */
+  texture?: {
+    data: string;
+    width: number;
+    height: number;
+    imageData?: ImageData;
+  };
 }
 
 /**
- * Instance buffer layout constants
+ * Instance buffer layout constants for parametric brushes
  */
 export const DAB_INSTANCE_SIZE = 36; // bytes per instance
 export const DAB_FLOATS_PER_INSTANCE = 9; // floats per instance
 export const INITIAL_INSTANCE_CAPACITY = 1024;
+
+/**
+ * Texture dab instance data for GPU instancing
+ * Layout: 48 bytes per instance (12 floats)
+ */
+export interface TextureDabInstanceData {
+  x: number; // Dab center X
+  y: number; // Dab center Y
+  size: number; // Dab diameter (not radius)
+  roundness: number; // Brush roundness (0-1)
+  angle: number; // Rotation angle in radians
+  r: number; // Color R (0-1)
+  g: number; // Color G (0-1)
+  b: number; // Color B (0-1)
+  dabOpacity: number; // Alpha ceiling for Alpha Darken (0-1)
+  flow: number; // Per-dab flow multiplier (0-1)
+  texWidth: number; // Original texture width
+  texHeight: number; // Original texture height
+}
+
+/**
+ * Instance buffer layout constants for texture brushes
+ */
+export const TEXTURE_DAB_INSTANCE_SIZE = 48; // bytes per instance (12 floats)
+export const TEXTURE_DAB_FLOATS_PER_INSTANCE = 12; // floats per instance
 
 /**
  * Batch processing thresholds

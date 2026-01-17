@@ -8,6 +8,7 @@
 // Types
 export type {
   DabInstanceData,
+  TextureDabInstanceData,
   GPUContextState,
   FrameMetrics,
   PerformanceSummary,
@@ -20,6 +21,8 @@ export type {
 export {
   DAB_INSTANCE_SIZE,
   DAB_FLOATS_PER_INSTANCE,
+  TEXTURE_DAB_INSTANCE_SIZE,
+  TEXTURE_DAB_FLOATS_PER_INSTANCE,
   INITIAL_INSTANCE_CAPACITY,
   BATCH_SIZE_THRESHOLD,
   BATCH_TIME_THRESHOLD_MS,
@@ -33,6 +36,9 @@ export { GPUProfiler, CPUTimer } from './profiler';
 // Resources
 export { PingPongBuffer } from './resources/PingPongBuffer';
 export { InstanceBuffer } from './resources/InstanceBuffer';
+export { TextureInstanceBuffer } from './resources/TextureInstanceBuffer';
+export { TextureAtlas } from './resources/TextureAtlas';
 
 // Pipeline
 export { BrushPipeline } from './pipeline/BrushPipeline';
+export { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
