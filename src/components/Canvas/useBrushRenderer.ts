@@ -199,6 +199,10 @@ export function useBrushRenderer({
       // Get dab positions from stamper
       const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
 
+      // DEBUG DIAGNOSTIC: Log how many dabs were generated
+      console.log('[useBrushRenderer.processPoint] Generated', dabs.length, 'dabs from stamper');
+
+      let loopIndex = 0;
       for (const dab of dabs) {
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         const dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
@@ -223,7 +227,9 @@ export function useBrushRenderer({
         };
 
         if (backend === 'gpu' && gpuBufferRef.current) {
+          console.log('[useBrushRenderer] Calling stampDab for dab', loopIndex, 'of', dabs.length);
           gpuBufferRef.current.stampDab(dabParams);
+          loopIndex++;
         } else if (cpuBufferRef.current) {
           const cpuBuffer = cpuBufferRef.current;
           if (cpuBuffer.isUsingRustPath()) {
@@ -235,13 +241,21 @@ export function useBrushRenderer({
       }
 
       // End CPU encode timing and trigger GPU sample if needed
+      // NOTE: Disabled during active painting to avoid breaking batch processing
+      // The RAF loop will handle flushing at the end of each frame
       if (pointIndex !== undefined && benchmarkProfiler) {
         // Force flush if this is a sample point to ensure accurate GPU timing
+        // IMPORTANT: Only flush if NOT using GPU batch rendering
+        // GPU batch rendering requires all dabs to be processed together before flush
         if (
-          backend === 'gpu' &&
+          backend !== 'gpu' && // Only flush for CPU backend
           gpuBufferRef.current &&
           benchmarkProfiler.shouldSampleGpu(pointIndex)
         ) {
+          console.log(
+            '[useBrushRenderer] shouldSampleGpu triggered, calling flush. pointIndex:',
+            pointIndex
+          );
           gpuBufferRef.current.flush();
         }
         void benchmarkProfiler.markRenderSubmit(pointIndex);
