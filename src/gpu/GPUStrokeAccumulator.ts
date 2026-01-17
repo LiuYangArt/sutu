@@ -35,7 +35,7 @@ export class GPUStrokeAccumulator {
   private instanceBuffer: InstanceBuffer;
   private brushPipeline: BrushPipeline;
   private computeBrushPipeline: ComputeBrushPipeline;
-  private useComputeShader: boolean = true; // Feature flag for compute shader path
+  private useComputeShader: boolean = false; // Feature flag for compute shader path
   private profiler: GPUProfiler;
 
   // Texture brush resources (separate from parametric brush)
@@ -323,9 +323,9 @@ export class GPUStrokeAccumulator {
 
       // Only flush when batch size threshold is reached
       // Time-based flushing is handled by the RAF loop calling flush() per frame
-      if (this.textureInstanceBuffer.count >= BATCH_SIZE_THRESHOLD) {
-        this.flushTextureBatch();
-      }
+      // if (this.textureInstanceBuffer.count >= BATCH_SIZE_THRESHOLD) {
+      //   this.flushTextureBatch();
+      // }
       return;
     }
 
@@ -365,10 +365,10 @@ export class GPUStrokeAccumulator {
     // Only flush when batch size threshold is reached
     // Time-based flushing is handled by the RAF loop calling flush() per frame
     // This prevents splitting dabs from a single processPoint() into multiple batches
-    if (this.instanceBuffer.count >= BATCH_SIZE_THRESHOLD) {
-      console.log('[GPUStrokeAccumulator.stampDab] Threshold reached, flushing...');
-      this.flushBatch();
-    }
+    // if (this.instanceBuffer.count >= BATCH_SIZE_THRESHOLD) {
+    //   console.log('[GPUStrokeAccumulator.stampDab] Threshold reached, flushing...');
+    //   this.flushBatch();
+    // }
   }
 
   /**

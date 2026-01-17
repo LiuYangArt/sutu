@@ -24,8 +24,8 @@
 
 ### 现象截图
 
-| 慢速绘画 | 快速绘画 |
-|---------|---------|
+| 慢速绘画                       | 快速绘画                             |
+| ------------------------------ | ------------------------------------ |
 | 生成 1 个 dab，渲染 1 个 dab ✓ | 生成 15-17 个 dab，只渲染 1 个 dab ✗ |
 
 ---
@@ -98,12 +98,14 @@ struct DabData {
 #### 调试日志分析
 
 **慢速绘画**（工作正常）:
+
 ```
 processPoint: generated 1 dab
 flushBatch: processing 1 dab
 ```
 
 **快速绘画**（出现问题）:
+
 ```
 processPoint: generated 15 dabs
 flushBatch: processing 1 dab    ← 问题：只渲染了 1 个！
@@ -136,6 +138,7 @@ instanceBuffer.push() × 15
 **假设**: `BATCH_TIME_THRESHOLD_MS = 4ms` 导致过早 flush
 
 **修改**:
+
 ```typescript
 // GPUStrokeAccumulator.ts stampDab()
 // Only flush when batch size threshold is reached
@@ -161,9 +164,9 @@ if (this.instanceBuffer.count >= BATCH_SIZE_THRESHOLD) {
 
 ```typescript
 // GPUStrokeAccumulator.ts flushBatch()
-const dabs = this.instanceBuffer.getDabsData();  // ← 获取数据
+const dabs = this.instanceBuffer.getDabsData(); // ← 获取数据
 const bbox = this.instanceBuffer.getBoundingBox();
-const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();  // ← 清空计数器
+const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush(); // ← 清空计数器
 ```
 
 **问题**: 如果 `getDabsData()` 和 `flush()` 之间有新的 dab 加入？
@@ -171,12 +174,13 @@ const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();  // ← 清空�
 #### 2. RAF Loop 与 flush 时机
 
 **当前流程**:
+
 ```typescript
 // Canvas/index.tsx RAF loop
 for (let i = 0; i < count; i++) {
-  processSinglePoint(p.x, p.y, p.pressure);  // 每次可能生成多个 dab
+  processSinglePoint(p.x, p.y, p.pressure); // 每次可能生成多个 dab
 }
-flushPending();  // 在循环后统一 flush
+flushPending(); // 在循环后统一 flush
 ```
 
 **问题**: `flushPending()` 调用的是 `GPUStrokeAccumulator.flush()`
@@ -185,7 +189,7 @@ flushPending();  // 在循环后统一 flush
 // useBrushRenderer.ts
 const flushPending = useCallback(() => {
   if (backend === 'gpu' && gpuBufferRef.current) {
-    gpuBufferRef.current.flush();  // ← 内部调用 flushBatch()
+    gpuBufferRef.current.flush(); // ← 内部调用 flushBatch()
   }
 }, [backend]);
 ```
@@ -409,15 +413,16 @@ stampDab(params) {
 
 ### 3. 阈值选择的权衡
 
-| 阈值类型 | 优点 | 缺点 |
-|---------|------|------|
-| 时间 (4ms) | 响应快 | 可能打断单个 processPoint |
-| 数量 (64) | 批处理效率高 | 可能延迟显示 |
-| 混合 | 兼顾 | 复杂度高 |
+| 阈值类型   | 优点         | 缺点                      |
+| ---------- | ------------ | ------------------------- |
+| 时间 (4ms) | 响应快       | 可能打断单个 processPoint |
+| 数量 (64)  | 批处理效率高 | 可能延迟显示              |
+| 混合       | 兼顾         | 复杂度高                  |
 
 ### 4. 测试环境 vs 实际环境
 
 测试页面可能工作正常，因为：
+
 - 测试是静态的，直接调用 `stampDab()` → `flushBatch()`
 - 实际绘画通过 RAF loop，有异步队列
 
@@ -481,15 +486,15 @@ stampDabRust(params) {
 
 ## 相关文件
 
-| 文件 | 说明 |
-|------|------|
-| `src/gpu/shaders/computeBrush.wgsl` | Compute shader 实现 |
-| `src/gpu/pipeline/ComputeBrushPipeline.ts` | Compute pipeline 封装 |
-| `src/gpu/GPUStrokeAccumulator.ts` | 笔触累积器 |
-| `src/gpu/resources/InstanceBuffer.ts` | Dab 数据缓冲 |
-| `src/components/Canvas/useBrushRenderer.ts` | React hook |
-| `src/components/Canvas/index.tsx` | 主画布组件 |
-| `src/utils/strokeBuffer.ts` | CPU 路径参考实现 |
+| 文件                                        | 说明                  |
+| ------------------------------------------- | --------------------- |
+| `src/gpu/shaders/computeBrush.wgsl`         | Compute shader 实现   |
+| `src/gpu/pipeline/ComputeBrushPipeline.ts`  | Compute pipeline 封装 |
+| `src/gpu/GPUStrokeAccumulator.ts`           | 笔触累积器            |
+| `src/gpu/resources/InstanceBuffer.ts`       | Dab 数据缓冲          |
+| `src/components/Canvas/useBrushRenderer.ts` | React hook            |
+| `src/components/Canvas/index.tsx`           | 主画布组件            |
+| `src/utils/strokeBuffer.ts`                 | CPU 路径参考实现      |
 
 ---
 
@@ -522,17 +527,14 @@ stampDabRust(params) {
 ```typescript
 // 问题代码
 if (pointIndex !== undefined && benchmarkProfiler) {
-  if (
-    backend === 'gpu' &&
-    gpuBufferRef.current &&
-    benchmarkProfiler.shouldSampleGpu(pointIndex)
-  ) {
-    gpuBufferRef.current.flush();  // ← 在循环中 flush！
+  if (backend === 'gpu' && gpuBufferRef.current && benchmarkProfiler.shouldSampleGpu(pointIndex)) {
+    gpuBufferRef.current.flush(); // ← 在循环中 flush！
   }
 }
 ```
 
 **问题**: 当 `shouldSampleGpu()` 返回 true 时，在 `processPoint` 的 dab 循环中就调用了 `flush()`，导致：
+
 - 第一个 dab 后就触发 flush
 - 后续 dabs 被清空或进入下一个 batch
 - 最终只渲染了 1 个 dab
@@ -544,7 +546,7 @@ if (pointIndex !== undefined && benchmarkProfiler) {
 if (pointIndex !== undefined && benchmarkProfiler) {
   // Only flush for CPU backend
   if (
-    backend !== 'gpu' &&  // ← GPU 不在循环中 flush
+    backend !== 'gpu' && // ← GPU 不在循环中 flush
     gpuBufferRef.current &&
     benchmarkProfiler.shouldSampleGpu(pointIndex)
   ) {
@@ -569,6 +571,7 @@ if (copyW > 0 && copyH > 0) {
 ```
 
 **问题**:
+
 - `dabData` 使用缩放后的坐标：`x: params.x * scale`
 - `dirtyRect` 使用逻辑坐标：`params.x`（没有 scale）
 - 当 `renderScale < 1.0` 时，`copyRect` 复制的区域与实际渲染区域不匹配
@@ -590,11 +593,11 @@ if (copyW > 0 && copyH > 0) {
 
 ### 修复记录
 
-| 修复 | 文件 | 状态 |
-|------|------|------|
-| 禁用 GPU backend 的 benchmark flush | `useBrushRenderer.ts` | ✅ 已应用 |
-| dirtyRect 坐标缩放到纹理空间 | `GPUStrokeAccumulator.ts` | ✅ 已应用 |
-| 同样修复 flushBatchLegacy 路径 | `GPUStrokeAccumulator.ts` | ✅ 已应用 |
+| 修复                                | 文件                      | 状态      |
+| ----------------------------------- | ------------------------- | --------- |
+| 禁用 GPU backend 的 benchmark flush | `useBrushRenderer.ts`     | ✅ 已应用 |
+| dirtyRect 坐标缩放到纹理空间        | `GPUStrokeAccumulator.ts` | ✅ 已应用 |
+| 同样修复 flushBatchLegacy 路径      | `GPUStrokeAccumulator.ts` | ✅ 已应用 |
 
 ### 待验证
 
@@ -608,6 +611,7 @@ if (copyW > 0 && copyH > 0) {
 ### 1. Benchmark 代码与生产代码的冲突
 
 benchmark 逻辑（`shouldSampleGpu`）需要精确测量 GPU 时间，但：
+
 - 它在 `processPoint` 循环中触发 `flush()`
 - 这破坏了 GPU 批处理需要的"累积后一次性提交"模式
 - **教训**: Benchmark 代码应该独立于主渲染逻辑
@@ -615,6 +619,7 @@ benchmark 逻辑（`shouldSampleGpu`）需要精确测量 GPU 时间，但：
 ### 2. 坐标系统一致性
 
 在 GPU 渲染中，必须确保所有坐标使用相同的缩放：
+
 - **顶点数据**: `dabData.x * scale` ✓
 - **dirtyRect**: `params.x` ✗ (逻辑坐标)
 - **copyRect**: 使用 dirtyRect 坐标 ✗ (需要缩放)
@@ -625,4 +630,29 @@ benchmark 逻辑（`shouldSampleGpu`）需要精确测量 GPU 时间，但：
 
 添加详细日志后，从日志中直接看到了 `shouldSampleGpu triggered`，这比任何猜测都更有效。
 
-**教训**: 在复杂系统中，详细的诊断日志是快速定位问题的关键
+---
+
+## Phase 7: Resolution
+
+### Fix Applied: Remove Premature Flushing
+
+Based on the analysis in `debug_review2.md`, the root cause was identified as **premature flushing** within `GPUStrokeAccumulator.stampDab()`.
+
+**The Logic Flaw:**
+
+- `stampDab()` had a check: `if (this.instanceBuffer.count >= BATCH_SIZE_THRESHOLD) this.flushBatch();`
+- `BATCH_SIZE_THRESHOLD` is 64.
+- During a fast stroke, `processPoint()` generates multiple dabs (e.g., 15).
+- If `stampDab` is called 15 times, and the buffer hits 64 _during_ this loop (or if the threshold was smaller, or simply due to accumulation), it triggers a flush.
+- Crucially, the RAF loop relies on accumulating _all_ dabs for a frame and then flushing _once_. Mid-frame flushing breaks the batching assumption and can lead to command encoder ordering issues or simply breaking the "atomic" update the renderer expects.
+
+**The Fix:**
+
+- Removed the automatic flush logic from `stampDab()`.
+- Now, flushing is **only** triggered by `flushPending()` in the RAF loop (in `useBrushRenderer.ts`).
+- This ensures that all dabs generated by input events in a single frame are batched together and submitted in one go.
+
+**Verification Needed:**
+
+- Fast strokes should now be smooth and continuous.
+- No "dots" or broken lines during rapid movement.
