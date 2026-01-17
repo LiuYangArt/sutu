@@ -228,9 +228,7 @@ export function BrushPanel(): JSX.Element {
       };
       setBrushTexture(texture);
       console.log(
-        'Applied textured preset:',
-        preset.name,
-        `${preset.textureWidth}x${preset.textureHeight}`
+        `Applied textured preset: ${preset.name} ${preset.textureWidth}x${preset.textureHeight}`
       );
     } else {
       // Clear texture for procedural brushes
