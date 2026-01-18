@@ -926,11 +926,141 @@ for (let i = 0; i < dabs.length; i += batchSize) {
 
 ### 状态
 
-🔲 **待调查** - 建议新建 Issue 处理，避免当前 PR 范围过大
+🔄 **进行中** - Issue #75
 
-### 建议
+### 已修复的问题
 
-由于这是一个独立的边界条件问题（极小 spacing），建议：
+#### Bug 1: dispatchInBatches Ping-Pong 交换逻辑错误
 
-1. 当前 PR 先合并（Texture Brush Compute Shader 主体功能正常）
-2. 新建 Issue 专门处理极小 spacing 场景的分批逻辑问题
+**根因**: `const` 变量导致没有真正交换 input/output
+
+```typescript
+// 错误代码
+const currentInput = inputTexture;   // const 永不改变
+const currentOutput = outputTexture; // const 永不改变
+const bbox = this.computePreciseBoundingBox(batch); // 只是当前 batch
+```
+
+**修复**: 使用 `let` 并正确交换，使用所有 dabs 的 bbox
+
+```typescript
+// 修复后
+let currentInput = inputTexture;
+let currentOutput = outputTexture;
+const allDabsBbox = this.computePreciseBoundingBox(dabs); // 所有 dabs
+
+// 每个 batch 后正确交换
+const temp = currentInput;
+currentInput = currentOutput;
+currentOutput = temp;
+```
+
+**影响文件**:
+- `ComputeBrushPipeline.ts`
+- `ComputeTextureBrushPipeline.ts`
+
+#### Bug 2: copyRect 双重缩放
+
+**根因**: 调用方已缩放坐标，`copyRect` 内部又缩放一次
+
+```typescript
+// 错误代码 (GPUStrokeAccumulator.flushBatch)
+const copyX = Math.floor(dr.left * scale);  // 第一次缩放
+this.pingPongBuffer.copyRect(encoder, copyX, ...);
+// copyRect 内部又缩放一次！
+```
+
+**修复**: 传入逻辑坐标，让 `copyRect` 统一处理缩放
+
+```typescript
+// 修复后
+const copyW = dr.right - dr.left;
+const copyH = dr.bottom - dr.top;
+this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
+```
+
+**影响文件**:
+- `GPUStrokeAccumulator.ts` (flushBatch, flushTextureBatch)
+
+### 当前进展
+
+- ✅ 大多数情况下笔触连贯
+- ❌ 极端快速移动时仍有少量断开
+- ⚠️ CPU 笔刷在相同参数下正常，说明问题仍在 GPU 路径
+
+### 待调查
+
+1. **为什么 CPU 正常但 GPU 断开**？
+   - 两者使用相同的 BrushStamper 生成 dabs
+   - 问题可能在 GPU 的 flush 时机或累积逻辑
+
+2. **每次 flush 的 dab 数量是否正确**？
+   - 需要添加日志验证
+
+---
+
+## Phase 12: 继续调试（2026-01-18）
+
+### 关键发现
+
+CPU 笔刷在相同参数下正常，说明：
+- BrushStamper 的 spacing 计算正确
+- 输入采样率不是问题
+- 问题在 GPU 路径的 flush/累积逻辑中
+
+### 日志分析
+
+添加详细日志后发现：
+- 每帧 dab 数量充足（28-200 个）
+- 快速划线时 dab 数量经常超过 128，触发 `dispatchInBatches`
+
+```
+[flushBatch] Compute: 178 dabs, bbox: 84x177
+[dispatchInBatches] Splitting 178 dabs into 2 batches  ← 触发分批
+```
+
+### Bug 3: dispatchInBatches 与调用方 copySourceToDest 冲突
+
+**现象**：
+- 慢速划线（dabs < 128）→ 笔触连贯 ✅
+- 快速划线（dabs > 128）→ 笔触断开 ❌
+
+**根因**：
+
+调用方 `GPUStrokeAccumulator.flushBatch()` 在调用 `dispatch()` 前已经执行了 `copySourceToDest(source → dest)`。
+
+但当 dab 数量 > 128 时，`dispatch()` 内部调用 `dispatchInBatches()`，其 ping-pong 逻辑与调用方的预复制冲突：
+
+```typescript
+// GPUStrokeAccumulator.flushBatch() - 调用方
+this.pingPongBuffer.copySourceToDest(encoder);  // source → dest
+this.computeBrushPipeline.dispatch(encoder, source, dest, dabs);
+
+// ComputeBrushPipeline.dispatchInBatches() - 内部
+// Batch 1: 读 source, 写 dest ✅
+// Copy: dest → source  ← 覆盖了原始累积数据！
+// Swap: input=dest, output=source
+// Batch 2: 读 dest, 写 source  ← 但 source 已被覆盖
+```
+
+**临时修复**：
+将 `MAX_DABS_PER_BATCH` 从 128 提高到 512，避免触发 `dispatchInBatches`。
+
+```typescript
+// ComputeBrushPipeline.ts
+const MAX_DABS_PER_BATCH = 512; // 原为 128
+```
+
+**影响**：
+- 大多数情况下不再触发分批
+- 但仍有问题（快速划线时仍有断开）
+
+### 待解决
+
+1. **彻底修复 dispatchInBatches**：重新设计分批逻辑，避免与调用方的 `copySourceToDest` 冲突
+2. **调查剩余的断开问题**：即使不触发分批，快速划线时仍有少量断开
+
+### 当前状态
+
+🔄 **部分修复** - 提高阈值减少了断开频率，但未完全解决
+

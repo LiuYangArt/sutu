@@ -31,7 +31,7 @@ export class GPUStrokeAccumulator {
   private instanceBuffer: InstanceBuffer;
   private brushPipeline: BrushPipeline;
   private computeBrushPipeline: ComputeBrushPipeline;
-  private useComputeShader: boolean = true; // Re-enabled for no-bbox test
+  private useComputeShader: boolean = true; // Re-enabled with full copy fix
   private profiler: GPUProfiler;
 
   // Texture brush resources (separate from parametric brush)
@@ -412,16 +412,13 @@ export class GPUStrokeAccumulator {
 
     // Try compute shader path first
     if (this.useComputeShader) {
-      // Compute shader: batch all dabs in single dispatch
-      const dr = this.dirtyRect;
+      // DEBUG: Track dab count per flush
+      console.log(`[flushBatch] Compute: ${dabs.length} dabs, bbox: ${bbox.width}x${bbox.height}`);
 
-      // Copy source to dest to preserve previous strokes
-      // NOTE: dirtyRect is in logical coordinates, copyRect will scale them
-      const copyW = dr.right - dr.left;
-      const copyH = dr.bottom - dr.top;
-      if (copyW > 0 && copyH > 0) {
-        this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
-      }
+      // Compute shader: batch all dabs in single dispatch
+      // IMPORTANT: Copy the ENTIRE source to dest before dispatch
+      // This ensures Compute Shader reads the accumulated result from previous flushes
+      this.pingPongBuffer.copySourceToDest(encoder);
 
       // Single dispatch for all dabs
       const success = this.computeBrushPipeline.dispatch(

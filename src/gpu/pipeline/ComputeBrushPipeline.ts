@@ -19,7 +19,9 @@ import computeShaderCode from '../shaders/computeBrush.wgsl?raw';
 
 // Performance safety thresholds
 const MAX_PIXELS_PER_BATCH = 2_000_000; // ~1400x1400 area
-const MAX_DABS_PER_BATCH = 128;
+// NOTE: Increased from 128 to 512 to avoid dispatchInBatches which has ping-pong bugs
+// TODO: Fix dispatchInBatches logic properly (see gpu-compute-shader-spacing-issue.md Phase 12)
+const MAX_DABS_PER_BATCH = 512;
 
 // Dab data size in bytes (12 floats * 4 bytes = 48 bytes per dab)
 const DAB_DATA_SIZE = 48;
@@ -217,6 +219,8 @@ export class ComputeBrushPipeline {
     dabs: DabInstanceData[]
   ): boolean {
     const batchSize = MAX_DABS_PER_BATCH;
+    const batchCount = Math.ceil(dabs.length / batchSize);
+    console.log(`[dispatchInBatches] Splitting ${dabs.length} dabs into ${batchCount} batches`);
 
     // Compute bounding box for ALL dabs (needed for proper copy between batches)
     const allDabsBbox = this.computePreciseBoundingBox(dabs);
@@ -253,7 +257,6 @@ export class ComputeBrushPipeline {
     // If even number of batches (and > 1), we need to ensure result is in outputTexture
     // The caller (GPUStrokeAccumulator.flushBatch) expects result in outputTexture (dest)
     // and will call swap() after. So we need to ensure the last dispatch wrote to outputTexture.
-    const batchCount = Math.ceil(dabs.length / batchSize);
     if (batchCount > 1 && batchCount % 2 === 0) {
       // Final result is in inputTexture (original outputTexture after swaps)
       // Copy back to outputTexture
