@@ -131,6 +131,10 @@
   color: var(--text-primary);
 }
 
+.color-action-btn:focus {
+  outline: none;
+}
+
 .color-preview {
   width: 24px;
   height: 24px;

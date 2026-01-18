@@ -1,5 +1,4 @@
-感觉gpu比cpu笔刷延时大，可能是什么原因？
-考虑 1. benchmark 增加cpu测试2. 为什么krita纯cpu笔刷这么快3. 考虑200px以下笔刷用cpu，200以上gpu，混合构架
+compute shader笔刷完成
 
 ---
 

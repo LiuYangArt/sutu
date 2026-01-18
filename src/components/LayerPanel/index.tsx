@@ -364,7 +364,7 @@ const LayerItem = memo(function LayerItem({
       onClick={() => onActivate(layer.id)}
       onContextMenu={(e) => onContextMenu(e, layer.id)}
     >
-      <div className="drag-handle" draggable={false}>
+      <div className="drag-handle">
         <GripVertical size={14} />
       </div>
 

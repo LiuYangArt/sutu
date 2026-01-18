@@ -93,18 +93,21 @@ export function useCursor({
     }
 
     const size = 24;
-    // Eyedropper icon SVG path (pipette shape)
+    // Lucide Pipette icon path
     const svg = `
-      <svg width="${size}" height="${size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M20.71 5.63l-2.34-2.34a1 1 0 00-1.41 0l-3.12 3.12-1.41-1.42-1.42 1.42 1.42 1.41-8.29 8.29a2 2 0 00-.59 1.42V19a1 1 0 001 1h1.47a2 2 0 001.42-.59l8.29-8.29 1.41 1.42 1.42-1.42-1.42-1.41 3.12-3.12a1 1 0 000-1.96z"
-              fill="white" stroke="black" stroke-width="1.5"/>
-        <circle cx="3" cy="21" r="2" fill="black" stroke="white" stroke-width="0.5"/>
+      <svg width="${size}" height="${size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none">
+        <path d="m2 22 1-1h3l9-9" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="m2 22 1-1h3l9-9" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M3 21v-3l9-9" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M3 21v-3l9-9" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" fill="white" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     `;
 
     const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
-    // Hotspot at the pipette tip (bottom-left area)
-    return `url("${cursorUrl}") 1 22, crosshair`;
+    // Hotspot at the pipette tip (bottom-left corner)
+    return `url("${cursorUrl}") 2 22, crosshair`;
   }, [shouldUseEyedropperCursor]);
 
   // Handle native pointer events for DOM cursor (zero-lag update)
