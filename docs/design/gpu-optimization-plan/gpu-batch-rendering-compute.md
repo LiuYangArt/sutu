@@ -75,6 +75,24 @@ P99 Frame: 68ms (目标 <25ms)
 
 ---
 
+## 关键约束
+
+> [!WARNING]
+> **坐标系契约 (RenderScale)**
+>
+> - 所有 dab 数据进入 GPU 前必须是 **纹理坐标空间**（即乘以 renderScale）
+> - dirtyRect 在逻辑空间计算，但在任何 GPU copy / scissor 操作前必须缩放
+> - 任何使用 `PingPongBuffer.copyRect` 的调用都必须使用纹理坐标
+
+> [!WARNING]
+> **Compute Dispatch 必须复用 encoder**
+>
+> - copyRect 和 dispatch 必须在同一 encoder 录制
+> - 否则无法保证执行顺序
+> - 不能在 dispatch 内部新建 encoder + submit
+
+---
+
 ## WGSL Shader (当前实现)
 
 ```wgsl
@@ -101,10 +119,12 @@ struct DabData {
 @group(0) @binding(3) var output_tex: texture_storage_2d<rgba16float, write>;
 
 // Shared Memory: 缓存 Dab 数据到 Workgroup 共享内存
-const MAX_SHARED_DABS: u32 = 64u;
+// 重要：MAX_SHARED_DABS 必须等于 workgroup_size (8x8 = 64)
+// 这样每个线程加载 1 个 Dab（Coalesced Access）
+const MAX_SHARED_DABS: u32 = 64u;  // == workgroup_size(8,8)
 var<workgroup> shared_dabs: array<DabData, MAX_SHARED_DABS>;
 
-@compute @workgroup_size(8, 8)
+@compute @workgroup_size(8, 8)  // 8x8 = 64 threads, must match MAX_SHARED_DABS
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, ...) {
   // 1. 协作加载 Dab 数据到 Shared Memory
   if (local_idx < dabs_to_load) {
@@ -227,6 +247,8 @@ private getOrCreateBindGroup(
 
 > [!TIP]
 > 由于 Ping-Pong Buffer 只有两种状态 (A→B 和 B→A)，Key 使用 texture label 可确保在整个笔触过程中只创建 2 个 BindGroup，避免每帧创建导致性能抖动。
+>
+> **实施建议**：如果未来需要更健壮的 Key，可在 `PingPongBuffer` 创建时维护 `sourceId/destId` 来替代 label。
 
 ---
 
@@ -290,13 +312,18 @@ fn compute_texture_mask(pixel: vec2<f32>, dab: TextureDabData) -> f32 {
 }
 ```
 
-### 挑战
+### 挑战与解决方向
 
-| 挑战                                    | 解决方向                              |
-| --------------------------------------- | ------------------------------------- |
-| Compute Shader 不支持 `textureSample()` | 使用 `textureLoad()` + 手动双线性插值 |
-| 多种 brush texture                      | 使用 Texture Array 或多次 dispatch    |
-| 变换矩阵计算开销                        | 预计算并传入 Uniform                  |
+| 挑战                                    | 解决方向                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------- |
+| Compute Shader 不支持 `textureSample()` | 先尝试 `textureSampleLevel(..., 0.0)`，只有 unfilterable 格式才需手动插值 |
+| 多种 brush texture                      | 使用 Texture Array 或多次 dispatch                                        |
+| 变换矩阵计算开销                        | 预计算并传入 Uniform                                                      |
+
+> [!NOTE]
+> **采样顺序建议**：`pixel -> dab local -> rotate -> roundness -> aspect -> uv -> texel`
+>
+> 这个顺序必须与 Render Pipeline 保持一致，否则会出现视觉差异。
 
 ### 实施优先级
 
@@ -324,7 +351,17 @@ if (dabs.length >= 256 || bboxPixels > 4_000_000) {
 
 ### Dab 子批次拆分
 
-当 `dab_count > 128` 时，自动拆分为多次 compute（见 `dispatchInBatches`）。
+当 `dab_count > MAX_SHARED_DABS (64)` 时，自动拆分为多次 compute（见 `dispatchInBatches`）。
+
+> [!IMPORTANT]
+> **TS 和 WGSL 常量必须一致**
+>
+> ```typescript
+> const MAX_SHARED_DABS = 64; // WGSL shared memory size
+> const MAX_DABS_PER_BATCH = MAX_SHARED_DABS; // 必须一致
+> ```
+>
+> 如果 batch 大于 shared 上限，必须分批 dispatch。
 
 ---
 
