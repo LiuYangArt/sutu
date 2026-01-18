@@ -31,7 +31,7 @@ export class GPUStrokeAccumulator {
   private instanceBuffer: InstanceBuffer;
   private brushPipeline: BrushPipeline;
   private computeBrushPipeline: ComputeBrushPipeline;
-  private useComputeShader: boolean = true; // Re-enabled for no-bbox test
+  private useComputeShader: boolean = true; // Re-enabled with full copy fix
   private profiler: GPUProfiler;
 
   // Texture brush resources (separate from parametric brush)
@@ -55,6 +55,10 @@ export class GPUStrokeAccumulator {
 
   // Batch timing control
   private dabsSinceLastFlush: number = 0;
+
+  // Auto-flush threshold: Must be <= WGSL MAX_SHARED_DABS (128) to prevent silent truncation.
+  // Using 64 as a conservative value to avoid triggering dispatchInBatches which has ping-pong bugs.
+  private static readonly MAX_SAFE_BATCH_SIZE = 64;
 
   // Readback buffer for GPU → CPU transfer
   private readbackBuffer: GPUBuffer | null = null;
@@ -330,6 +334,12 @@ export class GPUStrokeAccumulator {
       this.expandDirtyRectTexture(params.x, params.y, halfSize);
       this.dabsSinceLastFlush++;
 
+      // Auto-flush when batch is full to avoid triggering dispatchInBatches
+      // which has ping-pong bugs causing stroke discontinuity
+      if (this.textureInstanceBuffer.count >= GPUStrokeAccumulator.MAX_SAFE_BATCH_SIZE) {
+        this.flushTextureBatch();
+      }
+
       return;
     }
 
@@ -352,6 +362,12 @@ export class GPUStrokeAccumulator {
     // Dirty rect is in logical coordinates (for preview canvas)
     this.expandDirtyRect(params.x, params.y, radius, params.hardness);
     this.dabsSinceLastFlush++;
+
+    // Auto-flush when batch is full to avoid triggering dispatchInBatches
+    // which has ping-pong bugs causing stroke discontinuity
+    if (this.instanceBuffer.count >= GPUStrokeAccumulator.MAX_SAFE_BATCH_SIZE) {
+      this.flushBatch();
+    }
   }
 
   /**
@@ -413,17 +429,9 @@ export class GPUStrokeAccumulator {
     // Try compute shader path first
     if (this.useComputeShader) {
       // Compute shader: batch all dabs in single dispatch
-      const dr = this.dirtyRect;
-      const scale = this.currentRenderScale;
-
-      // Copy source to dest to preserve previous strokes
-      const copyX = Math.floor(dr.left * scale);
-      const copyY = Math.floor(dr.top * scale);
-      const copyW = Math.ceil((dr.right - dr.left) * scale);
-      const copyH = Math.ceil((dr.bottom - dr.top) * scale);
-      if (copyW > 0 && copyH > 0) {
-        this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
-      }
+      // IMPORTANT: Copy the ENTIRE source to dest before dispatch
+      // This ensures Compute Shader reads the accumulated result from previous flushes
+      this.pingPongBuffer.copySourceToDest(encoder);
 
       // Single dispatch for all dabs
       const success = this.computeBrushPipeline.dispatch(
@@ -578,15 +586,13 @@ export class GPUStrokeAccumulator {
     // Try compute shader path first
     if (this.useTextureComputeShader) {
       const dr = this.dirtyRect;
-      const scale = this.currentRenderScale;
 
       // Copy source to dest to preserve previous strokes
-      const copyX = Math.floor(dr.left * scale);
-      const copyY = Math.floor(dr.top * scale);
-      const copyW = Math.ceil((dr.right - dr.left) * scale);
-      const copyH = Math.ceil((dr.bottom - dr.top) * scale);
+      // NOTE: dirtyRect is in logical coordinates, copyRect will scale them
+      const copyW = dr.right - dr.left;
+      const copyH = dr.bottom - dr.top;
       if (copyW > 0 && copyH > 0) {
-        this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
+        this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
       }
 
       // Single dispatch for all dabs

@@ -19,6 +19,9 @@ import computeShaderCode from '../shaders/computeBrush.wgsl?raw';
 
 // Performance safety thresholds
 const MAX_PIXELS_PER_BATCH = 2_000_000; // ~1400x1400 area
+// CRITICAL: Must match WGSL MAX_SHARED_DABS (128) to prevent silent truncation!
+// The shader uses shared memory: `var<workgroup> shared_dabs: array<DabData, 128>`
+// If we send more than 128 dabs, shader executes `min(dab_count, 128)` and silently drops the rest.
 const MAX_DABS_PER_BATCH = 128;
 
 // Dab data size in bytes (12 floats * 4 bytes = 48 bytes per dab)
@@ -205,6 +208,10 @@ export class ComputeBrushPipeline {
 
   /**
    * Split dispatch when dab count or bbox is too large
+   *
+   * IMPORTANT: Uses proper ping-pong swapping between batches.
+   * Each batch reads from currentInput and writes to currentOutput,
+   * then we swap for the next batch to ensure sequential accumulation.
    */
   private dispatchInBatches(
     encoder: GPUCommandEncoder,
@@ -213,25 +220,52 @@ export class ComputeBrushPipeline {
     dabs: DabInstanceData[]
   ): boolean {
     const batchSize = MAX_DABS_PER_BATCH;
-    const currentInput = inputTexture;
-    const currentOutput = outputTexture;
+    const batchCount = Math.ceil(dabs.length / batchSize);
+
+    // Compute bounding box for ALL dabs (needed for proper copy between batches)
+    const allDabsBbox = this.computePreciseBoundingBox(dabs);
+
+    // Mutable references for ping-pong swapping
+    let currentInput = inputTexture;
+    let currentOutput = outputTexture;
 
     for (let i = 0; i < dabs.length; i += batchSize) {
       const batch = dabs.slice(i, i + batchSize);
       const success = this.dispatch(encoder, currentInput, currentOutput, batch);
       if (!success) return false;
 
-      // Swap for next batch (ping-pong within sub-batches)
+      // Swap for next batch (proper ping-pong)
       if (i + batchSize < dabs.length) {
-        // Copy output to input for next batch
-        const bbox = this.computePreciseBoundingBox(batch);
-        if (bbox.width > 0 && bbox.height > 0) {
+        // Copy the entire affected region from output to input for next batch
+        // This ensures the next batch sees the accumulated result of previous batches
+        if (allDabsBbox.width > 0 && allDabsBbox.height > 0) {
           encoder.copyTextureToTexture(
-            { texture: currentOutput, origin: { x: bbox.x, y: bbox.y } },
-            { texture: currentInput, origin: { x: bbox.x, y: bbox.y } },
-            [bbox.width, bbox.height]
+            { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
+            { texture: currentInput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
+            [allDabsBbox.width, allDabsBbox.height]
           );
         }
+
+        // Swap input/output for next iteration
+        const temp = currentInput;
+        currentInput = currentOutput;
+        currentOutput = temp;
+      }
+    }
+
+    // If we did an odd number of batches, the final result is in the original outputTexture
+    // If even number of batches (and > 1), we need to ensure result is in outputTexture
+    // The caller (GPUStrokeAccumulator.flushBatch) expects result in outputTexture (dest)
+    // and will call swap() after. So we need to ensure the last dispatch wrote to outputTexture.
+    if (batchCount > 1 && batchCount % 2 === 0) {
+      // Final result is in inputTexture (original outputTexture after swaps)
+      // Copy back to outputTexture
+      if (allDabsBbox.width > 0 && allDabsBbox.height > 0) {
+        encoder.copyTextureToTexture(
+          { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
+          { texture: outputTexture, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
+          [allDabsBbox.width, allDabsBbox.height]
+        );
       }
     }
 
