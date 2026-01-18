@@ -4,6 +4,7 @@ import { Toolbar } from './components/Toolbar';
 import { TabletPanel } from './components/TabletPanel';
 import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
+import { useToolStore } from './stores/tool';
 import { PanelLayer } from './components/UI/PanelLayer';
 import { usePanelStore } from './stores/panel';
 
@@ -45,10 +46,44 @@ function App() {
     }
   }, []);
 
+  // Drawing shortcuts: D (reset colors), X (swap colors), Alt+Backspace (fill)
+  const handleDrawingShortcuts = useCallback((e: KeyboardEvent) => {
+    // Skip if focus is on input elements
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+
+    const key = e.key.toLowerCase();
+
+    // D: Reset colors to default (black foreground, white background)
+    if (key === 'd' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      useToolStore.getState().resetColors();
+      return;
+    }
+
+    // X: Swap foreground and background colors
+    if (key === 'x' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      useToolStore.getState().swapColors();
+      return;
+    }
+
+    // Alt+Backspace: Fill active layer with foreground color
+    if (e.key === 'Backspace' && e.altKey && !e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      const brushColor = useToolStore.getState().brushColor;
+      window.__canvasFillLayer?.(brushColor);
+      return;
+    }
+  }, []);
+
   useEffect(() => {
     window.addEventListener('keydown', handleDebugShortcut);
-    return () => window.removeEventListener('keydown', handleDebugShortcut);
-  }, [handleDebugShortcut]);
+    window.addEventListener('keydown', handleDrawingShortcuts);
+    return () => {
+      window.removeEventListener('keydown', handleDebugShortcut);
+      window.removeEventListener('keydown', handleDrawingShortcuts);
+    };
+  }, [handleDebugShortcut, handleDrawingShortcuts]);
 
   // Get canvas ref for debug panel
   const getCanvasElement = useCallback((): HTMLCanvasElement | null => {

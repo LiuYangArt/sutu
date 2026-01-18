@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo } from 'react';
+import { useState, useEffect, useCallback, memo, useRef } from 'react';
 import { Eye, EyeOff, Plus, Trash2, Lock, Unlock, GripVertical, Eraser, Copy } from 'lucide-react';
 import { useDocumentStore, BlendMode } from '@/stores/document';
 import './LayerPanel.css';
@@ -341,6 +341,9 @@ const LayerItem = memo(function LayerItem({
   onDragLeave,
   onDragEnd,
 }: LayerItemProps) {
+  // Track if drag started from handle
+  const dragFromHandleRef = useRef(false);
+
   return (
     <div
       className={`layer-item ${isActive ? 'active' : ''} ${
@@ -348,7 +351,19 @@ const LayerItem = memo(function LayerItem({
       } ${isDropTarget ? 'drop-target' : ''}`}
       data-testid="layer-item"
       draggable
-      onDragStart={(e) => onDragStart(e, layer.id)}
+      onMouseDown={(e) => {
+        // Record if mousedown happened on the drag handle
+        const target = e.target as HTMLElement;
+        dragFromHandleRef.current = !!target.closest('.drag-handle');
+      }}
+      onDragStart={(e) => {
+        // Only allow drag if mousedown was on the handle
+        if (!dragFromHandleRef.current) {
+          e.preventDefault();
+          return;
+        }
+        onDragStart(e, layer.id);
+      }}
       onDragOver={(e) => onDragOver(e, layer.id)}
       onDragLeave={onDragLeave}
       onDrop={(e) => onDrop(e, layer.id)}
@@ -356,7 +371,7 @@ const LayerItem = memo(function LayerItem({
       onClick={() => onActivate(layer.id)}
       onContextMenu={(e) => onContextMenu(e, layer.id)}
     >
-      <div className="drag-handle" draggable={false}>
+      <div className="drag-handle">
         <GripVertical size={14} />
       </div>
 

@@ -70,6 +70,71 @@
   flex-shrink: 0; /* Keep inputs at bottom */
 }
 
+/* Foreground/Background Color Swatches */
+.color-swatches {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.color-swatch {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: box-shadow 0.1s ease;
+}
+
+.color-swatch:hover {
+  box-shadow: 0 0 0 1px var(--text-secondary);
+}
+
+.color-swatch.foreground {
+  top: 0;
+  left: 0;
+  z-index: 2;
+  border: 2px solid var(--text-primary);
+}
+
+.color-swatch.background {
+  bottom: 0;
+  right: 0;
+  z-index: 1;
+}
+
+/* Color action buttons */
+.color-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.color-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.color-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.color-action-btn:focus {
+  outline: none;
+}
+
 .color-preview {
   width: 24px;
   height: 24px;

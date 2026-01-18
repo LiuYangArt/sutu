@@ -46,6 +46,9 @@ export function useCursor({
     !spacePressed &&
     !isPanning;
 
+  // Should use hardware cursor for eyedropper
+  const shouldUseEyedropperCursor = currentTool === 'eyedropper' && !spacePressed && !isPanning;
+
   // Generate SVG cursor URL synchronously using useMemo
   const hardwareCursorStyle = useMemo(() => {
     if (!shouldUseHardwareCursor) {
@@ -82,6 +85,30 @@ export function useCursor({
     const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
     return `url("${cursorUrl}") ${center} ${center}, crosshair`;
   }, [shouldUseHardwareCursor, screenBrushSize, showCrosshair]);
+
+  // Generate eyedropper cursor SVG
+  const eyedropperCursorStyle = useMemo(() => {
+    if (!shouldUseEyedropperCursor) {
+      return '';
+    }
+
+    const size = 24;
+    // Lucide Pipette icon path
+    const svg = `
+      <svg width="${size}" height="${size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none">
+        <path d="m2 22 1-1h3l9-9" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="m2 22 1-1h3l9-9" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M3 21v-3l9-9" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M3 21v-3l9-9" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" fill="white" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    `;
+
+    const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
+    // Hotspot at the pipette tip (bottom-left corner)
+    return `url("${cursorUrl}") 2 22, crosshair`;
+  }, [shouldUseEyedropperCursor]);
 
   // Handle native pointer events for DOM cursor (zero-lag update)
   useEffect(() => {
@@ -124,6 +151,8 @@ export function useCursor({
   let cursorStyle = TOOL_CURSORS[currentTool];
   if (spacePressed || isPanning) {
     cursorStyle = 'grab';
+  } else if (shouldUseEyedropperCursor && eyedropperCursorStyle) {
+    cursorStyle = eyedropperCursorStyle;
   } else if (shouldUseHardwareCursor && hardwareCursorStyle) {
     cursorStyle = hardwareCursorStyle;
   } else if (showCrosshair && (currentTool === 'brush' || currentTool === 'eraser')) {

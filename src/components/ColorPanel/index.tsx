@@ -3,10 +3,11 @@ import { useToolStore } from '@/stores/tool';
 import { useState, useEffect, useCallback } from 'react';
 import { hexToHsva, hsvaToHex, normalizeHex } from '@/utils/colorUtils';
 import { VerticalHueSlider } from './VerticalHueSlider';
+import { ArrowLeftRight, RotateCcw } from 'lucide-react';
 import './ColorPanel.css';
 
 export function ColorPanel() {
-  const { brushColor, setBrushColor } = useToolStore();
+  const { brushColor, backgroundColor, setBrushColor, swapColors, resetColors } = useToolStore();
 
   // Use HSVA locally to control Saturation and Hue separately
   const [hsva, setHsva] = useState(() => hexToHsva(brushColor));
@@ -76,7 +77,28 @@ export function ColorPanel() {
         </div>
 
         <div className="color-inputs">
-          <div className="color-preview" style={{ backgroundColor: brushColor }} />
+          {/* Foreground/Background Color Swatches */}
+          <div className="color-swatches">
+            <div
+              className="color-swatch foreground"
+              style={{ backgroundColor: brushColor }}
+              title="Foreground Color"
+            />
+            <div
+              className="color-swatch background"
+              style={{ backgroundColor: backgroundColor }}
+              onClick={swapColors}
+              title="Background Color (Click to swap)"
+            />
+          </div>
+          <div className="color-actions">
+            <button className="color-action-btn" onClick={swapColors} title="Swap Colors (X)">
+              <ArrowLeftRight size={12} />
+            </button>
+            <button className="color-action-btn" onClick={resetColors} title="Reset Colors (D)">
+              <RotateCcw size={12} />
+            </button>
+          </div>
           <div className="hex-input-wrapper">
             <span className="hex-prefix">#</span>
             <input

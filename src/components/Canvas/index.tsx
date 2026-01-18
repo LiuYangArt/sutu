@@ -23,6 +23,7 @@ declare global {
       onPointDropped: () => void;
       onStrokeEnd: () => void;
     };
+    __canvasFillLayer?: (color: string) => void;
   }
 }
 
@@ -243,6 +244,45 @@ export function Canvas() {
     pushStroke(layerId, imageData);
     beforeImageRef.current = null;
   }, [pushStroke]);
+
+  // Fill active layer with a color (Alt+Backspace shortcut)
+  const fillActiveLayer = useCallback(
+    (color: string) => {
+      const renderer = layerRendererRef.current;
+      if (!renderer || !activeLayerId) return;
+
+      // Check if layer is locked
+      const layerState = layers.find((l) => l.id === activeLayerId);
+      if (!layerState || layerState.locked) return;
+
+      const layer = renderer.getLayer(activeLayerId);
+      if (!layer) return;
+
+      // Capture before image for undo
+      const beforeImage = renderer.getLayerImageData(activeLayerId);
+      if (!beforeImage) return;
+
+      // Fill the layer
+      layer.ctx.fillStyle = color;
+      layer.ctx.fillRect(0, 0, width, height);
+
+      // Save to history
+      pushStroke(activeLayerId, beforeImage);
+
+      // Update thumbnail and re-render
+      updateLayerThumbnail(activeLayerId, layer.canvas.toDataURL('image/png', 0.5));
+      compositeAndRender();
+    },
+    [activeLayerId, layers, width, height, pushStroke, updateLayerThumbnail, compositeAndRender]
+  );
+
+  // Expose fillActiveLayer to window for keyboard shortcut
+  useEffect(() => {
+    window.__canvasFillLayer = fillActiveLayer;
+    return () => {
+      delete window.__canvasFillLayer;
+    };
+  }, [fillActiveLayer]);
 
   // Update layer thumbnail
   const updateThumbnail = useCallback(
