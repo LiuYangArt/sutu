@@ -702,9 +702,6 @@ export function Canvas() {
       // Batch process all queued points (with soft limit)
       const queue = inputQueueRef.current;
       if (queue.length > 0) {
-        // DEBUG: Log queue state at start of frame
-        console.log('[RAF Loop] Frame start, queue length:', queue.length);
-
         // Visual Lag: measure distance from last queued point (newest input)
         // to last rendered point (before this batch)
         const lastQueuedPoint = queue[queue.length - 1]!;
@@ -718,17 +715,13 @@ export function Canvas() {
         // Drain and process points
         for (let i = 0; i < count; i++) {
           const p = queue[i]!;
-          console.log('[RAF Loop] Processing point', i, 'of', count);
           processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
         }
 
         // Clear processed points from queue
         inputQueueRef.current = count === queue.length ? [] : queue.slice(count);
 
-        // DEBUG: Log before/after flush
-        console.log('[RAF Loop] Before flushPending');
         flushPending();
-        console.log('[RAF Loop] After flushPending');
 
         needsRenderRef.current = true;
       }

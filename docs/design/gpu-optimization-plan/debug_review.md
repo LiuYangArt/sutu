@@ -1,88 +1,159 @@
-太棒了！恭喜你解决问题。根据你提供的 `gpu-compute-shader-spacing-issue.md`（特别是 Phase 10）的最终结论，**原本的 `gpu-batch-rendering-compute.md` (Revised v2) 设计方案在架构上其实是非常正确的**，但需要根据调试过程中的教训进行一些**关键性的补充和修正**。
+这份 **Revised v3** 文档写得非常出色。它不仅纠正了架构方向，更重要的是它**如实地记录了“为什么这样做”**（Why），而不仅仅是“怎么做”（How）。这对于后续维护和接手 Texture Brush 开发至关重要。
 
-调试过程中的曲折（特别是 Phase 8 和 9 认为 Compute Shader 有竞争问题）其实是因为走入了“试图用 Compute Shader 模拟 Render Pipeline（画一次->存一次->再画一次）”的误区。
-
-**Phase 10 的成功证明了：** 只要在 Shader 内部循环处理所有 Dab，利用寄存器进行累积（Local Accumulation），就可以完美避免并行写入的竞争问题。
-
-以下是建议对原设计文档做的 **4 点关键调整**，使其成为最终版：
-
-### 1. 明确 "Local Accumulation" (本地累积) 原理
-
-原文档虽然写了 Shader 代码，但没有强调**为什么**这样做能避免 Race Condition。需要在文档中增加一段原理解释，防止未来维护者又试图把循环拆到 CPU 端。
-
-**建议修改：**
-在“核心策略”或“架构设计”部分，增加以下说明：
-
-> **核心原理修正：本地寄存器累积 (In-Register Accumulation)**
->
-> 即使 GPU 是并行执行的，但对于**同一个像素**来说，它是在一个独立的线程中运行的。
->
-> - **错误做法**：在 JS 端循环 dispatch。这会导致频繁的显存读写依赖，引发同步问题（Phase 5-9 的教训）。
-> - **正确做法**：在 Shader 内部循环。线程读取一次 `input_tex`，在本地变量（寄存器）中循环应用所有 Dab 的混合算法，最后只写入一次 `output_tex`。这保证了混合顺序的绝对正确，且无需担心线程间竞争。
-
-### 2. 更新 `flushBatch` 的伪代码
-
-原文档中的 `flushBatch` 逻辑还保留了 `flushBatchLegacy` 的回退判断，且伪代码不够具体。需要根据 Phase 10 修正为“一次性提交”。
-
-**建议修改：**
-
-```typescript
-// 修改 GPUStrokeAccumulator.ts 中的 flushBatch 逻辑
-
-private flushBatch(): void {
-  // 1. 获取所有数据
-  const dabs = this.instanceBuffer.getDabsData();
-  const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();
-
-  // 2. Compute Shader 路径 (Primary)
-  if (this.useComputeShader && this.computePipeline) {
-     // 关键修正：必须一次性 dispatch 所有 dabs，绝对不要在 JS 层循环 dispatch
-     const success = this.computePipeline.dispatch(
-       this.pingPongBuffer.source,
-       this.pingPongBuffer.dest,
-       dabs // 传入整个数组
-     );
-
-     if (success) {
-       this.pingPongBuffer.swap();
-       return; // 成功则退出
-     }
-  }
-
-  // 3. Fallback 路径 (Render Pipeline)
-  this.flushBatchLegacy(dabs, gpuBatchBuffer);
-}
-```
-
-### 3. 强调 BindGroup 缓存策略（调试中的教训）
-
-在调试文档中你提到了 BindGroup label 和缓存的问题。原设计文档里已经有了 `cachedBindGroups`，但建议加强这一块的描述，明确 Key 的生成策略，避免 ping-pong 交换时导致的资源重新创建。
-
-**建议补充：**
-
-> **BindGroup 管理策略**
-> 由于 Ping-Pong Buffer 只有两种状态 (A->B 和 B->A)，`getOrCreateBindGroup` 必须使用稳定的 Key（例如 `source.id + "_" + dest.id`），确保在整个笔触过程中只创建 2 个 BindGroup，避免每帧创建导致性能抖动。
-
-### 4. 移除或更新“风险点”中的“并行竞争”描述
-
-Phase 8 中你曾担心并行竞争导致需要 Barrier。现在证明通过 Shader 内循环已经解决了这个问题。
-
-**建议修改：**
-将“风险点”中的相关担忧移除，改为：
-
-> **关于混合顺序**
-> 由于采用单次 Dispatch + Shader 内循环，像素内的混合顺序完全由 `dabs` 数组的顺序决定，这与 CPU 逻辑完全一致。无需复杂的 Barrier 或原子操作。
+现在的设计方案在逻辑上已经**闭环**，且经过了实战验证。我只有 **3 个微小的建议**，主要是针对“阶段二（Texture Brush）”的规划和文档细节的完善，你可以根据情况选择性采纳。
 
 ---
 
-### 总结
+### 1. 关于 Texture Brush 的采样方式 (技术修正)
 
-你的**代码实现（Phase 10）**已经是正确的了。
+在文档的“挑战”部分，你提到：
 
-**原来的设计文档只需要做减法和定性：**
+> _Compute Shader 不支持 `textureSample()` -> 使用 `textureLoad()` + 手动双线性插值_
 
-1.  **肯定** Shader 内循环方案（Batch Processing）。
-2.  **否定** 外部循环方案（Serial Dispatching）。
-3.  **确认** 这种方式在逻辑上等同于 CPU 的顺序执行。
+**这一点其实可以更乐观一些：**
+WebGPU 的 Compute Shader **是支持** `textureSampleLevel` (显式 LOD 采样) 的，通常也支持 `textureSample` (自动 LOD，虽然在 Compute 中通常等同于 LOD 0)。
 
-只要把这几点更新进去，这份设计文档就是一份非常高质量的 GPU 架构方案了。再次恭喜！
+- **现状**：你的 `brush_texture` (笔刷笔头纹理) 通常是只读的、标准的 `rgba8unorm` 或 `rgba16float`。只要在创建 Texture 和 Sampler 时标记了 `TextureUsage.TEXTURE_BINDING` 和 `SamplerBindingType.Filtering`，你是可以直接在 Compute Shader 里用硬件采样器的。
+- **建议**：在阶段二实施时，先尝试直接用 `textureSampleLevel(brush_texture, brush_sampler, uv, 0.0)`。
+- **好处**：硬件插值比手写双线性插值快得多，且代码更少。只有当笔头纹理必须是 `float32` (unfilterable) 时，才需要手写插值。
+
+### 2. 关于 Workgroup Size 与 Shared Memory 的对应关系 (文档注释)
+
+在 WGSL 代码段中：
+
+```wgsl
+const MAX_SHARED_DABS: u32 = 64u;
+// ...
+@compute @workgroup_size(8, 8) // 8x8 = 64 threads
+```
+
+**建议**：在文档或代码注释中明确指出这两个数字的**强关联性**。
+
+- **逻辑**：正是因为 Workgroup 有 64 个线程，所以我们把 Shared Memory 设为 64，这样刚好可以**让每个线程负责加载 1 个 Dab 数据**到共享内存（Coalesced Access），这是非常高效的并行加载模式。明确这一点能防止未来有人随意修改 Workgroup Size 而忘记调整加载逻辑。
+
+### 3. BindGroup Key 的安全性 (防御性编程)
+
+在 TypeScript 代码段中：
+
+```typescript
+const key = `${inputTexture.label}_${outputTexture.label}`;
+```
+
+**建议**：这在当前是完美的。但为了防止未来某天创建 Texture 时忘记加 Label 或者 Label 重复（例如都叫 "temp"），可以在 `PingPongBuffer` 类中给两个纹理分配唯一的 `readonly id: number`，用 ID 做 Key 会更稳健。
+
+- _当前文档不需要改，只是实施时的代码细节。_
+
+---
+
+### 结论
+
+**这份文档不需要再做大的调整了。** 它已经是一个**Production-Ready** 的架构文档。
+
+它完美地体现了：
+
+1.  **Problem**: JS 侧循环导致的竞争和开销。
+2.  **Solution**: Compute Shader 内循环 + 寄存器累积。
+3.  **Proof**: 调试过程的教训（Local Accumulation）。
+
+你可以放心地将此文档归档，并按照此蓝图推进后续的 Texture Brush 开发。祝贺你攻克了这个复杂的 GPU 并行渲染难题！
+
+---
+
+整体上 **v3 文档已经非常成熟**，结构清晰、原则正确，而且把 Phase 10 的关键教训写进去了。
+如果只看“是否需要再改设计方案”，我的判断是：
+
+✅ **核心架构无需调整（已正确）**
+✅ **但仍有 5 个细节建议补强，否则未来容易踩坑**
+
+下面给你“仅需微调”的建议（不会动核心方案），按重要性排序：
+
+---
+
+# ✅ 建议 1：明确 “RenderScale 坐标系契约”
+
+你已经在 `flushBatch` 写了 dirtyRect scale，但文档里“坐标契约”没有明确约束，容易被未来改动破坏。
+
+**建议新增小节：**
+
+> **坐标契约（必须写清楚）**
+>
+> - 所有 dab 数据进入 GPU 前必须是 **纹理坐标空间**（即乘以 renderScale）。
+> - dirtyRect 在逻辑空间计算，但在任何 GPU copy / scissor 操作前必须缩放。
+> - 任何使用 `PingPongBuffer.copyRect` 的调用都必须使用纹理坐标。
+
+✅ 防止后续加新渲染路径时又踩 “dirtyRect mismatch”。
+
+---
+
+# ✅ 建议 2：ComputeShader dispatch 必须复用 encoder
+
+你现在的 `dispatch()` 版本（文档）是“内部创建 encoder + submit”，
+但你目前真实实现里是 **外部传 encoder**。
+
+**这件事必须在文档写清楚：**
+
+> **重要约束：Compute dispatch 必须复用调用方 encoder**
+>
+> - copyRect 和 dispatch 必须在同一 encoder 录制
+> - 否则无法保证执行顺序
+> - 不能在 dispatch 内部新建 encoder + submit
+
+否则以后有人“优化” dispatch 写法会复现 Phase 10 问题。
+
+---
+
+# ✅ 建议 3：明确 “dab_count 上限与 shared memory 对齐”
+
+你在 WGSL 中 `MAX_SHARED_DABS = 64`，但 TS 里 `MAX_DABS_PER_BATCH = 128`。
+如果你继续这样写，实际是 **128 传入 → shader 只加载 64**，导致逻辑错误。
+
+✅ 必须在文档中写清楚：
+“如果 batch 大于 shared 上限，必须分批 dispatch”，并强制一致：
+
+```ts
+const MAX_SHARED_DABS = 64;
+const MAX_DABS_PER_BATCH = MAX_SHARED_DABS; // 必须一致
+```
+
+---
+
+# ✅ 建议 4：BindGroup 缓存 Key 不应依赖 label
+
+你文档里写的是：
+
+```ts
+const key = `${inputTexture.label}_${outputTexture.label}`;
+```
+
+**这是脆弱设计**：
+label 不是强约束，未来改 label 会导致 cache miss 或 collision。
+
+✅ 建议改为内部 ID：
+
+```ts
+const key = `${inputTexture.__id}_${outputTexture.__id}`;
+```
+
+如果不能给 texture 挂 id，就在 `PingPongBuffer` 创建时维护 `sourceId/destId`。
+
+---
+
+# ✅ 建议 5：Texture Brush Compute 的“采样策略”需要在文档更清晰
+
+你现在只写 “textureLoad + 手动双线性”，但：
+
+- textureLoad 只能整数坐标
+- 需要 **明确 UV → texel 坐标映射**
+- roundness + angle 的变换顺序容易出错
+
+建议补一句：
+
+> **采样顺序建议**：`(pixel -> dab local) -> rotate -> roundness -> aspect -> uv -> texel`
+
+否则未来实现时很容易和 Render Pipeline 不一致。
+
+---
+
+# ✅ 最终结论
+
+你的 v3 文档 **已经可以作为正式方案**，只需要加上这 5 条“边界约束”。

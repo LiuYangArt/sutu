@@ -199,10 +199,6 @@ export function useBrushRenderer({
       // Get dab positions from stamper
       const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
 
-      // DEBUG DIAGNOSTIC: Log how many dabs were generated
-      console.log('[useBrushRenderer.processPoint] Generated', dabs.length, 'dabs from stamper');
-
-      let loopIndex = 0;
       for (const dab of dabs) {
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         const dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
@@ -227,9 +223,7 @@ export function useBrushRenderer({
         };
 
         if (backend === 'gpu' && gpuBufferRef.current) {
-          console.log('[useBrushRenderer] Calling stampDab for dab', loopIndex, 'of', dabs.length);
           gpuBufferRef.current.stampDab(dabParams);
-          loopIndex++;
         } else if (cpuBufferRef.current) {
           const cpuBuffer = cpuBufferRef.current;
           if (cpuBuffer.isUsingRustPath()) {
@@ -252,10 +246,6 @@ export function useBrushRenderer({
           gpuBufferRef.current &&
           benchmarkProfiler.shouldSampleGpu(pointIndex)
         ) {
-          console.log(
-            '[useBrushRenderer] shouldSampleGpu triggered, calling flush. pointIndex:',
-            pointIndex
-          );
           gpuBufferRef.current.flush();
         }
         void benchmarkProfiler.markRenderSubmit(pointIndex);
