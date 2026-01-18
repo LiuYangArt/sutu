@@ -414,15 +414,13 @@ export class GPUStrokeAccumulator {
     if (this.useComputeShader) {
       // Compute shader: batch all dabs in single dispatch
       const dr = this.dirtyRect;
-      const scale = this.currentRenderScale;
 
       // Copy source to dest to preserve previous strokes
-      const copyX = Math.floor(dr.left * scale);
-      const copyY = Math.floor(dr.top * scale);
-      const copyW = Math.ceil((dr.right - dr.left) * scale);
-      const copyH = Math.ceil((dr.bottom - dr.top) * scale);
+      // NOTE: dirtyRect is in logical coordinates, copyRect will scale them
+      const copyW = dr.right - dr.left;
+      const copyH = dr.bottom - dr.top;
       if (copyW > 0 && copyH > 0) {
-        this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
+        this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
       }
 
       // Single dispatch for all dabs
@@ -578,15 +576,13 @@ export class GPUStrokeAccumulator {
     // Try compute shader path first
     if (this.useTextureComputeShader) {
       const dr = this.dirtyRect;
-      const scale = this.currentRenderScale;
 
       // Copy source to dest to preserve previous strokes
-      const copyX = Math.floor(dr.left * scale);
-      const copyY = Math.floor(dr.top * scale);
-      const copyW = Math.ceil((dr.right - dr.left) * scale);
-      const copyH = Math.ceil((dr.bottom - dr.top) * scale);
+      // NOTE: dirtyRect is in logical coordinates, copyRect will scale them
+      const copyW = dr.right - dr.left;
+      const copyH = dr.bottom - dr.top;
       if (copyW > 0 && copyH > 0) {
-        this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
+        this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
       }
 
       // Single dispatch for all dabs
