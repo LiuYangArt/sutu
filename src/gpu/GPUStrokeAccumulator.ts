@@ -428,9 +428,6 @@ export class GPUStrokeAccumulator {
 
     // Try compute shader path first
     if (this.useComputeShader) {
-      // DEBUG: Track dab count per flush
-      console.log(`[flushBatch] Compute: ${dabs.length} dabs, bbox: ${bbox.width}x${bbox.height}`);
-
       // Compute shader: batch all dabs in single dispatch
       // IMPORTANT: Copy the ENTIRE source to dest before dispatch
       // This ensures Compute Shader reads the accumulated result from previous flushes
