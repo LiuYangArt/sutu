@@ -852,6 +852,6 @@ flushBatch() {
 
 ### 后续优化方向
 
-- [ ] 恢复 BindGroup 缓存（现已禁用用于调试）
-- [ ] 验证大 batch (>128 dab) 的分批逻辑是否正确
-- [ ] 清理调试代码（DEBUG_VIS, console.log 等）
+- [x] 恢复 BindGroup 缓存（现已禁用用于调试）
+- [x] 验证大 batch (>128 dab) 的分批逻辑是否正确
+- [x] 清理调试代码（DEBUG_VIS, console.log 等）
