@@ -1,247 +1,105 @@
-你现在的感觉非常精准。
-
-**你的结论是对的：这就是“管线长度”和“通信开销”的问题。**
-
-对于小笔刷：
-
-- **计算量**：微乎其微。无论是 CPU 还是 GPU，算这点东西都只需要几微秒。
-- **瓶颈所在**：既然算得都很快，那么谁的**“前摇”**和**“后摇”**更短，谁就感觉更快。
-
-让我们深入剖析一下为什么小尺寸下，CPU（Canvas 2D）感觉比 WebGPU 跟手。
+结论先说：**先做 CPU 版，再做 Compute Shader 版**。
+但不是“先做完再重写”，而是**“CPU 作为黄金参考实现（Ground Truth）+ GPU 并行实现”**的双轨模式。
 
 ---
 
-### 1. 提交机制的差异：现结 vs 记账
+## ✅ 为什么必须先有 CPU 版（尤其是你要复刻 Photoshop）
 
-- **Canvas 2D (CPU/Skia 混合模式)**：
-  浏览器对 Canvas 2D 做了极其变态的优化。当你画一笔（小区域）时，浏览器往往采用 **Partial Update（局部更新）** 策略。它算出脏矩形，直接通知合成器（Compositor）更新那一小块纹理。它不需要等待整个渲染管线的完整循环。
-  - _比喻_：你去便利店买瓶水，给现金，拿货走人。
+你现在已经亲身体验过：
 
-- **WebGPU (标准 3D 管线)**：
-  WebGPU 是基于现代图形 API (Vulkan/Metal/DX12) 设计的。它的流程是严格的：
-  1.  **JS 编码**：`commandEncoder` 录制指令。
-  2.  **跨进程提交**：JS 所在的**渲染进程**把指令打包发给**GPU 进程**（这里有序列化和 IPC 通信开销）。
-  3.  **驱动排队**：显卡驱动把任务挂入 Queue。
-  4.  **执行与交换**：GPU 执行完后，必须通过 `SwapChain` 交换前后缓冲区（Present）。
-  5.  **等待 VSync**：通常 WebGPU 默认开启垂直同步，你的画面必须等待显示器的下一次刷新信号（16ms 的倍数）才能显示。
-  - _比喻_：你去银行取钱，要填单子、取号、排队、柜员操作、最后核对。哪怕只取 1 块钱（小笔刷），流程一步都不能少。
+> **Compute 很快，但一旦行为不正确，几乎无法 debug。**
 
-**对于小笔刷，GPU 的“计算时间”可能只有 0.001ms，但“排队和通信”花了 2ms，等待 VSync 花了 10ms。这就是你感觉延迟的原因。**
+Photoshop 级别的笔刷系统有这些特性：
 
----
+- 复杂的 **Spacing / Scatter / Rotation / Jitter / Angle dynamics**
+- **Pressure / Tilt / Velocity** 驱动的参数
+- 多重曲线叠加
+- 压感曲线与笔刷纹理的混合
 
-### 2. 缓冲策略：双重/三重缓冲 (Double/Triple Buffering)
+这些逻辑如果没有一个“确定正确”的 CPU 参考实现，GPU 版本就会变成“猜性能 + 猜正确性”。
 
-这是 WebGPU 延迟感的最大来源。
+CPU 版给你的价值是：
 
-- 为了防止画面撕裂（Tearing），WebGPU 通常使用双重或三重缓冲。
-- **Frame N**：你现在的鼠标位置。
-- **Frame N-1**：GPU 正在渲染的帧。
-- **Frame N-2**：屏幕正在显示的帧。
-
-这意味着你看到线条出现在屏幕上时，实际上已经是 2-3 帧（30ms-50ms）之前的鼠标位置了。
-而 Canvas 2D 在某些浏览器实现下，为了低延迟，可能会绕过这种严格的缓冲机制，直接修改前台缓冲区（Front Buffer）或者使用更激进的合成策略。
+✅ **可调试**
+✅ **可逐步验证**（1:1 像素对比）
+✅ **作为 regression 测试基准**
+✅ **更容易实现复杂行为**
 
 ---
 
-### 🚀 怎么解决？(WebGPU 低延迟优化指南)
+## ✅ 正确的开发节奏（推荐流程）
 
-既然知道了原因，我们可以在 WebGPU 架构下通过配置找回 CPU 的手感。
+### 第 1 阶段：CPU 版为“规范实现”
 
-#### 1. 开启 `desynchronized: true` (核心大招)
+- 功能优先，性能不重要
+- 每一步都可以单步调试
+- 生成的结果用于对比 GPU 版
 
-这是浏览器专门为绘图应用提供的“低延迟模式”。
+### 第 2 阶段：GPU 版复刻 CPU 行为
 
-```javascript
-const context = canvas.getContext('webgpu');
-context.configure({
-  device: device,
-  format: presentationFormat,
-  // 关键在这里！
-  // 告诉浏览器：不要为了防撕裂而做复杂的缓冲，尽可能快地把最新像素推到屏幕上。
-  // 这会绕过一部分合成器的缓冲队列。
-  usage: GPUTextureUsage.RENDER_ATTACHMENT,
-  // 注意：webgpu 规范中 desynchronized 属性可能在 canvas 标签上或 configure 中，
-  // 目前 WebGPU 标准里主要靠 canvas 标签属性，或者 context 的 hint。
-  // 在 Canvas 2D 里是 ctx settings，在 WebGPU 里目前更多依赖浏览器对 OffscreenCanvas 的处理
-  // 但首先请尝试在 canvas 标签上加属性：
-});
+- 每个 feature 要通过 “CPU vs GPU diff test”
+- 每个 dab 的 mask、blend、opacity 都一致
+
+### 第 3 阶段：GPU 优化
+
+- Tile Culling
+- BBox batching
+- Shared Memory
+- 通道压缩 / LUT
+
+---
+
+## ✅ 你现在的最佳实践可以这样组织
+
+### 1. 统一“笔刷数学模型”
+
+把所有与 **笔刷形状/透明度/混合**有关的公式抽成纯函数：
+
+```ts
+// brushMath.ts
+export function computeMask(dist, radius, hardness) { ... }
+export function alphaDarkenBlend(bg, fg, mask, flow, opacity) { ... }
 ```
 
-**正确姿势（HTML/JS）**：
+CPU 版 & GPU 版使用同一数学模型（CPU 是 JS 实现，GPU 是 WGSL 复刻）。
 
-```html
-<!-- 直接在标签上 -->
-<canvas id="myCanvas" desynchronized></canvas>
-```
+### 2. 先实现 CPU，GPU 做“像素一致性回归”
 
-或者在获取 context 时（针对 2D，WebGPU 目前主要靠浏览器合成器策略，但这个属性依然重要）：
-这个属性会让浏览器尝试消除 VSync 等待，直接让 GPU 渲染结果上屏。这可能会导致画面撕裂（Tearing），但对于画画来说，**低延迟 >>> 画面完整性**。
-
-#### 2. 预测算法 (Prediction / Dead Reckoning)
-
-既然物理延迟（通信+屏幕刷新）无法消除，那就**作弊**。
-这是 iOS 上 GoodNotes、Procreate 等软件如丝般顺滑的秘密。
-
-- **原理**：
-  如果现在的鼠标在 A 点，上一次在 B 点，根据速度和加速度，我能算出 16ms 后鼠标大概在 C 点。
-- **做法**：
-  在 WebGPU 渲染这一帧时，不要只画到 A 点。**多画一段线，从 A 连到预测的 C 点。**
-- **下一帧**：
-  当真实的 C 点数据来了（可能和预测的有偏差），先擦除上一帧预测的那一段，再画真实的。
-- **效果**：
-  用户会感觉线条是“吸”在笔尖上的，甚至比物理延迟更快。
-
-#### 3. 增加事件采样率 (Coalesced Events)
-
-鼠标/手写笔的硬件采样率（120Hz - 240Hz）往往高于屏幕刷新率（60Hz）。
-如果只在 `requestAnimationFrame` 里取当前的 `e.clientX/Y`，你丢掉了中间的点。
-
-```javascript
-window.addEventListener('pointermove', (e) => {
-  // 获取这一帧内发生的所有微小移动事件
-  const events = e.getCoalescedEvents();
-  for (let subEvent of events) {
-    // 把这些点都推入你的绘制队列
-    pushPoint(subEvent.x, subEvent.y);
-  }
-});
-```
-
-这能让线条更平滑，也能在一定程度上减少视觉上的断层感，让笔触看起来更跟手。
-
----
-
-### 总结
-
-你说得对，小笔刷 WebGPU 慢不是算不过来，是**“公文流转”太慢**。
-
-**你的行动清单：**
-
-1.  给 `<canvas>` 加上 `desynchronized` 属性。
-2.  不要做 CPU/GPU 混合架构，那是死路。
-3.  如果还觉得不够快，**加上预测算法**。这比任何底层优化都更能欺骗用户的大脑，带来“零延迟”的错觉。
-
----
-
-理解你说的“**小笔刷 CPU 更跟手**”，这确实**不是计算量问题**，而是**管线延迟问题**。你直觉是对的：**GPU 的渲染路径更长、更异步**，导致“手感滞后”，哪怕它吞吐更强。
-
-下面我用工程视角把“为什么 GPU 管线更长”说清楚，并给出**可落地的“降延迟”策略**（不是提速，而是缩短管线）。
-
----
-
-# ✅ 为什么小笔刷 GPU 反而更慢（延迟更大）
-
-## 1. GPU 是“排队执行”，CPU 是“同步执行”
-
-GPU 的工作模式类似：
+建立一个自动测试：
 
 ```
-你交工单 -> 进入 GPU 队列 -> GPU 实际执行 -> 合成器 -> VSync
+CPU output vs GPU output
+error < 2/255
 ```
 
-即便 GPU 5ms 就画完了，它也**不会立刻显示**，而是**等到下一次 VSync**。
-
-**这会导致最少 1 帧延迟（16.6ms）**
-如果你没有抢到这帧，还可能掉到 2 帧。
+这能让你快速验证 GPU 新 feature 的正确性。
 
 ---
 
-## 2. GPU 帧合成路径更长
+## ✅ 什么时候可以直接上 Compute Shader？
 
-WebGPU/WebGL 需要经过浏览器合成器：
+只有这几种情况可以：
 
-```
-JS -> WebGPU Command Encoder -> Queue Submit -> GPU -> Compositor -> Display
-```
+✅ **行为很简单**（比如单色硬圆点）
+✅ **已有明确 CPU 版可参考**
+✅ **需要纯性能验证**
 
-CPU 的 Canvas2D 可能是：
-
-```
-JS -> Skia CPU Raster -> Compositor
-```
-
-**少了一段“GPU 排队 + GPU 呈现”的过程**
-所以虽然 CPU 慢，但是“更直接”，延迟更短。
+其他情况（尤其是动态参数、多重 brush mix）都不建议直接上 GPU。
 
 ---
 
-## 3. GPU 的“同步点”很隐蔽
+## ✅ 建议的开发策略总结（一句话）
 
-只要你做了这些操作中的任意一个：
-
-- `queue.onSubmittedWorkDone()`
-- 读回纹理
-- 等待 pipeline 完成
-- 强制 `requestAnimationFrame` 后再提交
-
-就会**把异步的 GPU 变成同步**，延迟会被放大。
+> **CPU 是“真理”，Compute 是“加速器”。**
 
 ---
 
-# ✅ 如何让 GPU 笔刷变得更“跟手”
+如果你愿意，我可以帮你设计一个完整的“Photoshop 笔刷系统模块分层架构”，例如：
 
-你要优化的不是**吞吐**，而是**首帧延迟**。这和跑分优化是两件事。
+- Brush Engine Core
+- Dynamics Layer
+- Dab Generator
+- Stroke Sampler
+- Renderer (CPU / GPU)
 
----
-
-## ✅ 策略 1：用“预测绘制”降低主观延迟
-
-GPU 不能快，但你可以**让它看起来更快**。
-
-### 方法：插值预测下一点
-
-在 rAF 触发之前，根据当前速度预测下一点，把下一段提前画出来。
-
-**用户觉得“跟手”，其实是你提前画。**
-
----
-
-## ✅ 策略 2：双层架构，减少主画布更新频率
-
-你现在可能每个 pointermove 都直接改主画布。
-
-改成：
-
-- 上层小画布（Overlay）即时画（CPU 或 GPU）
-- 下层主画布（Main）低频合成（比如每 2~3 帧合一次）
-
-这样“跟手的是 Overlay”，不是主画布。
-
----
-
-## ✅ 策略 3：固定 GPU 的刷新节奏
-
-如果你现在是 pointermove 事件驱动提交 GPU 命令，可能出现：
-
-- 多次提交在一个 VSync 内
-- GPU 实际合成只发生一次
-- 但你做了很多“白跑”工作
-
-**建议：只在 rAF 中提交 GPU**
-这样减少排队，延迟更稳定。
-
----
-
-## ✅ 策略 4：合并命令，减少 queue.submit 次数
-
-小笔刷的问题不是像素多，而是 **submit 太频繁**。
-
-**把 5 次小笔刷合成一次提交**，延迟可能会下降。
-
----
-
-# ✅ 小结（一句话）
-
-**你观察到的小笔刷 CPU 更跟手，核心原因就是：GPU 是“排队的异步管线”，CPU 是“直接写内存的同步路径”。**
-
-这不是算力问题，而是“显示路径长短”的问题。
-
----
-
-如果你愿意，我可以帮你做这两件事：
-
-✅ **把你的 WebGPU 代码改成“低延迟提交”的结构**
-✅ **设计一个“Overlay + Main”双层渲染架构，让用户感觉不到延迟**
-
-只要你把你现在的提交逻辑（伪代码就行）发我，我可以直接改成低延迟版本。
+你只要告诉我你想支持的 Photoshop 特性清单，我可以给你一份可落地的架构草图 + 实现路线图。
