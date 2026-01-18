@@ -1,6 +1,6 @@
-# GPU 批量渲染优化方案：Compute Shader (Revised v2)
+# GPU 批量渲染优化方案：Compute Shader (Revised v3)
 
-> 基于两轮外部 Review 反馈修订，置信度：极高 (0.8~0.9)
+> 基于调试经验 (Phase 10) 和外部 Review 修订，置信度：极高 (0.9)
 
 ## 背景
 
@@ -22,7 +22,7 @@ P99 Frame: 68ms (目标 <25ms)
 
 ## 改进后的 Compute Shader 方案
 
-### 阶段一：MVP (最小可行性)
+### 阶段一：MVP (最小可行性) ✅ 已完成
 
 **核心策略**：
 
@@ -34,6 +34,16 @@ P99 Frame: 68ms (目标 <25ms)
 优化后流程:
 64 dabs → 计算 bbox → 1 compute dispatch (只处理 bbox 区域)
 ```
+
+> [!IMPORTANT]
+> **核心原理：本地寄存器累积 (In-Register Accumulation)**
+>
+> 即使 GPU 是并行执行的，但对于**同一个像素**来说，它是在一个独立的线程中运行的。
+>
+> - **错误做法**：在 JS 端循环 dispatch。这会导致频繁的显存读写依赖，引发同步问题（调试经验 Phase 5-9）。
+> - **正确做法**：在 Shader 内部循环。线程读取一次 `input_tex`，在本地变量（寄存器）中循环应用所有 Dab 的混合算法，最后只写入一次 `output_tex`。这保证了混合顺序的绝对正确，且无需担心线程间竞争。
+>
+> **关于混合顺序**：由于采用单次 Dispatch + Shader 内循环，像素内的混合顺序完全由 `dabs` 数组的顺序决定，这与 CPU 逻辑完全一致。无需复杂的 Barrier 或原子操作。
 
 ### 架构设计
 
@@ -65,518 +75,256 @@ P99 Frame: 68ms (目标 <25ms)
 
 ---
 
-## WGSL Shader (修订版 v2)
+## WGSL Shader (当前实现)
 
 ```wgsl
-// compute-brush.wgsl
+// computeBrush.wgsl (简化版，完整实现见源码)
 
 struct DabData {
-  center: vec2<f32>,      // Dab 中心位置 (绝对坐标)
-  radius: f32,            // Dab 半径
-  hardness: f32,          // 硬度 0-1
-  color: vec3<f32>,       // RGB 颜色 (0-1, 线性空间)
-  dab_opacity: f32,       // Alpha Darken 上限
-  flow: f32,              // 流量
-  _padding: vec3<f32>,    // 对齐到 48 bytes
-};
-
-struct Uniforms {
-  bbox_offset: vec2<u32>, // Bounding box 左上角偏移
-  bbox_size: vec2<u32>,   // Bounding box 尺寸
-  canvas_size: vec2<u32>, // 画布实际尺寸 (用于边界保护)
-  dab_count: u32,
-  color_blend_mode: u32,  // 0 = linear (默认), 1 = srgb
-};
+  center_x: f32,          // offset 0
+  center_y: f32,          // offset 4
+  radius: f32,            // offset 8
+  hardness: f32,          // offset 12
+  color_r: f32,           // offset 16
+  color_g: f32,           // offset 20
+  color_b: f32,           // offset 24
+  dab_opacity: f32,       // offset 28
+  flow: f32,              // offset 32
+  _padding0: f32,         // offset 36
+  _padding1: f32,         // offset 40
+  _padding2: f32,         // offset 44
+};  // Total: 48 bytes (aligned)
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var<storage, read> dabs: array<DabData>;
-@group(0) @binding(2) var input_tex: texture_2d<f32>;   // 读取源 (Ping)
-@group(0) @binding(3) var output_tex: texture_storage_2d<rgba16float, write>; // 写入目标 (Pong)
+@group(0) @binding(2) var input_tex: texture_2d<f32>;
+@group(0) @binding(3) var output_tex: texture_storage_2d<rgba16float, write>;
 
-// ============================================================================
-// Shared Memory 优化：缓存 Dab 数据到 Workgroup 共享内存
-// ============================================================================
+// Shared Memory: 缓存 Dab 数据到 Workgroup 共享内存
 const MAX_SHARED_DABS: u32 = 64u;
 var<workgroup> shared_dabs: array<DabData, MAX_SHARED_DABS>;
-var<workgroup> shared_dab_count: u32;
 
-// ============================================================================
-// 颜色空间转换 (sRGB <-> Linear)
-// ============================================================================
-fn srgb_to_linear(c: f32) -> f32 {
-  if (c <= 0.04045) {
-    return c / 12.92;
-  }
-  return pow((c + 0.055) / 1.055, 2.4);
-}
-
-fn linear_to_srgb(c: f32) -> f32 {
-  if (c <= 0.0031308) {
-    return c * 12.92;
-  }
-  return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
-}
-
-fn srgb_to_linear_rgb(c: vec3<f32>) -> vec3<f32> {
-  return vec3<f32>(srgb_to_linear(c.r), srgb_to_linear(c.g), srgb_to_linear(c.b));
-}
-
-fn linear_to_srgb_rgb(c: vec3<f32>) -> vec3<f32> {
-  return vec3<f32>(linear_to_srgb(c.r), linear_to_srgb(c.g), linear_to_srgb(c.b));
-}
-
-// ============================================================================
-// Alpha Darken 混合 (与 CPU 版本完全一致)
-// ============================================================================
-fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceiling: f32) -> vec4<f32> {
-  // 早停：已达上限
-  if (dst.a >= ceiling - 0.001) {
-    return dst;
-  }
-
-  let new_alpha = dst.a + (ceiling - dst.a) * src_alpha;
-
-  var new_rgb: vec3<f32>;
-  if (dst.a > 0.001) {
-    new_rgb = dst.rgb + (src_color - dst.rgb) * src_alpha;
-  } else {
-    new_rgb = src_color;
-  }
-
-  return vec4<f32>(new_rgb, new_alpha);
-}
-
-// ============================================================================
-// 软边缘 mask 计算 (与现有 brush.wgsl 一致)
-// ============================================================================
-fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
-  if (dist > radius) {
-    return 0.0;
-  }
-
-  let normalized_dist = dist / radius;
-
-  if (hardness >= 0.99) {
-    return 1.0;
-  }
-
-  // Gaussian falloff
-  let t = (normalized_dist - hardness) / (1.0 - hardness);
-  if (t <= 0.0) {
-    return 1.0;
-  }
-  return exp(-2.5 * t * t);
-}
-
-// ============================================================================
-// Main Compute Entry Point
-// ============================================================================
 @compute @workgroup_size(8, 8)
-fn main(
-  @builtin(global_invocation_id) gid: vec3<u32>,
-  @builtin(local_invocation_id) lid: vec3<u32>,
-  @builtin(local_invocation_index) local_idx: u32
-) {
-  // -------------------------------------------------------------------------
-  // Step 1: 协作加载 Dab 数据到 Shared Memory (减少全局内存访问)
-  // -------------------------------------------------------------------------
-  let dabs_to_load = min(uniforms.dab_count, MAX_SHARED_DABS);
-  if (local_idx == 0u) {
-    shared_dab_count = dabs_to_load;
-  }
-  workgroupBarrier();
-
-  // 每个线程加载一部分 dab (64 threads / workgroup, 64 dabs max)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, ...) {
+  // 1. 协作加载 Dab 数据到 Shared Memory
   if (local_idx < dabs_to_load) {
     shared_dabs[local_idx] = dabs[local_idx];
   }
   workgroupBarrier();
 
-  // -------------------------------------------------------------------------
-  // Step 2: 计算实际像素坐标
-  // -------------------------------------------------------------------------
-  let local_x = gid.x;
-  let local_y = gid.y;
+  // 2. 边界检查
+  if (pixel out of bounds) return;
 
-  // 边界检查 (只处理 bbox 内的像素)
-  if (local_x >= uniforms.bbox_size.x || local_y >= uniforms.bbox_size.y) {
-    return;
-  }
+  // 3. 从 INPUT texture 读取 (一次)
+  var color = textureLoad(input_tex, pixel_coord, 0);
 
-  let pixel_x = uniforms.bbox_offset.x + local_x;
-  let pixel_y = uniforms.bbox_offset.y + local_y;
-
-  // -------------------------------------------------------------------------
-  // Step 3: 全局边界保护 (防止 bbox 计算误差导致越界)
-  // -------------------------------------------------------------------------
-  if (pixel_x >= uniforms.canvas_size.x || pixel_y >= uniforms.canvas_size.y) {
-    return;
-  }
-
-  let pixel = vec2<f32>(f32(pixel_x), f32(pixel_y));
-
-  // -------------------------------------------------------------------------
-  // Step 4: 从 INPUT texture 读取当前像素
-  // -------------------------------------------------------------------------
-  var color = textureLoad(input_tex, vec2<i32>(i32(pixel_x), i32(pixel_y)), 0);
-
-  // -------------------------------------------------------------------------
-  // Step 5: 遍历所有 dab，按顺序混合 (从 shared memory 读取)
-  // -------------------------------------------------------------------------
+  // 4. 遍历所有 dab，在寄存器中累积混合结果
   for (var i = 0u; i < shared_dab_count; i++) {
     let dab = shared_dabs[i];
-
-    // 快速距离检测 (早期剔除)
-    let dist = distance(pixel, dab.center);
-    if (dist > dab.radius * 1.5) { // 1.5x 考虑软边缘扩展
-      continue;
-    }
-
-    // 计算 mask
+    // 快速距离检测 + mask 计算
     let mask = compute_mask(dist, dab.radius, dab.hardness);
-    if (mask < 0.001) {
-      continue;
-    }
-
-    let src_alpha = mask * dab.flow;
-
     // Alpha Darken 混合
-    color = alpha_darken_blend(color, dab.color, src_alpha, dab.dab_opacity);
+    color = alpha_darken_blend(color, dab.color, mask * dab.flow, dab.dab_opacity);
   }
 
-  // -------------------------------------------------------------------------
-  // Step 6: 写入 OUTPUT texture
-  // -------------------------------------------------------------------------
-  textureStore(output_tex, vec2<i32>(i32(pixel_x), i32(pixel_y)), color);
+  // 5. 写入 OUTPUT texture (一次)
+  textureStore(output_tex, pixel_coord, color);
 }
 ```
 
----
-
-## TypeScript 实现 (修订版 v2)
-
-```typescript
-// src/gpu/ComputeBrushPipeline.ts
-
-import type { DabInstanceData, BoundingBox } from './types';
-
-// 性能安全阈值
-const MAX_PIXELS_PER_BATCH = 2_000_000; // 约 1400x1400 区域
-const MAX_DABS_PER_BATCH = 128;
-
-export class ComputeBrushPipeline {
-  private device: GPUDevice;
-  private pipeline: GPUComputePipeline;
-  private bindGroupLayout: GPUBindGroupLayout;
-  private uniformBuffer: GPUBuffer;
-  private dabBuffer: GPUBuffer;
-
-  // BindGroup 缓存 (减少 GC 压力)
-  private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
-
-  private maxDabs = 256;
-  private canvasWidth: number = 0;
-  private canvasHeight: number = 0;
-
-  constructor(device: GPUDevice) {
-    this.device = device;
-    this.initPipeline();
-  }
-
-  private initPipeline() {
-    // Uniform buffer: bbox_offset(8) + bbox_size(8) + canvas_size(8) + dab_count(4) + blend_mode(4) = 32 bytes
-    this.uniformBuffer = this.device.createBuffer({
-      size: 32,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    // Dab storage buffer (48 bytes per dab)
-    this.dabBuffer = this.device.createBuffer({
-      size: this.maxDabs * 48,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-
-    // Bind group layout
-    this.bindGroupLayout = this.device.createBindGroupLayout({
-      label: 'Compute Brush Bind Group Layout',
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
-        {
-          binding: 3,
-          visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba16float' },
-        },
-      ],
-    });
-
-    this.pipeline = this.device.createComputePipeline({
-      label: 'Compute Brush Pipeline',
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] }),
-      compute: {
-        module: this.device.createShaderModule({ code: computeShaderCode }),
-        entryPoint: 'main',
-      },
-    });
-  }
-
-  /**
-   * 更新画布尺寸 (用于边界保护)
-   */
-  updateCanvasSize(width: number, height: number): void {
-    this.canvasWidth = width;
-    this.canvasHeight = height;
-    // 清除缓存的 BindGroup (纹理尺寸可能变化)
-    this.cachedBindGroups.clear();
-  }
-
-  /**
-   * 执行批量渲染
-   */
-  dispatch(inputTexture: GPUTexture, outputTexture: GPUTexture, dabs: DabInstanceData[]): void {
-    if (dabs.length === 0) return;
-
-    // 1. 检查是否需要分批 (防止 dab 过多导致循环过长)
-    if (dabs.length > MAX_DABS_PER_BATCH) {
-      this.dispatchInBatches(inputTexture, outputTexture, dabs);
-      return;
-    }
-
-    // 2. 计算精确 bounding box
-    const bbox = this.computePreciseBoundingBox(dabs);
-    if (bbox.width <= 0 || bbox.height <= 0) return;
-
-    // 3. 检查 bbox 像素上限 (防止对角线问题导致全屏 dispatch)
-    const bboxPixels = bbox.width * bbox.height;
-    if (bboxPixels > MAX_PIXELS_PER_BATCH) {
-      console.warn(`[ComputeBrush] BBox too large: ${bbox.width}x${bbox.height}, splitting batch`);
-      this.dispatchInBatches(inputTexture, outputTexture, dabs);
-      return;
-    }
-
-    // 4. 上传 uniforms
-    const uniformData = new Uint32Array([
-      bbox.x, bbox.y,                       // bbox_offset
-      bbox.width, bbox.height,              // bbox_size
-      this.canvasWidth, this.canvasHeight,  // canvas_size (边界保护)
-      dabs.length,                          // dab_count
-      0,                                    // color_blend_mode (0 = linear)
-    ]);
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
-
-    // 5. 上传 dab 数据
-    const dabData = this.packDabData(dabs);
-    this.device.queue.writeBuffer(this.dabBuffer, 0, dabData);
-
-    // 6. 获取或创建 BindGroup (缓存以减少 GC)
-    const bindGroup = this.getOrCreateBindGroup(inputTexture, outputTexture);
-
-    // 7. Dispatch
-    const encoder = this.device.createCommandEncoder({ label: 'Compute Brush Encoder' });
-    const pass = encoder.beginComputePass({ label: 'Compute Brush Pass' });
-
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bindGroup);
-
-    const workgroupsX = Math.ceil(bbox.width / 8);
-    const workgroupsY = Math.ceil(bbox.height / 8);
-    pass.dispatchWorkgroups(workgroupsX, workgroupsY);
-
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
-  }
-
-  /**
-   * 分批 dispatch (当 dab 数量过多或 bbox 过大时)
-   */
-  private dispatchInBatches(
-    inputTexture: GPUTexture,
-    outputTexture: GPUTexture,
-    dabs: DabInstanceData[]
-  ): void {
-    const batchSize = MAX_DABS_PER_BATCH;
-    for (let i = 0; i < dabs.length; i += batchSize) {
-      const batch = dabs.slice(i, i + batchSize);
-      this.dispatch(inputTexture, outputTexture, batch);
-    }
-  }
-
-  /**
-   * 获取或创建 BindGroup (缓存策略)
-   */
-  private getOrCreateBindGroup(inputTexture: GPUTexture, outputTexture: GPUTexture): GPUBindGroup {
-    // 使用 texture label 作为缓存 key (Ping-Pong 只有两种状态)
-    const key = `${inputTexture.label}_${outputTexture.label}`;
-
-    let bindGroup = this.cachedBindGroups.get(key);
-    if (!bindGroup) {
-      bindGroup = this.device.createBindGroup({
-        label: `Compute Brush BindGroup (${key})`,
-        layout: this.bindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.uniformBuffer } },
-          { binding: 1, resource: { buffer: this.dabBuffer } },
-          { binding: 2, resource: inputTexture.createView() },
-          { binding: 3, resource: outputTexture.createView() },
-        ],
-      });
-      this.cachedBindGroups.set(key, bindGroup);
-    }
-
-    return bindGroup;
-  }
-
-  /**
-   * 计算精确 bounding box (考虑软边缘扩展)
-   */
-  private computePreciseBoundingBox(dabs: DabInstanceData[]): BoundingBox {
-    let minX = Infinity, minY = Infinity;
-    let maxX = -Infinity, maxY = -Infinity;
-
-    for (const dab of dabs) {
-      // 软边缘扩展系数 (与 calculateEffectiveRadius 一致)
-      const expansion = dab.hardness >= 0.99 ? 1.0 : Math.max(1.5, 1.0 + (1.0 - dab.hardness) * 2.5);
-      const effectiveRadius = dab.size * expansion;
-
-      minX = Math.min(minX, dab.x - effectiveRadius);
-      minY = Math.min(minY, dab.y - effectiveRadius);
-      maxX = Math.max(maxX, dab.x + effectiveRadius);
-      maxY = Math.max(maxY, dab.y + effectiveRadius);
-    }
-
-    // Clamp to canvas bounds
-    const margin = 2;
-    return {
-      x: Math.max(0, Math.floor(minX) - margin),
-      y: Math.max(0, Math.floor(minY) - margin),
-      width: Math.min(this.canvasWidth, Math.ceil(maxX) + margin) - Math.max(0, Math.floor(minX) - margin),
-      height: Math.min(this.canvasHeight, Math.ceil(maxY) + margin) - Math.max(0, Math.floor(minY) - margin),
-    };
-  }
-
-  /**
-   * 打包 Dab 数据 (48 bytes per dab, 对齐到 16 bytes)
-   */
-  private packDabData(dabs: DabInstanceData[]): Float32Array {
-    const data = new Float32Array(dabs.length * 12); // 48 bytes = 12 floats
-
-    for (let i = 0; i < dabs.length; i++) {
-      const dab = dabs[i];
-      const offset = i * 12;
-      data[offset + 0] = dab.x;
-      data[offset + 1] = dab.y;
-      data[offset + 2] = dab.size;
-      data[offset + 3] = dab.hardness;
-      data[offset + 4] = dab.r;
-      data[offset + 5] = dab.g;
-      data[offset + 6] = dab.b;
-      data[offset + 7] = dab.dabOpacity;
-      data[offset + 8] = dab.flow;
-      // padding [9-11] = 0
-    }
-
-    return data;
-  }
-
-  /**
-   * 清理缓存
-   */
-  clearCache(): void {
-    this.cachedBindGroups.clear();
-  }
-
-  /**
-   * 释放 GPU 资源
-   */
-  destroy(): void {
-    this.uniformBuffer.destroy();
-    this.dabBuffer.destroy();
-    this.cachedBindGroups.clear();
-  }
-}
-```
+> [!NOTE]
+> **Struct 对齐教训**：WGSL 中 `vec3<f32>` 会导致 16-byte 对齐，使用独立 f32 字段避免 TS/WGSL 数据不匹配。
 
 ---
 
-## 集成到 GPUStrokeAccumulator
+## TypeScript 集成
+
+### flushBatch 核心逻辑
 
 ```typescript
-// 修改 GPUStrokeAccumulator
+// GPUStrokeAccumulator.ts flushBatch()
 
-// 新增成员
-private computePipeline: ComputeBrushPipeline | null = null;
-private useComputeShader: boolean = true; // Feature flag
-
-// 在 constructor 中初始化
-if (this.checkComputeShaderSupport(device)) {
-  this.computePipeline = new ComputeBrushPipeline(device);
-  this.computePipeline.updateCanvasSize(width, height);
-} else {
-  console.warn('[GPUStrokeAccumulator] Compute shader not supported, using render pipeline fallback');
-  this.useComputeShader = false;
-}
-
-// 修改 flushBatch()
 private flushBatch(): void {
   if (this.instanceBuffer.count === 0) return;
 
+  // 1. 获取所有数据
   const dabs = this.instanceBuffer.getDabsData();
   const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();
 
-  if (this.useComputeShader && this.computePipeline) {
-    // ✅ 新路径：Compute Shader
-    this.computePipeline.dispatch(
+  const encoder = this.device.createCommandEncoder();
+
+  // 2. 计算缩放后的 dirtyRect (坐标系一致)
+  const dr = this.dirtyRect;
+  const scale = this.currentRenderScale;
+  const copyX = Math.floor(dr.left * scale);
+  const copyY = Math.floor(dr.top * scale);
+  const copyW = Math.ceil((dr.right - dr.left) * scale);
+  const copyH = Math.ceil((dr.bottom - dr.top) * scale);
+
+  // 3. 复制前一帧结果到 dest (为 compute shader 准备)
+  if (copyW > 0 && copyH > 0) {
+    this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
+  }
+
+  // 4. Compute Shader 路径 (Primary)
+  if (this.useComputeShader && this.computeBrushPipeline) {
+    // 关键：必须一次性 dispatch 所有 dabs，绝对不要在 JS 层循环 dispatch
+    const success = this.computeBrushPipeline.dispatch(
+      encoder,
       this.pingPongBuffer.source,
       this.pingPongBuffer.dest,
-      dabs
+      dabs // 传入整个数组
     );
-    this.pingPongBuffer.swap();
-  } else {
-    // ⚠️ 回退路径：现有 per-dab Render Pipeline
-    this.flushBatchLegacy(dabs, gpuBatchBuffer);
+
+    if (success) {
+      this.pingPongBuffer.swap();
+      this.device.queue.submit([encoder.finish()]);
+      this.triggerPreviewUpdate();
+      return;
+    }
   }
 
-  // 触发 preview 更新
-  this.previewNeedsUpdate = true;
-  if (!this.previewUpdatePending) {
-    void this.updatePreview();
-  }
-}
-
-// 特性检测
-private checkComputeShaderSupport(device: GPUDevice): boolean {
-  // 检查必要的特性
-  // rgba16float 作为 storage texture 需要特定支持
-  // 这里保守检查，实际可能需要更细致的特性检测
-  return true; // MVP 阶段假设支持
+  // 5. Fallback 路径 (Render Pipeline)
+  this.flushBatchLegacy(encoder, dabs, gpuBatchBuffer);
+  this.device.queue.submit([encoder.finish()]);
 }
 ```
 
+> [!CAUTION]
+> **不要在 JS 层循环 dispatch**：
+>
+> - `dispatch()` 只是录制命令到 encoder，尚未执行
+> - `swap()` 是 JS 同步操作，立即交换 texture 引用
+> - 逐个 dispatch 会导致命令录制 vs 执行时机不匹配
+
+### BindGroup 缓存策略
+
+```typescript
+private getOrCreateBindGroup(
+  inputTexture: GPUTexture,
+  outputTexture: GPUTexture
+): GPUBindGroup {
+  // 使用稳定的 Key (texture label 如 "A"/"B")
+  // Ping-Pong 只有两种状态，确保只创建 2 个 BindGroup
+  const key = `${inputTexture.label}_${outputTexture.label}`;
+
+  let bindGroup = this.cachedBindGroups.get(key);
+  if (!bindGroup) {
+    bindGroup = this.device.createBindGroup({
+      layout: this.bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        { binding: 1, resource: { buffer: this.dabBuffer } },
+        { binding: 2, resource: inputTexture.createView() },
+        { binding: 3, resource: outputTexture.createView() },
+      ],
+    });
+    this.cachedBindGroups.set(key, bindGroup);
+  }
+  return bindGroup;
+}
+```
+
+> [!TIP]
+> 由于 Ping-Pong Buffer 只有两种状态 (A→B 和 B→A)，Key 使用 texture label 可确保在整个笔触过程中只创建 2 个 BindGroup，避免每帧创建导致性能抖动。
+
 ---
 
-## 阶段二优化 (未来)
+## 阶段二：ABR Texture Brush Compute Shader (规划中)
 
-### 1. Tile Culling (当 dab_count >= 256)
+### 背景
+
+当前 ABR Texture Brush 使用 **Render Pipeline** ([TextureBrushPipeline.ts](file:///f:/CodeProjects/PaintBoard/src/gpu/pipeline/TextureBrushPipeline.ts))，尚未迁移到 Compute Shader。
+
+### 设计思路
+
+与 Parametric Brush 类似，但需要额外处理：
+
+1. **纹理采样**：读取 brush tip texture (`brush_texture`)
+2. **变换参数**：rotation (`angle`)、roundness、texture aspect ratio
+3. **Mask 计算**：从 texture R channel 读取（而非参数化 Gaussian）
+
+```wgsl
+// 伪代码 - computeTextureBrush.wgsl
+
+struct TextureDabData {
+  center_x: f32,
+  center_y: f32,
+  size: f32,
+  roundness: f32,
+  angle: f32,             // 旋转角度
+  color_r: f32,
+  color_g: f32,
+  color_b: f32,
+  dab_opacity: f32,
+  flow: f32,
+  tex_width: f32,
+  tex_height: f32,
+};
+
+@group(0) @binding(4) var brush_texture: texture_2d<f32>;
+@group(0) @binding(5) var brush_sampler: sampler;
+
+fn compute_texture_mask(pixel: vec2<f32>, dab: TextureDabData) -> f32 {
+  // 1. 像素相对于 dab 中心的偏移
+  let offset = pixel - vec2(dab.center_x, dab.center_y);
+
+  // 2. 逆旋转
+  let cos_a = cos(-dab.angle);
+  let sin_a = sin(-dab.angle);
+  let rotated = vec2(
+    offset.x * cos_a - offset.y * sin_a,
+    offset.x * sin_a + offset.y * cos_a
+  );
+
+  // 3. 归一化到 UV 空间 (考虑 roundness 和 aspect ratio)
+  let half_size = dab.size / 2.0;
+  let uv = (rotated / half_size + 1.0) / 2.0;
+  // ... apply roundness transform
+
+  // 4. 采样纹理
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+    return 0.0;
+  }
+  return textureSample(brush_texture, brush_sampler, uv).r;
+}
+```
+
+### 挑战
+
+| 挑战                                    | 解决方向                              |
+| --------------------------------------- | ------------------------------------- |
+| Compute Shader 不支持 `textureSample()` | 使用 `textureLoad()` + 手动双线性插值 |
+| 多种 brush texture                      | 使用 Texture Array 或多次 dispatch    |
+| 变换矩阵计算开销                        | 预计算并传入 Uniform                  |
+
+### 实施优先级
+
+目前 Texture Brush 的使用频率较低，且 Render Pipeline 已工作正常。Compute Shader 迁移作为**性能优化项**，优先级排在：
+
+1. ✅ Parametric Brush Compute Shader（已完成）
+2. 🔲 Texture Brush Compute Shader（待实施）
+3. 🔲 Tile Culling 优化（dab_count >= 256 时）
+
+---
+
+## 阶段三优化 (未来)
+
+### Tile Culling (当 dab_count >= 256)
 
 ```typescript
 // 将画布分成 32x32 tiles
 // Compute Pass 1: 生成每个 tile 的 dabList
 // Compute Pass 2: 每个像素只遍历所在 tile 的 dab
 
-// 触发条件
 if (dabs.length >= 256 || bboxPixels > 4_000_000) {
   this.dispatchWithTileCulling(dabs);
 }
 ```
 
-### 2. Dab 子批次拆分 (已实现)
+### Dab 子批次拆分
 
 当 `dab_count > 128` 时，自动拆分为多次 compute（见 `dispatchInBatches`）。
-
-### 3. Shared Memory 优化 (已实现)
-
-Shader 中使用 `var<workgroup>` 缓存 dab 数据，减少全局内存访问。
 
 ---
 
@@ -587,6 +335,7 @@ Shader 中使用 `var<workgroup>` 缓存 dab 数据，减少全局内存访问�
 **风险**：并非所有平台都支持 `rgba16float` 作为 `unfilterable-float` 读取。
 
 **解决方案**：
+
 ```typescript
 // 创建 texture 时确保 usage 正确
 format: 'rgba16float',
@@ -594,11 +343,6 @@ usage: GPUTextureUsage.TEXTURE_BINDING |
        GPUTextureUsage.STORAGE_BINDING |
        GPUTextureUsage.COPY_SRC |
        GPUTextureUsage.COPY_DST
-
-// 检查特性
-if (adapter.features.has('float32-filterable')) {
-  // 可以使用 rgba32float
-}
 ```
 
 ### 2. sRGB / 线性空间混合
@@ -609,39 +353,18 @@ if (adapter.features.has('float32-filterable')) {
 - 笔刷颜色在 CPU 端转换为线性空间后再传给 GPU
 - 最终上屏时由 Canvas Context 处理 sRGB 转换
 
-```typescript
-// CPU 端颜色转换
-function srgbToLinear(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-
-// 打包 dab 时转换颜色
-data[offset + 4] = srgbToLinear(dab.r);
-data[offset + 5] = srgbToLinear(dab.g);
-data[offset + 6] = srgbToLinear(dab.b);
-```
-
-### 3. rgba16float 精度损失
+### 3. rgba16float 精度
 
 **风险**：低 flow/低 alpha 的软笔刷可能出现精度累积误差。
 
-**验证方法**：
-```typescript
-// 回归测试：对比 CPU 与 GPU 的像素差异
-function compareBuffers(cpu: Uint8ClampedArray, gpu: Uint8ClampedArray): number {
-  let maxDiff = 0;
-  for (let i = 0; i < cpu.length; i++) {
-    maxDiff = Math.max(maxDiff, Math.abs(cpu[i] - gpu[i]));
-  }
-  return maxDiff; // 应 < 2 (接近 1/255)
-}
-```
+**验证方法**：对比 CPU 与 GPU 的像素差异，应 < 2 (接近 1/255)。
 
 ### 4. BBox 过大 (对角线问题)
 
 **风险**：用户从左上角划到右下角，bbox 接近全屏。
 
 **解决方案** (已实现)：
+
 ```typescript
 const MAX_PIXELS_PER_BATCH = 2_000_000;
 if (bboxPixels > MAX_PIXELS_PER_BATCH) {
@@ -662,30 +385,55 @@ if (bboxPixels > MAX_PIXELS_PER_BATCH) {
 
 ## 实施检查清单
 
+### Parametric Brush (圆头笔刷) ✅
+
 - [x] 创建 `ComputeBrushPipeline` 类
-- [x] 创建 `compute-brush.wgsl` shader
+- [x] 创建 `computeBrush.wgsl` shader
 - [x] 修改 `GPUStrokeAccumulator.flushBatch()` 使用 compute pipeline
 - [x] 添加 BindGroup 缓存 (减少 GC)
 - [x] 添加 Shared Memory 优化
 - [x] 添加 bbox 像素上限保护
 - [x] 添加 dab 子批次拆分
 - [x] 添加全局边界保护
-- [ ] 添加 WebGPU 特性检测
 - [x] 添加 fallback 到现有 Render Pipeline
 - [x] 添加 sRGB/Linear 颜色转换
+- [x] WGSL struct 对齐修复
+- [x] dirtyRect 坐标缩放修复
+
+### Texture Brush (ABR 纹理笔刷) 🔲
+
+- [ ] 创建 `ComputeTextureBrushPipeline` 类
+- [ ] 创建 `computeTextureBrush.wgsl` shader
+- [ ] 实现 `textureLoad()` + 手动双线性插值
+- [ ] 支持 rotation/roundness 变换
+- [ ] 集成 Texture Array 或多纹理切换
+- [ ] 与 `GPUStrokeAccumulator` 集成
+
+### 验证 🔲
+
 - [ ] 运行 Benchmark 验证 P99 Frame Time (目标 <25ms)
 - [ ] 验证 Alpha Darken 混合正确性 (与 CPU 版本对比)
 - [ ] 精度回归测试 (误差 < 2/255)
+- [ ] 添加 WebGPU 特性检测
+
+---
+
+## 相关文档
+
+- [调试记录 (gpu-compute-shader-spacing-issue.md)](file:///f:/CodeProjects/PaintBoard/docs/postmortem/gpu-compute-shader-spacing-issue.md)
+- [Review 反馈 (debug_review.md)](file:///f:/CodeProjects/PaintBoard/docs/design/gpu-optimization-plan/debug_review.md)
+- [TextureBrushPipeline (当前实现)](file:///f:/CodeProjects/PaintBoard/src/gpu/pipeline/TextureBrushPipeline.ts)
+- [ComputeBrushPipeline (源码)](file:///f:/CodeProjects/PaintBoard/src/gpu/pipeline/ComputeBrushPipeline.ts)
 
 ---
 
 ## 评估总结
 
-| 维度   | 评分 | 说明                                  |
-| ------ | ---- | ------------------------------------- |
-| 正确性 | 9/10 | 逻辑顺序 & 混合一致性极好             |
-| 兼容性 | 8/10 | Ping-Pong 模式兼容性好，需注意 float16 |
+| 维度   | 评分 | 说明                                    |
+| ------ | ---- | --------------------------------------- |
+| 正确性 | 9/10 | 本地寄存器累积保证混合顺序              |
+| 兼容性 | 8/10 | Ping-Pong 模式兼容性好，需注意 float16  |
 | 性能   | 9/10 | BBox + Compute + Shared Memory 已是最优 |
-| 扩展性 | 9/10 | 可逐步加 Tile Culling                 |
+| 扩展性 | 9/10 | 可逐步加 Tile Culling 和 Texture Brush  |
 
-**总体置信度：极高 (0.8~0.9)**
+**总体置信度：极高 (0.9)**
