@@ -197,7 +197,6 @@ export function BrushPanel(): JSX.Element {
           path: selected,
         });
         setImportedPresets(presets);
-        console.log('Imported', presets.length, 'brushes');
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -227,13 +226,9 @@ export function BrushPanel(): JSX.Element {
         height: preset.textureHeight,
       };
       setBrushTexture(texture);
-      console.log(
-        `Applied textured preset: ${preset.name} ${preset.textureWidth}x${preset.textureHeight}`
-      );
     } else {
       // Clear texture for procedural brushes
       clearBrushTexture();
-      console.log('Applied procedural preset:', preset.name);
     }
   };
 
