@@ -398,8 +398,7 @@ export class GPUStrokeAccumulator {
 
     // Try compute shader path first
     if (this.useComputeShader) {
-      // SIMPLIFIED TEST: Single dispatch for ALL dabs in the batch
-      // No ping-pong swap within flushBatch - just one dispatch
+      // Compute shader: batch all dabs in single dispatch
       const dr = this.dirtyRect;
       const scale = this.currentRenderScale;
 
@@ -412,12 +411,12 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
       }
 
-      // Single dispatch for all dabs in this batch
+      // Single dispatch for all dabs
       const success = this.computeBrushPipeline.dispatch(
         encoder,
         this.pingPongBuffer.source,
         this.pingPongBuffer.dest,
-        dabs // All dabs at once, not one by one
+        dabs
       );
 
       if (success) {

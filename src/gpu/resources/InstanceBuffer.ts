@@ -139,9 +139,6 @@ export class InstanceBuffer {
    * Returns array of dab data without clearing the buffer
    */
   getDabsData(): DabInstanceData[] {
-    // DEBUG DIAGNOSTIC: Log state at entry
-    console.log('[InstanceBuffer.getDabsData] ENTRY, pendingCount:', this.pendingCount);
-
     const dabs: DabInstanceData[] = [];
     for (let i = 0; i < this.pendingCount; i++) {
       const offset = i * DAB_FLOATS_PER_INSTANCE;
@@ -158,7 +155,6 @@ export class InstanceBuffer {
       });
     }
 
-    console.log('[InstanceBuffer.getDabsData] RETURN, dabs.length:', dabs.length);
     return dabs;
   }
 

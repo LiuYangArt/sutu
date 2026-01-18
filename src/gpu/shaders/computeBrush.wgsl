@@ -225,24 +225,12 @@ fn main(
   // -------------------------------------------------------------------------
   // Step 5: Iterate all dabs, blend in order (read from shared memory)
   // -------------------------------------------------------------------------
-  // DEBUG: Visualize dab center positions as red dots
-  let DEBUG_VIS = false; // Disabled - root cause found (BindGroup cache key collision)
-
   for (var i = 0u; i < shared_dab_count; i++) {
     let dab = shared_dabs[i];
 
     // Reconstruct vec2/vec3 from individual f32 fields
     let dab_center = vec2<f32>(dab.center_x, dab.center_y);
     let dab_color = vec3<f32>(dab.color_r, dab.color_g, dab.color_b);
-
-    // DEBUG: Draw red marker at dab center (5px radius)
-    if (DEBUG_VIS) {
-      let center_dist = distance(pixel, dab_center);
-      if (center_dist < 5.0) {
-        color = vec4<f32>(1.0, 0.0, 0.0, 1.0); // Red marker
-        continue;
-      }
-    }
 
     // Fast distance check (early culling)
     let effective_radius = calculate_effective_radius(dab.radius, dab.hardness);
