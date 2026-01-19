@@ -122,6 +122,16 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
     // Key insight: Use physical distance (dist), not normalized distance (dist/radius)
     // This ensures the AA band is always exactly 1 pixel wide regardless of brush size
 
+    // For very small brushes (radius < 1px), use smoothstep for better coverage
+    // This prevents the "broken line" effect where the entire dab is in the AA zone
+    if (radius < 1.0) {
+      // Small brush: use smooth falloff based on normalized distance
+      // Ensures center pixels get full opacity
+      let norm_dist = dist / max(radius, 0.1);
+      // smoothstep gives S-curve: 0 at edge, 1 at center
+      return 1.0 - smoothstep(0.0, 1.5, norm_dist);
+    }
+
     let edge_dist = radius;  // Edge is at radius
 
     if (dist <= edge_dist - 0.5) {
@@ -158,12 +168,16 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
 // ============================================================================
 // Calculate effective radius (unified for all hardness levels)
 // ============================================================================
-// NOTE: Now that we use Gaussian erf for all hardness values, we need to
-// calculate effective radius for all brushes (including hard ones) to ensure
-// proper pixel coverage during the Gaussian falloff.
+// Ensures proper pixel coverage for both large and small brushes
 fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
-  // For very hard brushes, the Gaussian extends slightly beyond radius
-  // Use a minimum multiplier of 1.1 to ensure edge anti-aliasing is captured
+  // For small brushes (< 2px), ensure minimum effective radius of 1.5px
+  // This prevents missing pixels due to dab culling
+  if (radius < 2.0) {
+    return max(1.5, radius + 1.0);
+  }
+
+  // For larger brushes, use geometric fade for soft brushes
+  // and slight expansion for hard brushes to capture AA band
   let geometric_fade = (1.0 - hardness) * 2.5;
   return radius * max(1.1, 1.0 + geometric_fade);
 }
