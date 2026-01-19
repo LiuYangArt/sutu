@@ -1,6 +1,9 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { BaseDirectory, readTextFile, writeTextFile, exists } from '@tauri-apps/plugin-fs';
+
+// Settings file path (relative to app config directory)
+const SETTINGS_FILE = 'settings.json';
 
 // Accent color presets - add more colors here as needed
 export const ACCENT_COLORS = [
@@ -52,16 +55,18 @@ export interface TabletSettings {
   autoStart: boolean;
 }
 
-interface SettingsState {
+interface PersistedSettings {
+  appearance: AppearanceSettings;
+  tablet: TabletSettings;
+}
+
+interface SettingsState extends PersistedSettings {
   // Settings panel visibility
   isOpen: boolean;
   activeTab: string;
 
-  // Appearance settings
-  appearance: AppearanceSettings;
-
-  // Tablet settings
-  tablet: TabletSettings;
+  // Loading state
+  isLoaded: boolean;
 
   // Actions
   openSettings: () => void;
@@ -78,7 +83,26 @@ interface SettingsState {
   setPollingRate: (rate: number) => void;
   setPressureCurve: (curve: TabletSettings['pressureCurve']) => void;
   setAutoStart: (enabled: boolean) => void;
+
+  // Persistence
+  _loadSettings: () => Promise<void>;
+  _saveSettings: () => Promise<void>;
 }
+
+// Default settings
+const defaultSettings: PersistedSettings = {
+  appearance: {
+    accentColor: 'blue',
+    panelBgColor: 'dark',
+    enableBlur: true,
+  },
+  tablet: {
+    backend: 'auto',
+    pollingRate: 200,
+    pressureCurve: 'linear',
+    autoStart: true,
+  },
+};
 
 // Apply CSS variables based on settings
 function applyAppearanceSettings(appearance: AppearanceSettings): void {
@@ -129,90 +153,144 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${R}, ${G}, ${B}, ${alpha})`;
 }
 
+// Debounce save to avoid too frequent writes
+let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+function debouncedSave(saveFn: () => Promise<void>): void {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+  }
+  saveTimeout = setTimeout(() => {
+    saveFn();
+    saveTimeout = null;
+  }, 500);
+}
+
 export const useSettingsStore = create<SettingsState>()(
-  persist(
-    immer((set) => ({
-      // Initial state
-      isOpen: false,
-      activeTab: 'appearance',
+  immer((set, get) => ({
+    // Initial state
+    isOpen: false,
+    activeTab: 'appearance',
+    isLoaded: false,
 
-      appearance: {
-        accentColor: 'blue',
-        panelBgColor: 'dark',
-        enableBlur: true,
-      },
+    ...defaultSettings,
 
-      tablet: {
-        backend: 'auto',
-        pollingRate: 200,
-        pressureCurve: 'linear',
-        autoStart: true,
-      },
+    // Panel actions
+    openSettings: () => set({ isOpen: true }),
+    closeSettings: () => set({ isOpen: false }),
+    setActiveTab: (tab) => set({ activeTab: tab }),
 
-      // Panel actions
-      openSettings: () => set({ isOpen: true }),
-      closeSettings: () => set({ isOpen: false }),
-      setActiveTab: (tab) => set({ activeTab: tab }),
+    // Appearance actions
+    setAccentColor: (color) => {
+      set((state) => {
+        state.appearance.accentColor = color;
+      });
+      applyAppearanceSettings(get().appearance);
+      debouncedSave(() => get()._saveSettings());
+    },
 
-      // Appearance actions
-      setAccentColor: (color) =>
-        set((state) => {
-          state.appearance.accentColor = color;
-          applyAppearanceSettings(state.appearance);
-        }),
+    setPanelBgColor: (color) => {
+      set((state) => {
+        state.appearance.panelBgColor = color;
+      });
+      applyAppearanceSettings(get().appearance);
+      debouncedSave(() => get()._saveSettings());
+    },
 
-      setPanelBgColor: (color) =>
-        set((state) => {
-          state.appearance.panelBgColor = color;
-          applyAppearanceSettings(state.appearance);
-        }),
+    setEnableBlur: (enabled) => {
+      set((state) => {
+        state.appearance.enableBlur = enabled;
+      });
+      applyAppearanceSettings(get().appearance);
+      debouncedSave(() => get()._saveSettings());
+    },
 
-      setEnableBlur: (enabled) =>
-        set((state) => {
-          state.appearance.enableBlur = enabled;
-          applyAppearanceSettings(state.appearance);
-        }),
+    // Tablet actions
+    setTabletBackend: (backend) => {
+      set((state) => {
+        state.tablet.backend = backend;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
 
-      // Tablet actions
-      setTabletBackend: (backend) =>
-        set((state) => {
-          state.tablet.backend = backend;
-        }),
+    setPollingRate: (rate) => {
+      set((state) => {
+        state.tablet.pollingRate = rate;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
 
-      setPollingRate: (rate) =>
-        set((state) => {
-          state.tablet.pollingRate = rate;
-        }),
+    setPressureCurve: (curve) => {
+      set((state) => {
+        state.tablet.pressureCurve = curve;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
 
-      setPressureCurve: (curve) =>
-        set((state) => {
-          state.tablet.pressureCurve = curve;
-        }),
+    setAutoStart: (enabled) => {
+      set((state) => {
+        state.tablet.autoStart = enabled;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
 
-      setAutoStart: (enabled) =>
-        set((state) => {
-          state.tablet.autoStart = enabled;
-        }),
-    })),
-    {
-      name: 'paintboard-settings',
-      storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({
-        appearance: state.appearance,
-        tablet: state.tablet,
-      }),
-      onRehydrateStorage: () => (state) => {
-        // Apply settings after rehydration
-        if (state) {
-          applyAppearanceSettings(state.appearance);
+    // Load settings from file
+    _loadSettings: async () => {
+      try {
+        const fileExists = await exists(SETTINGS_FILE, { baseDir: BaseDirectory.AppConfig });
+
+        if (fileExists) {
+          const content = await readTextFile(SETTINGS_FILE, { baseDir: BaseDirectory.AppConfig });
+          const loaded = JSON.parse(content) as Partial<PersistedSettings>;
+
+          set((state) => {
+            // Merge with defaults to handle missing fields
+            if (loaded.appearance) {
+              state.appearance = { ...defaultSettings.appearance, ...loaded.appearance };
+            }
+            if (loaded.tablet) {
+              state.tablet = { ...defaultSettings.tablet, ...loaded.tablet };
+            }
+            state.isLoaded = true;
+          });
+
+          console.log('[Settings] Loaded from', SETTINGS_FILE);
+        } else {
+          // No settings file, use defaults and save
+          set({ isLoaded: true });
+          await get()._saveSettings();
+          console.log('[Settings] Created default settings file');
         }
-      },
-    }
-  )
+      } catch (error) {
+        console.error('[Settings] Failed to load settings:', error);
+        set({ isLoaded: true });
+      }
+
+      // Apply appearance after loading
+      applyAppearanceSettings(get().appearance);
+    },
+
+    // Save settings to file
+    _saveSettings: async () => {
+      try {
+        const state = get();
+        const data: PersistedSettings = {
+          appearance: state.appearance,
+          tablet: state.tablet,
+        };
+
+        await writeTextFile(SETTINGS_FILE, JSON.stringify(data, null, 2), {
+          baseDir: BaseDirectory.AppConfig,
+        });
+
+        console.log('[Settings] Saved to', SETTINGS_FILE);
+      } catch (error) {
+        console.error('[Settings] Failed to save settings:', error);
+      }
+    },
+  }))
 );
 
 // Initialize settings on load
-export function initializeSettings(): void {
-  const state = useSettingsStore.getState();
-  applyAppearanceSettings(state.appearance);
+export async function initializeSettings(): Promise<void> {
+  await useSettingsStore.getState()._loadSettings();
 }

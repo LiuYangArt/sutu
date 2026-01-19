@@ -100,10 +100,10 @@ function App() {
 
   // Initialize tablet at App level (runs once)
   useEffect(() => {
-    // Initialize settings (apply CSS variables)
-    initializeSettings();
+    const initialize = async () => {
+      // Initialize settings first (load from file, apply CSS variables)
+      await initializeSettings();
 
-    const setupTablet = async () => {
       // Use ref to prevent double initialization in StrictMode
       if (tabletInitializedRef.current) return;
       tabletInitializedRef.current = true;
@@ -115,7 +115,7 @@ function App() {
         return;
       }
 
-      // Use settings from store
+      // Use settings from store (now loaded from file)
       const tabletSettings = useSettingsStore.getState().tablet;
       await initTablet({
         backend: tabletSettings.backend,
@@ -128,7 +128,7 @@ function App() {
       }
     };
 
-    setupTablet();
+    initialize();
 
     // Cleanup only on actual unmount (App never unmounts in normal use)
     return () => {
