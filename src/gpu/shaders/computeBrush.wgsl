@@ -122,14 +122,16 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
     // Key insight: Use physical distance (dist), not normalized distance (dist/radius)
     // This ensures the AA band is always exactly 1 pixel wide regardless of brush size
 
-    // For very small brushes (radius < 1px), use smoothstep for better coverage
-    // This prevents the "broken line" effect where the entire dab is in the AA zone
+    // For very small brushes (radius < 1px), use Gaussian spot model
+    // This prevents the "broken line" effect caused by insufficient sampling
+    // Reference: docs/design/gpu-optimization-plan/debug_review.md
     if (radius < 1.0) {
-      // Small brush: use smooth falloff based on normalized distance
-      // Ensures center pixels get full opacity
-      let norm_dist = dist / max(radius, 0.1);
-      // smoothstep gives S-curve: 0 at edge, 1 at center
-      return 1.0 - smoothstep(0.0, 1.5, norm_dist);
+      // Use Gaussian distribution: exp(-dist² / (2 * sigma²))
+      // Sigma = max(radius, 0.5) ensures at least 0.5px spread
+      // Gaussian has longer "tails" than smoothstep, preserving visual continuity
+      let safe_sigma = max(radius, 0.5);
+      let alpha = exp(-(dist * dist) / (2.0 * safe_sigma * safe_sigma));
+      return min(1.0, alpha);
     }
 
     let edge_dist = radius;  // Edge is at radius
