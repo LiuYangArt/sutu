@@ -1,7 +1,7 @@
 .canvas-container {
   flex: 1;
   display: block;
-  background: var(--bg-secondary);
+  background: var(--app-bg);
   overflow: hidden;
   position: relative;
 }
