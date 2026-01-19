@@ -27,6 +27,9 @@
   --bg-tertiary: rgba(255, 255, 255, 0.05);
   --bg-elevated: rgba(255, 255, 255, 0.08);
 
+  /* App Background (Workspace outside canvas) */
+  --app-bg: var(--bg-primary);
+
   /* Legacy aliases (for backward compatibility) */
   --surface-color: var(--mica-bg-solid);
   --surface-hover: rgba(255, 255, 255, 0.1);
@@ -114,7 +117,7 @@ body,
 }
 
 body {
-  background: var(--bg-primary);
+  background: var(--app-bg);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 14px;

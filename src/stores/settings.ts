@@ -39,12 +39,22 @@ export const PANEL_BG_COLORS = [
   { id: 'warm', value: 'rgba(40, 35, 30, 0.8)', solid: '#28231e', label: 'Warm' },
 ] as const;
 
+// Canvas background color presets
+export const CANVAS_BG_COLORS = [
+  { id: 'black', value: '#000000', label: 'Black' },
+  { id: 'dark-gray', value: '#2e2e2e', label: 'Dark Gray' }, // 18% gray (approx)
+  { id: 'gray', value: '#808080', label: 'Gray' }, // 50% gray
+  { id: 'white', value: '#ffffff', label: 'White' },
+] as const;
+
 export type AccentColorId = (typeof ACCENT_COLORS)[number]['id'];
 export type PanelBgColorId = (typeof PANEL_BG_COLORS)[number]['id'];
+export type CanvasBgColorId = (typeof CANVAS_BG_COLORS)[number]['id'];
 
 export interface AppearanceSettings {
   accentColor: AccentColorId;
   panelBgColor: PanelBgColorId;
+  canvasBgColor: CanvasBgColorId;
   enableBlur: boolean;
 }
 
@@ -76,6 +86,7 @@ interface SettingsState extends PersistedSettings {
   // Appearance actions
   setAccentColor: (color: AccentColorId) => void;
   setPanelBgColor: (color: PanelBgColorId) => void;
+  setCanvasBgColor: (color: CanvasBgColorId) => void;
   setEnableBlur: (enabled: boolean) => void;
 
   // Tablet actions
@@ -94,6 +105,7 @@ const defaultSettings: PersistedSettings = {
   appearance: {
     accentColor: 'blue',
     panelBgColor: 'dark',
+    canvasBgColor: 'dark-gray',
     enableBlur: true,
   },
   tablet: {
@@ -131,6 +143,12 @@ function applyAppearanceSettings(appearance: AppearanceSettings): void {
       root.style.setProperty('--mica-blur', 'none');
     }
     root.style.setProperty('--mica-bg-solid', panelBg.solid);
+  }
+
+  // Find canvas background
+  const canvasBg = CANVAS_BG_COLORS.find((c) => c.id === appearance.canvasBgColor);
+  if (canvasBg) {
+    root.style.setProperty('--app-bg', canvasBg.value);
   }
 }
 
@@ -191,6 +209,14 @@ export const useSettingsStore = create<SettingsState>()(
     setPanelBgColor: (color) => {
       set((state) => {
         state.appearance.panelBgColor = color;
+      });
+      applyAppearanceSettings(get().appearance);
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setCanvasBgColor: (color) => {
+      set((state) => {
+        state.appearance.canvasBgColor = color;
       });
       applyAppearanceSettings(get().appearance);
       debouncedSave(() => get()._saveSettings());

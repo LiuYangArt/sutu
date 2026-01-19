@@ -3,8 +3,10 @@ import {
   useSettingsStore,
   ACCENT_COLORS,
   PANEL_BG_COLORS,
+  CANVAS_BG_COLORS,
   AccentColorId,
   PanelBgColorId,
+  CanvasBgColorId,
 } from '@/stores/settings';
 import { useTabletStore, BackendType } from '@/stores/tablet';
 import {
@@ -78,7 +80,8 @@ function ColorSwatch({
 
 // Appearance settings tab
 function AppearanceSettings() {
-  const { appearance, setAccentColor, setPanelBgColor, setEnableBlur } = useSettingsStore();
+  const { appearance, setAccentColor, setPanelBgColor, setCanvasBgColor, setEnableBlur } =
+    useSettingsStore();
 
   return (
     <div className="settings-content">
@@ -109,6 +112,21 @@ function AppearanceSettings() {
               color={color.solid}
               isSelected={appearance.panelBgColor === color.id}
               onClick={() => setPanelBgColor(color.id as PanelBgColorId)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Canvas Background */}
+      <div className="settings-section">
+        <label className="settings-label">CANVAS BACKGROUND</label>
+        <div className="color-grid">
+          {CANVAS_BG_COLORS.map((color) => (
+            <ColorSwatch
+              key={color.id}
+              color={color.value}
+              isSelected={appearance.canvasBgColor === color.id}
+              onClick={() => setCanvasBgColor(color.id as CanvasBgColorId)}
             />
           ))}
         </div>
