@@ -14,13 +14,12 @@ import {
   Eye,
   EyeOff,
   SlidersHorizontal,
-  Tablet,
 } from 'lucide-react';
 import { useToolStore, PressureCurve } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { usePanelStore } from '@/stores/panel';
-import { toggleTabletPanelVisibility, isTabletPanelVisible } from '@/components/TabletPanel';
+import { useSettingsStore } from '@/stores/settings';
 import './Toolbar.css';
 
 /** Common icon props for toolbar icons */
@@ -59,13 +58,15 @@ function PressureToggle({
 function AppMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const [panelsSubmenuOpen, setPanelsSubmenuOpen] = useState(false);
-  const [tabletVisible, setTabletVisible] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Only show Brush panel in menu (Tools, Color, Layers are now fixed)
   const brushPanel = usePanelStore((s) => s.panels['brush-panel']);
   const openPanel = usePanelStore((s) => s.openPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
+
+  // Settings
+  const openSettings = useSettingsStore((s) => s.openSettings);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -81,13 +82,6 @@ function AppMenu() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  // Sync tablet visibility state when menu opens
-  useEffect(() => {
-    if (isOpen) {
-      setTabletVisible(isTabletPanelVisible());
-    }
-  }, [isOpen]);
-
   const handleToggleBrushPanel = () => {
     if (brushPanel?.isOpen) {
       closePanel('brush-panel');
@@ -96,9 +90,9 @@ function AppMenu() {
     }
   };
 
-  const handleToggleTabletPanel = () => {
-    toggleTabletPanelVisibility();
-    setTabletVisible(!tabletVisible);
+  const handleOpenSettings = () => {
+    setIsOpen(false);
+    openSettings();
   };
 
   return (
@@ -109,7 +103,7 @@ function AppMenu() {
 
       {isOpen && (
         <div className="menu-dropdown">
-          <button className="menu-item" onClick={() => setIsOpen(false)}>
+          <button className="menu-item" onClick={handleOpenSettings}>
             <Settings size={16} />
             <span>Settings</span>
           </button>
@@ -128,11 +122,6 @@ function AppMenu() {
                 <button className="menu-item" onClick={handleToggleBrushPanel}>
                   {brushPanel?.isOpen ? <Eye size={14} /> : <EyeOff size={14} />}
                   <span>Brush</span>
-                </button>
-                <button className="menu-item" onClick={handleToggleTabletPanel}>
-                  {tabletVisible ? <Eye size={14} /> : <EyeOff size={14} />}
-                  <Tablet size={14} />
-                  <span>Tablet</span>
                 </button>
               </div>
             )}
