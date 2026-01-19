@@ -23,7 +23,8 @@ import { ComputeBrushPipeline } from './pipeline/ComputeBrushPipeline';
 import { ComputeTextureBrushPipeline } from './pipeline/ComputeTextureBrushPipeline';
 import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
-import { useToolStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/tool';
+import { useToolStore } from '@/stores/tool';
+import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/settings';
 
 export class GPUStrokeAccumulator {
   private device: GPUDevice;
@@ -223,7 +224,7 @@ export class GPUStrokeAccumulator {
    * Sync color blend mode from store to shader uniform
    */
   private syncColorBlendMode(): void {
-    const mode = useToolStore.getState().colorBlendMode;
+    const mode = useSettingsStore.getState().brush.colorBlendMode;
     if (mode !== this.cachedColorBlendMode) {
       this.brushPipeline.updateColorBlendMode(mode);
       this.computeBrushPipeline.updateColorBlendMode(mode);
@@ -238,7 +239,8 @@ export class GPUStrokeAccumulator {
    * Auto mode: downsample to 50% for soft large brushes (hardness < 70, size > 300)
    */
   private syncRenderScale(): void {
-    const { gpuRenderScaleMode: mode, brushHardness, brushSize } = useToolStore.getState();
+    const { gpuRenderScaleMode: mode } = useSettingsStore.getState().brush;
+    const { brushHardness, brushSize } = useToolStore.getState();
 
     const shouldDownsample = mode === 'auto' && brushHardness < 70 && brushSize > 300;
     const targetScale = shouldDownsample ? 0.5 : 1.0;

@@ -5,33 +5,7 @@ export type ToolType = 'brush' | 'eraser' | 'eyedropper' | 'move' | 'select' | '
 
 export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 
-/**
- * Brush mask type - controls how hardness affects edge falloff
- * - 'gaussian': erf-based Gaussian (Krita-style, smoother, default)
- * - 'default': Simple Gaussian exp(-k*t²) (original implementation)
- */
 export type BrushMaskType = 'gaussian' | 'default';
-
-/**
- * Render mode - controls which backend to use for brush rendering
- * - 'gpu': GPU rendering (WebGPU)
- * - 'cpu': CPU rendering (Canvas 2D)
- */
-export type RenderMode = 'gpu' | 'cpu';
-
-/**
- * Color blend mode - controls how colors are mixed during GPU rendering
- * - 'srgb': Match Canvas 2D behavior (8-bit quantization, default)
- * - 'linear': Physically correct linear-space blending
- */
-export type ColorBlendMode = 'srgb' | 'linear';
-
-/**
- * GPU render scale mode - controls dynamic downsampling
- * - 'auto': Automatically downsample for soft large brushes (hardness < 70, size > 300)
- * - 'off': Always render at full resolution
- */
-export type GPURenderScaleMode = 'auto' | 'off';
 
 /**
  * Brush texture data for sampled/imported brushes (e.g., from ABR files)
@@ -106,15 +80,6 @@ interface ToolState {
   // Cursor display settings
   showCrosshair: boolean;
 
-  // Render mode
-  renderMode: RenderMode;
-
-  // Color blend mode (GPU only)
-  colorBlendMode: ColorBlendMode;
-
-  // GPU render scale mode (GPU only)
-  gpuRenderScaleMode: GPURenderScaleMode;
-
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -141,9 +106,6 @@ interface ToolState {
   togglePressureOpacity: () => void;
   setPressureCurve: (curve: PressureCurve) => void;
   toggleCrosshair: () => void;
-  setRenderMode: (mode: RenderMode) => void;
-  setColorBlendMode: (mode: ColorBlendMode) => void;
-  setGpuRenderScaleMode: (mode: GPURenderScaleMode) => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -168,9 +130,6 @@ export const useToolStore = create<ToolState>()(
       pressureOpacityEnabled: true, // Only opacity affected by pressure by default
       pressureCurve: 'linear',
       showCrosshair: false,
-      renderMode: 'gpu',
-      colorBlendMode: 'linear',
-      gpuRenderScaleMode: 'off',
 
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
@@ -240,12 +199,6 @@ export const useToolStore = create<ToolState>()(
       setPressureCurve: (curve) => set({ pressureCurve: curve }),
 
       toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
-
-      setRenderMode: (mode) => set({ renderMode: mode }),
-
-      setColorBlendMode: (mode) => set({ colorBlendMode: mode }),
-
-      setGpuRenderScaleMode: (mode) => set({ gpuRenderScaleMode: mode }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -266,9 +219,6 @@ export const useToolStore = create<ToolState>()(
         pressureFlowEnabled: state.pressureFlowEnabled,
         pressureOpacityEnabled: state.pressureOpacityEnabled,
         pressureCurve: state.pressureCurve,
-        renderMode: state.renderMode,
-        colorBlendMode: state.colorBlendMode,
-        gpuRenderScaleMode: state.gpuRenderScaleMode,
       }),
     }
   )

@@ -12,7 +12,7 @@
 
 import type { TextureDabInstanceData, BoundingBox } from '../types';
 import type { GPUBrushTexture } from '../resources/TextureAtlas';
-import type { ColorBlendMode } from '@/stores/tool';
+import type { ColorBlendMode } from '@/stores/settings';
 
 // Import shader source
 import computeShaderCode from '../shaders/computeTextureBrush.wgsl?raw';

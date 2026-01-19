@@ -102,6 +102,8 @@ pnpm format           # 格式化代码
 - `useDocumentStore` - 文档状态、图层管理
 - `useToolStore` - 当前工具、笔刷设置、颜色
 
+### 持久化设置： C:\Users\<用户名>\AppData\Roaming\com.paintboard\settings.json
+
 ## 相关文档
 
 - **UI 规范**: [ui-guidelines.md](file:///f:/CodeProjects/PaintBoard/docs/ui-guidelines.md)
