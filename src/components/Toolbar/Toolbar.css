@@ -266,12 +266,10 @@
   top: calc(100% + 4px);
   left: 0;
   min-width: 180px;
-  background-color: var(--mica-bg);
-  backdrop-filter: var(--mica-blur);
-  -webkit-backdrop-filter: var(--mica-blur);
+  background-color: var(--mica-bg-solid);
   border: 1px solid var(--mica-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--mica-shadow);
+  box-shadow: var(--mica-shadow-lg);
   padding: 4px;
   z-index: var(--z-dropdown); /* Above panels */
 }
@@ -291,6 +289,11 @@
   text-align: left;
   transition: background-color 0.15s ease;
   position: relative;
+  outline: none;
+}
+
+.menu-item:focus {
+  outline: none;
 }
 
 .menu-item:hover {
@@ -315,17 +318,25 @@
 /* Submenu */
 .submenu {
   position: absolute;
-  left: calc(100% - 4px); /* Overlap slightly to prevent gap */
+  left: 100%; /* Align to parent edge */
   top: -4px; /* Align with parent padding */
   min-width: 160px;
-  background-color: var(--mica-bg);
-  backdrop-filter: var(--mica-blur);
-  -webkit-backdrop-filter: var(--mica-blur);
+  background-color: var(--mica-bg-solid);
   border: 1px solid var(--mica-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--mica-shadow);
+  box-shadow: var(--mica-shadow-lg);
   padding: 4px;
   z-index: var(--z-popover); /* Above menu-dropdown */
+}
+
+/* Bridge area to prevent submenu from closing when moving mouse */
+.menu-item.has-submenu::after {
+  content: '';
+  position: absolute;
+  right: -8px;
+  top: 0;
+  width: 12px;
+  height: 100%;
 }
 
 .submenu .menu-item {
