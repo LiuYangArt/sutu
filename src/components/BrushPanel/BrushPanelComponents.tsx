@@ -1,13 +1,11 @@
 /** Pressure toggle button component */
-export function PressureToggle({
-  enabled,
-  onToggle,
-  title,
-}: {
+interface PressureToggleProps {
   enabled: boolean;
   onToggle: () => void;
   title: string;
-}): JSX.Element {
+}
+
+export function PressureToggle({ enabled, onToggle, title }: PressureToggleProps): JSX.Element {
   return (
     <button
       className={`pressure-toggle ${enabled ? 'active' : ''}`}
@@ -17,6 +15,19 @@ export function PressureToggle({
       P
     </button>
   );
+}
+
+interface SliderRowProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  displayValue: string;
+  onChange: (value: number) => void;
+  pressureEnabled?: boolean;
+  onPressureToggle?: () => void;
+  pressureTitle?: string;
 }
 
 /** Slider row component for brush parameters */
@@ -31,18 +42,7 @@ export function SliderRow({
   pressureEnabled,
   onPressureToggle,
   pressureTitle,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  displayValue: string;
-  onChange: (value: number) => void;
-  pressureEnabled?: boolean;
-  onPressureToggle?: () => void;
-  pressureTitle?: string;
-}): JSX.Element {
+}: SliderRowProps): JSX.Element {
   return (
     <div className="brush-setting-row">
       <span className="brush-setting-label">{label}</span>
