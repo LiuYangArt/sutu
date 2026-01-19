@@ -74,7 +74,7 @@
 /* Resize Handles */
 .resizeHandle {
   position: absolute;
-  z-index: 9999; /* Ensure high z-index */
+  z-index: var(--z-popover); /* Ensure high z-index */
   /* Debugging: uncomment to see handles
   background: rgba(255, 0, 0, 0.2);
   */
@@ -115,7 +115,7 @@
   width: 12px;
   height: 12px;
   cursor: ne-resize;
-  z-index: 10000;
+  z-index: var(--z-tooltip);
 }
 .resize-nw {
   top: -4px;
@@ -123,7 +123,7 @@
   width: 12px;
   height: 12px;
   cursor: nw-resize;
-  z-index: 10000;
+  z-index: var(--z-tooltip);
 }
 .resize-se {
   bottom: -4px;
@@ -131,7 +131,7 @@
   width: 12px;
   height: 12px;
   cursor: se-resize;
-  z-index: 10000;
+  z-index: var(--z-tooltip);
 }
 .resize-sw {
   bottom: -4px;
@@ -139,5 +139,5 @@
   width: 12px;
   height: 12px;
   cursor: sw-resize;
-  z-index: 10000;
+  z-index: var(--z-tooltip);
 }

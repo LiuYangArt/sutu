@@ -1,7 +1,7 @@
 .canvas-container {
   flex: 1;
   display: block;
-  background: #2a2a2a;
+  background: var(--bg-secondary);
   overflow: hidden;
   position: relative;
 }
@@ -18,12 +18,12 @@
 .canvas-checkerboard {
   position: absolute;
   inset: 0;
-  background-color: #ffffff;
+  background-color: var(--pattern-light);
   background-image: conic-gradient(
-    #cbcccc 0.25turn,
-    #ffffff 0 0.5turn,
-    #cbcccc 0 0.75turn,
-    #ffffff 0
+    var(--pattern-dark) 0.25turn,
+    var(--pattern-light) 0 0.5turn,
+    var(--pattern-dark) 0 0.75turn,
+    var(--pattern-light) 0
   );
   background-size: 16px 16px;
   background-position: 0 0;
@@ -43,11 +43,11 @@
   left: 0;
   top: 0;
   pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   /* Position is set via JS: transform: translate(Xpx, Ypx) translate(-50%, -50%) */
-  z-index: 1000;
+  z-index: var(--z-overlay);
   min-width: 2px;
   min-height: 2px;
   will-change: transform;

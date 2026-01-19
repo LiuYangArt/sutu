@@ -9,7 +9,7 @@
   -webkit-backdrop-filter: var(--mica-blur);
   border-bottom: 1px solid var(--border-subtle);
   height: 40px;
-  z-index: 100000; /* Must be above all FloatingPanels for menu dropdown */
+  z-index: var(--z-header); /* Must be above panels */
   position: relative; /* Ensure stacking context */
 }
 
@@ -273,7 +273,7 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--mica-shadow);
   padding: 4px;
-  z-index: 99999; /* Above all panels and resize handles */
+  z-index: var(--z-dropdown); /* Above panels */
 }
 
 .menu-item {
@@ -325,7 +325,7 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--mica-shadow);
   padding: 4px;
-  z-index: 100000; /* Above menu-dropdown */
+  z-index: var(--z-popover); /* Above menu-dropdown */
 }
 
 .submenu .menu-item {

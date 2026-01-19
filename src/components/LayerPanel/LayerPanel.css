@@ -144,12 +144,12 @@
 .layer-thumbnail {
   width: 40px;
   height: 40px;
-  background-color: #ffffff;
+  background-color: var(--pattern-light);
   background-image: conic-gradient(
-    #e5e5e5 0.25turn,
-    #ffffff 0 0.5turn,
-    #e5e5e5 0 0.75turn,
-    #ffffff 0
+    var(--pattern-dark) 0.25turn,
+    var(--pattern-light) 0 0.5turn,
+    var(--pattern-dark) 0 0.75turn,
+    var(--pattern-light) 0
   );
   background-size: 10px 10px;
   background-position: 0 0;
@@ -211,7 +211,7 @@
 .delete-layer-btn:hover {
   opacity: 1 !important;
   color: var(--danger);
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--danger-bg);
 }
 
 /* Active State Overrides for Delete */
@@ -272,7 +272,7 @@
 /* Layer Panel Footer */
 .layer-panel-footer {
   padding: 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-tertiary);
   border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
@@ -373,6 +373,6 @@
 }
 
 .context-menu-item.danger:hover {
-  background: rgba(239, 68, 68, 0.15);
+  background: var(--danger-bg);
   color: var(--danger);
 }

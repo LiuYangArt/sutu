@@ -104,6 +104,7 @@ pnpm format           # 格式化代码
 
 ## 相关文档
 
+- **UI 规范**: [ui-guidelines.md](file:///f:/CodeProjects/PaintBoard/docs/ui-guidelines.md)
 - **架构设计**: [architecture.md](file:///f:/CodeProjects/PaintBoard/docs/architecture.md)
 - **测试策略**: [testing-strategy.md](file:///f:/CodeProjects/PaintBoard/docs/testing-strategy.md)
 - **开发环境搭建**: [development-setup.md](file:///f:/CodeProjects/PaintBoard/docs/development-setup.md)

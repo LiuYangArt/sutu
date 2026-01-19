@@ -8,7 +8,7 @@
   left: 20px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 1000;
+  z-index: var(--z-panels);
 
   /* Mica effect */
   background-color: var(--mica-bg);
@@ -80,7 +80,7 @@
   top: 60px; /* Below toolbar */
   bottom: 20px;
   width: 280px;
-  z-index: 1000;
+  z-index: var(--z-panels);
 
   /* Mica effect */
   background-color: var(--mica-bg);
