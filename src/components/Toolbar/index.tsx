@@ -15,7 +15,7 @@ import {
   EyeOff,
   SlidersHorizontal,
 } from 'lucide-react';
-import { useToolStore, PressureCurve } from '@/stores/tool';
+import { useToolStore } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { usePanelStore } from '@/stores/panel';
@@ -24,14 +24,6 @@ import './Toolbar.css';
 
 /** Common icon props for toolbar icons */
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
-
-const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
-  // Pressure curve presets
-  { id: 'linear', label: 'Linear' },
-  { id: 'soft', label: 'Soft' },
-  { id: 'hard', label: 'Hard' },
-  { id: 'sCurve', label: 'S-Curve' },
-];
 
 /** Pressure toggle button component */
 function PressureToggle({
@@ -154,8 +146,6 @@ export function Toolbar() {
     setBrushFlow,
     brushOpacity,
     setBrushOpacity,
-    pressureCurve,
-    setPressureCurve,
     pressureSizeEnabled,
     togglePressureSize,
     pressureFlowEnabled,
@@ -256,21 +246,6 @@ export function Toolbar() {
             onChange={(e) => setBrushOpacity(Number(e.target.value))}
           />
           <span className="setting-value">{Math.round(brushOpacity * 100)}%</span>
-        </label>
-
-        <label className="setting">
-          <span className="setting-label">Curve</span>
-          <select
-            value={pressureCurve}
-            onChange={(e) => setPressureCurve(e.target.value as PressureCurve)}
-            className="pressure-select"
-          >
-            {PRESSURE_CURVES.map((curve) => (
-              <option key={curve.id} value={curve.id}>
-                {curve.label}
-              </option>
-            ))}
-          </select>
         </label>
 
         <button

@@ -9,13 +9,7 @@ import {
   CanvasBgColorId,
 } from '@/stores/settings';
 import { useTabletStore, BackendType } from '@/stores/tablet';
-import {
-  useToolStore,
-  RenderMode,
-  ColorBlendMode,
-  GPURenderScaleMode,
-  PressureCurve,
-} from '@/stores/tool';
+import { useToolStore, RenderMode, ColorBlendMode, GPURenderScaleMode } from '@/stores/tool';
 import './SettingsPanel.css';
 
 // Tab configuration
@@ -153,9 +147,8 @@ function AppearanceSettings() {
 
 // Tablet settings tab
 function TabletSettings() {
-  const { tablet, setTabletBackend, setPollingRate, setAutoStart } = useSettingsStore();
-
-  const { pressureCurve, setPressureCurve } = useToolStore();
+  const { tablet, setTabletBackend, setPollingRate, setAutoStart, setPressureCurve } =
+    useSettingsStore();
 
   const { status, backend, info, isInitialized, isStreaming, init, start, stop, refresh } =
     useTabletStore();
@@ -221,8 +214,10 @@ function TabletSettings() {
           <span>Curve:</span>
           <select
             className="settings-select"
-            value={pressureCurve}
-            onChange={(e) => setPressureCurve(e.target.value as PressureCurve)}
+            value={tablet.pressureCurve}
+            onChange={(e) =>
+              setPressureCurve(e.target.value as 'linear' | 'soft' | 'hard' | 'scurve')
+            }
           >
             <option value="linear">Linear</option>
             <option value="soft">Soft</option>
