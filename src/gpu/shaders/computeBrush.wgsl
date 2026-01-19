@@ -110,35 +110,62 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
 }
 
 // ============================================================================
-// Compute Mask (matches brush.wgsl soft/hard brush logic)
+// Compute Mask (matches CPU maskCache.ts implementation)
 // ============================================================================
+// For hard brushes: 1px physical AA band (not normalized distance!)
+// For soft brushes: Gaussian erf-based falloff
 fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
-  // Normalized distance (0-1 within radius, can exceed 1.0 for soft brushes)
-  let normalized_dist = dist / radius;
+  // =========================================================================
+  // SMALL BRUSH OPTIMIZATION (applies to ALL hardness levels)
+  // =========================================================================
+  // For very small brushes (radius < 3px), use Gaussian spot model
+  // This prevents the "broken line" effect caused by insufficient sampling
+  // Reference: docs/design/gpu-optimization-plan/debug_review.md
 
+  // Threshold for transitioning from Gaussian to standard AA
+  let SMALL_BRUSH_THRESHOLD = 3.0;
+
+  if (radius < SMALL_BRUSH_THRESHOLD) {
+    // Use Gaussian distribution: exp(-dist² / (2 * sigma²))
+    // Sigma is scaled by hardness: softer = wider spread
+    let base_sigma = max(radius, 0.5);
+
+    // For hard brushes, we want tighter sigma (sharper edge)
+    // For soft brushes, wider sigma (more diffuse)
+    // hardness=1.0: factor=1.0, hardness=0.0: factor=2.0
+    let softness_factor = 1.0 + (1.0 - hardness);
+    let sigma = base_sigma * softness_factor;
+
+    // For larger small brushes (1.5-3px), blend with edge sharpening
+    // This makes the transition to physical AA less abrupt
+    var alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
+
+    // For hard brushes approaching threshold, sharpen the edge
+    // to match the physical AA behavior
+    if (hardness >= 0.99 && radius >= 1.5) {
+      // Blend between pure Gaussian and sharpened version
+      let blend = (radius - 1.5) / 1.5;  // 0 at 1.5px, 1 at 3px
+      let edge_dist = radius;
+
+      // Sharpened version: more like step function
+      let sharp_alpha = 1.0 - smoothstep(edge_dist - 0.5, edge_dist + 0.5, dist);
+
+      // Blend: more Gaussian at small size, more sharp at larger size
+      alpha = mix(alpha, sharp_alpha, blend * hardness);
+    }
+
+    return min(1.0, alpha);
+  }
+
+  // =========================================================================
+  // NORMAL SIZE BRUSHES (radius >= 3px)
+  // =========================================================================
   if (hardness >= 0.99) {
-    // Hard brush: 1px anti-aliased edge
-    // Early exit for pixels clearly outside
-    if (dist > radius + 1.0) {
-      return 0.0;
-    }
-
-    let pixel_size = 1.0 / radius;
-    let half_pixel = pixel_size * 0.5;
-    let edge_dist = normalized_dist - 1.0;
-
-    if (edge_dist >= half_pixel) {
-      return 0.0;
-    } else if (edge_dist > -half_pixel) {
-      return (half_pixel - edge_dist) / pixel_size;
-    } else {
-      return 1.0;
-    }
+    // Hard brush: 1px anti-aliased edge using smoothstep
+    // Equivalent to linear falloff in [radius-0.5, radius+0.5] range
+    return 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
   } else {
     // Soft brush: Gaussian (erf-based) falloff
-    // NOTE: Do NOT early-exit here - Gaussian extends beyond radius!
-    // The caller already did effective_radius culling.
-
     let fade = (1.0 - hardness) * 2.0;
     let safe_fade = max(0.001, fade);
 
@@ -149,7 +176,6 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
     // Distance factor for Gaussian falloff
     let distfactor = (SQRT_2 * 12500.0) / (6761.0 * safe_fade * radius);
 
-    // Physical distance (use actual dist, not normalized * radius to avoid precision loss)
     let scaled_dist = dist * distfactor;
     let val = alphafactor * (erf_approx(scaled_dist + center) - erf_approx(scaled_dist - center));
     return saturate(val);
@@ -157,14 +183,20 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
 }
 
 // ============================================================================
-// Calculate effective radius for soft brush (matches types.ts)
+// Calculate effective radius (unified for all hardness levels)
 // ============================================================================
+// Ensures proper pixel coverage for both large and small brushes
 fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
-  if (hardness >= 0.99) {
-    return radius;
+  // For small brushes (< 2px), ensure minimum effective radius of 1.5px
+  // This prevents missing pixels due to dab culling
+  if (radius < 2.0) {
+    return max(1.5, radius + 1.0);
   }
+
+  // For larger brushes, use geometric fade for soft brushes
+  // and slight expansion for hard brushes to capture AA band
   let geometric_fade = (1.0 - hardness) * 2.5;
-  return radius * max(1.5, 1.0 + geometric_fade);
+  return radius * max(1.1, 1.0 + geometric_fade);
 }
 
 // ============================================================================
