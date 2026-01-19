@@ -1,6 +1,6 @@
 {
   "name": "paintboard",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "description": "Professional painting software with low-latency pen input",
   "type": "module",
   "scripts": {
