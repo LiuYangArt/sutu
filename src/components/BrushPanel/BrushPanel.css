@@ -188,5 +188,84 @@
   height: 70%;
   margin: auto;
   border-radius: 50%;
-  background: radial-gradient(circle, var(--text-primary) 0%, var(--text-primary) 40%, transparent 70%);
+  background: radial-gradient(
+    circle,
+    var(--text-primary) 0%,
+    var(--text-primary) 40%,
+    transparent 70%
+  );
+}
+
+/* --- Refactor Layout Styles --- */
+
+.brush-panel-container {
+  display: flex;
+  flex-direction: row;
+  height: 100%; /* Fill parent */
+  min-height: 0; /* Important for nested flex scroll */
+  overflow: hidden;
+  background-color: var(--bg-secondary);
+}
+
+.brush-sidebar {
+  width: 140px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background-color: var(--bg-secondary);
+  padding: 4px 0;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* For potential lock icon on right */
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  user-select: none;
+}
+
+.sidebar-item:hover {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.sidebar-item.active {
+  background-color: var(--bg-primary);
+  color: var(--accent); /* Highlight active text with accent color */
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 0 var(--accent); /* Left border indicator */
+}
+
+.sidebar-item.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sidebar-item.disabled:hover {
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.sidebar-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Content area re-using brush-panel class */
+.brush-content {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
 }
