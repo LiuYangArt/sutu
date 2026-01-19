@@ -159,12 +159,13 @@
 
 /* Color Grid - 8 colors per row */
 .color-grid {
-  display: grid;
-  grid-template-columns: repeat(8, 36px);
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  width: 100%;
 }
 
-.color-swatch {
+.settings-color-swatch {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-md);
@@ -177,17 +178,17 @@
   padding: 0;
 }
 
-.color-swatch:hover {
+.settings-color-swatch:hover {
   transform: scale(1.1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.color-swatch.selected {
+.settings-color-swatch.selected {
   border-color: var(--text-primary);
   box-shadow: 0 0 0 2px var(--bg-primary);
 }
 
-.color-swatch .check-mark {
+.settings-color-swatch .check-mark {
   color: white;
   font-size: 16px;
   font-weight: bold;
