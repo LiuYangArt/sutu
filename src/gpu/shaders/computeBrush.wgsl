@@ -110,35 +110,35 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
 }
 
 // ============================================================================
-// Compute Mask (matches brush.wgsl soft/hard brush logic)
+// Compute Mask (matches CPU maskCache.ts implementation)
 // ============================================================================
+// For hard brushes: 1px physical AA band (not normalized distance!)
+// For soft brushes: Gaussian erf-based falloff
 fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
-  // Normalized distance (0-1 within radius, can exceed 1.0 for soft brushes)
-  let normalized_dist = dist / radius;
-
   if (hardness >= 0.99) {
-    // Hard brush: 1px anti-aliased edge
-    // Early exit for pixels clearly outside
-    if (dist > radius + 1.0) {
-      return 0.0;
-    }
+    // Hard brush: 1px anti-aliased edge using PHYSICAL pixel distance
+    // This matches CPU implementation in maskCache.ts stampHardBrush()
+    //
+    // Key insight: Use physical distance (dist), not normalized distance (dist/radius)
+    // This ensures the AA band is always exactly 1 pixel wide regardless of brush size
 
-    let pixel_size = 1.0 / radius;
-    let half_pixel = pixel_size * 0.5;
-    let edge_dist = normalized_dist - 1.0;
+    let edge_dist = radius;  // Edge is at radius
 
-    if (edge_dist >= half_pixel) {
-      return 0.0;
-    } else if (edge_dist > -half_pixel) {
-      return (half_pixel - edge_dist) / pixel_size;
-    } else {
+    if (dist <= edge_dist - 0.5) {
+      // Fully inside (more than 0.5px from edge)
       return 1.0;
+    } else if (dist >= edge_dist + 0.5) {
+      // Fully outside (more than 0.5px from edge)
+      return 0.0;
+    } else {
+      // Within 1px AA band: linear falloff
+      // When dist == edge_dist - 0.5: mask = 1.0
+      // When dist == edge_dist: mask = 0.5
+      // When dist == edge_dist + 0.5: mask = 0.0
+      return 0.5 - (dist - edge_dist);
     }
   } else {
     // Soft brush: Gaussian (erf-based) falloff
-    // NOTE: Do NOT early-exit here - Gaussian extends beyond radius!
-    // The caller already did effective_radius culling.
-
     let fade = (1.0 - hardness) * 2.0;
     let safe_fade = max(0.001, fade);
 
@@ -149,7 +149,6 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
     // Distance factor for Gaussian falloff
     let distfactor = (SQRT_2 * 12500.0) / (6761.0 * safe_fade * radius);
 
-    // Physical distance (use actual dist, not normalized * radius to avoid precision loss)
     let scaled_dist = dist * distfactor;
     let val = alphafactor * (erf_approx(scaled_dist + center) - erf_approx(scaled_dist - center));
     return saturate(val);
@@ -157,14 +156,16 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
 }
 
 // ============================================================================
-// Calculate effective radius for soft brush (matches types.ts)
+// Calculate effective radius (unified for all hardness levels)
 // ============================================================================
+// NOTE: Now that we use Gaussian erf for all hardness values, we need to
+// calculate effective radius for all brushes (including hard ones) to ensure
+// proper pixel coverage during the Gaussian falloff.
 fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
-  if (hardness >= 0.99) {
-    return radius;
-  }
+  // For very hard brushes, the Gaussian extends slightly beyond radius
+  // Use a minimum multiplier of 1.1 to ensure edge anti-aliasing is captured
   let geometric_fade = (1.0 - hardness) * 2.5;
-  return radius * max(1.5, 1.0 + geometric_fade);
+  return radius * max(1.1, 1.0 + geometric_fade);
 }
 
 // ============================================================================
