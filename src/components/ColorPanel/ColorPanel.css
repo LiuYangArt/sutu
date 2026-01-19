@@ -29,13 +29,12 @@
 .picker-area {
   display: flex; /* Row layout for Saturation + Hue */
   gap: 12px;
-  flex: 1; /* Fill remaining vertical space */
-  min-height: 150px;
+  flex-shrink: 0; /* Don't shrink */
 }
 
 .saturation-wrapper {
   flex: 1; /* Take remaining width */
-  height: 100%; /* Fill parent */
+  aspect-ratio: 1 / 1; /* Force square */
   position: relative;
 }
 

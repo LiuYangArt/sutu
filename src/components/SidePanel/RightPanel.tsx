@@ -5,6 +5,7 @@ import { Plus, Eraser } from 'lucide-react';
 import { ColorPanel } from '../ColorPanel';
 import { LayerPanel } from '../LayerPanel';
 import { useDocumentStore } from '@/stores/document';
+import { clearActiveLayer } from '@/utils/canvasCommands';
 import './SidePanel.css';
 
 export function RightPanel() {
@@ -14,13 +15,6 @@ export function RightPanel() {
 
   const handleAddLayer = () => {
     addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' });
-  };
-
-  const handleClearLayer = () => {
-    const win = window as Window & { __canvasClearLayer?: () => void };
-    if (win.__canvasClearLayer) {
-      win.__canvasClearLayer();
-    }
   };
 
   return (
@@ -42,7 +36,7 @@ export function RightPanel() {
           <div className="section-actions">
             <button
               className="section-action-btn"
-              onClick={handleClearLayer}
+              onClick={clearActiveLayer}
               title="Clear Layer Content"
               disabled={!activeLayerId}
             >

@@ -118,10 +118,15 @@
   font-size: 11px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--bg-primary);
   color: var(--text-primary);
   cursor: pointer;
   transition: border-color 0.15s ease;
+}
+
+.pressure-select option {
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 .pressure-select:hover {
