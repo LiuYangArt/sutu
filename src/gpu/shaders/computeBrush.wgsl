@@ -118,24 +118,47 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
   // =========================================================================
   // SMALL BRUSH OPTIMIZATION (applies to ALL hardness levels)
   // =========================================================================
-  // For very small brushes (radius < 1.5px), use Gaussian spot model
+  // For very small brushes (radius < 3px), use Gaussian spot model
   // This prevents the "broken line" effect caused by insufficient sampling
   // Reference: docs/design/gpu-optimization-plan/debug_review.md
-  if (radius < 1.5) {
+
+  // Threshold for transitioning from Gaussian to standard AA
+  let SMALL_BRUSH_THRESHOLD = 3.0;
+
+  if (radius < SMALL_BRUSH_THRESHOLD) {
     // Use Gaussian distribution: exp(-dist² / (2 * sigma²))
     // Sigma is scaled by hardness: softer = wider spread
-    // For hard brush (hardness=1): sigma = max(radius, 0.5)
-    // For soft brush (hardness=0): sigma = max(radius, 0.5) * 2.0
     let base_sigma = max(radius, 0.5);
-    let softness_factor = 1.0 + (1.0 - hardness);  // 1.0 for hard, 2.0 for soft
+
+    // For hard brushes, we want tighter sigma (sharper edge)
+    // For soft brushes, wider sigma (more diffuse)
+    // hardness=1.0: factor=1.0, hardness=0.0: factor=2.0
+    let softness_factor = 1.0 + (1.0 - hardness);
     let sigma = base_sigma * softness_factor;
 
-    let alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
+    // For larger small brushes (1.5-3px), blend with edge sharpening
+    // This makes the transition to physical AA less abrupt
+    var alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
+
+    // For hard brushes approaching threshold, sharpen the edge
+    // to match the physical AA behavior
+    if (hardness >= 0.99 && radius >= 1.5) {
+      // Blend between pure Gaussian and sharpened version
+      let blend = (radius - 1.5) / 1.5;  // 0 at 1.5px, 1 at 3px
+      let edge_dist = radius;
+
+      // Sharpened version: more like step function
+      let sharp_alpha = 1.0 - smoothstep(edge_dist - 0.5, edge_dist + 0.5, dist);
+
+      // Blend: more Gaussian at small size, more sharp at larger size
+      alpha = mix(alpha, sharp_alpha, blend * hardness);
+    }
+
     return min(1.0, alpha);
   }
 
   // =========================================================================
-  // NORMAL SIZE BRUSHES (radius >= 1.5)
+  // NORMAL SIZE BRUSHES (radius >= 3px)
   // =========================================================================
   if (hardness >= 0.99) {
     // Hard brush: 1px anti-aliased edge using PHYSICAL pixel distance
