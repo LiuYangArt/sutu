@@ -29,6 +29,8 @@ export function PanelLayer() {
         const config = configs[id];
         const Component = PANEL_REGISTRY[id];
 
+        if (!Component) return null;
+
         return (
           <FloatingPanel
             key={id}

@@ -3,8 +3,26 @@ import { Tablet, Wifi, WifiOff, Settings, X } from 'lucide-react';
 import { useTabletStore, BackendType } from '@/stores/tablet';
 import './TabletPanel.css';
 
+// Global toggle function for menu control
+let toggleVisibilityFn: (() => void) | null = null;
+let getVisibilityFn: (() => boolean) | null = null;
+
+export const toggleTabletPanelVisibility = () => toggleVisibilityFn?.();
+export const isTabletPanelVisible = () => getVisibilityFn?.() ?? false;
+
 export function TabletPanel() {
+  const [isVisible, setIsVisible] = useState(false); // Hidden by default
   const [isOpen, setIsOpen] = useState(false);
+
+  // Register global toggle function
+  useEffect(() => {
+    toggleVisibilityFn = () => setIsVisible((v) => !v);
+    getVisibilityFn = () => isVisible;
+    return () => {
+      toggleVisibilityFn = null;
+      getVisibilityFn = null;
+    };
+  }, [isVisible]);
   const [selectedBackend, setSelectedBackend] = useState<BackendType>('auto');
   const [pollingRate, setPollingRate] = useState(200);
   const [pressureCurve, setPressureCurve] = useState('linear');
@@ -46,6 +64,9 @@ export function TabletPanel() {
   };
 
   const statusColor = status === 'Connected' ? '#4f4' : status === 'Error' ? '#f44' : '#888';
+
+  // Don't render anything if not visible
+  if (!isVisible) return null;
 
   return (
     <>

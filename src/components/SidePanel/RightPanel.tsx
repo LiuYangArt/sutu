@@ -1,11 +1,28 @@
 /**
  * Right Panel - Fixed position, contains Color and Layer sections
  */
+import { Plus, Eraser } from 'lucide-react';
 import { ColorPanel } from '../ColorPanel';
 import { LayerPanel } from '../LayerPanel';
+import { useDocumentStore } from '@/stores/document';
 import './SidePanel.css';
 
 export function RightPanel() {
+  const layers = useDocumentStore((s) => s.layers);
+  const activeLayerId = useDocumentStore((s) => s.activeLayerId);
+  const addLayer = useDocumentStore((s) => s.addLayer);
+
+  const handleAddLayer = () => {
+    addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' });
+  };
+
+  const handleClearLayer = () => {
+    const win = window as Window & { __canvasClearLayer?: () => void };
+    if (win.__canvasClearLayer) {
+      win.__canvasClearLayer();
+    }
+  };
+
   return (
     <aside className="right-panel">
       <section className="panel-section color-section">
@@ -22,6 +39,19 @@ export function RightPanel() {
       <section className="panel-section layer-section">
         <header className="section-header">
           <h3>LAYERS</h3>
+          <div className="section-actions">
+            <button
+              className="section-action-btn"
+              onClick={handleClearLayer}
+              title="Clear Layer Content"
+              disabled={!activeLayerId}
+            >
+              <Eraser size={14} />
+            </button>
+            <button className="section-action-btn" onClick={handleAddLayer} title="Add Layer">
+              <Plus size={14} />
+            </button>
+          </div>
         </header>
         <div className="section-content layer-content">
           <LayerPanel />

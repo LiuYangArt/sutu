@@ -47,7 +47,7 @@ function App() {
     }
   }, []);
 
-  // Drawing shortcuts: D (reset colors), X (swap colors), Alt+Backspace (fill)
+  // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill)
   const handleDrawingShortcuts = useCallback((e: KeyboardEvent) => {
     // Skip if focus is on input elements
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -65,6 +65,12 @@ function App() {
     // X: Swap foreground and background colors
     if (key === 'x' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
       useToolStore.getState().swapColors();
+      return;
+    }
+
+    // I: Switch to eyedropper tool
+    if (key === 'i' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      useToolStore.getState().setTool('eyedropper');
       return;
     }
 
