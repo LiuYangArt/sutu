@@ -115,26 +115,32 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
 // For hard brushes: 1px physical AA band (not normalized distance!)
 // For soft brushes: Gaussian erf-based falloff
 fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
+  // =========================================================================
+  // SMALL BRUSH OPTIMIZATION (applies to ALL hardness levels)
+  // =========================================================================
+  // For very small brushes (radius < 1.5px), use Gaussian spot model
+  // This prevents the "broken line" effect caused by insufficient sampling
+  // Reference: docs/design/gpu-optimization-plan/debug_review.md
+  if (radius < 1.5) {
+    // Use Gaussian distribution: exp(-dist² / (2 * sigma²))
+    // Sigma is scaled by hardness: softer = wider spread
+    // For hard brush (hardness=1): sigma = max(radius, 0.5)
+    // For soft brush (hardness=0): sigma = max(radius, 0.5) * 2.0
+    let base_sigma = max(radius, 0.5);
+    let softness_factor = 1.0 + (1.0 - hardness);  // 1.0 for hard, 2.0 for soft
+    let sigma = base_sigma * softness_factor;
+
+    let alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
+    return min(1.0, alpha);
+  }
+
+  // =========================================================================
+  // NORMAL SIZE BRUSHES (radius >= 1.5)
+  // =========================================================================
   if (hardness >= 0.99) {
     // Hard brush: 1px anti-aliased edge using PHYSICAL pixel distance
     // This matches CPU implementation in maskCache.ts stampHardBrush()
-    //
-    // Key insight: Use physical distance (dist), not normalized distance (dist/radius)
-    // This ensures the AA band is always exactly 1 pixel wide regardless of brush size
-
-    // For very small brushes (radius < 1px), use Gaussian spot model
-    // This prevents the "broken line" effect caused by insufficient sampling
-    // Reference: docs/design/gpu-optimization-plan/debug_review.md
-    if (radius < 1.0) {
-      // Use Gaussian distribution: exp(-dist² / (2 * sigma²))
-      // Sigma = max(radius, 0.5) ensures at least 0.5px spread
-      // Gaussian has longer "tails" than smoothstep, preserving visual continuity
-      let safe_sigma = max(radius, 0.5);
-      let alpha = exp(-(dist * dist) / (2.0 * safe_sigma * safe_sigma));
-      return min(1.0, alpha);
-    }
-
-    let edge_dist = radius;  // Edge is at radius
+    let edge_dist = radius;
 
     if (dist <= edge_dist - 0.5) {
       // Fully inside (more than 0.5px from edge)
@@ -144,9 +150,6 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
       return 0.0;
     } else {
       // Within 1px AA band: linear falloff
-      // When dist == edge_dist - 0.5: mask = 1.0
-      // When dist == edge_dist: mask = 0.5
-      // When dist == edge_dist + 0.5: mask = 0.0
       return 0.5 - (dist - edge_dist);
     }
   } else {
