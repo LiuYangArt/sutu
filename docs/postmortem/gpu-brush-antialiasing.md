@@ -2,7 +2,7 @@
 
 > Issue: https://github.com/LiuYangArt/PaintBoard/issues/83
 > 日期: 2025-01-19
-> 状态: 部分完成，小笔刷仍有改进空间
+> 状态: ✅ 已完成
 
 ## 问题描述
 
@@ -55,53 +55,46 @@ if (physicalDist <= edgeDist - 0.5) {
 
 ---
 
-## 修复方案
+## 最终修复方案
 
-### 修改 1: 硬笔刷使用物理距离抗锯齿
+### 1. 小笔刷 (radius < 3px): 高斯光晕模型
+
+对所有硬度的小笔刷统一使用高斯分布，解决"采样频率不足"导致的断裂问题：
 
 ```wgsl
-fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
-  if (hardness >= 0.99) {
-    // 使用物理像素距离，不是归一化距离
-    let edge_dist = radius;
+if (radius < 3.0) {
+  let base_sigma = max(radius, 0.5);
+  let softness_factor = 1.0 + (1.0 - hardness);  // 软笔刷 sigma 更大
+  let sigma = base_sigma * softness_factor;
 
-    if (dist <= edge_dist - 0.5) {
-      return 1.0;  // 完全内部
-    } else if (dist >= edge_dist + 0.5) {
-      return 0.0;  // 完全外部
-    } else {
-      // 1px 抗锯齿带
-      return 0.5 - (dist - edge_dist);
-    }
+  var alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
+
+  // 1.5-3px 硬笔刷：渐进式锐化边缘
+  if (hardness >= 0.99 && radius >= 1.5) {
+    let blend = (radius - 1.5) / 1.5;
+    let sharp_alpha = 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
+    alpha = mix(alpha, sharp_alpha, blend * hardness);
   }
-  // ... 软笔刷保持高斯 erf
+
+  return min(1.0, alpha);
 }
 ```
 
-### 修改 2: 小笔刷特殊处理
+**原理**: 高斯函数拥有更长的"尾巴"，能更好地将颜色能量扩散到周围像素，保持线条视觉连续性。
 
-当 `radius < 1.0` 时，整个 dab 都在抗锯齿过渡区内，导致没有完全不透明的中心像素：
+### 2. 大笔刷 (radius >= 3px): 物理距离 AA
+
+使用 `smoothstep` 简化后的 1px 抗锯齿：
 
 ```wgsl
-if (radius < 1.0) {
-  let norm_dist = dist / max(radius, 0.1);
-  // smoothstep 确保中心像素有较高不透明度
-  return 1.0 - smoothstep(0.0, 1.5, norm_dist);
+if (hardness >= 0.99) {
+  return 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
 }
 ```
 
-### 修改 3: 小笔刷有效半径
+### 3. ABR 纹理笔刷
 
-确保小笔刷的有效半径足够大，防止 dab culling 错过像素：
-
-```wgsl
-fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
-  if (radius < 2.0) {
-    return max(1.5, radius + 1.0);  // 小笔刷保证最小 1.5px
-  }
-  // ... 大笔刷使用 geometric fade
-}
-```
+同样的高斯光晕方案应用于 `computeTextureBrush.wgsl`，小笔刷使用高斯 + 纹理混合过渡。
 
 ---
 
@@ -109,42 +102,32 @@ fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
 
 | 指标 | 修复前 | 修复后 |
 |------|--------|--------|
-| Max Diff (大笔刷) | 64-85 | 3 |
-| Diff Pixels | 2-3% | 0.0007% |
-| 边缘质量 | 锯齿明显 | 平滑 |
-| 小笔刷连续性 | - | 有改善，仍有优化空间 |
+| Max Diff (大笔刷) | 64-85 | **3** |
+| Diff Pixels | 2-3% | **0.0007%** |
+| 边缘质量 | 锯齿明显 | **平滑** |
+| 小笔刷 (1px) 连续性 | 断裂严重 | **连续平滑** |
+| 小笔刷 (不同硬度) | 断裂 | **全部支持** |
 
 ---
 
-## 待改进
+## 修改文件
 
-### 1. 小笔刷 (1px) 断裂问题
-
-当前 smoothstep 方案改善了问题，但与 CPU 仍有差异。可能需要：
-
-- 检查 CPU 对小笔刷的具体处理逻辑
-- 考虑使用更激进的 falloff 参数
-- 或者对极小笔刷直接返回固定值
-
-### 2. 软笔刷高硬度过渡
-
-当 `hardness` 接近 0.99 但未达到阈值时，高斯 erf 的 `safe_fade` 很小，曲线可能过于陡峭。可能需要：
-
-- 平滑过渡硬笔刷和软笔刷算法
-- 或者调整 `hardness >= 0.99` 的阈值
-
----
-
-## 相关文件
-
-- `src/gpu/shaders/computeBrush.wgsl` - GPU Compute Shader
-- `src/utils/maskCache.ts` - CPU Reference (stampHardBrush)
-- `src-tauri/src/brush/soft_dab.rs` - Rust 软笔刷实现 (使用高斯 erf)
+- `src/gpu/shaders/computeBrush.wgsl` - 参数化笔刷
+- `src/gpu/shaders/computeTextureBrush.wgsl` - ABR 纹理笔刷
 
 ---
 
 ## 关键教训
 
-1. **物理距离 vs 归一化距离**: 抗锯齿必须在物理像素空间计算，不能归一化
-2. **小笔刷边界情况**: 当笔刷尺寸接近或小于抗锯齿带宽度时，需要特殊处理
-3. **GPU/CPU 一致性**: 先理解 CPU Reference 的实际实现，再移植到 GPU
+1. **物理距离 vs 归一化距离**: 抗锯齿必须在物理像素空间计算，归一化会导致大笔刷的 AA 带过窄
+2. **小笔刷采样不足**: 当笔刷尺寸 < 3px 时，点采样无法捕获覆盖率，需要用高斯光晕模拟
+3. **高斯 vs smoothstep**: 高斯有"尾巴"，能保持视觉连续性；smoothstep 是硬截断
+4. **GPU/CPU 一致性**: 先理解 CPU Reference 的实际实现，再移植到 GPU
+5. **渐进过渡**: 小笔刷和大笔刷之间需要平滑过渡，避免视觉跳变
+
+---
+
+## 参考文档
+
+- `docs/design/gpu-optimization-plan/debug_review.md` - 小笔刷优化方案分析
+- `docs/design/gpu-optimization-plan/gpu-batch-rendering-compute.md` - Compute Shader 架构

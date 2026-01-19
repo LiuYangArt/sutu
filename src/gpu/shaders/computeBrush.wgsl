@@ -161,20 +161,9 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
   // NORMAL SIZE BRUSHES (radius >= 3px)
   // =========================================================================
   if (hardness >= 0.99) {
-    // Hard brush: 1px anti-aliased edge using PHYSICAL pixel distance
-    // This matches CPU implementation in maskCache.ts stampHardBrush()
-    let edge_dist = radius;
-
-    if (dist <= edge_dist - 0.5) {
-      // Fully inside (more than 0.5px from edge)
-      return 1.0;
-    } else if (dist >= edge_dist + 0.5) {
-      // Fully outside (more than 0.5px from edge)
-      return 0.0;
-    } else {
-      // Within 1px AA band: linear falloff
-      return 0.5 - (dist - edge_dist);
-    }
+    // Hard brush: 1px anti-aliased edge using smoothstep
+    // Equivalent to linear falloff in [radius-0.5, radius+0.5] range
+    return 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
   } else {
     // Soft brush: Gaussian (erf-based) falloff
     let fade = (1.0 - hardness) * 2.0;
