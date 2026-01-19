@@ -25,12 +25,21 @@ const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; descripti
 ];
 
 export function RendererSettings(): JSX.Element {
-  const renderMode = useSettingsStore((s) => s.brush.renderMode);
-  const colorBlendMode = useSettingsStore((s) => s.brush.colorBlendMode);
-  const gpuRenderScaleMode = useSettingsStore((s) => s.brush.gpuRenderScaleMode);
-  const setRenderMode = useSettingsStore((s) => s.setRenderMode);
-  const setColorBlendMode = useSettingsStore((s) => s.setColorBlendMode);
-  const setGpuRenderScaleMode = useSettingsStore((s) => s.setGpuRenderScaleMode);
+  const {
+    renderMode,
+    colorBlendMode,
+    gpuRenderScaleMode,
+    setRenderMode,
+    setColorBlendMode,
+    setGpuRenderScaleMode,
+  } = useSettingsStore((s) => ({
+    renderMode: s.brush.renderMode,
+    colorBlendMode: s.brush.colorBlendMode,
+    gpuRenderScaleMode: s.brush.gpuRenderScaleMode,
+    setRenderMode: s.setRenderMode,
+    setColorBlendMode: s.setColorBlendMode,
+    setGpuRenderScaleMode: s.setGpuRenderScaleMode,
+  }));
 
   return (
     <div className="brush-panel-section">

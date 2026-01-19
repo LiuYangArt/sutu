@@ -335,16 +335,13 @@ export const useSettingsStore = create<SettingsState>()(
             }
             state.isLoaded = true;
           });
-
-          console.log('[Settings] Loaded from', SETTINGS_FILE);
         } else {
           // No settings file, use defaults and save
           set({ isLoaded: true });
           await get()._saveSettings();
-          console.log('[Settings] Created default settings file');
         }
-      } catch (error) {
-        console.error('[Settings] Failed to load settings:', error);
+      } catch {
+        // Load failed - use defaults (non-critical, app works fine with defaults)
         set({ isLoaded: true });
       }
 
@@ -368,10 +365,8 @@ export const useSettingsStore = create<SettingsState>()(
         await writeTextFile(SETTINGS_FILE, JSON.stringify(data, null, 2), {
           baseDir: BaseDirectory.AppConfig,
         });
-
-        console.log('[Settings] Saved to', SETTINGS_FILE);
-      } catch (error) {
-        console.error('[Settings] Failed to save settings:', error);
+      } catch {
+        // Settings save failed - silent failure, non-critical operation
       }
     },
   }))
