@@ -255,6 +255,11 @@
   color: var(--primary);
   cursor: pointer;
   transition: background-color 0.15s ease;
+  outline: none;
+}
+
+.menu-btn:focus {
+  outline: none;
 }
 
 .menu-btn:hover {
