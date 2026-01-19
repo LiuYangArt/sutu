@@ -149,7 +149,56 @@ fn compute_texture_mask(pixel: vec2<f32>, dab: TextureDabData) -> f32 {
   );
 
   let half_dims = calculate_half_dimensions(dab);
+  let radius = dab.size / 2.0;
 
+  // =========================================================================
+  // SMALL BRUSH OPTIMIZATION (applies to ALL hardness levels)
+  // =========================================================================
+  // For very small brushes (size < 6px, radius < 3px), use Gaussian spot model
+  // This prevents the "broken line" effect caused by insufficient sampling
+  // Reference: docs/design/gpu-optimization-plan/debug_review.md
+  let SMALL_BRUSH_THRESHOLD = 3.0;
+
+  if (radius < SMALL_BRUSH_THRESHOLD) {
+    // Calculate distance from center in local space
+    // Account for roundness by scaling Y
+    let scaled_offset = vec2<f32>(rotated.x, rotated.y / max(dab.roundness, 0.01));
+    let dist = length(scaled_offset);
+
+    // Use Gaussian distribution: exp(-dist² / (2 * sigma²))
+    // Sigma is based on the smaller dimension to ensure proper coverage
+    let min_half_dim = min(half_dims.x, half_dims.y);
+    let base_sigma = max(min_half_dim, 0.5);
+
+    // For texture brushes, we always want some softness at small sizes
+    // to ensure visual continuity
+    let sigma = base_sigma * 1.2;  // Slightly wider than parametric
+
+    var alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
+
+    // For larger small brushes (1.5-3px), blend with texture sample
+    // This makes the transition to full texture rendering less abrupt
+    if (radius >= 1.5) {
+      // Normalize to UV space: [-1, 1] -> [0, 1]
+      let normalized = rotated / half_dims;
+      let uv = (normalized + 1.0) / 2.0;
+
+      // Bounds check
+      if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
+        let tex_mask = sample_texture_bilinear(brush_texture, uv);
+
+        // Blend: more Gaussian at small size, more texture at larger size
+        let blend = (radius - 1.5) / 1.5;  // 0 at 1.5px, 1 at 3px
+        alpha = mix(alpha, tex_mask, blend);
+      }
+    }
+
+    return min(1.0, alpha);
+  }
+
+  // =========================================================================
+  // NORMAL SIZE BRUSHES (radius >= 3px) - Full texture sampling
+  // =========================================================================
   // Normalize to UV space: [-1, 1] -> [0, 1]
   let normalized = rotated / half_dims;
   let uv = (normalized + 1.0) / 2.0;
