@@ -1,12 +1,5 @@
-import { useToolStore, PressureCurve } from '@/stores/tool';
+import { useToolStore } from '@/stores/tool';
 import { SliderRow } from '../BrushPanelComponents';
-
-const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
-  { id: 'linear', label: 'Linear' },
-  { id: 'soft', label: 'Soft' },
-  { id: 'hard', label: 'Hard' },
-  { id: 'sCurve', label: 'S-Curve' },
-];
 
 export function TransferSettings(): JSX.Element {
   const {
@@ -14,8 +7,6 @@ export function TransferSettings(): JSX.Element {
     setBrushFlow,
     brushOpacity,
     setBrushOpacity,
-    pressureCurve,
-    setPressureCurve,
     pressureFlowEnabled,
     togglePressureFlow,
     pressureOpacityEnabled,
@@ -49,21 +40,6 @@ export function TransferSettings(): JSX.Element {
         onPressureToggle={togglePressureOpacity}
         pressureTitle="Pressure affects opacity"
       />
-
-      <div className="brush-setting-row">
-        <span className="brush-setting-label">Curve</span>
-        <select
-          value={pressureCurve}
-          onChange={(e) => setPressureCurve(e.target.value as PressureCurve)}
-          className="brush-select"
-        >
-          {PRESSURE_CURVES.map((curve) => (
-            <option key={curve.id} value={curve.id}>
-              {curve.label}
-            </option>
-          ))}
-        </select>
-      </div>
     </div>
   );
 }

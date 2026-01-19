@@ -8,7 +8,7 @@
   left: 20px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 1000;
+  z-index: var(--z-panels);
 
   /* Mica effect */
   background-color: var(--mica-bg);
@@ -41,7 +41,9 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .tool-grid-btn:hover {
@@ -52,19 +54,6 @@
 .tool-grid-btn.active {
   background: var(--primary-bg);
   color: var(--primary);
-}
-
-/* Active indicator bar */
-.tool-grid-btn.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2px;
-  height: 24px;
-  background: var(--primary);
-  border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
 .tool-grid-btn:focus {
@@ -80,7 +69,7 @@
   top: 60px; /* Below toolbar */
   bottom: 20px;
   width: 280px;
-  z-index: 1000;
+  z-index: var(--z-panels);
 
   /* Mica effect */
   background-color: var(--mica-bg);
@@ -147,7 +136,9 @@
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .section-action-btn:hover {

@@ -14,25 +14,16 @@ import {
   Eye,
   EyeOff,
   SlidersHorizontal,
-  Tablet,
 } from 'lucide-react';
-import { useToolStore, PressureCurve } from '@/stores/tool';
+import { useToolStore } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { usePanelStore } from '@/stores/panel';
-import { toggleTabletPanelVisibility, isTabletPanelVisible } from '@/components/TabletPanel';
+import { useSettingsStore } from '@/stores/settings';
 import './Toolbar.css';
 
 /** Common icon props for toolbar icons */
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
-
-const PRESSURE_CURVES: { id: PressureCurve; label: string }[] = [
-  // Pressure curve presets
-  { id: 'linear', label: 'Linear' },
-  { id: 'soft', label: 'Soft' },
-  { id: 'hard', label: 'Hard' },
-  { id: 'sCurve', label: 'S-Curve' },
-];
 
 /** Pressure toggle button component */
 function PressureToggle({
@@ -59,13 +50,15 @@ function PressureToggle({
 function AppMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const [panelsSubmenuOpen, setPanelsSubmenuOpen] = useState(false);
-  const [tabletVisible, setTabletVisible] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Only show Brush panel in menu (Tools, Color, Layers are now fixed)
   const brushPanel = usePanelStore((s) => s.panels['brush-panel']);
   const openPanel = usePanelStore((s) => s.openPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
+
+  // Settings
+  const openSettings = useSettingsStore((s) => s.openSettings);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -81,13 +74,6 @@ function AppMenu() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  // Sync tablet visibility state when menu opens
-  useEffect(() => {
-    if (isOpen) {
-      setTabletVisible(isTabletPanelVisible());
-    }
-  }, [isOpen]);
-
   const handleToggleBrushPanel = () => {
     if (brushPanel?.isOpen) {
       closePanel('brush-panel');
@@ -96,9 +82,9 @@ function AppMenu() {
     }
   };
 
-  const handleToggleTabletPanel = () => {
-    toggleTabletPanelVisibility();
-    setTabletVisible(!tabletVisible);
+  const handleOpenSettings = () => {
+    setIsOpen(false);
+    openSettings();
   };
 
   return (
@@ -109,7 +95,7 @@ function AppMenu() {
 
       {isOpen && (
         <div className="menu-dropdown">
-          <button className="menu-item" onClick={() => setIsOpen(false)}>
+          <button className="menu-item" onClick={handleOpenSettings}>
             <Settings size={16} />
             <span>Settings</span>
           </button>
@@ -128,11 +114,6 @@ function AppMenu() {
                 <button className="menu-item" onClick={handleToggleBrushPanel}>
                   {brushPanel?.isOpen ? <Eye size={14} /> : <EyeOff size={14} />}
                   <span>Brush</span>
-                </button>
-                <button className="menu-item" onClick={handleToggleTabletPanel}>
-                  {tabletVisible ? <Eye size={14} /> : <EyeOff size={14} />}
-                  <Tablet size={14} />
-                  <span>Tablet</span>
                 </button>
               </div>
             )}
@@ -165,8 +146,6 @@ export function Toolbar() {
     setBrushFlow,
     brushOpacity,
     setBrushOpacity,
-    pressureCurve,
-    setPressureCurve,
     pressureSizeEnabled,
     togglePressureSize,
     pressureFlowEnabled,
@@ -267,21 +246,6 @@ export function Toolbar() {
             onChange={(e) => setBrushOpacity(Number(e.target.value))}
           />
           <span className="setting-value">{Math.round(brushOpacity * 100)}%</span>
-        </label>
-
-        <label className="setting">
-          <span className="setting-label">Curve</span>
-          <select
-            value={pressureCurve}
-            onChange={(e) => setPressureCurve(e.target.value as PressureCurve)}
-            className="pressure-select"
-          >
-            {PRESSURE_CURVES.map((curve) => (
-              <option key={curve.id} value={curve.id}>
-                {curve.label}
-              </option>
-            ))}
-          </select>
         </label>
 
         <button

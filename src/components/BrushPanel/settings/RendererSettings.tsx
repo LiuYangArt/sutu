@@ -1,4 +1,9 @@
-import { useToolStore, RenderMode, ColorBlendMode, GPURenderScaleMode } from '@/stores/tool';
+import {
+  useSettingsStore,
+  RenderMode,
+  ColorBlendMode,
+  GPURenderScaleMode,
+} from '@/stores/settings';
 
 const RENDER_MODES: { id: RenderMode; label: string; description: string }[] = [
   { id: 'gpu', label: 'GPU', description: 'WebGPU accelerated' },
@@ -22,12 +27,19 @@ const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; descripti
 export function RendererSettings(): JSX.Element {
   const {
     renderMode,
-    setRenderMode,
     colorBlendMode,
-    setColorBlendMode,
     gpuRenderScaleMode,
+    setRenderMode,
+    setColorBlendMode,
     setGpuRenderScaleMode,
-  } = useToolStore();
+  } = useSettingsStore((s) => ({
+    renderMode: s.brush.renderMode,
+    colorBlendMode: s.brush.colorBlendMode,
+    gpuRenderScaleMode: s.brush.gpuRenderScaleMode,
+    setRenderMode: s.setRenderMode,
+    setColorBlendMode: s.setColorBlendMode,
+    setGpuRenderScaleMode: s.setGpuRenderScaleMode,
+  }));
 
   return (
     <div className="brush-panel-section">

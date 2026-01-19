@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
 import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
-import { TabletPanel } from './components/TabletPanel';
+import { SettingsPanel } from './components/SettingsPanel';
 import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
 import { useToolStore } from './stores/tool';
+import { useSettingsStore, initializeSettings } from './stores/settings';
 import { LeftToolbar, RightPanel } from './components/SidePanel';
 import { PanelLayer } from './components/UI/PanelLayer';
 import { usePanelStore } from './stores/panel';
@@ -99,7 +100,10 @@ function App() {
 
   // Initialize tablet at App level (runs once)
   useEffect(() => {
-    const setupTablet = async () => {
+    const initialize = async () => {
+      // Initialize settings first (load from file, apply CSS variables)
+      await initializeSettings();
+
       // Use ref to prevent double initialization in StrictMode
       if (tabletInitializedRef.current) return;
       tabletInitializedRef.current = true;
@@ -111,11 +115,20 @@ function App() {
         return;
       }
 
-      await initTablet({ backend: 'auto' });
-      await startTablet();
+      // Use settings from store (now loaded from file)
+      const tabletSettings = useSettingsStore.getState().tablet;
+      await initTablet({
+        backend: tabletSettings.backend,
+        pollingRate: tabletSettings.pollingRate,
+        pressureCurve: tabletSettings.pressureCurve,
+      });
+
+      if (tabletSettings.autoStart) {
+        await startTablet();
+      }
     };
 
-    setupTablet();
+    initialize();
 
     // Cleanup only on actual unmount (App never unmounts in normal use)
     return () => {
@@ -174,7 +187,8 @@ function App() {
       <RightPanel />
       {/* Floating panels (only Brush panel now) */}
       <PanelLayer />
-      <TabletPanel />
+      {/* Settings Panel */}
+      <SettingsPanel />
       {/* Debug Panel - dev mode only */}
       {showDebugPanel && (
         <Suspense fallback={null}>

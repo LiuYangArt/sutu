@@ -27,6 +27,9 @@
   --bg-tertiary: rgba(255, 255, 255, 0.05);
   --bg-elevated: rgba(255, 255, 255, 0.08);
 
+  /* App Background (Workspace outside canvas) */
+  --app-bg: var(--bg-primary);
+
   /* Legacy aliases (for backward compatibility) */
   --surface-color: var(--mica-bg-solid);
   --surface-hover: rgba(255, 255, 255, 0.1);
@@ -81,6 +84,22 @@
   --z-header: 50;
   --z-overlay: 60;
   --z-modal: 70;
+  --z-dropdown: 80;
+  --z-popover: 90;
+  --z-tooltip: 100;
+
+  /* =========================
+   * Semantic Color Variants
+   * ========================= */
+  --danger-bg: rgba(239, 68, 68, 0.1);
+  --success-bg: rgba(34, 197, 94, 0.1);
+  --warning-bg: rgba(245, 158, 11, 0.1);
+
+  /* =========================
+   * Special Purpose Colors
+   * ========================= */
+  --pattern-light: #ffffff;
+  --pattern-dark: #e5e5e5;
 }
 
 * {
@@ -98,7 +117,7 @@ body,
 }
 
 body {
-  background: var(--bg-primary);
+  background: var(--app-bg);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -165,6 +184,7 @@ button {
   cursor: pointer;
   font-size: 13px;
   font-family: inherit;
+  outline: none;
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
