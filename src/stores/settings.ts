@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 
-// Accent color presets
+// Accent color presets - add more colors here as needed
 export const ACCENT_COLORS = [
   { id: 'blue', value: '#137fec', label: 'Blue' },
   { id: 'purple', value: '#8b5cf6', label: 'Purple' },
@@ -12,14 +12,28 @@ export const ACCENT_COLORS = [
   { id: 'yellow', value: '#eab308', label: 'Yellow' },
   { id: 'green', value: '#22c55e', label: 'Green' },
   { id: 'teal', value: '#14b8a6', label: 'Teal' },
+  // Row 2 - Placeholder colors (customize as needed)
+  { id: 'indigo', value: '#6366f1', label: 'Indigo' },
+  { id: 'violet', value: '#a855f7', label: 'Violet' },
+  { id: 'rose', value: '#f43f5e', label: 'Rose' },
+  { id: 'amber', value: '#f59e0b', label: 'Amber' },
+  { id: 'lime', value: '#84cc16', label: 'Lime' },
+  { id: 'emerald', value: '#10b981', label: 'Emerald' },
+  { id: 'cyan', value: '#06b6d4', label: 'Cyan' },
+  { id: 'sky', value: '#0ea5e9', label: 'Sky' },
 ] as const;
 
-// Panel background color presets
+// Panel background color presets - add more colors here as needed
 export const PANEL_BG_COLORS = [
   { id: 'dark', value: 'rgba(20, 20, 25, 0.8)', solid: '#14141a', label: 'Dark' },
   { id: 'darker', value: 'rgba(10, 10, 15, 0.85)', solid: '#0a0a0f', label: 'Darker' },
   { id: 'charcoal', value: 'rgba(30, 30, 35, 0.75)', solid: '#1e1e23', label: 'Charcoal' },
   { id: 'slate', value: 'rgba(40, 45, 55, 0.7)', solid: '#282d37', label: 'Slate' },
+  // Row 2 - Placeholder colors (customize as needed)
+  { id: 'midnight', value: 'rgba(15, 23, 42, 0.85)', solid: '#0f172a', label: 'Midnight' },
+  { id: 'graphite', value: 'rgba(55, 55, 60, 0.75)', solid: '#37373c', label: 'Graphite' },
+  { id: 'neutral', value: 'rgba(45, 45, 50, 0.8)', solid: '#2d2d32', label: 'Neutral' },
+  { id: 'warm', value: 'rgba(40, 35, 30, 0.8)', solid: '#28231e', label: 'Warm' },
 ] as const;
 
 export type AccentColorId = (typeof ACCENT_COLORS)[number]['id'];

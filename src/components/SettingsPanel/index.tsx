@@ -1,4 +1,4 @@
-import { X, Palette, Tablet } from 'lucide-react';
+import { X, Palette, Tablet, Brush } from 'lucide-react';
 import {
   useSettingsStore,
   ACCENT_COLORS,
@@ -7,6 +7,13 @@ import {
   PanelBgColorId,
 } from '@/stores/settings';
 import { useTabletStore, BackendType } from '@/stores/tablet';
+import {
+  useToolStore,
+  RenderMode,
+  ColorBlendMode,
+  GPURenderScaleMode,
+  PressureCurve,
+} from '@/stores/tool';
 import './SettingsPanel.css';
 
 // Tab configuration
@@ -18,6 +25,7 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={16} /> },
+  { id: 'brush', label: 'Brush', icon: <Brush size={16} /> },
   { id: 'tablet', label: 'Tablet', icon: <Tablet size={16} /> },
 ];
 
@@ -127,8 +135,9 @@ function AppearanceSettings() {
 
 // Tablet settings tab
 function TabletSettings() {
-  const { tablet, setTabletBackend, setPollingRate, setPressureCurve, setAutoStart } =
-    useSettingsStore();
+  const { tablet, setTabletBackend, setPollingRate, setAutoStart } = useSettingsStore();
+
+  const { pressureCurve, setPressureCurve } = useToolStore();
 
   const { status, backend, info, isInitialized, isStreaming, init, start, stop, refresh } =
     useTabletStore();
@@ -187,6 +196,24 @@ function TabletSettings() {
         </div>
       </div>
 
+      {/* Pressure Curve - always visible */}
+      <div className="settings-section">
+        <label className="settings-label">PRESSURE CURVE</label>
+        <div className="settings-row">
+          <span>Curve:</span>
+          <select
+            className="settings-select"
+            value={pressureCurve}
+            onChange={(e) => setPressureCurve(e.target.value as PressureCurve)}
+          >
+            <option value="linear">Linear</option>
+            <option value="soft">Soft</option>
+            <option value="hard">Hard</option>
+            <option value="sCurve">S-Curve</option>
+          </select>
+        </div>
+      </div>
+
       {/* Configuration (only before init) */}
       {!isInitialized && (
         <div className="settings-section">
@@ -216,22 +243,6 @@ function TabletSettings() {
               <option value={200}>200 Hz</option>
               <option value={500}>500 Hz</option>
               <option value={1000}>1000 Hz</option>
-            </select>
-          </div>
-
-          <div className="settings-row">
-            <span>Pressure Curve:</span>
-            <select
-              className="settings-select"
-              value={tablet.pressureCurve}
-              onChange={(e) =>
-                setPressureCurve(e.target.value as 'linear' | 'soft' | 'hard' | 'scurve')
-              }
-            >
-              <option value="linear">Linear</option>
-              <option value="soft">Soft</option>
-              <option value="hard">Hard</option>
-              <option value="scurve">S-Curve</option>
             </select>
           </div>
 
@@ -276,6 +287,100 @@ function TabletSettings() {
   );
 }
 
+// Brush settings tab (Renderer settings)
+const RENDER_MODES: { id: RenderMode; label: string; description: string }[] = [
+  { id: 'gpu', label: 'GPU', description: 'WebGPU accelerated' },
+  { id: 'cpu', label: 'CPU', description: 'Canvas 2D fallback' },
+];
+
+const COLOR_BLEND_MODES: { id: ColorBlendMode; label: string; description: string }[] = [
+  { id: 'srgb', label: 'sRGB', description: 'Match CPU rendering exactly' },
+  { id: 'linear', label: 'Linear', description: 'Smoother gradients (default)' },
+];
+
+const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; description: string }[] = [
+  { id: 'off', label: 'Off', description: 'Always render at full resolution' },
+  {
+    id: 'auto',
+    label: 'Auto',
+    description: 'Downsample for soft large brushes (hardness < 70, size > 300)',
+  },
+];
+
+function BrushSettings() {
+  const {
+    renderMode,
+    setRenderMode,
+    colorBlendMode,
+    setColorBlendMode,
+    gpuRenderScaleMode,
+    setGpuRenderScaleMode,
+  } = useToolStore();
+
+  return (
+    <div className="settings-content">
+      <h3 className="settings-section-title">Brush</h3>
+
+      {/* Renderer Settings */}
+      <div className="settings-section">
+        <label className="settings-label">RENDERER</label>
+
+        <div className="settings-row">
+          <span>Mode:</span>
+          <select
+            className="settings-select"
+            value={renderMode}
+            onChange={(e) => setRenderMode(e.target.value as RenderMode)}
+            title={RENDER_MODES.find((m) => m.id === renderMode)?.description}
+          >
+            {RENDER_MODES.map((mode) => (
+              <option key={mode.id} value={mode.id}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {renderMode === 'gpu' && (
+          <>
+            <div className="settings-row">
+              <span>Blending:</span>
+              <select
+                className="settings-select"
+                value={colorBlendMode}
+                onChange={(e) => setColorBlendMode(e.target.value as ColorBlendMode)}
+                title={COLOR_BLEND_MODES.find((m) => m.id === colorBlendMode)?.description}
+              >
+                {COLOR_BLEND_MODES.map((mode) => (
+                  <option key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="settings-row">
+              <span>Downsample:</span>
+              <select
+                className="settings-select"
+                value={gpuRenderScaleMode}
+                onChange={(e) => setGpuRenderScaleMode(e.target.value as GPURenderScaleMode)}
+                title={GPU_RENDER_SCALE_MODES.find((m) => m.id === gpuRenderScaleMode)?.description}
+              >
+                {GPU_RENDER_SCALE_MODES.map((mode) => (
+                  <option key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Main Settings Panel
 export function SettingsPanel() {
   const { isOpen, activeTab, closeSettings, setActiveTab } = useSettingsStore();
@@ -286,6 +391,8 @@ export function SettingsPanel() {
     switch (activeTab) {
       case 'appearance':
         return <AppearanceSettings />;
+      case 'brush':
+        return <BrushSettings />;
       case 'tablet':
         return <TabletSettings />;
       default:

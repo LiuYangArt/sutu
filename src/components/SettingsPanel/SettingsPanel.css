@@ -157,10 +157,10 @@
   color: var(--text-primary);
 }
 
-/* Color Grid */
+/* Color Grid - 8 colors per row */
 .color-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(8, 36px);
   gap: 8px;
 }
 

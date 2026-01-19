@@ -5,13 +5,12 @@ import { BrushSettingsSidebar, TabConfig } from './BrushSettingsSidebar';
 import { BrushPresets } from './settings/BrushPresets';
 import { BrushTipShape } from './settings/BrushTipShape';
 import { TransferSettings } from './settings/TransferSettings';
-import { RendererSettings } from './settings/RendererSettings';
 
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
   const [importedPresets, setImportedPresets] = useState<BrushPreset[]>([]);
 
-  // Tab Configuration
+  // Tab Configuration - Renderer moved to Settings panel
   const tabs: TabConfig[] = [
     { id: 'brushes', label: 'Brushes' },
     { id: 'tip_shape', label: 'Brush Tip Shape' },
@@ -27,7 +26,6 @@ export function BrushPanel(): JSX.Element {
     { id: 'build_up', label: 'Build-up', disabled: true },
     { id: 'smoothing', label: 'Smoothing', disabled: true },
     { id: 'protect_texture', label: 'Protect Texture', disabled: true },
-    { id: 'renderer', label: 'Renderer' }, // Extra tab for our settings
   ];
 
   const renderContent = () => {
@@ -40,8 +38,6 @@ export function BrushPanel(): JSX.Element {
         return <BrushTipShape />;
       case 'transfer':
         return <TransferSettings />;
-      case 'renderer':
-        return <RendererSettings />;
       default:
         return (
           <div className="p-4 text-gray-500 text-sm">
