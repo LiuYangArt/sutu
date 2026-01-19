@@ -11,7 +11,8 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
-import { applyPressureCurve, PressureCurve, RenderMode, BrushTexture } from '@/stores/tool';
+import { applyPressureCurve, PressureCurve, BrushTexture } from '@/stores/tool';
+import { RenderMode } from '@/stores/settings';
 import { LatencyProfiler } from '@/benchmark';
 import {
   GPUContext,

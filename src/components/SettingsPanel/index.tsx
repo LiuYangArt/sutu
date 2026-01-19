@@ -7,9 +7,11 @@ import {
   AccentColorId,
   PanelBgColorId,
   CanvasBgColorId,
+  RenderMode,
+  ColorBlendMode,
+  GPURenderScaleMode,
 } from '@/stores/settings';
 import { useTabletStore, BackendType } from '@/stores/tablet';
-import { useToolStore, RenderMode, ColorBlendMode, GPURenderScaleMode } from '@/stores/tool';
 import './SettingsPanel.css';
 
 // Tab configuration
@@ -321,14 +323,10 @@ const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; descripti
 ];
 
 function BrushSettings() {
-  const {
-    renderMode,
-    setRenderMode,
-    colorBlendMode,
-    setColorBlendMode,
-    gpuRenderScaleMode,
-    setGpuRenderScaleMode,
-  } = useToolStore();
+  const brush = useSettingsStore((s) => s.brush);
+  const setRenderMode = useSettingsStore((s) => s.setRenderMode);
+  const setColorBlendMode = useSettingsStore((s) => s.setColorBlendMode);
+  const setGpuRenderScaleMode = useSettingsStore((s) => s.setGpuRenderScaleMode);
 
   return (
     <div className="settings-content">
@@ -342,9 +340,9 @@ function BrushSettings() {
           <span>Mode:</span>
           <select
             className="settings-select"
-            value={renderMode}
+            value={brush.renderMode}
             onChange={(e) => setRenderMode(e.target.value as RenderMode)}
-            title={RENDER_MODES.find((m) => m.id === renderMode)?.description}
+            title={RENDER_MODES.find((m) => m.id === brush.renderMode)?.description}
           >
             {RENDER_MODES.map((mode) => (
               <option key={mode.id} value={mode.id}>
@@ -354,15 +352,15 @@ function BrushSettings() {
           </select>
         </div>
 
-        {renderMode === 'gpu' && (
+        {brush.renderMode === 'gpu' && (
           <>
             <div className="settings-row">
               <span>Blending:</span>
               <select
                 className="settings-select"
-                value={colorBlendMode}
+                value={brush.colorBlendMode}
                 onChange={(e) => setColorBlendMode(e.target.value as ColorBlendMode)}
-                title={COLOR_BLEND_MODES.find((m) => m.id === colorBlendMode)?.description}
+                title={COLOR_BLEND_MODES.find((m) => m.id === brush.colorBlendMode)?.description}
               >
                 {COLOR_BLEND_MODES.map((mode) => (
                   <option key={mode.id} value={mode.id}>
@@ -376,9 +374,11 @@ function BrushSettings() {
               <span>Downsample:</span>
               <select
                 className="settings-select"
-                value={gpuRenderScaleMode}
+                value={brush.gpuRenderScaleMode}
                 onChange={(e) => setGpuRenderScaleMode(e.target.value as GPURenderScaleMode)}
-                title={GPU_RENDER_SCALE_MODES.find((m) => m.id === gpuRenderScaleMode)?.description}
+                title={
+                  GPU_RENDER_SCALE_MODES.find((m) => m.id === brush.gpuRenderScaleMode)?.description
+                }
               >
                 {GPU_RENDER_SCALE_MODES.map((mode) => (
                   <option key={mode.id} value={mode.id}>

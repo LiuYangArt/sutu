@@ -12,7 +12,7 @@
 import type { DabInstanceData, BoundingBox } from '../types';
 import { calculateEffectiveRadius } from '../types';
 import { erfLUT } from '@/utils/maskCache';
-import type { ColorBlendMode } from '@/stores/tool';
+import type { ColorBlendMode } from '@/stores/settings';
 
 // Import shader source
 import computeShaderCode from '../shaders/computeBrush.wgsl?raw';

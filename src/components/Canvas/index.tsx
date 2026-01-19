@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useDocumentStore } from '@/stores/document';
 import { useToolStore, applyPressureCurve, ToolType } from '@/stores/tool';
+import { useSettingsStore } from '@/stores/settings';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { useTabletStore, drainPointBuffer, clearPointBuffer } from '@/stores/tablet';
@@ -118,7 +119,6 @@ export function Canvas() {
     setBrushColor,
     setTool,
     showCrosshair,
-    renderMode,
     brushTexture,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
@@ -140,9 +140,11 @@ export function Canvas() {
     setBrushColor: s.setBrushColor,
     setTool: s.setTool,
     showCrosshair: s.showCrosshair,
-    renderMode: s.renderMode,
     brushTexture: s.brushTexture,
   }));
+
+  // Get render mode from settings store (persisted to settings.json)
+  const renderMode = useSettingsStore((s) => s.brush.renderMode);
 
   // Get current tool size (brush or eraser)
   const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;

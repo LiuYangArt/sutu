@@ -65,9 +65,31 @@ export interface TabletSettings {
   autoStart: boolean;
 }
 
+/**
+ * Render mode - controls which backend to use for brush rendering
+ */
+export type RenderMode = 'gpu' | 'cpu';
+
+/**
+ * Color blend mode - controls how colors are mixed during GPU rendering
+ */
+export type ColorBlendMode = 'srgb' | 'linear';
+
+/**
+ * GPU render scale mode - controls dynamic downsampling
+ */
+export type GPURenderScaleMode = 'auto' | 'off';
+
+export interface BrushSettings {
+  renderMode: RenderMode;
+  colorBlendMode: ColorBlendMode;
+  gpuRenderScaleMode: GPURenderScaleMode;
+}
+
 interface PersistedSettings {
   appearance: AppearanceSettings;
   tablet: TabletSettings;
+  brush: BrushSettings;
 }
 
 interface SettingsState extends PersistedSettings {
@@ -95,6 +117,11 @@ interface SettingsState extends PersistedSettings {
   setPressureCurve: (curve: TabletSettings['pressureCurve']) => void;
   setAutoStart: (enabled: boolean) => void;
 
+  // Brush/Renderer actions
+  setRenderMode: (mode: RenderMode) => void;
+  setColorBlendMode: (mode: ColorBlendMode) => void;
+  setGpuRenderScaleMode: (mode: GPURenderScaleMode) => void;
+
   // Persistence
   _loadSettings: () => Promise<void>;
   _saveSettings: () => Promise<void>;
@@ -113,6 +140,11 @@ const defaultSettings: PersistedSettings = {
     pollingRate: 200,
     pressureCurve: 'linear',
     autoStart: true,
+  },
+  brush: {
+    renderMode: 'gpu',
+    colorBlendMode: 'linear',
+    gpuRenderScaleMode: 'off',
   },
 };
 
@@ -259,6 +291,28 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    // Brush/Renderer actions
+    setRenderMode: (mode) => {
+      set((state) => {
+        state.brush.renderMode = mode;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setColorBlendMode: (mode) => {
+      set((state) => {
+        state.brush.colorBlendMode = mode;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setGpuRenderScaleMode: (mode) => {
+      set((state) => {
+        state.brush.gpuRenderScaleMode = mode;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     // Load settings from file
     _loadSettings: async () => {
       try {
@@ -275,6 +329,9 @@ export const useSettingsStore = create<SettingsState>()(
             }
             if (loaded.tablet) {
               state.tablet = { ...defaultSettings.tablet, ...loaded.tablet };
+            }
+            if (loaded.brush) {
+              state.brush = { ...defaultSettings.brush, ...loaded.brush };
             }
             state.isLoaded = true;
           });
@@ -305,6 +362,7 @@ export const useSettingsStore = create<SettingsState>()(
         const data: PersistedSettings = {
           appearance: state.appearance,
           tablet: state.tablet,
+          brush: state.brush,
         };
 
         await writeTextFile(SETTINGS_FILE, JSON.stringify(data, null, 2), {

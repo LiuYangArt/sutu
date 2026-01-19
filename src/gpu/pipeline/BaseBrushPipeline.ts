@@ -9,7 +9,7 @@
  * Subclasses implement the specific shader, bind group layout, and instance buffer layout.
  */
 
-import type { ColorBlendMode } from '@/stores/tool';
+import type { ColorBlendMode } from '@/stores/settings';
 
 export abstract class BaseBrushPipeline {
   protected device: GPUDevice;
