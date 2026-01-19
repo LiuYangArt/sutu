@@ -1,6 +1,6 @@
 import { SaturationSquare } from './SaturationSquare';
 import { useToolStore } from '@/stores/tool';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { hexToHsva, hsvaToHex, normalizeHex } from '@/utils/colorUtils';
 import { VerticalHueSlider } from './VerticalHueSlider';
 import { ArrowLeftRight, RotateCcw } from 'lucide-react';
@@ -15,14 +15,26 @@ export function ColorPanel() {
   // Also keep hex input synced
   const [hexInput, setHexInput] = useState(brushColor.replace('#', ''));
 
+  // Ref to track the last hex color we initiated to prevent round-trip jitter
+  const lastInitiatedHex = useRef<string | null>(null);
+
   // When store changes (e.g. undo/eyedropper), sync local state
   useEffect(() => {
-    // Only update if significantly different to allow fractional edits?
-    // Actually, store is the source of truth.
-    const newHsva = hexToHsva(brushColor);
-    // Simple check to avoid loops if needed, but hex->hsva is stable usually.
-    setHsva(newHsva);
+    // Always sync hex input
     setHexInput(brushColor.replace('#', ''));
+
+    // Check if the update matches what we just initiated locally
+    if (
+      lastInitiatedHex.current &&
+      lastInitiatedHex.current.toLowerCase() === brushColor.toLowerCase()
+    ) {
+      // The color matches our local high-precision state, so don't overwrite it
+      // with the potentially lower-precision round-tripped value.
+      return;
+    }
+
+    const newHsva = hexToHsva(brushColor);
+    setHsva(newHsva);
   }, [brushColor]);
 
   // Handler for Saturation change
@@ -31,6 +43,7 @@ export function ColorPanel() {
       // newColor contains updated s,v. h,a are passed from props?
       // react-colorful Saturation calls onChange with { h, s, v, a } merged.
       const hex = hsvaToHex(newColor);
+      lastInitiatedHex.current = hex;
       setHsva(newColor);
       setBrushColor(hex);
     },
@@ -42,6 +55,7 @@ export function ColorPanel() {
     (newHue: number) => {
       const newHsva = { ...hsva, h: newHue };
       const hex = hsvaToHex(newHsva);
+      lastInitiatedHex.current = hex;
       setHsva(newHsva);
       setBrushColor(hex);
     },
