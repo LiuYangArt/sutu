@@ -82,11 +82,11 @@
   --z-canvas: 0;
   --z-panels: 40;
   --z-header: 50;
-  --z-overlay: 60;
-  --z-modal: 70;
-  --z-dropdown: 80;
-  --z-popover: 90;
-  --z-tooltip: 100;
+  --z-overlay: 1000;
+  --z-modal: 2000;
+  --z-dropdown: 3000;
+  --z-popover: 4000;
+  --z-tooltip: 5000;
 
   /* =========================
    * Semantic Color Variants
