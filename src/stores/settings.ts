@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { BaseDirectory, readTextFile, writeTextFile, exists } from '@tauri-apps/plugin-fs';
+import { BaseDirectory, readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
 
 // Settings file path (relative to app config directory)
 const SETTINGS_FILE = 'settings.json';
@@ -272,6 +272,9 @@ export const useSettingsStore = create<SettingsState>()(
     // Save settings to file
     _saveSettings: async () => {
       try {
+        // Ensure AppConfig directory exists
+        await mkdir('', { baseDir: BaseDirectory.AppConfig, recursive: true });
+
         const state = get();
         const data: PersistedSettings = {
           appearance: state.appearance,

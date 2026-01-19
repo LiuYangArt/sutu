@@ -80,6 +80,10 @@ function ColorSwatch({
 function AppearanceSettings() {
   const { appearance, setAccentColor, setPanelBgColor, setEnableBlur } = useSettingsStore();
 
+  // DEBUG: Log color array lengths
+  console.log('[DEBUG] ACCENT_COLORS length:', ACCENT_COLORS.length, ACCENT_COLORS);
+  console.log('[DEBUG] PANEL_BG_COLORS length:', PANEL_BG_COLORS.length);
+
   return (
     <div className="settings-content">
       <h3 className="settings-section-title">Appearance</h3>
