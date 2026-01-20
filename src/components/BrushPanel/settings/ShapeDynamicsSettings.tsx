@@ -11,22 +11,38 @@
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
 
-/** Available control source options */
-const CONTROL_OPTIONS: ControlSourceOption[] = [
+/** Control options for Size Jitter (no direction controls) */
+const SIZE_CONTROL_OPTIONS: ControlSourceOption[] = [
   { value: 'off', label: 'Off' },
+  { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
   { value: 'penTilt', label: 'Pen Tilt' },
-  { value: 'direction', label: 'Direction' },
+  { value: 'rotation', label: 'Rotation' },
+];
+
+/** Control options for Angle Jitter (includes direction controls) */
+const ANGLE_CONTROL_OPTIONS: ControlSourceOption[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'fade', label: 'Fade' },
+  { value: 'penPressure', label: 'Pen Pressure' },
+  { value: 'penTilt', label: 'Pen Tilt' },
+  { value: 'rotation', label: 'Rotation' },
   { value: 'initial', label: 'Initial Direction' },
+  { value: 'direction', label: 'Direction' },
+];
+
+/** Control options for Roundness Jitter (no direction controls) */
+const ROUNDNESS_CONTROL_OPTIONS: ControlSourceOption[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'fade', label: 'Fade' },
+  { value: 'penPressure', label: 'Pen Pressure' },
+  { value: 'penTilt', label: 'Pen Tilt' },
+  { value: 'rotation', label: 'Rotation' },
 ];
 
 export function ShapeDynamicsSettings(): JSX.Element {
-  const {
-    shapeDynamics,
-    setShapeDynamics,
-    shapeDynamicsEnabled,
-    toggleShapeDynamics,
-  } = useToolStore();
+  const { shapeDynamics, setShapeDynamics, shapeDynamicsEnabled, toggleShapeDynamics } =
+    useToolStore();
 
   const disabled = !shapeDynamicsEnabled;
 
@@ -35,11 +51,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
       {/* Section header with enable checkbox */}
       <div className="section-header-row">
         <label className="section-checkbox-label">
-          <input
-            type="checkbox"
-            checked={shapeDynamicsEnabled}
-            onChange={toggleShapeDynamics}
-          />
+          <input type="checkbox" checked={shapeDynamicsEnabled} onChange={toggleShapeDynamics} />
           <h4>Shape Dynamics</h4>
         </label>
       </div>
@@ -57,7 +69,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
         <ControlSourceSelect
           label="Control"
           value={shapeDynamics.sizeControl}
-          options={CONTROL_OPTIONS}
+          options={SIZE_CONTROL_OPTIONS}
           onChange={(v) => setShapeDynamics({ sizeControl: v as ControlSource })}
           disabled={disabled}
         />
@@ -84,7 +96,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
         <ControlSourceSelect
           label="Control"
           value={shapeDynamics.angleControl}
-          options={CONTROL_OPTIONS}
+          options={ANGLE_CONTROL_OPTIONS}
           onChange={(v) => setShapeDynamics({ angleControl: v as ControlSource })}
           disabled={disabled}
         />
@@ -103,7 +115,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
         <ControlSourceSelect
           label="Control"
           value={shapeDynamics.roundnessControl}
-          options={CONTROL_OPTIONS}
+          options={ROUNDNESS_CONTROL_OPTIONS}
           onChange={(v) => setShapeDynamics({ roundnessControl: v as ControlSource })}
           disabled={disabled}
         />

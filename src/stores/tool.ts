@@ -12,10 +12,12 @@ export type BrushMaskType = 'gaussian' | 'default';
  */
 export type ControlSource =
   | 'off' // No control, use base value only
+  | 'fade' // Fade over stroke distance
   | 'penPressure' // Pen pressure (0-1)
   | 'penTilt' // Pen tilt magnitude
-  | 'direction' // Stroke direction
-  | 'initial'; // Initial direction at stroke start
+  | 'rotation' // Pen barrel rotation
+  | 'direction' // Stroke direction (Angle only)
+  | 'initial'; // Initial direction at stroke start (Angle only)
 
 /**
  * Shape Dynamics settings (Photoshop Shape Dynamics panel compatible)

@@ -22,10 +22,14 @@ export interface DynamicsInput {
   tiltX: number;
   /** Pen tilt Y (-1 to 1, away to towards user) */
   tiltY: number;
+  /** Pen barrel rotation in degrees (0-360) */
+  rotation: number;
   /** Current stroke direction in degrees (0-360) */
   direction: number;
   /** Initial stroke direction in degrees (captured at stroke start) */
   initialDirection: number;
+  /** Fade progress (0-1, where 0=start, 1=fully faded) */
+  fadeProgress: number;
 }
 
 /**
@@ -57,11 +61,7 @@ export type RandomFn = () => number;
  * @param random - Random function returning 0-1
  * @returns Value with jitter applied (can be ± jitterPercent of baseValue)
  */
-export function applyJitter(
-  baseValue: number,
-  jitterPercent: number,
-  random: RandomFn
-): number {
+export function applyJitter(baseValue: number, jitterPercent: number, random: RandomFn): number {
   if (jitterPercent <= 0) return baseValue;
 
   // Jitter is bidirectional: ±jitterPercent%
@@ -91,7 +91,7 @@ export function applyAngleJitter(
   // Bidirectional jitter: ±jitterDegrees
   const offset = (random() * 2 - 1) * jitterDegrees;
   // Normalize to 0-360
-  return ((baseAngle + offset) % 360 + 360) % 360;
+  return (((baseAngle + offset) % 360) + 360) % 360;
 }
 
 /**
@@ -106,6 +106,10 @@ export function getControlValue(source: ControlSource, input: DynamicsInput): nu
     case 'off':
       return 1.0; // Full base value
 
+    case 'fade':
+      // Fade: starts at 1, decreases to 0 over stroke
+      return Math.max(0, 1 - input.fadeProgress);
+
     case 'penPressure':
       return Math.max(0, Math.min(1, input.pressure));
 
@@ -114,6 +118,10 @@ export function getControlValue(source: ControlSource, input: DynamicsInput): nu
       const tiltMag = Math.sqrt(input.tiltX * input.tiltX + input.tiltY * input.tiltY);
       return Math.min(1, tiltMag);
     }
+
+    case 'rotation':
+      // Pen barrel rotation: map 0-360 to 0-1
+      return (input.rotation % 360) / 360;
 
     case 'direction':
       // Map 0-360 to 0-1

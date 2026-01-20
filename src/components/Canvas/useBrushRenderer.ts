@@ -11,7 +11,12 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
-import { applyPressureCurve, PressureCurve, BrushTexture, ShapeDynamicsSettings } from '@/stores/tool';
+import {
+  applyPressureCurve,
+  PressureCurve,
+  BrushTexture,
+  ShapeDynamicsSettings,
+} from '@/stores/tool';
 import { RenderMode } from '@/stores/settings';
 import { LatencyProfiler } from '@/benchmark';
 import {
@@ -260,8 +265,10 @@ export function useBrushRenderer({
             pressure: dabPressure,
             tiltX: 0, // TODO: Get from dab if available
             tiltY: 0, // TODO: Get from dab if available
+            rotation: 0, // TODO: Get from dab if available (pen barrel rotation)
             direction,
             initialDirection: initialDirectionRef.current,
+            fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
           };
 
           // Compute dynamic shape
