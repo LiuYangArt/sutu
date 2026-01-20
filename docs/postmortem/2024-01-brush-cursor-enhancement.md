@@ -148,3 +148,131 @@ const DEFAULT_STROKE: StrokeStyle = {
 - [x] 大笔刷 (>128px) DOM cursor 正确显示
 - [x] cursor 中心与笔画中心对齐（无偏移）
 - [x] Rust 单元测试全部通过
+
+## 后续优化问题与解决 (2024-01 续)
+
+### 问题 6: DOM cursor 容器 transform 覆盖位置
+
+**现象**: 纹理笔刷的 DOM cursor (>128px) 初始显示在左上角，鼠标移动后才归位
+
+**原因**: 在 `index.tsx` 中设置了 `transform: rotate(${brushAngle}deg)`，这会**覆盖**掉 `useCursor.ts` 中通过 JS 设置的 `translate(X, Y)` 位置变换
+
+```tsx
+// 错误：容器上同时设置 rotation，覆盖了位置 transform
+style={{
+  transform: `rotate(${brushAngle}deg)`,  // 覆盖了 useCursor 设置的 translate!
+}}
+```
+
+**解决**: 将 rotation 移到内部元素（SVG 或 ellipse div）上，不影响容器的位置 transform
+
+```tsx
+// 正确：容器只负责位置，内部元素负责旋转
+<div ref={brushCursorRef} className="brush-cursor">
+  <svg style={{ transform: `rotate(${brushAngle}deg)` }}>
+    ...
+  </svg>
+</div>
+```
+
+**教训**: CSS transform 是整体覆盖而非叠加，需要分离不同层级的变换职责
+
+### 问题 7: 键盘缩放笔刷时 cursor 飞到左上角
+
+**现象**: 用 `]` 键放大笔刷超过 128px 时，cursor 瞬间飞到左上角
+
+**原因**:
+1. `showDomCursor` 从 `false` 变为 `true`
+2. DOM cursor 元素**新创建**，但没有收到任何 pointer 事件
+3. 没有初始位置，默认显示在 CSS 的 `left: 0; top: 0`
+
+**解决**: 添加 `lastMousePosRef` 持续追踪鼠标位置，并在 `showDomCursor` 变为 `true` 时初始化位置
+
+```typescript
+const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
+
+// 始终追踪鼠标位置
+const handleNativePointerMove = (e: PointerEvent) => {
+  lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+  // ...
+};
+
+// DOM cursor 显示时初始化位置
+useEffect(() => {
+  if (showDomCursor && cursor && lastPos) {
+    setCursorPosition(cursor, lastPos.x, lastPos.y);
+  }
+}, [showDomCursor]);
+```
+
+**教训**: 状态驱动的 UI 元素创建时，需要考虑初始状态的设置，不能完全依赖事件驱动
+
+### 问题 8: 硬件/DOM cursor 切换时 crosshair 闪烁
+
+**现象**: 缩放笔刷穿过 128px 阈值时，短暂显示 crosshair
+
+**原因**: `cursorStyle` 判断逻辑中，`showDomCursor` 的优先级低于 `showCrosshair`
+
+```typescript
+// 错误：showDomCursor 时仍然可能进入 crosshair 分支
+} else if (showCrosshair && (currentTool === 'brush' || currentTool === 'eraser')) {
+  cursorStyle = 'crosshair';
+}
+```
+
+**解决**: 调整优先级，`showDomCursor` 时直接设置 `cursorStyle = 'none'`
+
+```typescript
+// 正确：showDomCursor 优先级高于 crosshair
+} else if (showDomCursor) {
+  cursorStyle = 'none';  // DOM cursor 负责显示，系统 cursor 隐藏
+} else if (showCrosshair && ...) {
+  cursorStyle = 'crosshair';
+}
+```
+
+**教训**: 状态切换时的优先级顺序很重要，需要确保互斥状态不会同时生效
+
+### 问题 9: 轮廓线粗细随笔刷缩放
+
+**现象**: 笔刷越大，cursor 轮廓线越粗
+
+**原因**:
+1. 硬件 cursor: `strokeWidth` 被动态计算 `Math.max(1.5 / size, 0.02)`
+2. DOM cursor: `strokeWidth="0.025"` 是归一化值，随 viewBox 缩放
+
+**解决**: 使用 SVG 的 `vector-effect="non-scaling-stroke"` 属性
+
+```tsx
+<path
+  strokeWidth={1.5}
+  vectorEffect="non-scaling-stroke"  // 保持固定像素宽度
+/>
+```
+
+**教训**: SVG 有专门的属性处理"不随缩放变化的描边"，不需要手动计算
+
+## 代码简化 (续)
+
+本次新增辅助函数进一步减少重复：
+
+```typescript
+/** Set cursor position with center offset */
+const setCursorPosition = (cursor: HTMLDivElement, x: number, y: number) => {
+  cursor.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+};
+
+/** Generate crosshair SVG lines */
+const generateCrosshairSvg = (cx: number, cy: number, size: number) => `...`;
+```
+
+移除未使用的 `export`：
+- `generateTextureOutlineSvg` 改为内部函数
+- `generateEllipseOutlineSvg` 改为内部函数
+
+## 相关文档
+
+- **轮廓优化方案**: `docs/todo/abr-cursor-outline-optimization.md`
+  - Marching Squares 算法方案
+  - Chaikin 平滑算法
+  - 待后续实现
