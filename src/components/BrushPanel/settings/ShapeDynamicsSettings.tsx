@@ -11,8 +11,8 @@
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
 
-/** Control options for Size Jitter (no direction controls) */
-const SIZE_CONTROL_OPTIONS: ControlSourceOption[] = [
+/** Base control options (shared by Size and Roundness) */
+const BASE_CONTROL_OPTIONS: ControlSourceOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
@@ -20,24 +20,11 @@ const SIZE_CONTROL_OPTIONS: ControlSourceOption[] = [
   { value: 'rotation', label: 'Rotation' },
 ];
 
-/** Control options for Angle Jitter (includes direction controls) */
+/** Angle control adds direction options */
 const ANGLE_CONTROL_OPTIONS: ControlSourceOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'fade', label: 'Fade' },
-  { value: 'penPressure', label: 'Pen Pressure' },
-  { value: 'penTilt', label: 'Pen Tilt' },
-  { value: 'rotation', label: 'Rotation' },
+  ...BASE_CONTROL_OPTIONS,
   { value: 'initial', label: 'Initial Direction' },
   { value: 'direction', label: 'Direction' },
-];
-
-/** Control options for Roundness Jitter (no direction controls) */
-const ROUNDNESS_CONTROL_OPTIONS: ControlSourceOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'fade', label: 'Fade' },
-  { value: 'penPressure', label: 'Pen Pressure' },
-  { value: 'penTilt', label: 'Pen Tilt' },
-  { value: 'rotation', label: 'Rotation' },
 ];
 
 export function ShapeDynamicsSettings(): JSX.Element {
@@ -69,7 +56,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
         <ControlSourceSelect
           label="Control"
           value={shapeDynamics.sizeControl}
-          options={SIZE_CONTROL_OPTIONS}
+          options={BASE_CONTROL_OPTIONS}
           onChange={(v) => setShapeDynamics({ sizeControl: v as ControlSource })}
           disabled={disabled}
         />
@@ -115,7 +102,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
         <ControlSourceSelect
           label="Control"
           value={shapeDynamics.roundnessControl}
-          options={ROUNDNESS_CONTROL_OPTIONS}
+          options={BASE_CONTROL_OPTIONS}
           onChange={(v) => setShapeDynamics({ roundnessControl: v as ControlSource })}
           disabled={disabled}
         />
