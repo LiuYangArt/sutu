@@ -65,6 +65,8 @@ export const DEFAULT_SHAPE_DYNAMICS: ShapeDynamicsSettings = {
  * When set, the brush uses this texture instead of procedural mask generation
  */
 export interface BrushTexture {
+  /** Unique identifier (from BrushPreset.id) for cache lookup */
+  id: string;
   /** Base64 encoded PNG data */
   data: string;
   /** Texture width in pixels */

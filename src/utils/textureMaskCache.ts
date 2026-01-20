@@ -14,78 +14,7 @@
 
 import type { Rect } from './strokeBuffer';
 import type { BrushTexture } from '@/stores/tool';
-
-/**
- * Decode base64 PNG to ImageData
- * Uses OffscreenCanvas for performance when available
- */
-async function decodeBase64ToImageData(
-  base64: string,
-  width: number,
-  height: number
-): Promise<ImageData> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      // Use OffscreenCanvas if available (better performance)
-      const canvas =
-        typeof OffscreenCanvas !== 'undefined'
-          ? new OffscreenCanvas(width, height)
-          : document.createElement('canvas');
-
-      if (!(canvas instanceof OffscreenCanvas)) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-
-      const ctx = canvas.getContext('2d') as
-        | CanvasRenderingContext2D
-        | OffscreenCanvasRenderingContext2D;
-      if (!ctx) {
-        reject(new Error('Failed to create canvas context'));
-        return;
-      }
-
-      ctx.drawImage(img, 0, 0, width, height);
-      const imageData = ctx.getImageData(0, 0, width, height);
-      resolve(imageData);
-    };
-    img.onerror = () => reject(new Error('Failed to load texture image'));
-    img.src = `data:image/png;base64,${base64}`;
-  });
-}
-
-/**
- * Synchronously decode base64 PNG (blocking, for immediate use)
- * Falls back to creating a temporary canvas
- */
-function decodeBase64ToImageDataSync(
-  base64: string,
-  width: number,
-  height: number
-): ImageData | null {
-  try {
-    // Create a temporary image element
-    const img = new Image();
-    img.src = `data:image/png;base64,${base64}`;
-
-    // If image is not yet loaded, we can't decode synchronously
-    if (!img.complete) {
-      return null;
-    }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    ctx.drawImage(img, 0, 0, width, height);
-    return ctx.getImageData(0, 0, width, height);
-  } catch {
-    return null;
-  }
-}
+import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUtils';
 
 export interface TextureMaskParams {
   /** Current brush size (diameter in pixels) */
@@ -123,8 +52,8 @@ export class TextureMaskCache {
    * Returns a Promise that resolves when texture is decoded
    */
   async setTexture(texture: BrushTexture): Promise<void> {
-    // Generate texture ID for change detection (use first 100 chars of base64)
-    const textureId = texture.data.substring(0, 100);
+    // Use texture.id for change detection
+    const textureId = texture.id;
 
     // Skip if same texture
     if (textureId === this.currentTextureId && this.sourceImageData) {
@@ -154,8 +83,8 @@ export class TextureMaskCache {
    * Set texture synchronously (for immediate use, may fail)
    */
   setTextureSync(texture: BrushTexture): boolean {
-    // Generate texture ID for change detection
-    const textureId = texture.data.substring(0, 100);
+    // Use texture.id for change detection
+    const textureId = texture.id;
 
     // Skip if same texture
     if (textureId === this.currentTextureId && this.sourceImageData) {

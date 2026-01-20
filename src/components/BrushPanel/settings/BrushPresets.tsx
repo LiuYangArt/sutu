@@ -67,6 +67,7 @@ export function BrushPresets({
     // Apply texture if preset has one
     if (preset.hasTexture && preset.textureData && preset.textureWidth && preset.textureHeight) {
       const texture: BrushTexture = {
+        id: preset.id,
         data: preset.textureData,
         width: preset.textureWidth,
         height: preset.textureHeight,

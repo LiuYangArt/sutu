@@ -12,6 +12,7 @@
  */
 
 import type { BrushTexture } from '@/stores/tool';
+import { decodeBase64ToImageData } from '@/utils/imageUtils';
 
 export interface GPUBrushTexture {
   texture: GPUTexture;
@@ -19,14 +20,6 @@ export interface GPUBrushTexture {
   width: number;
   height: number;
   sampler: GPUSampler;
-}
-
-/**
- * Generate a unique ID for a BrushTexture based on its data
- * Uses first 100 chars of base64 data as fingerprint
- */
-function getTextureId(texture: BrushTexture): string {
-  return texture.data.substring(0, 100);
 }
 
 export class TextureAtlas {
@@ -58,7 +51,7 @@ export class TextureAtlas {
    * @returns true if texture is ready, false if async loading needed
    */
   async setTexture(texture: BrushTexture): Promise<boolean> {
-    const textureId = getTextureId(texture);
+    const textureId = texture.id;
 
     // Check if already current
     if (textureId === this.currentTextureId && this.currentTexture) {
@@ -76,12 +69,12 @@ export class TextureAtlas {
     // Need to upload - first ensure ImageData is available
     let imageData = texture.imageData;
     if (!imageData) {
-      imageData = await this.decodeBase64ToImageData(texture.data, texture.width, texture.height);
+      imageData = await decodeBase64ToImageData(texture.data, texture.width, texture.height);
       texture.imageData = imageData; // Cache in the texture object
     }
 
     // Upload to GPU
-    const gpuTexture = this.uploadTexture(imageData, texture.width, texture.height);
+    const gpuTexture = this.uploadTexture(imageData, texture.width, texture.height, textureId);
 
     // Cache and set as current
     this.textureCache.set(textureId, gpuTexture);
@@ -95,7 +88,7 @@ export class TextureAtlas {
    * Synchronous texture set - returns false if texture not ready
    */
   setTextureSync(texture: BrushTexture): boolean {
-    const textureId = getTextureId(texture);
+    const textureId = texture.id;
 
     // Check if already current
     if (textureId === this.currentTextureId && this.currentTexture) {
@@ -112,7 +105,12 @@ export class TextureAtlas {
 
     // Check if ImageData is already decoded
     if (texture.imageData) {
-      const gpuTexture = this.uploadTexture(texture.imageData, texture.width, texture.height);
+      const gpuTexture = this.uploadTexture(
+        texture.imageData,
+        texture.width,
+        texture.height,
+        textureId
+      );
       this.textureCache.set(textureId, gpuTexture);
       this.currentTextureId = textureId;
       this.currentTexture = gpuTexture;
@@ -140,10 +138,15 @@ export class TextureAtlas {
   /**
    * Upload ImageData to GPU texture
    */
-  private uploadTexture(imageData: ImageData, width: number, height: number): GPUBrushTexture {
-    // Create GPU texture
+  private uploadTexture(
+    imageData: ImageData,
+    width: number,
+    height: number,
+    textureId: string
+  ): GPUBrushTexture {
+    // Create GPU texture with unique label for BindGroup cache key
     const texture = this.device.createTexture({
-      label: 'Brush Texture',
+      label: `Brush Texture ${textureId}`,
       size: [width, height],
       format: 'rgba8unorm',
       usage:
@@ -168,48 +171,10 @@ export class TextureAtlas {
   }
 
   /**
-   * Decode base64 PNG to ImageData
-   */
-  private async decodeBase64ToImageData(
-    base64: string,
-    width: number,
-    height: number
-  ): Promise<ImageData> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas =
-          typeof OffscreenCanvas !== 'undefined'
-            ? new OffscreenCanvas(width, height)
-            : document.createElement('canvas');
-
-        if (!(canvas instanceof OffscreenCanvas)) {
-          canvas.width = width;
-          canvas.height = height;
-        }
-
-        const ctx = canvas.getContext('2d') as
-          | CanvasRenderingContext2D
-          | OffscreenCanvasRenderingContext2D;
-        if (!ctx) {
-          reject(new Error('Failed to create canvas context'));
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, width, height);
-        const imageData = ctx.getImageData(0, 0, width, height);
-        resolve(imageData);
-      };
-      img.onerror = () => reject(new Error('Failed to load texture image'));
-      img.src = `data:image/png;base64,${base64}`;
-    });
-  }
-
-  /**
    * Clear a specific texture from cache
    */
   clearTexture(texture: BrushTexture): void {
-    const textureId = getTextureId(texture);
+    const textureId = texture.id;
     const cached = this.textureCache.get(textureId);
     if (cached) {
       cached.texture.destroy();

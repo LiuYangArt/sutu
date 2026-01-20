@@ -5,6 +5,7 @@
  */
 
 import type { Rect } from '@/utils/strokeBuffer';
+import type { BrushTexture } from '@/stores/tool';
 
 /**
  * Dab instance data for GPU instancing
@@ -101,12 +102,7 @@ export interface GPUDabParams {
   roundness?: number;
   angle?: number;
   /** Texture for sampled brushes (from ABR import) */
-  texture?: {
-    data: string;
-    width: number;
-    height: number;
-    imageData?: ImageData;
-  };
+  texture?: BrushTexture;
 }
 
 /**
