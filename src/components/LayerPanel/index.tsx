@@ -1,5 +1,16 @@
 import { useState, useEffect, useCallback, memo, useRef } from 'react';
-import { Eye, EyeOff, Plus, Trash2, Lock, Unlock, GripVertical, Eraser, Copy } from 'lucide-react';
+import {
+  Eye,
+  EyeOff,
+  Plus,
+  Trash2,
+  Lock,
+  Unlock,
+  GripVertical,
+  Eraser,
+  Copy,
+  FolderPlus,
+} from 'lucide-react';
 import { useDocumentStore, BlendMode } from '@/stores/document';
 import './LayerPanel.css';
 
@@ -32,6 +43,7 @@ interface ContextMenuState {
 export function LayerPanel(): JSX.Element {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     visible: false,
     x: 0,
@@ -50,6 +62,7 @@ export function LayerPanel(): JSX.Element {
     setLayerOpacity,
     setLayerBlendMode,
     toggleLayerLock,
+    renameLayer,
     moveLayer,
     width,
     height,
@@ -64,6 +77,7 @@ export function LayerPanel(): JSX.Element {
     setLayerOpacity: s.setLayerOpacity,
     setLayerBlendMode: s.setLayerBlendMode,
     toggleLayerLock: s.toggleLayerLock,
+    renameLayer: s.renameLayer,
     moveLayer: s.moveLayer,
     width: s.width,
     height: s.height,
@@ -91,6 +105,10 @@ export function LayerPanel(): JSX.Element {
     });
   }, []);
 
+  const closeContextMenu = useCallback(() => {
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, []);
+
   const handleDuplicateLayer = useCallback(() => {
     if (contextMenu.layerId) {
       const newLayerId = duplicateLayer(contextMenu.layerId);
@@ -104,8 +122,8 @@ export function LayerPanel(): JSX.Element {
         }
       }
     }
-    setContextMenu((prev) => ({ ...prev, visible: false }));
-  }, [contextMenu.layerId, duplicateLayer]);
+    closeContextMenu();
+  }, [contextMenu.layerId, duplicateLayer, closeContextMenu]);
 
   // Helper to remove layer via Canvas interface (saves history)
   const safeRemoveLayer = useCallback(
@@ -122,8 +140,8 @@ export function LayerPanel(): JSX.Element {
 
   const handleDeleteLayer = useCallback(() => {
     if (contextMenu.layerId) safeRemoveLayer(contextMenu.layerId);
-    setContextMenu((prev) => ({ ...prev, visible: false }));
-  }, [contextMenu.layerId, safeRemoveLayer]);
+    closeContextMenu();
+  }, [contextMenu.layerId, safeRemoveLayer, closeContextMenu]);
 
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const displayLayers = [...layers].reverse();
@@ -178,33 +196,50 @@ export function LayerPanel(): JSX.Element {
     addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' });
   }
 
-  // Event handlers wrappers to prevent inline arrow function creation in render loop where possible
-  // (Though for mapped items, inline is often inevitable without sub-components, keeping simple here)
+  function handleAddGroup(): void {
+    // TODO: Implement group/folder layer type
+    addLayer({ name: `Group ${layers.length + 1}`, type: 'raster' });
+  }
+
+  // Handle rename completion
+  const handleRenameComplete = useCallback(
+    (id: string, newName: string) => {
+      if (newName.trim()) {
+        renameLayer(id, newName.trim());
+      }
+      setEditingLayerId(null);
+    },
+    [renameLayer]
+  );
+
+  // Delete active layer from toolbar
+  const handleDeleteActiveLayer = useCallback(() => {
+    if (activeLayerId) {
+      safeRemoveLayer(activeLayerId);
+    }
+  }, [activeLayerId, safeRemoveLayer]);
+
+  // Toggle lock on active layer
+  const handleToggleActiveLock = useCallback(() => {
+    if (activeLayerId) {
+      toggleLayerLock(activeLayerId);
+    }
+  }, [activeLayerId, toggleLayerLock]);
+
+  // F2 shortcut to rename active layer
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'F2' && activeLayerId && !editingLayerId) {
+        e.preventDefault();
+        setEditingLayerId(activeLayerId);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [activeLayerId, editingLayerId]);
 
   return (
     <aside className="layer-panel">
-      <header className="layer-panel-header">
-        <div className="layer-panel-actions">
-          <button
-            className="clear-layer-btn"
-            data-testid="clear-layer-btn"
-            onClick={handleClearLayer}
-            title="Clear Layer Content"
-            disabled={!activeLayerId}
-          >
-            <Eraser size={16} strokeWidth={2} />
-          </button>
-          <button
-            className="add-layer-btn"
-            data-testid="add-layer-btn"
-            onClick={handleAddLayer}
-            title="Add Layer"
-          >
-            <Plus size={16} strokeWidth={2} />
-          </button>
-        </div>
-      </header>
-
       <div
         className="layer-list"
         onDragOver={(e) => {
@@ -220,19 +255,21 @@ export function LayerPanel(): JSX.Element {
               key={layer.id}
               layer={layer}
               isActive={activeLayerId === layer.id}
+              isEditing={editingLayerId === layer.id}
               isDragging={draggedId === layer.id}
               isDropTarget={dropTargetId === layer.id}
               thumbDimensions={{ width: thumbWidth, height: thumbHeight }}
               onActivate={setActiveLayer}
               onToggleVisibility={toggleLayerVisibility}
-              onToggleLock={toggleLayerLock}
-              onRemove={safeRemoveLayer}
               onContextMenu={handleContextMenu}
               onDragStart={handleDragStart}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
               onDragLeave={handleDragLeave}
               onDragEnd={handleDragEnd}
+              onRenameComplete={handleRenameComplete}
+              onRenameCancel={() => setEditingLayerId(null)}
+              onStartEditing={setEditingLayerId}
             />
           ))
         )}
@@ -272,6 +309,39 @@ export function LayerPanel(): JSX.Element {
           />
           <span>{activeLayer?.opacity ?? 100}%</span>
         </label>
+
+        <div className="layer-toolbar">
+          <button className="toolbar-btn" onClick={handleAddLayer} title="New Layer">
+            <Plus size={16} />
+          </button>
+          <button className="toolbar-btn" onClick={handleAddGroup} title="New Group">
+            <FolderPlus size={16} />
+          </button>
+          <button
+            className="toolbar-btn"
+            onClick={handleClearLayer}
+            title="Clear Layer"
+            disabled={!activeLayerId}
+          >
+            <Eraser size={16} />
+          </button>
+          <button
+            className={`toolbar-btn ${activeLayer?.locked ? 'active' : ''}`}
+            onClick={handleToggleActiveLock}
+            title={activeLayer?.locked ? 'Unlock Layer' : 'Lock Layer'}
+            disabled={!activeLayerId}
+          >
+            {activeLayer?.locked ? <Lock size={16} /> : <Unlock size={16} />}
+          </button>
+          <button
+            className="toolbar-btn danger"
+            onClick={handleDeleteActiveLayer}
+            title="Delete Layer"
+            disabled={!activeLayerId || layers.length <= 1}
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
       </footer>
 
       {/* Context Menu */}
@@ -308,46 +378,75 @@ interface LayerItemProps {
     thumbnail?: string;
   };
   isActive: boolean;
+  isEditing: boolean;
   isDragging: boolean;
   isDropTarget: boolean;
   thumbDimensions: { width: number; height: number };
   onActivate: (id: string) => void;
   onToggleVisibility: (id: string) => void;
-  onToggleLock: (id: string) => void;
-  onRemove: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   onDragStart: (e: React.DragEvent, id: string) => void;
   onDragOver: (e: React.DragEvent, id: string) => void;
   onDrop: (e: React.DragEvent, id: string) => void;
   onDragLeave: () => void;
   onDragEnd: () => void;
+  onRenameComplete: (id: string, newName: string) => void;
+  onRenameCancel: () => void;
+  onStartEditing: (id: string) => void;
 }
 
 const LayerItem = memo(function LayerItem({
   layer,
   isActive,
+  isEditing,
   isDragging,
   isDropTarget,
   thumbDimensions,
   onActivate,
   onToggleVisibility,
-  onToggleLock,
-  onRemove,
   onContextMenu,
   onDragStart,
   onDragOver,
   onDrop,
   onDragLeave,
   onDragEnd,
+  onRenameComplete,
+  onRenameCancel,
+  onStartEditing,
 }: LayerItemProps) {
   // Track if drag started from handle
   const dragFromHandleRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [editValue, setEditValue] = useState(layer.name);
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      setEditValue(layer.name);
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing, layer.name]);
+
+  const handleInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onRenameComplete(layer.id, editValue);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onRenameCancel();
+    }
+  };
+
+  const handleInputBlur = () => {
+    onRenameComplete(layer.id, editValue);
+  };
 
   return (
     <div
       className={`layer-item ${isActive ? 'active' : ''} ${
         isDragging ? 'dragging' : ''
-      } ${isDropTarget ? 'drop-target' : ''}`}
+      } ${isDropTarget ? 'drop-target' : ''} ${layer.locked ? 'locked' : ''}`}
       data-testid="layer-item"
       draggable
       onMouseDown={(e) => {
@@ -368,6 +467,10 @@ const LayerItem = memo(function LayerItem({
       onDrop={(e) => onDrop(e, layer.id)}
       onDragEnd={onDragEnd}
       onClick={() => onActivate(layer.id)}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onStartEditing(layer.id);
+      }}
       onContextMenu={(e) => onContextMenu(e, layer.id)}
     >
       <div className="drag-handle">
@@ -398,33 +501,25 @@ const LayerItem = memo(function LayerItem({
         {layer.thumbnail && <img src={layer.thumbnail} alt={layer.name} draggable={false} />}
       </div>
 
-      <span className="layer-name" data-testid="layer-name" draggable={false}>
-        {layer.name}
-      </span>
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          className="layer-name-input"
+          type="text"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onKeyDown={handleInputKeyDown}
+          onBlur={handleInputBlur}
+          onClick={(e) => e.stopPropagation()}
+          draggable={false}
+        />
+      ) : (
+        <span className="layer-name" data-testid="layer-name" draggable={false}>
+          {layer.name}
+        </span>
+      )}
 
-      <button
-        className="delete-layer-btn"
-        draggable={false}
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove(layer.id);
-        }}
-        title="Delete Layer"
-      >
-        <Trash2 size={14} />
-      </button>
-
-      <button
-        className={`lock-toggle ${layer.locked ? 'locked' : ''}`}
-        draggable={false}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleLock(layer.id);
-        }}
-        title={layer.locked ? 'Unlock Layer' : 'Lock Layer'}
-      >
-        {layer.locked ? <Lock size={14} /> : <Unlock size={14} />}
-      </button>
+      {layer.locked && <Lock size={12} className="lock-indicator" />}
     </div>
   );
 });

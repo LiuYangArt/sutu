@@ -6,55 +6,6 @@
   flex-direction: column;
 }
 
-.layer-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0 8px;
-  height: 32px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.layer-panel-header h3 {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.layer-panel-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.add-layer-btn,
-.clear-layer-btn {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.add-layer-btn:hover,
-.clear-layer-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.clear-layer-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* Layer List */
 .layer-list {
   flex: 1;
@@ -74,7 +25,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: var(--radius-lg);
   border: 1px solid transparent;
   cursor: pointer;
@@ -88,6 +39,10 @@
 .layer-item.active {
   background: var(--primary-bg);
   border-color: var(--primary-border);
+}
+
+.layer-item.locked {
+  opacity: 0.7;
 }
 
 .layer-item.dragging {
@@ -188,85 +143,24 @@
   color: var(--text-primary);
 }
 
-.delete-layer-btn {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.layer-item:hover .delete-layer-btn {
-  opacity: 0.6;
-}
-
-.delete-layer-btn:hover {
-  opacity: 1 !important;
-  color: var(--danger);
-  background: var(--danger-bg);
-}
-
-/* Active State Overrides for Delete */
-.layer-item.active .delete-layer-btn {
-  color: var(--primary);
-}
-
-.layer-item.active .delete-layer-btn:hover {
-  color: var(--danger);
-  background: rgba(239, 68, 68, 0.15);
-}
-
-.lock-toggle {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.layer-item:hover .lock-toggle {
-  opacity: 0.6;
-}
-
-.lock-toggle:hover {
-  opacity: 1 !important;
-  background: var(--surface-hover);
+/* Layer name input for renaming */
+.layer-name-input {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  outline: none;
+  min-width: 0;
 }
 
-.lock-toggle.locked {
-  opacity: 0.8;
-  color: var(--primary);
-}
-
-/* Active State Overrides for Lock */
-.layer-item.active .lock-toggle {
-  color: var(--primary);
-}
-
-.layer-item.active .lock-toggle:hover {
-  background: var(--surface-hover);
-}
-
-.layer-item.active .lock-toggle.locked {
-  color: var(--primary);
-  opacity: 1;
+/* Lock indicator on layer item */
+.lock-indicator {
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 /* Layer Panel Footer */
@@ -337,6 +231,54 @@
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-secondary);
+}
+
+/* Layer Toolbar (bottom action buttons) */
+.layer-toolbar {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.toolbar-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.toolbar-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.toolbar-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.toolbar-btn.active {
+  color: var(--primary);
+}
+
+.toolbar-btn.danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-bg);
 }
 
 /* Context Menu */
