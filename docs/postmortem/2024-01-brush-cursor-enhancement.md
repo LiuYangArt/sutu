@@ -423,3 +423,99 @@ return { cursorStyle, showDomCursor, showEyedropperDomCursor };
 - **DOM cursor 是 CSS cursor 的可靠替代方案**：当系统覆盖 CSS cursor 时，DOM 元素渲染不受影响
 - **对比两种情况的差异**：按 I 键正常、按 Alt 键异常，说明问题与 Alt 键的特殊性有关，而非 eyedropper cursor 本身
 
+## 后续优化问题与解决 (2026-01 续)
+
+### 问题 12: ABR 纹理笔刷轮廓提取算法重写
+
+**日期**: 2026-01-20
+
+**现象**:
+1. 轮廓有连线：多个断开区域之间出现不应有的连接线
+2. 尖锐折角：轮廓不够平滑，有锯齿感
+3. 菱形笔刷下半部分"崩了"：轮廓无法正确闭合
+
+**根因分析**:
+
+原始实现使用"最近邻连接"算法追踪边界像素，存在多个问题：
+1. **不保证追踪顺序**：贪婪连接可能跳跃，导致异常连线
+2. **缺乏真正的轮廓追踪**：不是基于等值线的算法
+3. **边界处理不完整**：纹理像素接触图像边缘时无法正确检测边界
+
+**解决方案**:
+
+采用 **Marching Squares + HashMap 组装 + 尖角保护** 的三阶段方案：
+
+```
+原始图像 → 2px Padding → Marching Squares 生成 Segments
+    → HashMap 组装闭合轮廓 → RDP 简化 → Chaikin 平滑(带尖角保护) → SVG Path
+```
+
+**关键修复点**:
+
+| 问题 | 解决方案 |
+|------|----------|
+| 边缘纹理无法检测 | 添加 2px padding，确保所有像素都有"有→无"的过渡 |
+| 轮廓断开/连线错误 | 用 HashMap 基于量化点组装 segments，而非追踪式遍历 |
+| Saddle case (case 5/10) 错误 | 修正 lookup table 的边配对方式 |
+| 菱形尖角被平滑掉 | Chaikin 平滑时检测夹角，< 100° 的尖角保留不切 |
+
+**核心代码改动**:
+
+1. **HashMap 组装**:
+```rust
+// 量化点精度 1/32 像素，避免浮点误差
+const QUANT_SCALE: f32 = 32.0;
+
+fn quantize_point(p: (f32, f32)) -> (i32, i32) {
+    ((p.0 * QUANT_SCALE).round() as i32, (p.1 * QUANT_SCALE).round() as i32)
+}
+
+// 建立邻接关系：量化点 -> [(segment_idx, is_p0), ...]
+let mut adjacency: HashMap<(i32, i32), Vec<(usize, bool)>> = HashMap::new();
+```
+
+2. **尖角保护的 Chaikin 平滑**:
+```rust
+fn chaikin_smooth(points: &[(f32, f32)], iterations: usize) -> Vec<(f32, f32)> {
+    for i in 0..n {
+        let angle = calculate_angle(p_prev, p_curr, p_next);
+
+        // 尖角保护：< 100° 的角不切
+        if angle < 100.0 {
+            smoothed.push(p_curr);  // 保留原顶点
+        } else {
+            // 正常 Chaikin 切角
+            smoothed.push((0.75 * p_curr.0 + 0.25 * p_next.0, ...));
+            smoothed.push((0.25 * p_curr.0 + 0.75 * p_next.0, ...));
+        }
+    }
+}
+```
+
+3. **Saddle Case 修正**:
+```rust
+const MS_EDGES: [[i8; 4]; 16] = [
+    // ...
+    [0, 3, 1, 2],     // 5: TR+BL (saddle) - connect 0-3, 1-2
+    // ...
+    [0, 1, 2, 3],     // 10: TL+BR (saddle) - connect 0-1, 2-3
+    // ...
+];
+```
+
+**教训**:
+
+1. **复杂形状需要正规算法**：最近邻连接对简单形状有效，但菱形等几何形状需要 Marching Squares
+2. **HashMap 组装比追踪更鲁棒**：不依赖遍历顺序，只依赖端点匹配，容错性更好
+3. **平滑算法需要保护尖角**：无脑 Chaikin 会把菱形变成"软糖"，需要检测角度保护几何特征
+4. **Padding 是边界处理的关键**：1px 不够时增加到 2px，确保边缘像素有完整的过渡区域
+5. **量化精度影响正确性**：32x 精度（1/32 像素）足够避免浮点误差导致的匹配失败
+
+**验证清单**:
+
+- [x] 圆形笔刷轮廓正确
+- [x] 菱形笔刷尖角保留，轮廓完整闭合
+- [x] 边缘接触的纹理轮廓正确
+- [x] 多区域断开的纹理生成多个独立 subpath
+- [x] 单元测试全部通过
+
