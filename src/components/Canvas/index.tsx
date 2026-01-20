@@ -120,6 +120,8 @@ export function Canvas() {
     setTool,
     showCrosshair,
     brushTexture,
+    shapeDynamicsEnabled,
+    shapeDynamics,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
@@ -141,6 +143,8 @@ export function Canvas() {
     setTool: s.setTool,
     showCrosshair: s.showCrosshair,
     brushTexture: s.brushTexture,
+    shapeDynamicsEnabled: s.shapeDynamicsEnabled,
+    shapeDynamics: s.shapeDynamics,
   }));
 
   // Get render mode from settings store (persisted to settings.json)
@@ -663,6 +667,8 @@ export function Canvas() {
       pressureOpacityEnabled,
       pressureCurve,
       texture: brushTexture,
+      shapeDynamicsEnabled,
+      shapeDynamics,
     };
   }, [
     currentSize,
@@ -679,6 +685,8 @@ export function Canvas() {
     pressureOpacityEnabled,
     pressureCurve,
     brushTexture,
+    shapeDynamicsEnabled,
+    shapeDynamics,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position

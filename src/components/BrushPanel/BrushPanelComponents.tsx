@@ -17,6 +17,47 @@ export function PressureToggle({ enabled, onToggle, title }: PressureToggleProps
   );
 }
 
+/** Control source option for Shape Dynamics */
+export interface ControlSourceOption {
+  value: string;
+  label: string;
+}
+
+interface ControlSourceSelectProps {
+  label: string;
+  value: string;
+  options: ControlSourceOption[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}
+
+/** Control source dropdown for Shape Dynamics parameters */
+export function ControlSourceSelect({
+  label,
+  value,
+  options,
+  onChange,
+  disabled = false,
+}: ControlSourceSelectProps): JSX.Element {
+  return (
+    <div className="control-source-row">
+      <span className="control-source-label">{label}</span>
+      <select
+        className="control-source-select"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 interface SliderRowProps {
   label: string;
   value: number;
