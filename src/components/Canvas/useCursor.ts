@@ -12,6 +12,62 @@ const TOOL_CURSORS: Record<ToolType, string> = {
   zoom: 'zoom-in',
 };
 
+/** Brush texture data for cursor rendering */
+export interface BrushCursorTexture {
+  /** Pre-computed SVG path data (normalized 0-1 coordinates) */
+  cursorPath?: string;
+  /** Original texture bounds for proper scaling */
+  cursorBounds?: { width: number; height: number };
+}
+
+/** Stroke style for cursor outline (dual-stroke for visibility) */
+interface StrokeStyle {
+  outer: { color: string; width: number };
+  inner: { color: string; width: number };
+}
+
+const DEFAULT_STROKE: StrokeStyle = {
+  outer: { color: 'rgba(255,255,255,0.9)', width: 1.5 },
+  inner: { color: 'rgba(0,0,0,0.8)', width: 1 },
+};
+
+/**
+ * Generate SVG content for texture brush cursor outline.
+ * Shared by both hardware cursor and DOM cursor.
+ */
+export function generateTextureOutlineSvg(
+  cursorPath: string,
+  size: number,
+  scaleY: number,
+  angle: number,
+  stroke: StrokeStyle = DEFAULT_STROKE
+): string {
+  const strokeWidth = Math.max(1.5 / size, 0.02);
+  return `
+    <g transform="rotate(${angle}) scale(${size}, ${size * scaleY})">
+      <path d="${cursorPath}" fill="none" stroke="${stroke.outer.color}" stroke-width="${strokeWidth * stroke.outer.width}"/>
+      <path d="${cursorPath}" fill="none" stroke="${stroke.inner.color}" stroke-width="${strokeWidth * stroke.inner.width}"/>
+    </g>
+  `;
+}
+
+/**
+ * Generate SVG content for ellipse brush cursor.
+ */
+export function generateEllipseOutlineSvg(
+  rx: number,
+  ry: number,
+  angle: number,
+  stroke: StrokeStyle = DEFAULT_STROKE
+): string {
+  return `
+    <g transform="rotate(${angle})">
+      <ellipse rx="${rx}" ry="${ry}" fill="none" stroke="${stroke.outer.color}" stroke-width="${stroke.outer.width}"/>
+      <ellipse rx="${rx}" ry="${ry}" fill="none" stroke="${stroke.inner.color}" stroke-width="${stroke.inner.width}"/>
+    </g>
+  `;
+}
+
 interface UseCursorProps {
   currentTool: ToolType;
   currentSize: number;
@@ -21,6 +77,12 @@ interface UseCursorProps {
   isPanning: boolean;
   containerRef: React.RefObject<HTMLDivElement>;
   brushCursorRef: React.RefObject<HTMLDivElement>;
+  /** Brush roundness (1-100, 100 = perfect circle) */
+  brushRoundness?: number;
+  /** Brush angle in degrees (0-360) */
+  brushAngle?: number;
+  /** Texture cursor data (for ABR brushes) */
+  brushTexture?: BrushCursorTexture | null;
 }
 
 export function useCursor({
@@ -32,6 +94,9 @@ export function useCursor({
   isPanning,
   containerRef,
   brushCursorRef,
+  brushRoundness = 100,
+  brushAngle = 0,
+  brushTexture,
 }: UseCursorProps) {
   // Calculate actual pixel size of brush on screen
   const screenBrushSize = currentSize * scale;
@@ -56,19 +121,36 @@ export function useCursor({
     }
 
     const r = screenBrushSize / 2;
+    // Roundness affects Y-axis scale (100 = circle, 1 = flat line)
+    const scaleY = Math.max(brushRoundness, 1) / 100;
+    // Calculate bounding box after rotation to ensure cursor fits
+    const angleRad = (brushAngle * Math.PI) / 180;
+    const cosA = Math.abs(Math.cos(angleRad));
+    const sinA = Math.abs(Math.sin(angleRad));
+    const ry = r * scaleY;
+    // Rotated ellipse bounding box
+    const boundWidth = 2 * (r * cosA + ry * sinA);
+    const boundHeight = 2 * (r * sinA + ry * cosA);
+    const maxBound = Math.max(boundWidth, boundHeight);
     // Add padding to avoid clipping
-    const canvasSize = Math.ceil(screenBrushSize + 4);
+    const canvasSize = Math.ceil(maxBound + 4);
     const center = canvasSize / 2;
 
-    // Generate SVG content
-    let svgContent = `
-      <circle cx="${center}" cy="${center}" r="${r}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
-      <circle cx="${center}" cy="${center}" r="${r}" fill="none" stroke="rgba(0,0,0,0.8)" stroke-width="1"/>
-    `;
+    let shapeContent: string;
 
+    if (brushTexture?.cursorPath) {
+      // Texture brush: use shared generator
+      shapeContent = `<g transform="translate(${center}, ${center})">${generateTextureOutlineSvg(brushTexture.cursorPath, screenBrushSize, scaleY, brushAngle)}</g>`;
+    } else {
+      // Round brush: use shared generator
+      shapeContent = `<g transform="translate(${center}, ${center})">${generateEllipseOutlineSvg(r, ry, brushAngle)}</g>`;
+    }
+
+    // Generate crosshair if enabled
+    let crosshairContent = '';
     if (showCrosshair) {
       const crossSize = 8;
-      svgContent += `
+      crosshairContent = `
         <line x1="${center - crossSize}" y1="${center}" x2="${center + crossSize}" y2="${center}" stroke="black" stroke-width="2"/>
         <line x1="${center - crossSize}" y1="${center}" x2="${center + crossSize}" y2="${center}" stroke="white" stroke-width="1"/>
         <line x1="${center}" y1="${center - crossSize}" x2="${center}" y2="${center + crossSize}" stroke="black" stroke-width="2"/>
@@ -78,13 +160,21 @@ export function useCursor({
 
     const svg = `
       <svg width="${canvasSize}" height="${canvasSize}" viewBox="0 0 ${canvasSize} ${canvasSize}" xmlns="http://www.w3.org/2000/svg">
-        ${svgContent}
+        ${shapeContent}
+        ${crosshairContent}
       </svg>
     `;
 
     const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
     return `url("${cursorUrl}") ${center} ${center}, crosshair`;
-  }, [shouldUseHardwareCursor, screenBrushSize, showCrosshair]);
+  }, [
+    shouldUseHardwareCursor,
+    screenBrushSize,
+    showCrosshair,
+    brushRoundness,
+    brushAngle,
+    brushTexture,
+  ]);
 
   // Generate eyedropper cursor SVG
   const eyedropperCursorStyle = useMemo(() => {

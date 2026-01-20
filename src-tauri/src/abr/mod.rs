@@ -25,12 +25,14 @@
 //! }
 //! ```
 
+pub mod cursor;
 mod defaults;
 mod error;
 mod parser;
 mod samp;
 mod types;
 
+pub use cursor::{extract_cursor_outline, generate_cursor_data, CursorBounds};
 pub use defaults::AbrDefaults;
 pub use error::AbrError;
 pub use parser::AbrParser;

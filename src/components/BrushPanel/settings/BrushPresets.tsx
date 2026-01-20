@@ -70,6 +70,8 @@ export function BrushPresets({
         data: preset.textureData,
         width: preset.textureWidth,
         height: preset.textureHeight,
+        cursorPath: preset.cursorPath ?? undefined,
+        cursorBounds: preset.cursorBounds ?? undefined,
       };
       setBrushTexture(texture);
     } else {

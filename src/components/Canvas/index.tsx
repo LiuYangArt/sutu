@@ -165,6 +165,14 @@ export function Canvas() {
     isPanning,
     containerRef,
     brushCursorRef,
+    brushRoundness,
+    brushAngle,
+    brushTexture: brushTexture
+      ? {
+          cursorPath: brushTexture.cursorPath,
+          cursorBounds: brushTexture.cursorBounds,
+        }
+      : null,
   });
 
   const { pushStroke, pushAddLayer, pushRemoveLayer, undo, redo } = useHistoryStore();
@@ -1362,9 +1370,46 @@ export function Canvas() {
           className="brush-cursor"
           style={{
             width: currentSize * scale,
-            height: currentSize * scale,
+            height: currentSize * scale * (brushRoundness / 100),
+            transform: `rotate(${brushAngle}deg)`,
+            // Hide default circle border/shadow if using texture path
+            ...(brushTexture?.cursorPath && {
+              border: 'none',
+              borderRadius: 0,
+              boxShadow: 'none',
+              position: 'fixed' as const,
+            }),
           }}
-        />
+        >
+          {brushTexture?.cursorPath && (
+            <svg
+              width={currentSize * scale}
+              height={currentSize * scale * (brushRoundness / 100)}
+              viewBox="-0.5 -0.5 1 1"
+              preserveAspectRatio="none"
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                overflow: 'visible',
+              }}
+            >
+              <path
+                d={brushTexture.cursorPath}
+                fill="none"
+                stroke="rgba(255,255,255,0.9)"
+                strokeWidth="0.025"
+              />
+              <path
+                d={brushTexture.cursorPath}
+                fill="none"
+                stroke="rgba(0,0,0,0.8)"
+                strokeWidth="0.015"
+              />
+            </svg>
+          )}
+        </div>
       )}
     </div>
   );

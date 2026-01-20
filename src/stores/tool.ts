@@ -73,6 +73,10 @@ export interface BrushTexture {
   height: number;
   /** Decoded ImageData (cached after first use) */
   imageData?: ImageData;
+  /** Pre-computed cursor outline as SVG path data (normalized 0-1 coordinates) */
+  cursorPath?: string;
+  /** Bounding box of the cursor path for proper scaling */
+  cursorBounds?: { width: number; height: number };
 }
 
 /** Clamp brush/eraser size to valid range */

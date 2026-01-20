@@ -146,11 +146,37 @@ pub struct BrushPreset {
     pub size_pressure: bool,
     /// Pressure affects opacity
     pub opacity_pressure: bool,
+    /// Pre-computed cursor outline as SVG path data (normalized 0-1 coordinates)
+    pub cursor_path: Option<String>,
+    /// Cursor bounds for proper scaling
+    pub cursor_bounds: Option<CursorBoundsData>,
+}
+
+/// Cursor bounds data for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorBoundsData {
+    pub width: f32,
+    pub height: f32,
 }
 
 impl From<AbrBrush> for BrushPreset {
     fn from(brush: AbrBrush) -> Self {
         let dynamics = brush.dynamics.as_ref();
+
+        // Generate cursor outline from texture if available
+        let (cursor_path, cursor_bounds) = brush
+            .tip_image
+            .as_ref()
+            .map(|img| {
+                let path = super::cursor::extract_cursor_outline(img, 128);
+                let bounds = path.as_ref().map(|_| CursorBoundsData {
+                    width: img.width as f32,
+                    height: img.height as f32,
+                });
+                (path, bounds)
+            })
+            .unwrap_or((None, None));
 
         BrushPreset {
             id: brush
@@ -168,6 +194,8 @@ impl From<AbrBrush> for BrushPreset {
             texture_height: brush.tip_image.as_ref().map(|img| img.height),
             size_pressure: dynamics.map(|d| d.size_control == 2).unwrap_or(false),
             opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
+            cursor_path,
+            cursor_bounds,
         }
     }
 }
