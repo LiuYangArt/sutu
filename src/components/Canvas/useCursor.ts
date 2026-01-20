@@ -105,24 +105,18 @@ export function useCursor({
   brushAngle = 0,
   brushTexture,
 }: UseCursorProps) {
-  // Track last known mouse position for initializing DOM cursor
   const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Calculate actual pixel size of brush on screen
+  const isBrushTool = currentTool === 'brush' || currentTool === 'eraser';
+  const isInteracting = spacePressed || isPanning;
   const screenBrushSize = currentSize * scale;
 
-  // Determine if we should use hardware cursor (SVG)
-  // Q2 Optimization: Windows limits cursor size to ~128x128px
-  // Increased threshold from 64px to 128px for better brush tracking with larger brushes
-  // Note: If browser silently falls back to software rendering above 128px, this is acceptable
+  // Windows cursor size limit varies (32-128px), 96px is safe threshold
+  const HARDWARE_CURSOR_MAX_SIZE = 96;
   const shouldUseHardwareCursor =
-    (currentTool === 'brush' || currentTool === 'eraser') &&
-    screenBrushSize <= 128 &&
-    !spacePressed &&
-    !isPanning;
+    isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
 
-  // Should use hardware cursor for eyedropper
-  const shouldUseEyedropperCursor = currentTool === 'eyedropper' && !spacePressed && !isPanning;
+  const shouldUseEyedropperCursor = currentTool === 'eyedropper' && !isInteracting;
 
   // Generate SVG cursor URL synchronously using useMemo
   const hardwareCursorStyle = useMemo(() => {
@@ -167,7 +161,8 @@ export function useCursor({
     `;
 
     const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
-    return `url("${cursorUrl}") ${center} ${center}, crosshair`;
+    // Use 'none' as fallback to prevent crosshair flash during cursor image loading
+    return `url("${cursorUrl}") ${center} ${center}, none`;
   }, [
     shouldUseHardwareCursor,
     screenBrushSize,
@@ -243,12 +238,7 @@ export function useCursor({
     };
   }, [containerRef, brushCursorRef]);
 
-  // Determine if DOM brush cursor should be shown (fallback)
-  const showDomCursor =
-    (currentTool === 'brush' || currentTool === 'eraser') &&
-    !spacePressed &&
-    !isPanning &&
-    !shouldUseHardwareCursor;
+  const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
 
   // Initialize DOM cursor position when it becomes visible
   // This handles the case when brush size changes via keyboard (no pointer event)
@@ -261,18 +251,16 @@ export function useCursor({
     }
   }, [showDomCursor, brushCursorRef]);
 
-  // Determine final cursor style string
   let cursorStyle = TOOL_CURSORS[currentTool];
-  if (spacePressed || isPanning) {
+  if (isInteracting) {
     cursorStyle = 'grab';
   } else if (shouldUseEyedropperCursor && eyedropperCursorStyle) {
     cursorStyle = eyedropperCursorStyle;
-  } else if (shouldUseHardwareCursor && hardwareCursorStyle) {
-    cursorStyle = hardwareCursorStyle;
+  } else if (shouldUseHardwareCursor) {
+    cursorStyle = hardwareCursorStyle || 'none';
   } else if (showDomCursor) {
-    // When using DOM cursor, hide system cursor completely
     cursorStyle = 'none';
-  } else if (showCrosshair && (currentTool === 'brush' || currentTool === 'eraser')) {
+  } else if (showCrosshair && isBrushTool) {
     cursorStyle = 'crosshair';
   }
 
