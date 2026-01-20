@@ -352,3 +352,74 @@ const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
 ```
 
 代码行数：283 → 269 行（-14 行）
+
+### 问题 11: 按 Alt 键临时吸色时 cursor 显示 crosshair 而非吸管图标
+
+**日期**: 2026-01-20
+
+**现象**: 使用画笔工具时按 Alt 键切换到吸色模式，cursor 显示为 crosshair，但按 I 键切换到吸色工具时 cursor 正常显示吸管图标
+
+**诊断过程**:
+
+1. **初步假设错误**: 认为是 CSS cursor SVG 编码问题，尝试修改 `btoa` 为 `encodeURIComponent`，无效
+
+2. **添加诊断日志** 进行根因追踪:
+```typescript
+console.log('[Canvas] DOM cursor check:', {
+  altPressed,
+  containerInlineStyle: container.style.cursor,
+  containerComputedCursor: computedStyle.cursor,
+});
+```
+
+3. **关键发现**:
+| 场景 | altPressed | containerInlineStyle | computedCursor |
+|------|------------|---------------------|----------------|
+| 按 I 键 | `false` | SVG URL ✅ | SVG URL ✅ |
+| 按 Alt 键 | `true` | SVG URL ✅ | `crosshair` ❌ |
+
+**根因**: **Windows 系统在 Alt 键按下时会强制覆盖 CSS cursor 属性**
+
+这是 Windows 的已知行为——Alt 键用于激活菜单栏快捷键，系统会接管光标显示。即使 `style.cursor` 正确设置了 SVG URL，`getComputedStyle().cursor` 仍被系统覆盖为默认值。
+
+**解决方案**: 使用 DOM 自定义光标元素（类似画笔工具的 `.brush-cursor`）来显示吸管图标，绕过 Windows 系统对 CSS cursor 的覆盖
+
+修改的文件:
+| 文件 | 修改 |
+|------|------|
+| `useCursor.ts` | 添加 `showEyedropperDomCursor` 状态和 `eyedropperCursorRef` 参数 |
+| `useCursor.ts` | 更新事件处理器同时管理 brush 和 eyedropper 的 DOM cursor 位置 |
+| `useCursor.ts` | eyedropper 激活时返回 `cursor: 'none'` 隐藏系统光标 |
+| `index.tsx` | 添加 `eyedropperCursorRef` |
+| `index.tsx` | 渲染吸管 DOM 光标元素（内联 SVG） |
+
+核心代码:
+```typescript
+// useCursor.ts
+const showEyedropperDomCursor = currentTool === 'eyedropper' && !isInteracting;
+
+// 当 eyedropper 激活时，隐藏系统 cursor
+if (showEyedropperDomCursor) {
+  cursorStyle = 'none';
+}
+
+return { cursorStyle, showDomCursor, showEyedropperDomCursor };
+```
+
+```tsx
+// index.tsx - 吸管 DOM cursor 元素
+{showEyedropperDomCursor && (
+  <div ref={eyedropperCursorRef} className="eyedropper-cursor" style={{...}}>
+    <svg width="24" height="24" viewBox="0 0 24 24">
+      {/* Lucide Pipette icon */}
+    </svg>
+  </div>
+)}
+```
+
+**教训**:
+- **操作系统可能会覆盖 CSS 属性**：某些系统级按键（如 Alt）会触发系统行为，覆盖应用的样式设置
+- **诊断日志比猜测更有效**：对比 `style.cursor`（应用设置）和 `getComputedStyle().cursor`（实际生效）可以快速定位问题层级
+- **DOM cursor 是 CSS cursor 的可靠替代方案**：当系统覆盖 CSS cursor 时，DOM 元素渲染不受影响
+- **对比两种情况的差异**：按 I 键正常、按 Alt 键异常，说明问题与 Alt 键的特殊性有关，而非 eyedropper cursor 本身
+

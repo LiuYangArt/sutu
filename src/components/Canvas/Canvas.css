@@ -33,7 +33,8 @@
 
 .main-canvas {
   display: block;
-  /* cursor is controlled by parent .canvas-container via JS */
+  /* Inherit cursor from parent .canvas-container (set via JS) */
+  cursor: inherit;
   touch-action: none;
 }
 

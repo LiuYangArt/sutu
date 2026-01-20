@@ -87,6 +87,7 @@ export function Canvas() {
   const [altPressed, setAltPressed] = useState(false);
 
   const brushCursorRef = useRef<HTMLDivElement>(null);
+  const eyedropperCursorRef = useRef<HTMLDivElement>(null);
   const previousToolRef = useRef<string | null>(null);
 
   const { width, height, layers, activeLayerId, initDocument, updateLayerThumbnail } =
@@ -156,7 +157,7 @@ export function Canvas() {
   const { scale, offsetX, offsetY, isPanning, zoomIn, zoomOut, pan, setIsPanning, setScale } =
     useViewportStore();
 
-  const { cursorStyle, showDomCursor } = useCursor({
+  const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
     currentTool,
     currentSize,
     scale,
@@ -165,6 +166,7 @@ export function Canvas() {
     isPanning,
     containerRef,
     brushCursorRef,
+    eyedropperCursorRef,
     brushRoundness,
     brushAngle,
     brushTexture: brushTexture
@@ -1420,6 +1422,67 @@ export function Canvas() {
               }}
             />
           )}
+        </div>
+      )}
+      {showEyedropperDomCursor && (
+        <div
+          ref={eyedropperCursorRef}
+          className="eyedropper-cursor"
+          style={{
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            pointerEvents: 'none',
+            zIndex: 'var(--z-overlay)',
+            width: 24,
+            height: 24,
+          }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path
+              d="m2 22 1-1h3l9-9"
+              stroke="black"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="m2 22 1-1h3l9-9"
+              stroke="white"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M3 21v-3l9-9"
+              stroke="black"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M3 21v-3l9-9"
+              stroke="white"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"
+              stroke="black"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"
+              fill="white"
+              stroke="white"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
       )}
     </div>

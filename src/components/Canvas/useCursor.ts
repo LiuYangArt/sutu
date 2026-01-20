@@ -5,7 +5,7 @@ import { ToolType } from '@/stores/tool';
 const TOOL_CURSORS: Record<ToolType, string> = {
   brush: 'none',
   eraser: 'none',
-  eyedropper: 'crosshair',
+  eyedropper: 'none', // Custom SVG cursor is generated dynamically
   move: 'move',
   select: 'crosshair',
   lasso: 'crosshair',
@@ -84,6 +84,7 @@ interface UseCursorProps {
   isPanning: boolean;
   containerRef: React.RefObject<HTMLDivElement>;
   brushCursorRef: React.RefObject<HTMLDivElement>;
+  eyedropperCursorRef: React.RefObject<HTMLDivElement>;
   /** Brush roundness (1-100, 100 = perfect circle) */
   brushRoundness?: number;
   /** Brush angle in degrees (0-360) */
@@ -101,6 +102,7 @@ export function useCursor({
   isPanning,
   containerRef,
   brushCursorRef,
+  eyedropperCursorRef,
   brushRoundness = 100,
   brushAngle = 0,
   brushTexture,
@@ -115,8 +117,6 @@ export function useCursor({
   const HARDWARE_CURSOR_MAX_SIZE = 96;
   const shouldUseHardwareCursor =
     isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
-
-  const shouldUseEyedropperCursor = currentTool === 'eyedropper' && !isInteracting;
 
   // Generate SVG cursor URL synchronously using useMemo
   const hardwareCursorStyle = useMemo(() => {
@@ -172,31 +172,7 @@ export function useCursor({
     brushTexture,
   ]);
 
-  // Generate eyedropper cursor SVG
-  const eyedropperCursorStyle = useMemo(() => {
-    if (!shouldUseEyedropperCursor) {
-      return '';
-    }
-
-    const size = 24;
-    // Lucide Pipette icon path
-    const svg = `
-      <svg width="${size}" height="${size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none">
-        <path d="m2 22 1-1h3l9-9" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="m2 22 1-1h3l9-9" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M3 21v-3l9-9" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M3 21v-3l9-9" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" fill="white" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    `;
-
-    const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
-    // Hotspot at the pipette tip (bottom-left corner)
-    return `url("${cursorUrl}") 2 22, crosshair`;
-  }, [shouldUseEyedropperCursor]);
-
-  // Handle native pointer events for DOM cursor (zero-lag update)
+  // Handle native pointer events for DOM cursors (zero-lag update)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -205,9 +181,16 @@ export function useCursor({
       // Always track mouse position, even when DOM cursor is not shown
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-      const cursor = brushCursorRef.current;
-      if (cursor) {
-        setCursorPosition(cursor, e.clientX, e.clientY);
+      // Update brush cursor position
+      const brushCursor = brushCursorRef.current;
+      if (brushCursor) {
+        setCursorPosition(brushCursor, e.clientX, e.clientY);
+      }
+
+      // Update eyedropper cursor position
+      const eyedropperCursor = eyedropperCursorRef.current;
+      if (eyedropperCursor) {
+        setCursorPosition(eyedropperCursor, e.clientX, e.clientY);
       }
     };
 
@@ -215,15 +198,24 @@ export function useCursor({
       if (brushCursorRef.current) {
         brushCursorRef.current.style.display = 'none';
       }
+      if (eyedropperCursorRef.current) {
+        eyedropperCursorRef.current.style.display = 'none';
+      }
     };
 
     const handleNativePointerEnter = (e: PointerEvent) => {
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-      const cursor = brushCursorRef.current;
-      if (cursor) {
-        cursor.style.display = 'block';
-        setCursorPosition(cursor, e.clientX, e.clientY);
+      const brushCursor = brushCursorRef.current;
+      if (brushCursor) {
+        brushCursor.style.display = 'block';
+        setCursorPosition(brushCursor, e.clientX, e.clientY);
+      }
+
+      const eyedropperCursor = eyedropperCursorRef.current;
+      if (eyedropperCursor) {
+        eyedropperCursor.style.display = 'block';
+        setCursorPosition(eyedropperCursor, e.clientX, e.clientY);
       }
     };
 
@@ -236,9 +228,13 @@ export function useCursor({
       container.removeEventListener('pointerleave', handleNativePointerLeave);
       container.removeEventListener('pointerenter', handleNativePointerEnter);
     };
-  }, [containerRef, brushCursorRef]);
+  }, [containerRef, brushCursorRef, eyedropperCursorRef]);
 
   const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
+
+  // Show DOM eyedropper cursor when eyedropper tool is active
+  // This is needed because Windows overrides CSS cursor when Alt key is held
+  const showEyedropperDomCursor = currentTool === 'eyedropper' && !isInteracting;
 
   // Initialize DOM cursor position when it becomes visible
   // This handles the case when brush size changes via keyboard (no pointer event)
@@ -254,8 +250,9 @@ export function useCursor({
   let cursorStyle = TOOL_CURSORS[currentTool];
   if (isInteracting) {
     cursorStyle = 'grab';
-  } else if (shouldUseEyedropperCursor && eyedropperCursorStyle) {
-    cursorStyle = eyedropperCursorStyle;
+  } else if (showEyedropperDomCursor) {
+    // Use DOM cursor for eyedropper, hide system cursor
+    cursorStyle = 'none';
   } else if (shouldUseHardwareCursor) {
     cursorStyle = hardwareCursorStyle || 'none';
   } else if (showDomCursor) {
@@ -264,5 +261,5 @@ export function useCursor({
     cursorStyle = 'crosshair';
   }
 
-  return { cursorStyle, showDomCursor };
+  return { cursorStyle, showDomCursor, showEyedropperDomCursor };
 }
