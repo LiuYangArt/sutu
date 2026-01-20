@@ -48,41 +48,52 @@ function App() {
     }
   }, []);
 
-  // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill)
-  const handleDrawingShortcuts = useCallback((e: KeyboardEvent) => {
-    // Skip if focus is on input elements
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-      return;
-    }
+  // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill), F5 (brush panel)
+  const togglePanel = usePanelStore((s) => s.togglePanel);
+  const handleDrawingShortcuts = useCallback(
+    (e: KeyboardEvent) => {
+      // F5: Toggle brush panel (allow even in input fields)
+      if (e.key === 'F5') {
+        e.preventDefault();
+        togglePanel('brush-panel');
+        return;
+      }
 
-    const key = e.key.toLowerCase();
+      // Skip other shortcuts if focus is on input elements
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
 
-    // D: Reset colors to default (black foreground, white background)
-    if (key === 'd' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-      useToolStore.getState().resetColors();
-      return;
-    }
+      const key = e.key.toLowerCase();
 
-    // X: Swap foreground and background colors
-    if (key === 'x' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-      useToolStore.getState().swapColors();
-      return;
-    }
+      // D: Reset colors to default (black foreground, white background)
+      if (key === 'd' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        useToolStore.getState().resetColors();
+        return;
+      }
 
-    // I: Switch to eyedropper tool
-    if (key === 'i' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-      useToolStore.getState().setTool('eyedropper');
-      return;
-    }
+      // X: Swap foreground and background colors
+      if (key === 'x' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        useToolStore.getState().swapColors();
+        return;
+      }
 
-    // Alt+Backspace: Fill active layer with foreground color
-    if (e.key === 'Backspace' && e.altKey && !e.ctrlKey && !e.shiftKey) {
-      e.preventDefault();
-      const brushColor = useToolStore.getState().brushColor;
-      window.__canvasFillLayer?.(brushColor);
-      return;
-    }
-  }, []);
+      // I: Switch to eyedropper tool
+      if (key === 'i' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        useToolStore.getState().setTool('eyedropper');
+        return;
+      }
+
+      // Alt+Backspace: Fill active layer with foreground color
+      if (e.key === 'Backspace' && e.altKey && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault();
+        const brushColor = useToolStore.getState().brushColor;
+        window.__canvasFillLayer?.(brushColor);
+        return;
+      }
+    },
+    [togglePanel]
+  );
 
   useEffect(() => {
     window.addEventListener('keydown', handleDebugShortcut);
