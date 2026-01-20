@@ -16,6 +16,7 @@ import {
   PressureCurve,
   BrushTexture,
   ShapeDynamicsSettings,
+  ColorDynamicsSettings,
 } from '@/stores/tool';
 import { RenderMode } from '@/stores/settings';
 import { LatencyProfiler } from '@/benchmark';
@@ -32,6 +33,7 @@ import {
   isShapeDynamicsActive,
   type DynamicsInput,
 } from '@/utils/shapeDynamics';
+import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
 
 export interface BrushRenderConfig {
   size: number;
@@ -43,6 +45,7 @@ export interface BrushRenderConfig {
   roundness: number; // 0-100 (100 = circle, <100 = ellipse)
   angle: number; // 0-360 degrees
   color: string;
+  backgroundColor: string; // For F/B jitter
   pressureSizeEnabled: boolean;
   pressureFlowEnabled: boolean;
   pressureOpacityEnabled: boolean;
@@ -51,6 +54,9 @@ export interface BrushRenderConfig {
   // Shape Dynamics settings (Photoshop-compatible)
   shapeDynamicsEnabled: boolean;
   shapeDynamics?: ShapeDynamicsSettings;
+  // Color Dynamics settings (Photoshop-compatible)
+  colorDynamicsEnabled: boolean;
+  colorDynamics?: ColorDynamicsSettings;
 }
 
 export interface UseBrushRendererProps {
@@ -229,6 +235,12 @@ export function useBrushRenderer({
         config.shapeDynamics &&
         isShapeDynamicsActive(config.shapeDynamics);
 
+      // Color Dynamics: Check if we need to apply dynamics
+      const useColorDynamics =
+        config.colorDynamicsEnabled &&
+        config.colorDynamics &&
+        isColorDynamicsActive(config.colorDynamics);
+
       for (const dab of dabs) {
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         let dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
@@ -290,6 +302,32 @@ export function useBrushRenderer({
         // Update previous dab position for next direction calculation
         prevDabPosRef.current = { x: dab.x, y: dab.y };
 
+        // Color Dynamics: Calculate dynamic color
+        let dabColor = config.color;
+
+        if (useColorDynamics && config.colorDynamics) {
+          // Prepare dynamics input (reuse or create if Shape Dynamics was skipped)
+          const colorDynamicsInput: DynamicsInput = {
+            pressure: dabPressure,
+            tiltX: 0, // TODO: Get from dab if available
+            tiltY: 0, // TODO: Get from dab if available
+            rotation: 0, // TODO: Get from dab if available
+            direction: prevDabPosRef.current
+              ? calculateDirection(prevDabPosRef.current.x, prevDabPosRef.current.y, dab.x, dab.y)
+              : 0,
+            initialDirection: initialDirectionRef.current,
+            fadeProgress: 0, // TODO: Implement fade tracking
+          };
+
+          const colorResult = computeDabColor(
+            config.color,
+            config.backgroundColor,
+            config.colorDynamics,
+            colorDynamicsInput
+          );
+          dabColor = colorResult.color;
+        }
+
         const dabParams: DabParams = {
           x: dab.x,
           y: dab.y,
@@ -297,7 +335,7 @@ export function useBrushRenderer({
           flow: dabFlow,
           hardness: config.hardness / 100,
           maskType: config.maskType,
-          color: config.color,
+          color: dabColor,
           dabOpacity,
           roundness: dabRoundness,
           angle: dabAngle,
