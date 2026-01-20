@@ -5,6 +5,7 @@ import { BrushSettingsSidebar, TabConfig } from './BrushSettingsSidebar';
 import { BrushPresets } from './settings/BrushPresets';
 import { BrushTipShape } from './settings/BrushTipShape';
 import { TransferSettings } from './settings/TransferSettings';
+import { ShapeDynamicsSettings } from './settings/ShapeDynamicsSettings';
 
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
@@ -14,7 +15,7 @@ export function BrushPanel(): JSX.Element {
   const tabs: TabConfig[] = [
     { id: 'brushes', label: 'Brushes' },
     { id: 'tip_shape', label: 'Brush Tip Shape' },
-    { id: 'shape_dynamics', label: 'Shape Dynamics', disabled: true },
+    { id: 'shape_dynamics', label: 'Shape Dynamics' },
     { id: 'scattering', label: 'Scattering', disabled: true },
     { id: 'texture', label: 'Texture', disabled: true },
     { id: 'dual_brush', label: 'Dual Brush', disabled: true },
@@ -36,6 +37,8 @@ export function BrushPanel(): JSX.Element {
         );
       case 'tip_shape':
         return <BrushTipShape />;
+      case 'shape_dynamics':
+        return <ShapeDynamicsSettings />;
       case 'transfer':
         return <TransferSettings />;
       default:

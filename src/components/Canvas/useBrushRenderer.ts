@@ -11,7 +11,7 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
-import { applyPressureCurve, PressureCurve, BrushTexture } from '@/stores/tool';
+import { applyPressureCurve, PressureCurve, BrushTexture, ShapeDynamicsSettings } from '@/stores/tool';
 import { RenderMode } from '@/stores/settings';
 import { LatencyProfiler } from '@/benchmark';
 import {
@@ -21,6 +21,12 @@ import {
   reportGPUFallback,
   type RenderBackend,
 } from '@/gpu';
+import {
+  computeDabShape,
+  calculateDirection,
+  isShapeDynamicsActive,
+  type DynamicsInput,
+} from '@/utils/shapeDynamics';
 
 export interface BrushRenderConfig {
   size: number;
@@ -29,7 +35,7 @@ export interface BrushRenderConfig {
   hardness: number;
   maskType: MaskType; // Mask type: 'gaussian' or 'default'
   spacing: number;
-  roundness: number; // 0-1 (1 = circle, <1 = ellipse)
+  roundness: number; // 0-100 (100 = circle, <100 = ellipse)
   angle: number; // 0-360 degrees
   color: string;
   pressureSizeEnabled: boolean;
@@ -37,6 +43,9 @@ export interface BrushRenderConfig {
   pressureOpacityEnabled: boolean;
   pressureCurve: PressureCurve;
   texture?: BrushTexture | null; // Texture for sampled brushes (from ABR import)
+  // Shape Dynamics settings (Photoshop-compatible)
+  shapeDynamicsEnabled: boolean;
+  shapeDynamics?: ShapeDynamicsSettings;
 }
 
 export interface UseBrushRendererProps {
@@ -90,6 +99,11 @@ export function useBrushRenderer({
   // When stroke 2 starts during stroke 1's await prepareEndStroke(),
   // stroke 2's clear() would wipe stroke 1's previewCanvas before composite.
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
+
+  // Shape Dynamics: Track previous dab position for direction calculation
+  const prevDabPosRef = useRef<{ x: number; y: number } | null>(null);
+  // Shape Dynamics: Capture initial direction at stroke start
+  const initialDirectionRef = useRef<number>(0);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -163,6 +177,10 @@ export function useBrushRenderer({
 
       stamperRef.current.beginStroke();
 
+      // Shape Dynamics: Reset direction tracking for new stroke
+      prevDabPosRef.current = null;
+      initialDirectionRef.current = 0;
+
       if (backend === 'gpu' && gpuBufferRef.current) {
         gpuBufferRef.current.beginStroke();
       } else {
@@ -200,14 +218,70 @@ export function useBrushRenderer({
       // Get dab positions from stamper
       const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
 
+      // Shape Dynamics: Check if we need to apply dynamics
+      const useShapeDynamics =
+        config.shapeDynamicsEnabled &&
+        config.shapeDynamics &&
+        isShapeDynamicsActive(config.shapeDynamics);
+
       for (const dab of dabs) {
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
-        const dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
+        let dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
         const dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
 
         const dabOpacity = config.pressureOpacityEnabled
           ? config.opacity * dabPressure
           : config.opacity;
+
+        // Shape Dynamics: Calculate direction and apply dynamics
+        let dabRoundness = config.roundness / 100;
+        let dabAngle = config.angle;
+        let dabFlipX = false;
+        let dabFlipY = false;
+
+        if (useShapeDynamics && config.shapeDynamics) {
+          // Calculate direction from previous dab
+          let direction = 0;
+          if (prevDabPosRef.current) {
+            direction = calculateDirection(
+              prevDabPosRef.current.x,
+              prevDabPosRef.current.y,
+              dab.x,
+              dab.y
+            );
+            // Capture initial direction on first movement
+            if (initialDirectionRef.current === 0 && direction !== 0) {
+              initialDirectionRef.current = direction;
+            }
+          }
+
+          // Prepare dynamics input
+          const dynamicsInput: DynamicsInput = {
+            pressure: dabPressure,
+            tiltX: 0, // TODO: Get from dab if available
+            tiltY: 0, // TODO: Get from dab if available
+            direction,
+            initialDirection: initialDirectionRef.current,
+          };
+
+          // Compute dynamic shape
+          const shape = computeDabShape(
+            dabSize,
+            config.angle,
+            config.roundness, // 0-100
+            config.shapeDynamics,
+            dynamicsInput
+          );
+
+          dabSize = shape.size;
+          dabAngle = shape.angle;
+          dabRoundness = shape.roundness; // Already 0-1
+          dabFlipX = shape.flipX;
+          dabFlipY = shape.flipY;
+        }
+
+        // Update previous dab position for next direction calculation
+        prevDabPosRef.current = { x: dab.x, y: dab.y };
 
         const dabParams: DabParams = {
           x: dab.x,
@@ -218,9 +292,11 @@ export function useBrushRenderer({
           maskType: config.maskType,
           color: config.color,
           dabOpacity,
-          roundness: config.roundness / 100,
-          angle: config.angle,
+          roundness: dabRoundness,
+          angle: dabAngle,
           texture: config.texture ?? undefined,
+          flipX: dabFlipX,
+          flipY: dabFlipY,
         };
 
         if (backend === 'gpu' && gpuBufferRef.current) {

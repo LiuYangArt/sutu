@@ -34,6 +34,9 @@ export interface DabParams {
   roundness?: number; // Brush roundness (0-1, 1 = circle, <1 = ellipse)
   angle?: number; // Brush angle in degrees (0-360)
   texture?: BrushTexture; // Texture for sampled brushes (from ABR import)
+  // Shape Dynamics: flip flags for sampled/texture brushes
+  flipX?: boolean; // Flip horizontally
+  flipY?: boolean; // Flip vertically
 }
 
 export interface Rect {

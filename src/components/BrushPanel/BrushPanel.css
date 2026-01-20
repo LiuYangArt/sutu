@@ -290,3 +290,122 @@
     transparent 70%
   );
 }
+
+/* =========================
+ * Shape Dynamics
+ * ========================= */
+
+/* Section header with checkbox */
+.section-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.section-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.section-checkbox-label input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.section-checkbox-label h4 {
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Dynamics group */
+.dynamics-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dynamics-group:last-child {
+  border-bottom: none;
+}
+
+.dynamics-group.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Control source dropdown row */
+.control-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 68px; /* Align with slider content */
+}
+
+.control-source-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  min-width: 45px;
+}
+
+.control-source-select {
+  flex: 1;
+  padding: 3px 6px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.control-source-select:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.control-source-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Flip jitter group */
+.flip-group {
+  flex-direction: row;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.flip-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.flip-checkbox input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.flip-checkbox input[type='checkbox']:disabled {
+  cursor: not-allowed;
+}
+

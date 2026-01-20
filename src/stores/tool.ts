@@ -8,6 +8,57 @@ export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 export type BrushMaskType = 'gaussian' | 'default';
 
 /**
+ * Control source for dynamic brush parameters (Photoshop-compatible)
+ */
+export type ControlSource =
+  | 'off' // No control, use base value only
+  | 'penPressure' // Pen pressure (0-1)
+  | 'penTilt' // Pen tilt magnitude
+  | 'direction' // Stroke direction
+  | 'initial'; // Initial direction at stroke start
+
+/**
+ * Shape Dynamics settings (Photoshop Shape Dynamics panel compatible)
+ * Controls how brush shape varies during a stroke
+ */
+export interface ShapeDynamicsSettings {
+  // Size Jitter
+  sizeJitter: number; // 0-100 (percentage)
+  sizeControl: ControlSource; // What controls size
+  minimumDiameter: number; // 0-100 (percentage of base size)
+
+  // Angle Jitter
+  angleJitter: number; // 0-360 (degrees)
+  angleControl: ControlSource;
+
+  // Roundness Jitter
+  roundnessJitter: number; // 0-100 (percentage)
+  roundnessControl: ControlSource;
+  minimumRoundness: number; // 0-100 (percentage)
+
+  // Flip Jitter (boolean toggles)
+  flipXJitter: boolean;
+  flipYJitter: boolean;
+}
+
+/** Default Shape Dynamics settings (all off) */
+export const DEFAULT_SHAPE_DYNAMICS: ShapeDynamicsSettings = {
+  sizeJitter: 0,
+  sizeControl: 'off',
+  minimumDiameter: 0,
+
+  angleJitter: 0,
+  angleControl: 'off',
+
+  roundnessJitter: 0,
+  roundnessControl: 'off',
+  minimumRoundness: 25, // PS default
+
+  flipXJitter: false,
+  flipYJitter: false,
+};
+
+/**
  * Brush texture data for sampled/imported brushes (e.g., from ABR files)
  * When set, the brush uses this texture instead of procedural mask generation
  */
@@ -80,6 +131,10 @@ interface ToolState {
   // Cursor display settings
   showCrosshair: boolean;
 
+  // Shape Dynamics settings (Photoshop-compatible)
+  shapeDynamicsEnabled: boolean;
+  shapeDynamics: ShapeDynamicsSettings;
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -106,6 +161,11 @@ interface ToolState {
   togglePressureOpacity: () => void;
   setPressureCurve: (curve: PressureCurve) => void;
   toggleCrosshair: () => void;
+  // Shape Dynamics actions
+  setShapeDynamicsEnabled: (enabled: boolean) => void;
+  toggleShapeDynamics: () => void;
+  setShapeDynamics: (settings: Partial<ShapeDynamicsSettings>) => void;
+  resetShapeDynamics: () => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -130,6 +190,10 @@ export const useToolStore = create<ToolState>()(
       pressureOpacityEnabled: true, // Only opacity affected by pressure by default
       pressureCurve: 'linear',
       showCrosshair: false,
+
+      // Shape Dynamics (default: disabled with all jitter at 0)
+      shapeDynamicsEnabled: false,
+      shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS },
 
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
@@ -199,6 +263,19 @@ export const useToolStore = create<ToolState>()(
       setPressureCurve: (curve) => set({ pressureCurve: curve }),
 
       toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
+
+      // Shape Dynamics actions
+      setShapeDynamicsEnabled: (enabled) => set({ shapeDynamicsEnabled: enabled }),
+
+      toggleShapeDynamics: () =>
+        set((state) => ({ shapeDynamicsEnabled: !state.shapeDynamicsEnabled })),
+
+      setShapeDynamics: (settings) =>
+        set((state) => ({
+          shapeDynamics: { ...state.shapeDynamics, ...settings },
+        })),
+
+      resetShapeDynamics: () => set({ shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS } }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -219,6 +296,8 @@ export const useToolStore = create<ToolState>()(
         pressureFlowEnabled: state.pressureFlowEnabled,
         pressureOpacityEnabled: state.pressureOpacityEnabled,
         pressureCurve: state.pressureCurve,
+        shapeDynamicsEnabled: state.shapeDynamicsEnabled,
+        shapeDynamics: state.shapeDynamics,
       }),
     }
   )
