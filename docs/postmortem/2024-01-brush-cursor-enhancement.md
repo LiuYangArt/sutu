@@ -276,3 +276,79 @@ const generateCrosshairSvg = (cx: number, cy: number, size: number) => `...`;
   - Marching Squares 算法方案
   - Chaikin 平滑算法
   - 待后续实现
+
+## 后续优化问题与解决 (2025-01 续)
+
+### 问题 10: 键盘缩放笔刷时 cursor 在过渡尺寸区间消失或显示 crosshair
+
+**现象**: 用 `[` `]` 键调整笔刷大小时，在某个尺寸区间内 cursor 会变成 crosshair，或完全消失
+
+**第一性原理分析**:
+
+硬件 cursor 和 DOM cursor 的切换逻辑：
+```typescript
+// 硬件 cursor: screenBrushSize <= 128
+const shouldUseHardwareCursor = screenBrushSize <= 128 && ...;
+
+// DOM cursor: !shouldUseHardwareCursor (即 screenBrushSize > 128)
+const showDomCursor = !shouldUseHardwareCursor && ...;
+```
+
+理论上这是互补的，不应该有间隙。
+
+**根因 1: Windows 硬件 cursor 尺寸限制**
+
+Windows 系统对硬件 cursor 有尺寸限制（标准 32x32，部分系统支持到 128x128）。当 `screenBrushSize` 处于某个范围时：
+1. 代码认为 `shouldUseHardwareCursor = true`
+2. **Windows 实际上拒绝显示超尺寸的 cursor**（静默失败）
+3. 同时 `showDomCursor = false`
+4. 结果：cursor 完全消失
+
+**根因 2: CSS cursor fallback 机制**
+
+```typescript
+return `url("${cursorUrl}") ${center} ${center}, crosshair`;
+//                                              ^^^^^^^^^^^
+```
+
+当 SVG data URL 解析过程中，浏览器会使用 fallback cursor（`crosshair`），导致闪烁。
+
+**解决**:
+
+1. 将硬件 cursor 阈值从 128px 降到 96px（保守安全值）：
+```typescript
+const HARDWARE_CURSOR_MAX_SIZE = 96;
+const shouldUseHardwareCursor =
+  isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
+```
+
+2. 将 CSS cursor fallback 从 `crosshair` 改为 `none`：
+```typescript
+return `url("${cursorUrl}") ${center} ${center}, none`;
+```
+
+**教训**:
+- 浏览器/系统对硬件 cursor 有隐式限制，超过限制时会静默失败而非报错
+- CSS cursor 的 fallback 值会在图片加载期间显示，需要选择合适的 fallback
+- 从第一性原理分析问题时，要考虑"代码逻辑"之外的"运行时环境限制"
+
+### 代码简化 (2025-01)
+
+提取公共变量减少重复判断：
+
+```typescript
+// 之前：重复 4 次
+currentTool === 'brush' || currentTool === 'eraser'
+spacePressed || isPanning
+
+// 之后：提取为变量
+const isBrushTool = currentTool === 'brush' || currentTool === 'eraser';
+const isInteracting = spacePressed || isPanning;
+
+// 简化后的条件判断
+const shouldUseHardwareCursor =
+  isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
+const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
+```
+
+代码行数：283 → 269 行（-14 行）
