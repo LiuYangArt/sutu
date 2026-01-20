@@ -6,6 +6,7 @@ import { BrushPresets } from './settings/BrushPresets';
 import { BrushTipShape } from './settings/BrushTipShape';
 import { TransferSettings } from './settings/TransferSettings';
 import { ShapeDynamicsSettings } from './settings/ShapeDynamicsSettings';
+import { ColorDynamicsSettings } from './settings/ColorDynamicsSettings';
 
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
@@ -19,7 +20,7 @@ export function BrushPanel(): JSX.Element {
     { id: 'scattering', label: 'Scattering', disabled: true },
     { id: 'texture', label: 'Texture', disabled: true },
     { id: 'dual_brush', label: 'Dual Brush', disabled: true },
-    { id: 'color_dynamics', label: 'Color Dynamics', disabled: true },
+    { id: 'color_dynamics', label: 'Color Dynamics' },
     { id: 'transfer', label: 'Transfer' },
     { id: 'brush_pose', label: 'Brush Pose', disabled: true },
     { id: 'noise', label: 'Noise', disabled: true },
@@ -39,6 +40,8 @@ export function BrushPanel(): JSX.Element {
         return <BrushTipShape />;
       case 'shape_dynamics':
         return <ShapeDynamicsSettings />;
+      case 'color_dynamics':
+        return <ColorDynamicsSettings />;
       case 'transfer':
         return <TransferSettings />;
       default:

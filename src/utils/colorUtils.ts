@@ -1,4 +1,14 @@
 /**
+ * HSVA color type
+ */
+export interface HSVA {
+  h: number; // 0-360
+  s: number; // 0-100
+  v: number; // 0-100
+  a: number; // 0-1
+}
+
+/**
  * Expands short hex (e.g. "03F") to full 6-digit hex (e.g. "0033FF").
  * Handles optional # prefix.
  */
@@ -13,7 +23,7 @@ export const normalizeHex = (hex: string): string => {
   return c;
 };
 
-export const hexToHsva = (hex: string): { h: number; s: number; v: number; a: number } => {
+export const hexToHsva = (hex: string): HSVA => {
   const expanded = normalizeHex(hex);
 
   const r = parseInt(expanded.slice(0, 2), 16) / 255;

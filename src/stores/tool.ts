@@ -61,6 +61,39 @@ export const DEFAULT_SHAPE_DYNAMICS: ShapeDynamicsSettings = {
 };
 
 /**
+ * Color Dynamics settings (Photoshop Color Dynamics panel compatible)
+ * Controls how brush color varies during a stroke
+ */
+export interface ColorDynamicsSettings {
+  // Foreground/Background Jitter
+  foregroundBackgroundJitter: number; // 0-100 (percentage)
+  foregroundBackgroundControl: ControlSource; // What controls F/B mixing
+
+  // Hue Jitter
+  hueJitter: number; // 0-100 (percentage, maps to ±180° at 100%)
+
+  // Saturation Jitter
+  saturationJitter: number; // 0-100 (percentage)
+
+  // Brightness Jitter (HSB's B = HSV's V)
+  brightnessJitter: number; // 0-100 (percentage)
+
+  // Purity (global saturation adjustment)
+  // -100 = grayscale, 0 = no change, +100 = maximum saturation
+  purity: number; // -100 to +100
+}
+
+/** Default Color Dynamics settings (all off) */
+export const DEFAULT_COLOR_DYNAMICS: ColorDynamicsSettings = {
+  foregroundBackgroundJitter: 0,
+  foregroundBackgroundControl: 'off',
+  hueJitter: 0,
+  saturationJitter: 0,
+  brightnessJitter: 0,
+  purity: 0,
+};
+
+/**
  * Brush texture data for sampled/imported brushes (e.g., from ABR files)
  * When set, the brush uses this texture instead of procedural mask generation
  */
@@ -143,6 +176,10 @@ interface ToolState {
   shapeDynamicsEnabled: boolean;
   shapeDynamics: ShapeDynamicsSettings;
 
+  // Color Dynamics settings (Photoshop-compatible)
+  colorDynamicsEnabled: boolean;
+  colorDynamics: ColorDynamicsSettings;
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -174,6 +211,12 @@ interface ToolState {
   toggleShapeDynamics: () => void;
   setShapeDynamics: (settings: Partial<ShapeDynamicsSettings>) => void;
   resetShapeDynamics: () => void;
+
+  // Color Dynamics actions
+  setColorDynamicsEnabled: (enabled: boolean) => void;
+  toggleColorDynamics: () => void;
+  setColorDynamics: (settings: Partial<ColorDynamicsSettings>) => void;
+  resetColorDynamics: () => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -202,6 +245,10 @@ export const useToolStore = create<ToolState>()(
       // Shape Dynamics (default: disabled with all jitter at 0)
       shapeDynamicsEnabled: false,
       shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS },
+
+      // Color Dynamics (default: disabled with all jitter at 0)
+      colorDynamicsEnabled: false,
+      colorDynamics: { ...DEFAULT_COLOR_DYNAMICS },
 
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
@@ -284,6 +331,19 @@ export const useToolStore = create<ToolState>()(
         })),
 
       resetShapeDynamics: () => set({ shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS } }),
+
+      // Color Dynamics actions
+      setColorDynamicsEnabled: (enabled) => set({ colorDynamicsEnabled: enabled }),
+
+      toggleColorDynamics: () =>
+        set((state) => ({ colorDynamicsEnabled: !state.colorDynamicsEnabled })),
+
+      setColorDynamics: (settings) =>
+        set((state) => ({
+          colorDynamics: { ...state.colorDynamics, ...settings },
+        })),
+
+      resetColorDynamics: () => set({ colorDynamics: { ...DEFAULT_COLOR_DYNAMICS } }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -306,6 +366,8 @@ export const useToolStore = create<ToolState>()(
         pressureCurve: state.pressureCurve,
         shapeDynamicsEnabled: state.shapeDynamicsEnabled,
         shapeDynamics: state.shapeDynamics,
+        colorDynamicsEnabled: state.colorDynamicsEnabled,
+        colorDynamics: state.colorDynamics,
       }),
     }
   )

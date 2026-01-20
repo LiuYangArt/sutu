@@ -272,11 +272,11 @@
 
 - [x] 笔刷面板框架
 - [x] 预设网格展示 (缩略图)
-- [ ] 详细参数编辑器 (展开式)
+- [/] 详细参数编辑器 (展开式)
 - [x] 导入 ABR 对话框
-- [ ] 笔刷设置面板重构 (Photoshop 风格)
-  - [ ] 分类导航 (Shape Dynamics, Scattering, Transfer 等)
-  - [ ] 分类启用/禁用 checkbox
+- [/] 笔刷设置面板重构 (Photoshop 风格)
+  - [/] 分类导航 (Shape Dynamics, Scattering, Transfer 等)
+  - [x] 分类启用/禁用 checkbox
   - [ ] 右侧详细参数面板
   - [ ] 笔刷预览区域
 
