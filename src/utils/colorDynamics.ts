@@ -10,7 +10,7 @@
  */
 
 import { ColorDynamicsSettings } from '@/stores/tool';
-import { hexToHsva, hsvaToHex } from './colorUtils';
+import { hexToHsva, hsvaToHex, type HSVA } from './colorUtils';
 import { getControlValue, type DynamicsInput, type RandomFn } from './shapeDynamics';
 
 /**
@@ -22,29 +22,26 @@ export interface ComputedDabColor {
 }
 
 /**
- * Lerp between two hex colors in HSV space
- * Used for Foreground/Background interpolation
+ * Lerp between two HSVA colors (operates directly on HSVA to avoid conversions)
  *
- * @param colorA - First color (hex)
- * @param colorB - Second color (hex)
- * @param t - Interpolation factor (0 = colorA, 1 = colorB)
- * @returns Interpolated color (hex)
+ * @param a - First color (HSVA)
+ * @param b - Second color (HSVA)
+ * @param t - Interpolation factor (0 = a, 1 = b)
+ * @returns Interpolated color (HSVA)
  */
-export function lerpColorHsv(colorA: string, colorB: string, t: number): string {
-  const a = hexToHsva(colorA);
-  const b = hexToHsva(colorB);
-
+function lerpHsva(a: HSVA, b: HSVA, t: number): HSVA {
   // Hue interpolation needs special handling for wrap-around
   // Find shortest path around the color wheel
   let hDiff = b.h - a.h;
   if (hDiff > 180) hDiff -= 360;
   if (hDiff < -180) hDiff += 360;
 
-  const h = (((a.h + hDiff * t) % 360) + 360) % 360;
-  const s = a.s + (b.s - a.s) * t;
-  const v = a.v + (b.v - a.v) * t;
-
-  return hsvaToHex({ h, s, v, a: 1 });
+  return {
+    h: (((a.h + hDiff * t) % 360) + 360) % 360,
+    s: a.s + (b.s - a.s) * t,
+    v: a.v + (b.v - a.v) * t,
+    a: a.a + (b.a - a.a) * t,
+  };
 }
 
 /**
@@ -113,14 +110,14 @@ export function applyPurity(baseSaturation: number, purity: number): number {
  * This is the main entry point for Color Dynamics calculation.
  * Called once per dab during stroke rendering.
  *
- * Processing order:
- * 1. Apply Foreground/Background mixing (control + jitter)
- * 2. Convert to HSV
+ * Processing order (all in HSV space to minimize conversions):
+ * 1. Convert foreground/background to HSV once
+ * 2. Apply Foreground/Background mixing
  * 3. Apply Hue Jitter
  * 4. Apply Saturation Jitter
  * 5. Apply Brightness Jitter
  * 6. Apply Purity (global saturation adjustment)
- * 7. Convert back to Hex
+ * 7. Convert back to Hex once
  *
  * @param foregroundColor - Foreground color (hex)
  * @param backgroundColor - Background color (hex)
@@ -136,17 +133,14 @@ export function computeDabColor(
   input: DynamicsInput,
   random: RandomFn = Math.random
 ): ComputedDabColor {
-  // Step 1: Start with foreground color
-  let workingColor = foregroundColor;
+  // Convert to HSV once at entry
+  let hsv = hexToHsva(foregroundColor);
 
-  // Step 2: Apply Foreground/Background mixing
+  // Apply Foreground/Background mixing (if needed)
   if (settings.foregroundBackgroundJitter > 0 || settings.foregroundBackgroundControl !== 'off') {
-    // Get control value (0-1)
     const controlValue = getControlValue(settings.foregroundBackgroundControl, input);
 
-    // Calculate mix factor
-    // Control source: high value (e.g., high pressure) = more foreground
-    // So we invert: mixFactor 0 = foreground, 1 = background
+    // Calculate mix factor (high pressure = more foreground, so invert)
     let mixFactor = 0;
     if (settings.foregroundBackgroundControl !== 'off') {
       mixFactor = 1 - controlValue;
@@ -158,28 +152,26 @@ export function computeDabColor(
       mixFactor = Math.max(0, Math.min(1, mixFactor + jitterAmount));
     }
 
-    // Interpolate between foreground and background
+    // Interpolate in HSV space (convert background only when needed)
     if (mixFactor > 0) {
-      workingColor = lerpColorHsv(foregroundColor, backgroundColor, mixFactor);
+      const bgHsv = hexToHsva(backgroundColor);
+      hsv = lerpHsva(hsv, bgHsv, mixFactor);
     }
   }
 
-  // Step 3: Convert to HSV for jitter operations
-  const hsv = hexToHsva(workingColor);
-
-  // Step 4: Apply Hue Jitter
+  // Apply Hue Jitter
   hsv.h = applyHueJitter(hsv.h, settings.hueJitter, random);
 
-  // Step 5: Apply Saturation Jitter
+  // Apply Saturation Jitter
   hsv.s = applySVJitter(hsv.s, settings.saturationJitter, random);
 
-  // Step 6: Apply Brightness Jitter
+  // Apply Brightness Jitter
   hsv.v = applySVJitter(hsv.v, settings.brightnessJitter, random);
 
-  // Step 7: Apply Purity (after jitter, as global adjustment)
+  // Apply Purity (after jitter, as global adjustment)
   hsv.s = applyPurity(hsv.s, settings.purity);
 
-  // Step 8: Convert back to hex
+  // Convert back to hex once at exit
   return {
     color: hsvaToHex(hsv),
   };

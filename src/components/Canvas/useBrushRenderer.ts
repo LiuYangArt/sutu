@@ -250,13 +250,9 @@ export function useBrushRenderer({
           ? config.opacity * dabPressure
           : config.opacity;
 
-        // Shape Dynamics: Calculate direction and apply dynamics
-        let dabRoundness = config.roundness / 100;
-        let dabAngle = config.angle;
-        let dabFlipX = false;
-        let dabFlipY = false;
-
-        if (useShapeDynamics && config.shapeDynamics) {
+        // Build DynamicsInput once, reuse for both Shape and Color Dynamics
+        let dynamicsInput: DynamicsInput | null = null;
+        if (useShapeDynamics || useColorDynamics) {
           // Calculate direction from previous dab
           let direction = 0;
           if (prevDabPosRef.current) {
@@ -272,8 +268,7 @@ export function useBrushRenderer({
             }
           }
 
-          // Prepare dynamics input
-          const dynamicsInput: DynamicsInput = {
+          dynamicsInput = {
             pressure: dabPressure,
             tiltX: 0, // TODO: Get from dab if available
             tiltY: 0, // TODO: Get from dab if available
@@ -282,8 +277,15 @@ export function useBrushRenderer({
             initialDirection: initialDirectionRef.current,
             fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
           };
+        }
 
-          // Compute dynamic shape
+        // Shape Dynamics: Apply dynamics
+        let dabRoundness = config.roundness / 100;
+        let dabAngle = config.angle;
+        let dabFlipX = false;
+        let dabFlipY = false;
+
+        if (useShapeDynamics && config.shapeDynamics && dynamicsInput) {
           const shape = computeDabShape(
             dabSize,
             config.angle,
@@ -305,25 +307,12 @@ export function useBrushRenderer({
         // Color Dynamics: Calculate dynamic color
         let dabColor = config.color;
 
-        if (useColorDynamics && config.colorDynamics) {
-          // Prepare dynamics input (reuse or create if Shape Dynamics was skipped)
-          const colorDynamicsInput: DynamicsInput = {
-            pressure: dabPressure,
-            tiltX: 0, // TODO: Get from dab if available
-            tiltY: 0, // TODO: Get from dab if available
-            rotation: 0, // TODO: Get from dab if available
-            direction: prevDabPosRef.current
-              ? calculateDirection(prevDabPosRef.current.x, prevDabPosRef.current.y, dab.x, dab.y)
-              : 0,
-            initialDirection: initialDirectionRef.current,
-            fadeProgress: 0, // TODO: Implement fade tracking
-          };
-
+        if (useColorDynamics && config.colorDynamics && dynamicsInput) {
           const colorResult = computeDabColor(
             config.color,
             config.backgroundColor,
             config.colorDynamics,
-            colorDynamicsInput
+            dynamicsInput
           );
           dabColor = colorResult.color;
         }
