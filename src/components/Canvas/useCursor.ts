@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { ToolType } from '@/stores/tool';
 
 /** Cursor style for each tool type */
@@ -31,30 +31,37 @@ const DEFAULT_STROKE: StrokeStyle = {
   inner: { color: 'rgba(0,0,0,0.8)', width: 1 },
 };
 
-/**
- * Generate SVG content for texture brush cursor outline.
- * Shared by both hardware cursor and DOM cursor.
- */
-export function generateTextureOutlineSvg(
+/** Set cursor position with center offset */
+const setCursorPosition = (cursor: HTMLDivElement, x: number, y: number) => {
+  cursor.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+};
+
+/** Generate crosshair SVG lines */
+const generateCrosshairSvg = (cx: number, cy: number, size: number) => `
+  <line x1="${cx - size}" y1="${cy}" x2="${cx + size}" y2="${cy}" stroke="black" stroke-width="2"/>
+  <line x1="${cx - size}" y1="${cy}" x2="${cx + size}" y2="${cy}" stroke="white" stroke-width="1"/>
+  <line x1="${cx}" y1="${cy - size}" x2="${cx + size}" y2="${cy}" stroke="black" stroke-width="2"/>
+  <line x1="${cx}" y1="${cy - size}" x2="${cx + size}" y2="${cy}" stroke="white" stroke-width="1"/>
+`;
+
+/** Generate SVG content for texture brush cursor outline */
+function generateTextureOutlineSvg(
   cursorPath: string,
   size: number,
   scaleY: number,
   angle: number,
   stroke: StrokeStyle = DEFAULT_STROKE
 ): string {
-  const strokeWidth = Math.max(1.5 / size, 0.02);
   return `
     <g transform="rotate(${angle}) scale(${size}, ${size * scaleY})">
-      <path d="${cursorPath}" fill="none" stroke="${stroke.outer.color}" stroke-width="${strokeWidth * stroke.outer.width}"/>
-      <path d="${cursorPath}" fill="none" stroke="${stroke.inner.color}" stroke-width="${strokeWidth * stroke.inner.width}"/>
+      <path d="${cursorPath}" fill="none" stroke="${stroke.outer.color}" stroke-width="${stroke.outer.width}" vector-effect="non-scaling-stroke"/>
+      <path d="${cursorPath}" fill="none" stroke="${stroke.inner.color}" stroke-width="${stroke.inner.width}" vector-effect="non-scaling-stroke"/>
     </g>
   `;
 }
 
-/**
- * Generate SVG content for ellipse brush cursor.
- */
-export function generateEllipseOutlineSvg(
+/** Generate SVG content for ellipse brush cursor */
+function generateEllipseOutlineSvg(
   rx: number,
   ry: number,
   angle: number,
@@ -98,6 +105,9 @@ export function useCursor({
   brushAngle = 0,
   brushTexture,
 }: UseCursorProps) {
+  // Track last known mouse position for initializing DOM cursor
+  const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
+
   // Calculate actual pixel size of brush on screen
   const screenBrushSize = currentSize * scale;
 
@@ -147,16 +157,7 @@ export function useCursor({
     }
 
     // Generate crosshair if enabled
-    let crosshairContent = '';
-    if (showCrosshair) {
-      const crossSize = 8;
-      crosshairContent = `
-        <line x1="${center - crossSize}" y1="${center}" x2="${center + crossSize}" y2="${center}" stroke="black" stroke-width="2"/>
-        <line x1="${center - crossSize}" y1="${center}" x2="${center + crossSize}" y2="${center}" stroke="white" stroke-width="1"/>
-        <line x1="${center}" y1="${center - crossSize}" x2="${center}" y2="${center + crossSize}" stroke="black" stroke-width="2"/>
-        <line x1="${center}" y1="${center - crossSize}" x2="${center}" y2="${center + crossSize}" stroke="white" stroke-width="1"/>
-      `;
-    }
+    const crosshairContent = showCrosshair ? generateCrosshairSvg(center, center, 8) : '';
 
     const svg = `
       <svg width="${canvasSize}" height="${canvasSize}" viewBox="0 0 ${canvasSize} ${canvasSize}" xmlns="http://www.w3.org/2000/svg">
@@ -206,9 +207,12 @@ export function useCursor({
     if (!container) return;
 
     const handleNativePointerMove = (e: PointerEvent) => {
+      // Always track mouse position, even when DOM cursor is not shown
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+
       const cursor = brushCursorRef.current;
       if (cursor) {
-        cursor.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -50%)`;
+        setCursorPosition(cursor, e.clientX, e.clientY);
       }
     };
 
@@ -219,10 +223,12 @@ export function useCursor({
     };
 
     const handleNativePointerEnter = (e: PointerEvent) => {
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+
       const cursor = brushCursorRef.current;
       if (cursor) {
         cursor.style.display = 'block';
-        cursor.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -50%)`;
+        setCursorPosition(cursor, e.clientX, e.clientY);
       }
     };
 
@@ -237,6 +243,24 @@ export function useCursor({
     };
   }, [containerRef, brushCursorRef]);
 
+  // Determine if DOM brush cursor should be shown (fallback)
+  const showDomCursor =
+    (currentTool === 'brush' || currentTool === 'eraser') &&
+    !spacePressed &&
+    !isPanning &&
+    !shouldUseHardwareCursor;
+
+  // Initialize DOM cursor position when it becomes visible
+  // This handles the case when brush size changes via keyboard (no pointer event)
+  useEffect(() => {
+    const cursor = brushCursorRef.current;
+    const lastPos = lastMousePosRef.current;
+
+    if (showDomCursor && cursor && lastPos) {
+      setCursorPosition(cursor, lastPos.x, lastPos.y);
+    }
+  }, [showDomCursor, brushCursorRef]);
+
   // Determine final cursor style string
   let cursorStyle = TOOL_CURSORS[currentTool];
   if (spacePressed || isPanning) {
@@ -245,16 +269,12 @@ export function useCursor({
     cursorStyle = eyedropperCursorStyle;
   } else if (shouldUseHardwareCursor && hardwareCursorStyle) {
     cursorStyle = hardwareCursorStyle;
+  } else if (showDomCursor) {
+    // When using DOM cursor, hide system cursor completely
+    cursorStyle = 'none';
   } else if (showCrosshair && (currentTool === 'brush' || currentTool === 'eraser')) {
     cursorStyle = 'crosshair';
   }
-
-  // Determine if DOM brush cursor should be shown (fallback)
-  const showDomCursor =
-    (currentTool === 'brush' || currentTool === 'eraser') &&
-    !spacePressed &&
-    !isPanning &&
-    !shouldUseHardwareCursor;
 
   return { cursorStyle, showDomCursor };
 }

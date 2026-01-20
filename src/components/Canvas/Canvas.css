@@ -43,12 +43,24 @@
   left: 0;
   top: 0;
   pointer-events: none;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   /* Position is set via JS: transform: translate(Xpx, Ypx) translate(-50%, -50%) */
   z-index: var(--z-overlay);
   min-width: 2px;
   min-height: 2px;
   will-change: transform;
+}
+
+/* Default ellipse cursor (non-texture brushes) */
+.brush-cursor__ellipse {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* Texture brush cursor: hide default border, show SVG outline */
+.brush-cursor--texture {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
 }

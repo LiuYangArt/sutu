@@ -1367,47 +1367,58 @@ export function Canvas() {
       {showDomCursor && (
         <div
           ref={brushCursorRef}
-          className="brush-cursor"
+          className={`brush-cursor ${brushTexture?.cursorPath ? 'brush-cursor--texture' : ''}`}
           style={{
             width: currentSize * scale,
             height: currentSize * scale * (brushRoundness / 100),
-            transform: `rotate(${brushAngle}deg)`,
-            // Hide default circle border/shadow if using texture path
-            ...(brushTexture?.cursorPath && {
-              border: 'none',
-              borderRadius: 0,
-              boxShadow: 'none',
-              position: 'fixed' as const,
-            }),
+            // Note: position transform is set by useCursor via JS
+            // rotation is applied to inner content, not the container
           }}
         >
-          {brushTexture?.cursorPath && (
+          {brushTexture?.cursorPath ? (
             <svg
-              width={currentSize * scale}
-              height={currentSize * scale * (brushRoundness / 100)}
+              key={brushTexture.cursorPath.slice(0, 50)}
+              width="100%"
+              height="100%"
               viewBox="-0.5 -0.5 1 1"
               preserveAspectRatio="none"
               style={{
                 position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
+                top: 0,
+                left: 0,
                 overflow: 'visible',
+                transform: `rotate(${brushAngle}deg)`,
               }}
             >
+              {/* Use vector-effect to keep stroke width constant regardless of viewBox scale */}
               <path
                 d={brushTexture.cursorPath}
                 fill="none"
                 stroke="rgba(255,255,255,0.9)"
-                strokeWidth="0.025"
+                strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
               />
               <path
                 d={brushTexture.cursorPath}
                 fill="none"
                 stroke="rgba(0,0,0,0.8)"
-                strokeWidth="0.015"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
               />
             </svg>
+          ) : (
+            // For non-texture brushes, apply rotation via pseudo-element in CSS
+            <div
+              className="brush-cursor__ellipse"
+              style={{
+                width: '100%',
+                height: '100%',
+                borderRadius: '50%',
+                border: '1px solid var(--border-strong)',
+                boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.5)',
+                transform: `rotate(${brushAngle}deg)`,
+              }}
+            />
           )}
         </div>
       )}
