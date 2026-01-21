@@ -2,10 +2,6 @@
 trigger: always_on
 ---
 
-本文件为 AI 助手提供项目开发指引。
-
-## 项目概述
-
 **PaintBoard** 是一个专业绘画软件，追求低延迟数位板输入体验。
 这是一个纯AI vibe-coding项目，所有开发方案以ai native优先。
 
@@ -41,22 +37,22 @@ pnpm format           # 格式化代码
 ├─────────────────────────────────────────────────────┤
 │  Rust 后端 (src-tauri/)                             │
 │  ├── input/     → 数位板输入（WinTab/PointerEvent） │
-│  ├── brush/     → 笔刷引擎（插值、压感曲线）        │
+│  ├── brush/     → [Reserved] 纯数值计算备用          │
 │  └── commands.rs→ Tauri IPC 命令                    │
 ├─────────────────────────────────────────────────────┤
 │  前端 (src/)                         IPC ↑↓         │
-│  ├── stores/    → Zustand 状态（文档、工具）        │
 │  ├── components/→ React UI 组件                     │
-│  └── gpu/       → WebGPU 渲染（规划中）             │
+│  ├── gpu/       → WebGPU 渲染 (Primary Engine)      │
+│  └── utils/     → TypeScript 渲染 (Fallback Engine) │
 └─────────────────────────────────────────────────────┘
 ```
 
 ### 数据流: 笔触输入 → 画布渲染
 
-1. **WinTab/PointerEvent** 捕获原始输入
-2. **InputProcessor** 过滤、时间戳、压感曲线
-3. **BrushEngine** 插值点位（Catmull-Rom）
-4. **Canvas Renderer** 绘制到画布
+1. **WinTab/PointerEvent** 捕获原始输入 (Rust)
+2. **IPC** 传输至前端
+3. **Frontend Brush Engine** (TS): 插值、抖动、生成 Dabs
+4. **Renderer** (WebGPU/Canvas2D): 绘制到 Stroke Buffer 并合成
 
 ## 代码规范
 
@@ -96,22 +92,30 @@ pnpm format           # 格式化代码
 **Rust** (`src-tauri/src/`):
 
 - `RawInputPoint` - 原始输入（坐标、压感、倾斜、时间戳）
-- `BrushPoint` - 处理后的点（应用压感曲线后的大小/透明度）
-- `StrokeSegment` - 渲染数据（颜色、混合模式）
 
-**TypeScript** (`src/stores/`):
+**Frontend** (`src/`):
+
+- `DabParams` - 笔刷印章参数 (x, y, size, flow, etc.)
+- `BrushRenderConfig` - 渲染配置
+- `StrokeAccumulator` - 笔划累积缓冲 (CPU/GPU)
+
+**State Management** (`src/stores/`):
 
 - `useDocumentStore` - 文档状态、图层管理
 - `useToolStore` - 当前工具、笔刷设置、颜色
 
+### 持久化设置： C:\Users\<用户名>\AppData\Roaming\com.paintboard\settings.json
+
 ## 相关文档
 
+- **UI 规范**: [ui-guidelines.md](file:///f:/CodeProjects/PaintBoard/docs/ui-guidelines.md)
 - **架构设计**: [architecture.md](file:///f:/CodeProjects/PaintBoard/docs/architecture.md)
 - **测试策略**: [testing-strategy.md](file:///f:/CodeProjects/PaintBoard/docs/testing-strategy.md)
 - **开发环境搭建**: [development-setup.md](file:///f:/CodeProjects/PaintBoard/docs/development-setup.md)
 - **开发路线图**: [development-roadmap.md](file:///f:/CodeProjects/PaintBoard/docs/todo/development-roadmap.md)
 - **项目灵感**: [project_idea.md](file:///f:/CodeProjects/PaintBoard/docs/project_idea.md)
 - **DEBUG经验**: @docs/postmortem/
+- **kirta源码**: F:\CodeProjects\krita\
 
 ## 开发阶段
 
@@ -120,12 +124,6 @@ pnpm format           # 格式化代码
 ## 版本管理
 
 版本号唯一来源: `package.json`
-
-发布流程:
-
-1. 运行 `.dev/publish_release.bat`
-2. 选择版本类型（Patch/Minor/Major）
-3. 确认推送后自动触发 GitHub Actions 构建
 
 ## Plan Mode
 

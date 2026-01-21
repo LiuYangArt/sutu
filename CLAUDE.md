@@ -1,9 +1,5 @@
 # CLAUDE.md
 
-本文件为 AI 助手提供项目开发指引。
-
-## 项目概述
-
 **PaintBoard** 是一个专业绘画软件，追求低延迟数位板输入体验。
 这是一个纯AI vibe-coding项目，所有开发方案以ai native优先。
 
