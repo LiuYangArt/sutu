@@ -61,6 +61,34 @@ export const DEFAULT_SHAPE_DYNAMICS: ShapeDynamicsSettings = {
 };
 
 /**
+ * Scatter settings (Photoshop Scattering panel compatible)
+ * Controls random displacement of dabs perpendicular to stroke direction
+ */
+export interface ScatterSettings {
+  // Scatter amount (% of brush diameter, 0-1000)
+  scatter: number;
+  scatterControl: ControlSource;
+
+  // Both Axes - scatter along stroke direction as well
+  bothAxes: boolean;
+
+  // Count - number of dabs per spacing interval (1-16)
+  count: number;
+  countControl: ControlSource;
+  countJitter: number; // 0-100 (%)
+}
+
+/** Default Scatter settings (all off) */
+export const DEFAULT_SCATTER_SETTINGS: ScatterSettings = {
+  scatter: 0,
+  scatterControl: 'off',
+  bothAxes: false,
+  count: 1,
+  countControl: 'off',
+  countJitter: 0,
+};
+
+/**
  * Color Dynamics settings (Photoshop Color Dynamics panel compatible)
  * Controls how brush color varies during a stroke
  */
@@ -176,6 +204,10 @@ interface ToolState {
   shapeDynamicsEnabled: boolean;
   shapeDynamics: ShapeDynamicsSettings;
 
+  // Scatter settings (Photoshop-compatible)
+  scatterEnabled: boolean;
+  scatter: ScatterSettings;
+
   // Color Dynamics settings (Photoshop-compatible)
   colorDynamicsEnabled: boolean;
   colorDynamics: ColorDynamicsSettings;
@@ -212,6 +244,12 @@ interface ToolState {
   setShapeDynamics: (settings: Partial<ShapeDynamicsSettings>) => void;
   resetShapeDynamics: () => void;
 
+  // Scatter actions
+  setScatterEnabled: (enabled: boolean) => void;
+  toggleScatter: () => void;
+  setScatter: (settings: Partial<ScatterSettings>) => void;
+  resetScatter: () => void;
+
   // Color Dynamics actions
   setColorDynamicsEnabled: (enabled: boolean) => void;
   toggleColorDynamics: () => void;
@@ -245,6 +283,10 @@ export const useToolStore = create<ToolState>()(
       // Shape Dynamics (default: disabled with all jitter at 0)
       shapeDynamicsEnabled: false,
       shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS },
+
+      // Scatter (default: disabled)
+      scatterEnabled: false,
+      scatter: { ...DEFAULT_SCATTER_SETTINGS },
 
       // Color Dynamics (default: disabled with all jitter at 0)
       colorDynamicsEnabled: false,
@@ -332,6 +374,18 @@ export const useToolStore = create<ToolState>()(
 
       resetShapeDynamics: () => set({ shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS } }),
 
+      // Scatter actions
+      setScatterEnabled: (enabled) => set({ scatterEnabled: enabled }),
+
+      toggleScatter: () => set((state) => ({ scatterEnabled: !state.scatterEnabled })),
+
+      setScatter: (settings) =>
+        set((state) => ({
+          scatter: { ...state.scatter, ...settings },
+        })),
+
+      resetScatter: () => set({ scatter: { ...DEFAULT_SCATTER_SETTINGS } }),
+
       // Color Dynamics actions
       setColorDynamicsEnabled: (enabled) => set({ colorDynamicsEnabled: enabled }),
 
@@ -366,6 +420,8 @@ export const useToolStore = create<ToolState>()(
         pressureCurve: state.pressureCurve,
         shapeDynamicsEnabled: state.shapeDynamicsEnabled,
         shapeDynamics: state.shapeDynamics,
+        scatterEnabled: state.scatterEnabled,
+        scatter: state.scatter,
         colorDynamicsEnabled: state.colorDynamicsEnabled,
         colorDynamics: state.colorDynamics,
       }),

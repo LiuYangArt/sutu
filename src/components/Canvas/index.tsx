@@ -124,6 +124,8 @@ export function Canvas() {
     brushTexture,
     shapeDynamicsEnabled,
     shapeDynamics,
+    scatterEnabled,
+    scatter,
     colorDynamicsEnabled,
     colorDynamics,
   } = useToolStore((s) => ({
@@ -150,6 +152,8 @@ export function Canvas() {
     brushTexture: s.brushTexture,
     shapeDynamicsEnabled: s.shapeDynamicsEnabled,
     shapeDynamics: s.shapeDynamics,
+    scatterEnabled: s.scatterEnabled,
+    scatter: s.scatter,
     colorDynamicsEnabled: s.colorDynamicsEnabled,
     colorDynamics: s.colorDynamics,
   }));
@@ -686,6 +690,8 @@ export function Canvas() {
       texture: brushTexture,
       shapeDynamicsEnabled,
       shapeDynamics,
+      scatterEnabled,
+      scatter,
       colorDynamicsEnabled,
       colorDynamics,
     };
@@ -707,6 +713,8 @@ export function Canvas() {
     brushTexture,
     shapeDynamicsEnabled,
     shapeDynamics,
+    scatterEnabled,
+    scatter,
     colorDynamicsEnabled,
     colorDynamics,
   ]);
