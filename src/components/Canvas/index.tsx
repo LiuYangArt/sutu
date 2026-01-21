@@ -128,6 +128,8 @@ export function Canvas() {
     scatter,
     colorDynamicsEnabled,
     colorDynamics,
+    wetEdgeEnabled,
+    wetEdge,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
@@ -156,6 +158,8 @@ export function Canvas() {
     scatter: s.scatter,
     colorDynamicsEnabled: s.colorDynamicsEnabled,
     colorDynamics: s.colorDynamics,
+    wetEdgeEnabled: s.wetEdgeEnabled,
+    wetEdge: s.wetEdge,
   }));
 
   // Get render mode from settings store (persisted to settings.json)
@@ -694,6 +698,8 @@ export function Canvas() {
       scatter,
       colorDynamicsEnabled,
       colorDynamics,
+      wetEdgeEnabled,
+      wetEdge,
     };
   }, [
     currentSize,
@@ -717,6 +723,8 @@ export function Canvas() {
     scatter,
     colorDynamicsEnabled,
     colorDynamics,
+    wetEdgeEnabled,
+    wetEdge,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position
@@ -968,7 +976,8 @@ export function Canvas() {
    */
   const initializeBrushStroke = useCallback(async () => {
     try {
-      await beginBrushStroke(brushHardness);
+      const wetEdgeValue = wetEdgeEnabled ? wetEdge : 0;
+      await beginBrushStroke(brushHardness, wetEdgeValue);
 
       // Check if cancelled or state changed during await
       if (strokeStateRef.current !== 'starting') {
@@ -999,7 +1008,14 @@ export function Canvas() {
       pendingPointsRef.current = [];
       isDrawingRef.current = false;
     }
-  }, [beginBrushStroke, brushHardness, finalizeStroke, processBrushPointWithConfig]);
+  }, [
+    beginBrushStroke,
+    brushHardness,
+    wetEdgeEnabled,
+    wetEdge,
+    finalizeStroke,
+    processBrushPointWithConfig,
+  ]);
 
   // Handle pointer down events
   const handlePointerDown = useCallback(

@@ -62,6 +62,9 @@ export interface BrushRenderConfig {
   // Color Dynamics settings (Photoshop-compatible)
   colorDynamicsEnabled: boolean;
   colorDynamics?: ColorDynamicsSettings;
+  // Wet Edge settings (Photoshop-compatible)
+  wetEdgeEnabled: boolean;
+  wetEdge: number; // Wet edge strength (0-1)
 }
 
 export interface UseBrushRendererProps {
@@ -74,7 +77,7 @@ export interface UseBrushRendererProps {
 }
 
 export interface UseBrushRendererResult {
-  beginStroke: (hardness?: number) => Promise<void>;
+  beginStroke: (hardness?: number, wetEdge?: number) => Promise<void>;
   processPoint: (
     x: number,
     y: number,
@@ -185,7 +188,7 @@ export function useBrushRenderer({
    * This prevents "tailgating" where new stroke's clear() wipes previous stroke's data
    */
   const beginStroke = useCallback(
-    async (hardness: number = 100): Promise<void> => {
+    async (hardness: number = 100, wetEdge: number = 0): Promise<void> => {
       // Optimization 7: Wait for previous stroke to finish
       if (finishingPromiseRef.current) {
         await finishingPromiseRef.current;
@@ -201,7 +204,7 @@ export function useBrushRenderer({
         gpuBufferRef.current.beginStroke();
       } else {
         const buffer = ensureCPUBuffer();
-        buffer.beginStroke(hardness / 100);
+        buffer.beginStroke(hardness / 100, wetEdge);
       }
     },
     [backend, ensureCPUBuffer]
@@ -352,6 +355,7 @@ export function useBrushRenderer({
             texture: config.texture ?? undefined,
             flipX: dabFlipX,
             flipY: dabFlipY,
+            wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
           };
 
           if (backend === 'gpu' && gpuBufferRef.current) {

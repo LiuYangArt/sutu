@@ -246,6 +246,8 @@ export class TextureMaskCache {
   /**
    * Stamp the texture mask to buffer using Alpha Darken blending
    * Same blending logic as MaskCache for consistency
+   *
+   * @param wetEdge - Wet edge strength (0-1), creates hollow center effect
    */
   stampToBuffer(
     buffer: Uint8ClampedArray,
@@ -257,7 +259,8 @@ export class TextureMaskCache {
     dabOpacity: number,
     r: number,
     g: number,
-    b: number
+    b: number,
+    _wetEdge: number = 0 // Unused: wet edge is handled at stroke buffer level
   ): Rect {
     if (!this.scaledMask) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -285,7 +288,7 @@ export class TextureMaskCache {
     const dirtyRight = bufferLeft + endX;
     const dirtyBottom = bufferTop + endY;
 
-    // Blending loop (same as MaskCache.blendPixel)
+    // Blending loop
     for (let my = startY; my < endY; my++) {
       const bufferRowStart = (bufferTop + my) * bufferWidth;
       const maskRowStart = my * this.scaledWidth;
@@ -294,16 +297,16 @@ export class TextureMaskCache {
         const maskValue = this.scaledMask[maskRowStart + mx]!;
         if (maskValue < 0.001) continue;
 
-        const srcAlpha = maskValue * flow;
         const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-        // Alpha Darken blend (same as MaskCache)
+        // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
+        const srcAlpha = maskValue * flow;
+
         const dstR = buffer[idx]!;
         const dstG = buffer[idx + 1]!;
         const dstB = buffer[idx + 2]!;
         const dstA = buffer[idx + 3]! / 255;
 
-        // Alpha Darken: lerp toward ceiling
         const outA = dstA >= dabOpacity - 0.001 ? dstA : dstA + (dabOpacity - dstA) * srcAlpha;
 
         if (outA > 0.001) {

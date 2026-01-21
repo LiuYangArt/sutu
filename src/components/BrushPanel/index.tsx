@@ -8,6 +8,7 @@ import { TransferSettings } from './settings/TransferSettings';
 import { ShapeDynamicsSettings } from './settings/ShapeDynamicsSettings';
 import { ScatterSettings } from './settings/ScatterSettings';
 import { ColorDynamicsSettings } from './settings/ColorDynamicsSettings';
+import { WetEdgeSettings } from './settings/WetEdgeSettings';
 
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
@@ -25,7 +26,7 @@ export function BrushPanel(): JSX.Element {
     { id: 'transfer', label: 'Transfer' },
     { id: 'brush_pose', label: 'Brush Pose', disabled: true },
     { id: 'noise', label: 'Noise', disabled: true },
-    { id: 'wet_edges', label: 'Wet Edges', disabled: true },
+    { id: 'wet_edges', label: 'Wet Edges' },
     { id: 'build_up', label: 'Build-up', disabled: true },
     { id: 'smoothing', label: 'Smoothing', disabled: true },
     { id: 'protect_texture', label: 'Protect Texture', disabled: true },
@@ -45,6 +46,8 @@ export function BrushPanel(): JSX.Element {
         return <ScatterSettings />;
       case 'color_dynamics':
         return <ColorDynamicsSettings />;
+      case 'wet_edges':
+        return <WetEdgeSettings />;
       case 'transfer':
         return <TransferSettings />;
       default:

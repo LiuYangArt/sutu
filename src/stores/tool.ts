@@ -212,6 +212,10 @@ interface ToolState {
   colorDynamicsEnabled: boolean;
   colorDynamics: ColorDynamicsSettings;
 
+  // Wet Edge settings (Photoshop-compatible)
+  wetEdgeEnabled: boolean;
+  wetEdge: number; // Wet edge strength (0-1)
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -255,6 +259,11 @@ interface ToolState {
   toggleColorDynamics: () => void;
   setColorDynamics: (settings: Partial<ColorDynamicsSettings>) => void;
   resetColorDynamics: () => void;
+
+  // Wet Edge actions
+  setWetEdgeEnabled: (enabled: boolean) => void;
+  toggleWetEdge: () => void;
+  setWetEdge: (value: number) => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -291,6 +300,10 @@ export const useToolStore = create<ToolState>()(
       // Color Dynamics (default: disabled with all jitter at 0)
       colorDynamicsEnabled: false,
       colorDynamics: { ...DEFAULT_COLOR_DYNAMICS },
+
+      // Wet Edge (default: disabled, full strength when enabled)
+      wetEdgeEnabled: false,
+      wetEdge: 1.0,
 
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
@@ -398,6 +411,13 @@ export const useToolStore = create<ToolState>()(
         })),
 
       resetColorDynamics: () => set({ colorDynamics: { ...DEFAULT_COLOR_DYNAMICS } }),
+
+      // Wet Edge actions
+      setWetEdgeEnabled: (enabled) => set({ wetEdgeEnabled: enabled }),
+
+      toggleWetEdge: () => set((state) => ({ wetEdgeEnabled: !state.wetEdgeEnabled })),
+
+      setWetEdge: (value) => set({ wetEdge: Math.max(0, Math.min(1, value)) }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -424,6 +444,8 @@ export const useToolStore = create<ToolState>()(
         scatter: state.scatter,
         colorDynamicsEnabled: state.colorDynamicsEnabled,
         colorDynamics: state.colorDynamics,
+        wetEdgeEnabled: state.wetEdgeEnabled,
+        wetEdge: state.wetEdge,
       }),
     }
   )

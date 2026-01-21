@@ -244,6 +244,7 @@ export class MaskCache {
    * Stamp the cached mask to a buffer using Alpha Darken blending
    * This is the fast path - only does simple blending, no mask calculation
    *
+   * @param wetEdge - Wet edge strength (0-1), creates hollow center effect
    * @returns The dirty rectangle that was modified
    */
   stampToBuffer(
@@ -256,7 +257,8 @@ export class MaskCache {
     dabOpacity: number,
     r: number,
     g: number,
-    b: number
+    b: number,
+    _wetEdge: number = 0 // Unused: wet edge is now handled at stroke buffer level
   ): Rect {
     if (!this.mask) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -293,8 +295,10 @@ export class MaskCache {
         const maskValue = this.mask[maskRowStart + mx]!;
         if (maskValue < 0.001) continue;
 
-        const srcAlpha = maskValue * flow;
         const idx = (bufferRowStart + bufferLeft + mx) * 4;
+
+        // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
+        const srcAlpha = maskValue * flow;
         this.blendPixel(buffer, idx, srcAlpha, dabOpacity, r, g, b);
       }
     }
@@ -314,6 +318,8 @@ export class MaskCache {
    * - No mask array access
    * - No mask generation
    * - Simple distance calculation instead of erf
+   *
+   * @param wetEdge - Wet edge strength (0-1), creates hollow center effect
    */
   stampHardBrush(
     buffer: Uint8ClampedArray,
@@ -328,7 +334,8 @@ export class MaskCache {
     dabOpacity: number,
     r: number,
     g: number,
-    b: number
+    b: number,
+    _wetEdge: number = 0 // Unused: wet edge is handled at stroke buffer level
   ): Rect {
     const radiusX = radius;
     const radiusY = radius * roundness;
@@ -396,8 +403,10 @@ export class MaskCache {
 
         if (maskValue < 0.001) continue;
 
-        const srcAlpha = maskValue * flow;
         const idx = (rowStart + px) * 4;
+
+        // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
+        const srcAlpha = maskValue * flow;
         this.blendPixel(buffer, idx, srcAlpha, dabOpacity, r, g, b);
       }
     }

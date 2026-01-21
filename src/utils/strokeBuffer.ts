@@ -37,6 +37,8 @@ export interface DabParams {
   // Shape Dynamics: flip flags for sampled/texture brushes
   flipX?: boolean; // Flip horizontally
   flipY?: boolean; // Flip vertically
+  // Wet Edge: hollow center effect (Photoshop-compatible)
+  wetEdge?: number; // Wet edge strength (0-1), 0 = off
 }
 
 export interface Rect {
@@ -99,6 +101,13 @@ export class StrokeAccumulator {
   private persistentBuffer: Uint8ClampedArray | null = null;
   private useRustPath: boolean = false;
 
+  // Wet Edge settings (Photoshop-compatible stroke-level effect)
+  private wetEdgeEnabled: boolean = false;
+  private wetEdgeStrength: number = 1.0;
+
+  // Wet Edge effect buffer - stores the processed result for preview
+  private wetEdgeBuffer: Uint8ClampedArray | null = null;
+
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
@@ -127,15 +136,25 @@ export class StrokeAccumulator {
   /**
    * Begin a new stroke
    * @param hardness - Brush hardness (0-1), determines if Rust SIMD path is used
+   * @param wetEdge - Wet edge strength (0-1), 0 = disabled
    */
-  beginStroke(_hardness: number = 1): void {
+  beginStroke(_hardness: number = 1, wetEdge: number = 0): void {
     this.clear();
     this.active = true;
+
+    // Wet Edge settings
+    this.wetEdgeEnabled = wetEdge > 0;
+    this.wetEdgeStrength = wetEdge;
 
     // Initialize persistent ImageData buffer for the entire canvas
     // This avoids getImageData/putImageData per dab - major performance win
     this.imageData = this.ctx.createImageData(this.width, this.height);
     this.bufferData = this.imageData.data;
+
+    // Initialize wet edge buffer if enabled
+    if (this.wetEdgeEnabled) {
+      this.wetEdgeBuffer = new Uint8ClampedArray(this.width * this.height * 4);
+    }
 
     // DISABLED: Rust SIMD path has too much IPC overhead
     this.useRustPath = false;
@@ -165,6 +184,9 @@ export class StrokeAccumulator {
     this.bufferData = null;
     this.persistentBuffer = null;
     this.useRustPath = false;
+    this.wetEdgeEnabled = false;
+    this.wetEdgeStrength = 1.0;
+    this.wetEdgeBuffer = null;
     // Don't clear syncImageData - it can be reused across strokes
   }
 
@@ -303,7 +325,8 @@ export class StrokeAccumulator {
         dabOpacity,
         rgb.r,
         rgb.g,
-        rgb.b
+        rgb.b,
+        params.wetEdge ?? 0
       );
     } else if (hardness >= 0.99) {
       // Fast path for hard brushes - skip mask caching entirely
@@ -320,7 +343,8 @@ export class StrokeAccumulator {
         dabOpacity,
         rgb.r,
         rgb.g,
-        rgb.b
+        rgb.b,
+        params.wetEdge ?? 0
       );
     } else {
       // Soft brushes use cached mask
@@ -348,7 +372,8 @@ export class StrokeAccumulator {
         dabOpacity,
         rgb.r,
         rgb.g,
-        rgb.b
+        rgb.b,
+        params.wetEdge ?? 0
       );
     }
 
@@ -401,14 +426,29 @@ export class StrokeAccumulator {
       this.syncImageDataHeight = height;
     }
 
-    // Extract region from persistent buffer and sync to canvas
-    const regionData = this.syncImageData;
-    for (let py = 0; py < height; py++) {
-      const srcStart = ((top + py) * this.width + left) * 4;
-      const dstStart = py * width * 4;
-      regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
+    // Apply wet edge effect if enabled
+    if (this.wetEdgeEnabled && this.wetEdgeBuffer) {
+      // Apply wet edge to the entire stroke dirty region (not just pending)
+      this.applyWetEdgeEffect();
+
+      // Extract from wet edge buffer instead of raw buffer
+      const regionData = this.syncImageData;
+      for (let py = 0; py < height; py++) {
+        const srcStart = ((top + py) * this.width + left) * 4;
+        const dstStart = py * width * 4;
+        regionData.data.set(this.wetEdgeBuffer.subarray(srcStart, srcStart + width * 4), dstStart);
+      }
+      this.ctx.putImageData(regionData, left, top);
+    } else {
+      // Extract region from persistent buffer and sync to canvas
+      const regionData = this.syncImageData;
+      for (let py = 0; py < height; py++) {
+        const srcStart = ((top + py) * this.width + left) * 4;
+        const dstStart = py * width * 4;
+        regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
+      }
+      this.ctx.putImageData(regionData, left, top);
     }
-    this.ctx.putImageData(regionData, left, top);
 
     // Reset pending dirty rect
     this.pendingDirtyRect = {
@@ -417,6 +457,69 @@ export class StrokeAccumulator {
       right: 0,
       bottom: 0,
     };
+  }
+
+  /**
+   * Apply wet edge effect using alpha inversion algorithm
+   *
+   * Core concept: Use inverted alpha as a multiplier to fade the center.
+   * - Center (high alpha=255) → fades to ~45% of original
+   * - Edge (low alpha) → boosted to ~220% (relatively darker)
+   *
+   * Photoshop-like behavior:
+   * - Center opacity: ~45% of original
+   * - Edge opacity: ~220% of original (clamped to 255)
+   *
+   * This naturally adapts to brush hardness:
+   * - Hard brushes (sudden alpha drop) → minimal wet edge area
+   * - Soft brushes (gradual alpha) → wide wet edge gradient
+   */
+  private applyWetEdgeEffect(): void {
+    if (!this.bufferData || !this.wetEdgeBuffer) return;
+
+    const strength = this.wetEdgeStrength;
+    const centerOpacity = 0.45; // Center keeps 45% of original opacity
+    const edgeBoost = 2.2; // Edge gets boosted to 220% of original
+
+    const left = Math.max(0, this.dirtyRect.left);
+    const top = Math.max(0, this.dirtyRect.top);
+    const right = Math.min(this.width, this.dirtyRect.right);
+    const bottom = Math.min(this.height, this.dirtyRect.bottom);
+
+    for (let y = top; y < bottom; y++) {
+      for (let x = left; x < right; x++) {
+        const idx = (y * this.width + x) * 4;
+        const originalAlpha = this.bufferData[idx + 3]!;
+
+        if (originalAlpha < 1) {
+          // Fully transparent - copy as-is
+          this.wetEdgeBuffer[idx] = 0;
+          this.wetEdgeBuffer[idx + 1] = 0;
+          this.wetEdgeBuffer[idx + 2] = 0;
+          this.wetEdgeBuffer[idx + 3] = 0;
+          continue;
+        }
+
+        // Normalize original alpha to 0-1
+        const alphaNorm = originalAlpha / 255;
+
+        // Wet edge multiplier: center (alpha=1) → 0.45, edge (alpha→0) → 2.2
+        // Linear interpolation from edgeBoost to centerOpacity
+        const wetMultiplier = edgeBoost - (edgeBoost - centerOpacity) * alphaNorm;
+
+        // Apply wet edge effect (clamped to 255)
+        const wetAlpha = Math.min(255, originalAlpha * wetMultiplier);
+
+        // Blend between original and wet-edge based on strength
+        const newAlpha = originalAlpha * (1 - strength) + wetAlpha * strength;
+
+        // Copy color, apply modified alpha
+        this.wetEdgeBuffer[idx] = this.bufferData[idx]!;
+        this.wetEdgeBuffer[idx + 1] = this.bufferData[idx + 1]!;
+        this.wetEdgeBuffer[idx + 2] = this.bufferData[idx + 2]!;
+        this.wetEdgeBuffer[idx + 3] = Math.round(newAlpha);
+      }
+    }
   }
 
   /**
