@@ -91,13 +91,27 @@ fn quantize_to_8bit(val: f32) -> f32 {
 // ============================================================================
 // Alpha Darken Blend (matches brush.wgsl exactly)
 // ============================================================================
+// Fixed: Each dab's ceiling only limits ITS OWN contribution, not whether to skip.
+// This ensures later dabs with lower opacity still paint ON TOP of earlier dabs.
 fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceiling: f32) -> vec4<f32> {
-  // Early stop: already at ceiling
-  if (dst.a >= ceiling - 0.001) {
+  // Each dab can only raise alpha up to its own ceiling
+  // Use max(dst.a, ceiling) as the effective ceiling for this dab
+  let effective_ceiling = max(dst.a, ceiling);
+  let alpha_headroom = effective_ceiling - dst.a;
+
+  // Early stop: this dab has no contribution space
+  if (alpha_headroom <= 0.001) {
+    // But we still need to blend the color ON TOP even if alpha doesn't increase
+    if (src_alpha > 0.001 && dst.a > 0.001) {
+      // Color-only blend: new dab paints on top
+      let blend_factor = src_alpha * ceiling;  // Weighted by dab's opacity
+      let new_rgb = dst.rgb + (src_color - dst.rgb) * blend_factor;
+      return vec4<f32>(new_rgb, dst.a);
+    }
     return dst;
   }
 
-  let new_alpha = dst.a + (ceiling - dst.a) * src_alpha;
+  let new_alpha = dst.a + alpha_headroom * src_alpha;
 
   var new_rgb: vec3<f32>;
   if (dst.a > 0.001) {
