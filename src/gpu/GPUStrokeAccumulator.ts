@@ -18,6 +18,7 @@ import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
 import { TextureInstanceBuffer } from './resources/TextureInstanceBuffer';
 import { BrushPipeline } from './pipeline/BrushPipeline';
+import { useSelectionStore } from '@/stores/selection';
 import { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
 import { ComputeBrushPipeline } from './pipeline/ComputeBrushPipeline';
 import { ComputeTextureBrushPipeline } from './pipeline/ComputeTextureBrushPipeline';
@@ -832,12 +833,12 @@ export class GPUStrokeAccumulator {
         await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ);
         const gpuData = new Float32Array(this.previewReadbackBuffer!.getMappedRange());
 
-        // Get dirty rect bounds (in logical/canvas coordinates)
+        // Get dirty rect bounds (in logical/canvas coordinates) - use integers
         const rect = {
-          left: Math.max(0, this.dirtyRect.left),
-          top: Math.max(0, this.dirtyRect.top),
-          right: Math.min(this.width, this.dirtyRect.right),
-          bottom: Math.min(this.height, this.dirtyRect.bottom),
+          left: Math.floor(Math.max(0, this.dirtyRect.left)),
+          top: Math.floor(Math.max(0, this.dirtyRect.top)),
+          right: Math.ceil(Math.min(this.width, this.dirtyRect.right)),
+          bottom: Math.ceil(Math.min(this.height, this.dirtyRect.bottom)),
         };
 
         const rectWidth = rect.right - rect.left;
@@ -849,12 +850,36 @@ export class GPUStrokeAccumulator {
           const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
           const floatsPerRow = this.readbackBytesPerRow / 4;
 
+          // Get selection mask for real-time clipping during preview
+          const selectionState = useSelectionStore.getState();
+          const selectionMask = selectionState.hasSelection ? selectionState.selectionMask : null;
+
           // Sample from scaled texture with bilinear-ish nearest neighbor
           for (let py = 0; py < rectHeight; py++) {
             for (let px = 0; px < rectWidth; px++) {
+              // Global canvas coordinates for this pixel
+              const globalX = rect.left + px;
+              const globalY = rect.top + py;
+
+              // Selection mask clipping: skip pixels outside selection
+              if (selectionMask) {
+                if (
+                  globalX >= 0 &&
+                  globalX < selectionMask.width &&
+                  globalY >= 0 &&
+                  globalY < selectionMask.height
+                ) {
+                  const maskIdx = (globalY * selectionMask.width + globalX) * 4 + 3;
+                  const maskAlpha = selectionMask.data[maskIdx] ?? 0;
+                  if (maskAlpha === 0) continue; // Skip pixels outside selection
+                } else {
+                  continue; // Skip pixels outside mask bounds
+                }
+              }
+
               // Map preview pixel to texture pixel (nearest neighbor)
-              const texX = Math.floor((rect.left + px) * scale);
-              const texY = Math.floor((rect.top + py) * scale);
+              const texX = Math.floor(globalX * scale);
+              const texY = Math.floor(globalY * scale);
               const srcIdx = texY * floatsPerRow + texX * 4;
               const dstIdx = (py * rectWidth + px) * 4;
 
@@ -961,13 +986,15 @@ export class GPUStrokeAccumulator {
   /**
    * Composite from previewCanvas to layer (WYSIWYG approach)
    * Uses the same data that was displayed as preview
+   * Applies selection mask clipping if active
    */
   private compositeFromPreview(layerCtx: CanvasRenderingContext2D, opacity: number): void {
+    // Use integer coordinates for consistent mask lookup
     const rect = {
-      left: Math.max(0, this.dirtyRect.left),
-      top: Math.max(0, this.dirtyRect.top),
-      right: Math.min(this.width, this.dirtyRect.right),
-      bottom: Math.min(this.height, this.dirtyRect.bottom),
+      left: Math.floor(Math.max(0, this.dirtyRect.left)),
+      top: Math.floor(Math.max(0, this.dirtyRect.top)),
+      right: Math.ceil(Math.min(this.width, this.dirtyRect.right)),
+      bottom: Math.ceil(Math.min(this.height, this.dirtyRect.bottom)),
     };
 
     const rectWidth = rect.right - rect.left;
@@ -981,6 +1008,10 @@ export class GPUStrokeAccumulator {
     // Get layer data for compositing
     const layerData = layerCtx.getImageData(rect.left, rect.top, rectWidth, rectHeight);
 
+    // Get selection mask for clipping
+    const selectionState = useSelectionStore.getState();
+    const selectionMask = selectionState.hasSelection ? selectionState.selectionMask : null;
+
     // Composite using Porter-Duff over
     for (let i = 0; i < strokeData.data.length; i += 4) {
       const strokeR = strokeData.data[i]!;
@@ -989,6 +1020,29 @@ export class GPUStrokeAccumulator {
       const strokeA = strokeData.data[i + 3]! / 255;
 
       if (strokeA < 0.001) continue;
+
+      // Selection mask clipping: skip pixels outside selection
+      if (selectionMask) {
+        const pixelIndex = i / 4;
+        const localX = pixelIndex % rectWidth;
+        const localY = Math.floor(pixelIndex / rectWidth);
+        const globalX = rect.left + localX;
+        const globalY = rect.top + localY;
+
+        // Check if pixel is within selection mask
+        if (
+          globalX >= 0 &&
+          globalX < selectionMask.width &&
+          globalY >= 0 &&
+          globalY < selectionMask.height
+        ) {
+          const maskIdx = (globalY * selectionMask.width + globalX) * 4 + 3;
+          const maskAlpha = selectionMask.data[maskIdx] ?? 0;
+          if (maskAlpha === 0) continue; // Skip pixels outside selection
+        } else {
+          continue; // Skip pixels outside mask bounds
+        }
+      }
 
       // Apply opacity scaling
       const srcAlpha = strokeA * opacity;

@@ -1353,9 +1353,14 @@ export function Canvas() {
         return;
       }
 
-      // ESC: Cancel selection creation
+      // ESC: Cancel selection move or creation
       if (e.code === 'Escape') {
-        cancelSelection();
+        const selState = useSelectionStore.getState();
+        if (selState.isMoving) {
+          selState.cancelMove();
+        } else {
+          cancelSelection();
+        }
         return;
       }
 

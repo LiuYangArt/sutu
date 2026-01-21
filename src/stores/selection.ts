@@ -44,6 +44,12 @@ interface SelectionState {
   selectionMode: SelectionMode; // Boolean operation mode
   lassoMode: LassoMode; // Lasso sub-mode
 
+  // Move state
+  isMoving: boolean; // Currently moving selection
+  moveStartPoint: SelectionPoint | null; // Starting point of drag
+  originalPath: SelectionPoint[]; // Path before move started
+  originalBounds: SelectionBounds | null; // Bounds before move started
+
   // Rendering state
   featherRadius: number; // Feather radius in pixels
   marchingAntsOffset: number; // Animation offset for marching ants
@@ -63,11 +69,18 @@ interface SelectionState {
   deselectAll: () => void;
   invertSelection: (width: number, height: number) => void;
 
+  // Selection move
+  beginMove: (startPoint: SelectionPoint) => void;
+  updateMove: (currentPoint: SelectionPoint, docWidth: number, docHeight: number) => void;
+  commitMove: (docWidth: number, docHeight: number) => void;
+  cancelMove: () => void;
+
   // Marching ants animation
   updateMarchingAnts: () => void;
 
   // Utility methods
   isPointInSelection: (x: number, y: number) => boolean;
+  isPointInBounds: (x: number, y: number) => boolean;
   getSelectionMaskForLayer: () => ImageData | null;
 }
 
@@ -157,6 +170,12 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   selectionMode: 'new',
   lassoMode: 'freehand',
 
+  // Move state
+  isMoving: false,
+  moveStartPoint: null,
+  originalPath: [],
+  originalBounds: null,
+
   featherRadius: 0,
   marchingAntsOffset: 0,
 
@@ -245,6 +264,11 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       isCreating: false,
       creationPoints: [],
       creationStart: null,
+      // Also clear move state
+      isMoving: false,
+      moveStartPoint: null,
+      originalPath: [],
+      originalBounds: null,
     }),
 
   invertSelection: (width, height) => {
@@ -291,6 +315,88 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
 
     const idx = (iy * mask.width + ix) * 4 + 3; // Alpha channel
     return (mask.data[idx] ?? 0) > 0;
+  },
+
+  isPointInBounds: (x, y) => {
+    const state = get();
+    if (!state.hasSelection || !state.bounds) return false;
+    const b = state.bounds;
+    return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+  },
+
+  // Selection move actions
+  beginMove: (startPoint) => {
+    const state = get();
+    if (!state.hasSelection) return;
+
+    set({
+      isMoving: true,
+      moveStartPoint: startPoint,
+      originalPath: [...state.selectionPath],
+      originalBounds: state.bounds ? { ...state.bounds } : null,
+    });
+  },
+
+  updateMove: (currentPoint, docWidth, docHeight) => {
+    const state = get();
+    if (!state.isMoving || !state.moveStartPoint || !state.originalBounds) return;
+
+    // Calculate offset
+    let deltaX = currentPoint.x - state.moveStartPoint.x;
+    let deltaY = currentPoint.y - state.moveStartPoint.y;
+
+    // Constrain to canvas bounds
+    const newX = state.originalBounds.x + deltaX;
+    const newY = state.originalBounds.y + deltaY;
+    const w = state.originalBounds.width;
+    const h = state.originalBounds.height;
+
+    if (newX < 0) deltaX -= newX;
+    if (newY < 0) deltaY -= newY;
+    if (newX + w > docWidth) deltaX -= newX + w - docWidth;
+    if (newY + h > docHeight) deltaY -= newY + h - docHeight;
+
+    // Translate path points
+    const newPath = state.originalPath.map((pt) => ({
+      x: pt.x + deltaX,
+      y: pt.y + deltaY,
+    }));
+
+    set({
+      selectionPath: newPath,
+      bounds: calculateBounds(newPath),
+    });
+  },
+
+  commitMove: (docWidth, docHeight) => {
+    const state = get();
+    if (!state.isMoving) return;
+
+    // Regenerate mask from new path
+    const mask = pathToMask(state.selectionPath, docWidth, docHeight);
+
+    set({
+      selectionMask: mask,
+      isMoving: false,
+      moveStartPoint: null,
+      originalPath: [],
+      originalBounds: null,
+    });
+  },
+
+  cancelMove: () => {
+    const state = get();
+    if (!state.isMoving) return;
+
+    // Restore original path and bounds
+    set({
+      selectionPath: state.originalPath,
+      bounds: state.originalBounds,
+      isMoving: false,
+      moveStartPoint: null,
+      originalPath: [],
+      originalBounds: null,
+    });
   },
 
   getSelectionMaskForLayer: () => {

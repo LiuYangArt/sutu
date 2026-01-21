@@ -35,6 +35,9 @@ interface SelectionHandlerResult {
   /** Check if currently creating a selection */
   isCreatingSelection: boolean;
 
+  /** Check if currently moving a selection */
+  isMovingSelection: boolean;
+
   /** Current effective lasso mode (considering Alt key) */
   effectiveLassoMode: 'freehand' | 'polygonal';
 }
@@ -52,12 +55,28 @@ interface SelectionHandlerResult {
 export function useSelectionHandler({
   currentTool,
 }: UseSelectionHandlerProps): SelectionHandlerResult {
-  const { isCreating, beginSelection, addCreationPoint, updateCreationRect, commitSelection } =
-    useSelectionStore();
+  const {
+    isCreating,
+    hasSelection,
+    isMoving,
+    beginSelection,
+    addCreationPoint,
+    updateCreationRect,
+    commitSelection,
+    isPointInBounds,
+    beginMove,
+    updateMove,
+    commitMove,
+    deselectAll,
+  } = useSelectionStore();
 
   const startPointRef = useRef<SelectionPoint | null>(null);
   const isSelectingRef = useRef(false);
   const lastPointRef = useRef<SelectionPoint | null>(null);
+  // Track if actual dragging happened (for click-to-deselect logic)
+  const hasDraggedRef = useRef(false);
+  // Track if we started on existing selection (for click-to-deselect)
+  const startedOnSelectionRef = useRef(false);
 
   // Track Alt key state for real-time mode switching during selection
   const [altPressed, setAltPressed] = useState(false);
@@ -111,11 +130,29 @@ export function useSelectionHandler({
       const point: SelectionPoint = { x: canvasX, y: canvasY };
       const isAltPressed = e.altKey;
 
+      // Reset drag tracking
+      hasDraggedRef.current = false;
+      startedOnSelectionRef.current = false;
+
       // For lasso tool in polygonal mode (Alt held) while already creating, just add a vertex
       if (currentTool === 'lasso' && isAltPressed && isCreating) {
         addCreationPoint(point);
         lastPointRef.current = point;
         return true;
+      }
+
+      // Check if clicking on existing selection (for move or click-to-deselect)
+      if (hasSelection) {
+        startedOnSelectionRef.current = true;
+        if (isPointInBounds(canvasX, canvasY)) {
+          // Start potential move (will be confirmed if drag happens)
+          beginMove(point);
+          return true;
+        }
+        // Clicking outside bounds - deselect and start new selection
+        deselectAll();
+        startedOnSelectionRef.current = false;
+        // Fall through to start new selection
       }
 
       // Start new selection
@@ -126,14 +163,33 @@ export function useSelectionHandler({
 
       return true;
     },
-    [isSelectionToolActive, currentTool, isCreating, beginSelection, addCreationPoint]
+    [
+      isSelectionToolActive,
+      currentTool,
+      isCreating,
+      hasSelection,
+      beginSelection,
+      addCreationPoint,
+      isPointInBounds,
+      beginMove,
+      deselectAll,
+    ]
   );
 
   const handleSelectionPointerMove = useCallback(
     (canvasX: number, canvasY: number, e: PointerEvent | React.PointerEvent) => {
+      const point: SelectionPoint = { x: canvasX, y: canvasY };
+
+      // Handle move mode
+      if (isMoving) {
+        hasDraggedRef.current = true; // Mark that actual drag happened
+        const { width, height } = useDocumentStore.getState();
+        updateMove(point, width, height);
+        return;
+      }
+
       if (!isSelectingRef.current || !startPointRef.current) return;
 
-      const point: SelectionPoint = { x: canvasX, y: canvasY };
       const isAltPressed = e.altKey;
 
       // Always update lastPointRef for tracking current mouse position
@@ -153,11 +209,33 @@ export function useSelectionHandler({
         }
       }
     },
-    [currentTool, updateCreationRect, addCreationPoint]
+    [currentTool, isMoving, updateMove, updateCreationRect, addCreationPoint]
   );
 
   const handleSelectionPointerUp = useCallback(
     (canvasX: number, canvasY: number) => {
+      // Handle move mode completion
+      if (isMoving) {
+        const { width, height } = useDocumentStore.getState();
+        // If no actual drag happened, it's a click - deselect
+        if (!hasDraggedRef.current) {
+          deselectAll();
+        } else {
+          commitMove(width, height);
+        }
+        hasDraggedRef.current = false;
+        startedOnSelectionRef.current = false;
+        return;
+      }
+
+      // Click on existing selection without drag = deselect
+      if (startedOnSelectionRef.current && !hasDraggedRef.current) {
+        deselectAll();
+        hasDraggedRef.current = false;
+        startedOnSelectionRef.current = false;
+        return;
+      }
+
       if (!isSelectingRef.current) return;
 
       const point: SelectionPoint = { x: canvasX, y: canvasY };
@@ -179,8 +257,10 @@ export function useSelectionHandler({
       isSelectingRef.current = false;
       startPointRef.current = null;
       lastPointRef.current = null;
+      hasDraggedRef.current = false;
+      startedOnSelectionRef.current = false;
     },
-    [currentTool, altPressed, addCreationPoint, commitSelection]
+    [currentTool, altPressed, isMoving, addCreationPoint, commitSelection, commitMove, deselectAll]
   );
 
   const handleSelectionDoubleClick = useCallback(
@@ -204,6 +284,7 @@ export function useSelectionHandler({
     handleSelectionDoubleClick,
     isSelectionToolActive,
     isCreatingSelection: isCreating,
+    isMovingSelection: isMoving,
     effectiveLassoMode,
   };
 }

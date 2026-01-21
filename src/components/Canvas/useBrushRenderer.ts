@@ -36,6 +36,7 @@ import {
 } from '@/utils/shapeDynamics';
 import { applyScatter, isScatterActive } from '@/utils/scatterDynamics';
 import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
+import { useSelectionStore } from '@/stores/selection';
 
 export interface BrushRenderConfig {
   size: number;
@@ -252,7 +253,16 @@ export function useBrushRenderer({
         config.colorDynamics &&
         isColorDynamicsActive(config.colorDynamics);
 
+      // Selection constraint: get state once before loop for performance
+      const selectionState = useSelectionStore.getState();
+      const hasSelection = selectionState.hasSelection;
+
       for (const dab of dabs) {
+        // Selection constraint: skip dabs outside selection
+        if (hasSelection && !selectionState.isPointInSelection(dab.x, dab.y)) {
+          continue;
+        }
+
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         let dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
         const dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
