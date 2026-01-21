@@ -74,8 +74,13 @@ PaintBoard 的所有引擎均已移植 Krita 的数学模型：
 #### B. CPU 引擎 (`textureMaskCache.ts`)
 
 - **现状**: 使用最基础的双线性插值 (`bilinear interpolation`) 逐点计算。
-- **问题**: 同样没有 Mipmap 机制。CPU 端如果不做优化，大图缩小的计算量极大且画质差。
+- **问题**: 同样没有 Mipmap 机制。CPU 端如果不做优化，大图缩小的计算量极大且画质差。同时，非预乘 Alpha (Straight Alpha) 插值可能导致边缘黑边。
 - **性能隐患**: 当前 CPU 实现每次笔刷参数变化（如旋转）都会重采样整个 Mask，对于大纹理是严重的性能瓶颈。
+
+### 3.4 缺失环节：Gamma 校正 (Gamma Correction)
+
+- **问题**: 目前文档主要关注 Alpha 的几何覆盖率，忽略了色彩空间的混合。
+- **风险**: Krita 的混合通常在线性空间 (Linear Space) 进行。如果 PaintBoard 直接输出 Alpha 而不进行正确的色彩空间转换（sRGB vs Linear），会导致边缘视觉上变“细”或出现“黑边”。
 
 ## 4. 优化方案建议
 
@@ -83,43 +88,73 @@ PaintBoard 的所有引擎均已移植 Krita 的数学模型：
 
 ### 任务 1: 全局纹理 Mipmap 系统 (高优先级)
 
-**目标**：消除所有引擎中的纹理笔刷锯齿。
+**目标**：消除所有引擎中的纹理笔刷锯齿，消除“纹理闪烁 (Shimmering)”。
 **方案**：
 
-1.  **资源加载层**: 在 `BrushTexture` 加载时，不仅解码原始图，还应预生成 Mipmap 链（Canvas API 或 createImageBitmap）。
-2.  **GPU 适配**:
-    - 上传完整的 Mipmap 链到 GPU Texture。
-    - **Compute Shader**: 计算需要的 LOD (`log2(texSize/dabSize)`), 使用 `textureSampleLevel` (如果 WGSL 支持) 或手动实现三线性插值 (Trilinear)。
+1.  **Mipmap 生成策略 (由于 WebGPU 无 `gl.generateMipmap`)**：
+    - **CPU 生成 (V1 - 推荐)**: Canvas API `drawImage` 逐层 Downsample，或 `createImageBitmap`。简单可靠，但增加加载耗时。
+    - **GPU 生成 (V2)**: 编写 Compute Shader 或 Render Pass 逐层生成。速度快，工程量大。
+2.  **GPU Compute Shader 适配 (手动 LOD)**：
+    - 由于 Compute Shader 无自动导数，需**显式计算 LOD**：
+      ```wgsl
+      let pixelRatio = textureSize.x / currentBrushPixelSize;
+      let lod = clamp(log2(pixelRatio), 0.0, maxMipLevel);
+      ```
+    - **手动三线性插值 (Trilinear)**: 计算 `floor(lod)` 和 `ceil(lod)`，分别双线性采样后 `mix`。
 3.  **CPU 适配**:
-    - 在内存中保留 Mipmap 数组。
-    - `textureMaskCache.ts` 根据笔刷大小选择最接近的两个 Mipmap 层级进行采样插值，或直接选取较小的一层进行计算，显著减少计算量并提升画质。
+    - 内存中保留 Mipmap 链。
+    - 使用 **Premultiplied Alpha** 格式存储，避免插值时的边缘黑边。
 
-### 任务 2: 硬边笔刷模式选项 (中优先级)
+### 任务 2: 硬边笔刷：直接对齐 Krita (Inner Mode)
 
-**目标**：提供 Krita 风格的硬边手感。
+**目标**：手感与视觉完全对齐 Krita，不增加额外设置选项。
 **方案**：
 
-1.  在 `Settings` 中增加 `Brush Edge Mode`: `Center` (Default) vs `Inner` (Sharper/Krita-like)。
+1.  **废弃 "Center" 模式**: 不再提供选项，默认采用 Krita 的 "Inner" 策略。
+    - **理由**: 用户在深色背景画亮色时，Center 模式会使笔刷显得“虚胖”。Inner 模式更锐利精确。
 2.  **GPU 改动**:
     ```wgsl
-    // Inner Mode
-    // AA band from r-1.0 to r
+    // Inner Mode: AA band 位于 [Radius-1.0, Radius]
+    // 意味着 Radius 是绝对边界 (0% Opacity)
     return 1.0 - smoothstep(radius - 1.0, radius, dist);
     ```
-3.  **CPU 改动**: 调整 `stampHardBrush` 中的边界判断逻辑以匹配 GPU。
+3.  **CPU 改动**: 调整 `stampHardBrush` 将 Radius 定义为边缘。
 
-### 任务 3: CPU 纹理缓存性能优化
+### 任务 3: CPU 引擎深度优化
 
 **目标**：解决 CPU 引擎在大纹理上的性能瓶颈。
 **方案**：
 
-- 利用 **任务 1** 的 Mipmap，CPU 总是从最接近目标尺寸的 Mip Level (通常是略大的一层) 进行重采样，避免对 4K 原始贴图进行逐像素遍历。这将带来 10x-100x 的性能提升。
+1.  **Mipmap 加速**: 总是使用最接近目标尺寸的 Mip Level 进行采样 (10x-100x 提升)。
+2.  **逆向采样优化 (Inverse Sampling)**:
+    - 不再为每个旋转角度生成新的 Mask。
+    - 直接在 `stampToBuffer` 阶段，通过**逆变换矩阵**计算当前像素对应在 Mipmap 上的 UV 坐标。
+    - 这消除了 `O(MaskSize)` 的重生成开销，将其转化为 `O(StampArea)` 的采样开销。
+
+### 任务 4: Gamma & 纹理边缘安全 (新增)
+
+**目标**：图形学正确性。
+**方案**：
+
+1.  **Gamma Review**: 检查混合管线，确认 Shader 输出的 Alpha 在混合前是否需要 `pow(x, 1.0/2.2)` 补偿，或确认 SwapChain 格式。
+2.  **Texture Wrapping**:
+    - 强制笔刷纹理使用 `clamp-to-edge`。
+    - 确保 Stamp 类笔刷（如树叶）贴图边缘有一圈透明像素，防止 Mipmap 采样导致边缘出现硬切线。
+
+## 5. 验证与风险量化
+
+### 5.1 验证方法 (Confidence Building)
+
+- **1D 截面分析**: 沿笔刷中心线采样 Alpha，对比 Krita 与 PaintBoard 的曲线重合度。
+- **2D 差值热力图**: 计算 `|Alpha_Krita - Alpha_PB|`，目标是最大误差 < 1/255。
+
+### 5.2 资源成本
+
+- **内存增加**: 完整的 Mipmap 链会增加约 **33%** 的纹理内存占用。鉴于笔刷贴图通常较小 (1k-2k)，这是完全可接受的。
 
 ### 任务 4: 小笔刷亚像素覆盖修正 (已完成)
 
 **状态**：我们在之前的迭代中已经引入了 `Small Brush Optimization` (针对 < 3px 笔刷强制使用高斯模型)，这实际上已经超越了 Krita 的普通处理（Krita 也有类似处理但逻辑略有不同），确保了极细线条不断连。**无需额外改动**。
-
-## 5. 总结
 
 PaintBoard 的核心笔刷引擎目前已经处于非常高的水平，特别是参数化（柔边）笔刷已经达到了 Krita 的标准。主要的提升空间在于**纹理笔刷的抗锯齿**（通过 Mipmap）。
 
