@@ -39,22 +39,22 @@ pnpm format           # 格式化代码
 ├─────────────────────────────────────────────────────┤
 │  Rust 后端 (src-tauri/)                             │
 │  ├── input/     → 数位板输入（WinTab/PointerEvent） │
-│  ├── brush/     → 笔刷引擎（插值、压感曲线）        │
+│  ├── brush/     → [Reserved] 纯数值计算备用          │
 │  └── commands.rs→ Tauri IPC 命令                    │
 ├─────────────────────────────────────────────────────┤
 │  前端 (src/)                         IPC ↑↓         │
-│  ├── stores/    → Zustand 状态（文档、工具）        │
 │  ├── components/→ React UI 组件                     │
-│  └── gpu/       → WebGPU 渲染（规划中）             │
+│  ├── gpu/       → WebGPU 渲染 (Primary Engine)      │
+│  └── utils/     → TypeScript 渲染 (Fallback Engine) │
 └─────────────────────────────────────────────────────┘
 ```
 
 ### 数据流: 笔触输入 → 画布渲染
 
-1. **WinTab/PointerEvent** 捕获原始输入
-2. **InputProcessor** 过滤、时间戳、压感曲线
-3. **BrushEngine** 插值点位（Catmull-Rom）
-4. **Canvas Renderer** 绘制到画布
+1. **WinTab/PointerEvent** 捕获原始输入 (Rust)
+2. **IPC** 传输至前端
+3. **Frontend Brush Engine** (TS): 插值、抖动、生成 Dabs
+4. **Renderer** (WebGPU/Canvas2D): 绘制到 Stroke Buffer 并合成
 
 ## 代码规范
 
@@ -94,10 +94,14 @@ pnpm format           # 格式化代码
 **Rust** (`src-tauri/src/`):
 
 - `RawInputPoint` - 原始输入（坐标、压感、倾斜、时间戳）
-- `BrushPoint` - 处理后的点（应用压感曲线后的大小/透明度）
-- `StrokeSegment` - 渲染数据（颜色、混合模式）
 
-**TypeScript** (`src/stores/`):
+**Frontend** (`src/`):
+
+- `DabParams` - 笔刷印章参数 (x, y, size, flow, etc.)
+- `BrushRenderConfig` - 渲染配置
+- `StrokeAccumulator` - 笔划累积缓冲 (CPU/GPU)
+
+**State Management** (`src/stores/`):
 
 - `useDocumentStore` - 文档状态、图层管理
 - `useToolStore` - 当前工具、笔刷设置、颜色

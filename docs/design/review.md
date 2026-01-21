@@ -1,133 +1,102 @@
-这份设计文档的**方向是正确的**，即试图填补 ABR 解析中“纹理缺失”的空白。
+你好！我仔细审查了你提供的 `m3-brush-system.md` 和 `2026-01-21-wet-edge-implementation-failure.md` 复盘文档。
 
-然而，作为一名开发人员，我对这份文档的**置信度评级为 6/10**。
+你目前对 **"Alpha Darken Ceiling (不透明度上限)"** 的修正方向是完全正确的。这是复刻 Photoshop 笔刷积累机制（Accumulation）的关键，也是之前失败的根本原因（只改了增量，没改上限）。
 
-目前的文档在**文件结构假设**、**数据可用性风险**以及**渲染实现细节**上过于乐观或模糊。如果不解决这些问题，开发过程中极有可能遭遇“解析不到数据”或者“渲染效果完全不对”的阻塞性问题。
+为了进一步提高 M3 阶段 Wet Edge 设计的置信度，并避免再次出现“效果不像”的问题，我对 Appendix A 的数学模型和实现细节有以下 **4 点核心优化建议**：
 
-以下是我提出的**深度优化建议**和**风险预警**：
+### 1. 数学模型优化：非线性衰减 (The "Puddle" vs "Cone" Problem)
 
----
+**问题：**
+目前的公式 `1.0 - (0.25 * w * mask)` 是线性的。
+如果笔刷是柔边（Soft Round），`mask` 从中心向外线性衰减。这意味着你的“湿边”效果会像一个倒锥体（中心最淡，均匀变浓）。
+**现实中的水彩湿边**通常是：中间一大片都是淡的，只有到了最边缘才快速变深（形成明显的“积墨”边缘）。
 
-### 1. 核心风险：ABR 文件真的包含图案数据吗？(Data Availability)
+**优化建议：**
+在计算 `center_hollow` 时，对 `mask` 进行指数处理（Gamma 校正）或使用 `smoothstep`，将“镂空区”向边缘推挤，形成更锐利的边缘感。
 
-这是最大的风险点。
-**现状分析**：标准的 `.abr` 文件（尤其是旧版本）通常**只包含笔头形状 (`samp`) 和参数**。当你在 Photoshop 中为一个笔刷设置纹理时，ABR 文件中记录的往往只是一个指向 Photoshop 图案库的**引用 (UUID 或 Name)**，而不是图案的**像素数据**本身。
-**后果**：如果你只解析 ABR，你可能会得到一个 `patternId: "Paper-Texture-01"`，但根本找不到对应的图片数据块 `patt`。
+**修改后的 WGSL 伪代码：**
 
-**优化方案**：
+```wgsl
+// 原始 mask (0.0 边缘 -> 1.0 中心)
 
-- **调整预期**：明确 ABR 解析器可能面临“有参数无数据”的情况。
-- **策略变更**：
-  - **Case A (嵌入式)**：某些新型或特定导出的 ABR *可能*包含嵌入资源。需要通过 Hex Editor 验证 `8BIM` 资源块中是否存在 ID 为 `0x0408` (Pattern) 或类似的数据。
-  - **Case B (引用式 - 常见)**：如果 ABR 只有引用，你需要提供一个**“缺失资源占位符”**机制，或者允许用户**额外导入 `.pat` 文件**来建立映射库。
-- **补充任务**：在 Task List 中增加一项关键任务——**ABR 样本逆向分析**。拿到 5-10 个带纹理的 ABR，用 Hex Editor 确认里面是否真的有大块的图像数据。如果没有，这个设计文档的一半内容（解析 `patt`）都要推翻重写为“导入外部 .pat 文件”。
+// 优化: 使用 pow 让 mask 的高值(中心)区域更宽，衰减更集中在边缘
+// 这里的 3.0 是经验值，越大边缘越锐利，看起来更像干涸的水渍
+let shaped_mask = pow(mask, 3.0);
 
-### 2. 解析逻辑优化：二进制结构的复杂性
+let edge_factor = 1.0 - (0.2 * wet_strength);
+// 使用 shaped_mask 替代线性 mask
+let center_hollow = 1.0 - (0.25 * wet_strength * shaped_mask);
 
-文档对 `patt` 块的假设（"类似于 .pat 文件"）过于简化。
+let wet_factor = edge_factor * center_hollow;
+```
 
-**优化方案**：
+### 2. 视觉保真度：处理硬边笔刷的伪影
 
-- **压缩算法**：Adobe 的图像资源几乎从不存储 Raw RGBA。它们通常使用 **PackBits (RLE)** 或 **Zip** 压缩，且通道顺序往往是 **Planar** (RRRGGGBBB) 而非 Interleaved (RGBRGB)。文档必须提及解码器需求。
-- **色彩模式**：图案可能是索引颜色 (Indexed Color)、灰度或 CMYK。必须实现**色彩空间转换**逻辑，统一转为 RGBA8。
-- **大端序 (Big Endian)**：Adobe 文件格式是 Big Endian，而现代 CPU 是 Little Endian。文档应显式提醒解析时需处理字节序转换。
+**问题：**
+如果用户选择了一个 **Hardness = 100%** 的笔刷，`mask` 几乎是二值的（要么0要么1）。
+根据现有公式，这会导致笔刷变成一个纯粹的“甜甜圈”或“圆环”，中间是平坦的 60%，边缘几乎没有过渡直接跳变。虽然这符合数学逻辑，但在低 Flow 下绘制线条时，会产生非常难看的“空心管子”效果。
 
-### 3. 存储与去重 (Storage & Deduplication)
+**优化建议：**
+Wet Edge 的强度应该受笔刷原本的 Softness 调制，或者强制 Wet Edge 计算使用一个“伪造的”柔化 Mask。
 
-文档提议 `App_Data/patterns/{uuid}.png`。这在工程上不够严谨。
+**策略：**
+Photoshop 的 Wet Edge 即使在硬笔刷上也有效果，它是通过强制在笔刷边缘生成一个内部渐变来实现的。
+在 Shader 中，你可能无法轻易获得“笔刷边缘距离”，但如果你使用 SDF (Signed Distance Field) 或者简单的径向距离（如果是程序化圆形笔刷）计算 mask，请确保 Wet Edge 计算用的 mask 总是带有一定的渐变，即使笔刷本身的 Alpha 是硬切的。
 
-**优化方案**：
+### 3. 工程实现：防止 Alpha Darken 的逻辑死锁
 
-- **内容寻址存储 (Content-Addressable Storage)**：
-  - 不要用 UUID 做文件名（不同的笔刷可能引用同一个图案，但 UUID 可能不同，或者同一个图案被多次包含）。
-  - **方案**：对解码后的图案像素数据计算 **SHA-256 哈希**。
-  - **文件名**：`patterns/a1b2c3d4....png`。
-  - **映射表**：维护一个 `Map<ABR_Pattern_UUID, File_Hash>`。
-  - **收益**：防止用户导入 10 个笔刷包后，磁盘里存了 100 份一模一样的“噪点图”。
+**风险点：**
+你提到 `effective_ceiling = dab.dab_opacity * wet_factor`。
+在 `Alpha Darken` (常用作 Flow 积累模式) 中，如果当前的 Framebuffer 颜色已经比 `effective_ceiling` 更深（Alpha 更高），新的笔触将无法绘制任何东西。
 
-### 4. 渲染引擎细节：Texture Depth 不是简单的 Blend
+**场景模拟：**
 
-文档中提到 `mode: BlendMode` 和 `depth: number`。在 Photoshop 的笔刷纹理中，**Depth (深度)** 的计算逻辑非常特殊，它不是标准的图层混合模式。
+1. 用户画了一笔，Wet Edge 导致中心 Alpha = 0.6。
+2. 用户想在同一个位置画第二笔加深颜色。
+3. 第二笔的 Ceiling 依然是 0.6。
+4. **结果：** 无论画多少笔，中心永远卡在 0.6，无法叠加变深。这不符合物理规律（水彩干了之后重叠是可以变深的）。
 
-**优化方案**：
+**优化建议 (混合模式微调)：**
+Photoshop 的 Wet Edge 在单次笔划（Stroke）内是保持镂空的，但在**多次笔划重叠**时，通常表现为 `Multiply` (正片叠底) 或允许突破 Ceiling。
 
-- **明确 Shader 逻辑**：
-  - Photoshop 的纹理逻辑通常是：`Final_Alpha = Brush_Tip_Alpha * Texture_Influence`。
-  - `Texture_Influence` 的计算公式近似于：
+鉴于你目前采用 `Stroke Buffer` (Buffer 隔离)，这是个巨大的优势：
 
-    ```glsl
-    // 伪代码
-    float textureValue = texture(u_pattern, uv).r; // 假设是灰度
-    if (invert) textureValue = 1.0 - textureValue;
+1. **Stroke Buffer 内部** (单笔画)：严格执行 `effective_ceiling = 0.6`，保证这一笔画出来中间是空的。
+2. **Stroke Buffer 合成到 Canvas** (笔画结束)：将 Buffer 混合到画布时，不要使用 `Max` 或 `Copy`，而应该使用正常混合或正片叠底。
 
-    // Depth 控制纹理的对比度/穿透力
-    float dynamicDepth = u_depth * u_pressure_control; // 深度常受压感控制
+**结论：** 确保你的 `Alpha Darken` 逻辑仅限制**当前这一笔**的自我积累，不要限制这一笔与画布原有颜色的混合。你的架构中 `Stroke Buffer` 似乎已经隐含了这一点，但在 `computeBrush.wgsl` 里要确认 `dab_opacity` 是相对于 Stroke Buffer 的，而不是相对于最终 Canvas 的。
 
-    // 核心混合：纹理作为一种“遮罩”或者“加深/减淡”
-    // 简单乘法是不够的，通常是 Subtract 或 Height map 逻辑
-    float influence = mix(1.0, textureValue, dynamicDepth);
+### 4. 调试与验证工具 (提升置信度)
 
-    // 应用模式 (Multiply, Subtract, Linear Burn 等)
-    // 这里的 Mode 是指纹理如何与笔头形状混合，而不是与画布混合
-    ```
+在 `2026-01-21-wet-edge-implementation-failure.md` 中提到调试低效。建议在 Phase 2 增加一个 **"Debug View"** 模式。
 
-- **UV 坐标系**：
-  - 明确纹理是 **Screen Space (屏幕空间)** 还是 **Stroke Space (笔触空间)**？
-  - Photoshop 笔刷纹理通常支持 **"Scale"**，这是相对于笔刷大小还是相对于图案原始尺寸？(通常是相对于图案原始尺寸)。
+**建议代码变更：**
+在 `computeBrush.wgsl` 中添加一个 debug flag。
 
----
-
-### 修正后的设计文档建议 (Diff View)
-
-建议将以下内容更新到文档中，以提高置信度：
-
-#### 2.1 新增模块 `src-tauri/src/abr/patt.rs` (Revised)
-
-```rust
-pub struct AbrPattern {
-    // 使用 Hash 避免重复存储
-    pub content_hash: String,
-    // 原始 ID，用于与 desc 匹配
-    pub original_id: String,
-    pub name: String,
-    pub width: u32,
-    pub height: u32,
-    pub mode: ImageMode, // Gray, RGB, CMYK, Lab...
-    pub data: Vec<u8>,   // Decoded RGBA8
-}
-
-pub fn parse_patt_resource(data: &[u8]) -> Result<Vec<AbrPattern>, AbrError> {
-    // 关键：处理 Adobe 的 PackBits 压缩和 Planar 通道布局
-    // 关键：处理 Big Endian 读取
+```wgsl
+if (uniforms.debug_mode == 1) {
+    // 直接输出 wet_factor 的可视化，不进行混合
+    // 红色通道 = 边缘变暗因子
+    // 绿色通道 = 中心镂空因子
+    output_color = vec4(edge_factor, center_hollow, 0.0, 1.0);
+    return;
 }
 ```
 
-#### 2.3 数据关联逻辑 (Revised)
+这样你可以直观地看到：
 
-1.  **Extract**: 尝试从 ABR 中提取嵌入的 `8BIM` 资源 (ID `0x0408` 或类似)。
-2.  **Fallback**: 如果 ABR 中未找到图案数据（只有引用），记录 `Missing Pattern UUID`。
-3.  **External Import**: 提供接口 `import_pat_file(path)`，解析标准 `.pat` 文件，并尝试将其 ID 注册到系统的资源库中，以解决 Missing 引用。
-
-#### 3.2 笔刷引擎集成 (Shader Spec)
-
-- **UV Calculation**: 必须实现 `Texturize` 逻辑。
-  ```glsl
-  // Pattern 通常是平铺在画布上的，仿佛在有纹理的纸上作画
-  vec2 uv = (gl_FragCoord.xy / u_viewport_size) * (u_viewport_size / (pattern_size * u_scale));
-  // 加上 Offset 来模拟 "Jitter"
-  ```
-
-### 总结
-
-这份文档目前的置信度较低，主要是因为**未确认 ABR 是否真的携带数据**。
-
-**下一步行动建议**：
-在写任何代码之前，**先做“逆向调研”**。
-
-1.  找一个 Photoshop 笔刷，加上纹理，导出 `.abr`。
-2.  用 Hex Editor 打开，搜索纹理的文件名或者 `8BIM` 头。
-3.  如果找不到大块数据，那么你的 `patt.rs` 解析器设计就是无用功，你需要转而设计 `.pat` 导入器。
-
-只要确认了这一点，这个设计文档就可以被批准实施了。
+- 边缘是否够黑（Red）
+- 中心是否够白（Green）
+- 衰减曲线是否是你想要的（Linear vs Pow）。
 
 ---
+
+### 总结优化后的设计更新点
+
+建议更新 `m3-brush-system.md` 的 Appendix A，加入以下内容：
+
+1.  **曲线修正**: 明确指出 `center_reduction` 需应用 `pow(mask, 3.0)` 以模拟液体表面张力带来的边缘堆积感。
+2.  **混合语境**: 明确 `Ceiling` 限制仅作用于 `Stroke Buffer` 的积累阶段。
+3.  **参数解耦**: (可选) 考虑将 `0.2` (Edge Dimming) 和 `0.25` (Center Hollow) 提取为可配置的常量或 Uniforms，方便在开发阶段通过 Dat.GUI 实时调整手感，找到最像 PS 的参数，而不是硬编码。
+
+你的方向已经调整正确了，加上非线性曲线调节，手感会提升一个档次。祝 Coding 顺利！

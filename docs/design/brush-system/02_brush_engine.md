@@ -1,6 +1,11 @@
 # 笔刷引擎扩展设计
 
 > 对应原文档 Phase 2
+>
+> **⚠️ 状态变更 (2026-01-21)**:
+> 本文档描述的 Rust 笔刷引擎目前处于 **Reserved / Experimental** 状态。
+> 由于 IPC 通信开销，生产环境已切换为 **Frontend-First Hybrid Engine** (WebGPU Primary + TypeScript Fallback)。
+> 此处设计仅作为纯数值计算参考或未来 WASM 移植储备。
 
 ## Phase 2: 笔刷引擎扩展
 
