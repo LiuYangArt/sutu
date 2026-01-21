@@ -5,6 +5,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { useTabletStore, drainPointBuffer, clearPointBuffer } from '@/stores/tablet';
+import { useSelectionStore } from '@/stores/selection';
 import { StrokeBuffer, Point } from '@/utils/interpolation';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import './Canvas.css';
@@ -13,6 +14,8 @@ import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { getEffectiveInputData } from './inputUtils';
 import { useRawPointerInput, supportsPointerRawUpdate } from './useRawPointerInput';
+import { useSelectionHandler } from './useSelectionHandler';
+import { SelectionOverlay } from './SelectionOverlay';
 import { LatencyProfiler, FPSCounter, LagometerMonitor } from '@/benchmark';
 
 declare global {
@@ -192,6 +195,18 @@ export function Canvas() {
   });
 
   const { pushStroke, pushAddLayer, pushRemoveLayer, undo, redo } = useHistoryStore();
+
+  // Selection handler for rect select and lasso tools
+  const {
+    handleSelectionPointerDown,
+    handleSelectionPointerMove,
+    handleSelectionPointerUp,
+    handleSelectionDoubleClick: _handleSelectionDoubleClick,
+    isSelectionToolActive,
+  } = useSelectionHandler({ currentTool, scale });
+
+  // Get selection store actions for keyboard shortcuts
+  const { selectAll, deselectAll, cancelSelection } = useSelectionStore();
 
   // Store beforeImage when stroke starts
   const beforeImageRef = useRef<{ layerId: string; imageData: ImageData } | null>(null);
@@ -1058,6 +1073,15 @@ export function Canvas() {
         return;
       }
 
+      // Handle Selection Tools (rect select / lasso)
+      if (isSelectionToolActive) {
+        const handled = handleSelectionPointerDown(canvasX, canvasY, e.nativeEvent);
+        if (handled) {
+          canvas.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+
       // Check Layer Validation
       const activeLayer = layers.find((l) => l.id === activeLayerId);
       if (!activeLayerId || !activeLayer?.visible) return;
@@ -1110,6 +1134,8 @@ export function Canvas() {
       initializeBrushStroke,
       drawPoints,
       setIsPanning,
+      isSelectionToolActive,
+      handleSelectionPointerDown,
     ]
   );
 
@@ -1151,6 +1177,19 @@ export function Canvas() {
           setScale(newScale, initialClickX, initialClickY);
         }
 
+        return;
+      }
+
+      // Selection tool move handling
+      if (isSelectionToolActive) {
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const canvasX = (lastEvent.clientX - rect.left) / scale;
+          const canvasY = (lastEvent.clientY - rect.top) / scale;
+          handleSelectionPointerMove(canvasX, canvasY, lastEvent);
+        }
         return;
       }
 
@@ -1222,7 +1261,17 @@ export function Canvas() {
         }
       }
     },
-    [isPanning, pan, drawPoints, scale, setScale, currentTool, usingRawInput]
+    [
+      isPanning,
+      pan,
+      drawPoints,
+      scale,
+      setScale,
+      currentTool,
+      usingRawInput,
+      isSelectionToolActive,
+      handleSelectionPointerMove,
+    ]
   );
 
   const handlePointerUp = useCallback(
@@ -1245,6 +1294,19 @@ export function Canvas() {
         return;
       }
 
+      // Finish selection
+      if (isSelectionToolActive) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const canvasX = (e.clientX - rect.left) / scale;
+          const canvasY = (e.clientY - rect.top) / scale;
+          handleSelectionPointerUp(canvasX, canvasY);
+          canvas.releasePointerCapture(e.pointerId);
+        }
+        return;
+      }
+
       // 结束绘画
       const canvas = canvasRef.current;
       if (canvas) {
@@ -1254,13 +1316,20 @@ export function Canvas() {
       // 完成当前笔触
       finishCurrentStroke();
     },
-    [isPanning, setIsPanning, finishCurrentStroke]
+    [
+      isPanning,
+      setIsPanning,
+      finishCurrentStroke,
+      isSelectionToolActive,
+      handleSelectionPointerUp,
+      scale,
+    ]
   );
 
   // 键盘事件处理
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 优先处理修饰键组合 (Undo/Redo)
+      // 优先处理修饰键组合 (Undo/Redo/Selection)
       if (e.ctrlKey || e.metaKey) {
         if (e.code === 'KeyZ') {
           e.preventDefault();
@@ -1272,7 +1341,21 @@ export function Canvas() {
         } else if (e.code === 'KeyY') {
           e.preventDefault();
           handleRedo();
+        } else if (e.code === 'KeyA') {
+          // Ctrl+A: Select All
+          e.preventDefault();
+          selectAll(width, height);
+        } else if (e.code === 'KeyD') {
+          // Ctrl+D: Deselect
+          e.preventDefault();
+          deselectAll();
         }
+        return;
+      }
+
+      // ESC: Cancel selection creation
+      if (e.code === 'Escape') {
+        cancelSelection();
         return;
       }
 
@@ -1288,7 +1371,8 @@ export function Canvas() {
 
         case 'AltLeft':
         case 'AltRight':
-          if (!altPressed) {
+          // Alt 键切换吸色工具仅对画笔和橡皮擦工具生效
+          if (!altPressed && (currentTool === 'brush' || currentTool === 'eraser')) {
             // 如果正在绘制，先强制结束当前笔触
             if (isDrawingRef.current) finishCurrentStroke();
 
@@ -1329,6 +1413,20 @@ export function Canvas() {
             setTool('eraser');
           }
           break;
+
+        case 'KeyM':
+          if (!e.altKey) {
+            e.preventDefault();
+            setTool('select');
+          }
+          break;
+
+        case 'KeyS':
+          if (!e.altKey && !e.ctrlKey) {
+            e.preventDefault();
+            setTool('lasso');
+          }
+          break;
       }
     };
 
@@ -1366,6 +1464,11 @@ export function Canvas() {
     currentSize,
     setCurrentSize,
     finishCurrentStroke,
+    selectAll,
+    deselectAll,
+    cancelSelection,
+    width,
+    height,
   ]);
 
   // 计算 viewport 变换样式
@@ -1393,6 +1496,13 @@ export function Canvas() {
       style={{ cursor: cursorStyle }}
     >
       <div className="canvas-checkerboard" style={{ clipPath: clipPathKey }} />
+      <SelectionOverlay
+        width={width}
+        height={height}
+        scale={scale}
+        offsetX={offsetX}
+        offsetY={offsetY}
+      />
       <div className="canvas-viewport" style={viewportStyle}>
         <canvas
           ref={canvasRef}
