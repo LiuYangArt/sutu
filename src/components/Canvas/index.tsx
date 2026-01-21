@@ -105,6 +105,7 @@ export function Canvas() {
     brushSize,
     eraserSize,
     brushColor,
+    backgroundColor,
     brushOpacity,
     brushFlow,
     brushHardness,
@@ -123,11 +124,14 @@ export function Canvas() {
     brushTexture,
     shapeDynamicsEnabled,
     shapeDynamics,
+    colorDynamicsEnabled,
+    colorDynamics,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
     eraserSize: s.eraserSize,
     brushColor: s.brushColor,
+    backgroundColor: s.backgroundColor,
     brushOpacity: s.brushOpacity,
     brushFlow: s.brushFlow,
     brushHardness: s.brushHardness,
@@ -146,6 +150,8 @@ export function Canvas() {
     brushTexture: s.brushTexture,
     shapeDynamicsEnabled: s.shapeDynamicsEnabled,
     shapeDynamics: s.shapeDynamics,
+    colorDynamicsEnabled: s.colorDynamicsEnabled,
+    colorDynamics: s.colorDynamics,
   }));
 
   // Get render mode from settings store (persisted to settings.json)
@@ -672,6 +678,7 @@ export function Canvas() {
       roundness: brushRoundness,
       angle: brushAngle,
       color: brushColor,
+      backgroundColor,
       pressureSizeEnabled,
       pressureFlowEnabled,
       pressureOpacityEnabled,
@@ -679,6 +686,8 @@ export function Canvas() {
       texture: brushTexture,
       shapeDynamicsEnabled,
       shapeDynamics,
+      colorDynamicsEnabled,
+      colorDynamics,
     };
   }, [
     currentSize,
@@ -690,6 +699,7 @@ export function Canvas() {
     brushRoundness,
     brushAngle,
     brushColor,
+    backgroundColor,
     pressureSizeEnabled,
     pressureFlowEnabled,
     pressureOpacityEnabled,
@@ -697,6 +707,8 @@ export function Canvas() {
     brushTexture,
     shapeDynamicsEnabled,
     shapeDynamics,
+    colorDynamicsEnabled,
+    colorDynamics,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position
