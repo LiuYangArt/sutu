@@ -244,26 +244,9 @@ if (uniforms.wet_enabled > 0) {
 }
 ```
 
-**硬边笔刷 (Hardness = 1.0) 的平滑处理**:
-若笔刷极硬，`mask` 接近二值，`pow` 也无法产生平滑渐变，导致"空心管"效果。
-
-- _建议_: 强制 Wet Edge 计算使用一个带有最小柔化半径的 Mask，或在 Shader 中利用 SDF (如果可用) 重新计算一个柔化 mask 用于镂空计算。
-
-#### 3. CPU 逻辑 (Rust Backend - `soft_dab.rs`)
-
-复刻 WGSL 的非线性逻辑：
-
-```rust
-if wet_edge > 0.001 {
-    let shaped_mask = mask_shape.powf(3.0);
-    let edge_factor = 1.0 - (0.2 * wet_edge);
-    let center_hollow = 1.0 - (0.25 * wet_edge * shaped_mask);
-    let wet_factor = edge_factor * center_hollow;
-
-    target_opacity = dab_opacity * wet_factor;
-    effective_src_alpha = mask_shape * flow * wet_factor;
-}
-```
+**硬边笔刷 (Hardness = 1.0) 的行为**:
+若笔刷极硬，`mask` 为二值 (0 或 1)。此时公式产生的 `wet_factor` 为常数 (例如 0.6)，导致笔触呈现均匀的半透明状态。
+用户的测试表明这正是 Photoshop 的原生行为（见截图），因此**无需**进行额外的平滑或 SDF 处理。直接应用上述公式即可。
 
 #### 4. CPU 逻辑 (TypeScript Backend - `maskCache.ts`)
 
