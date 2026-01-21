@@ -122,3 +122,7 @@ PaintBoard 的所有引擎均已移植 Krita 的数学模型：
 ## 5. 总结
 
 PaintBoard 的核心笔刷引擎目前已经处于非常高的水平，特别是参数化（柔边）笔刷已经达到了 Krita 的标准。主要的提升空间在于**纹理笔刷的抗锯齿**（通过 Mipmap）。
+
+---
+
+krita 源码路径 @F:\CodeProjects\krita
