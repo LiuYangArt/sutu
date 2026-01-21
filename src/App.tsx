@@ -48,10 +48,24 @@ function App() {
     }
   }, []);
 
-  // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill), F5 (brush panel)
+  // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill), F5 (brush panel), Ctrl+Alt+Shift+U (settings)
   const togglePanel = usePanelStore((s) => s.togglePanel);
+  const isSettingsOpen = useSettingsStore((s) => s.isOpen);
+  const openSettings = useSettingsStore((s) => s.openSettings);
+  const closeSettings = useSettingsStore((s) => s.closeSettings);
   const handleDrawingShortcuts = useCallback(
     (e: KeyboardEvent) => {
+      // Ctrl+Alt+Shift+U: Toggle settings panel
+      if (e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === 'u') {
+        e.preventDefault();
+        if (isSettingsOpen) {
+          closeSettings();
+        } else {
+          openSettings();
+        }
+        return;
+      }
+
       // F5: Toggle brush panel (allow even in input fields)
       if (e.key === 'F5') {
         e.preventDefault();
@@ -92,7 +106,7 @@ function App() {
         return;
       }
     },
-    [togglePanel]
+    [togglePanel, isSettingsOpen, openSettings, closeSettings]
   );
 
   useEffect(() => {
