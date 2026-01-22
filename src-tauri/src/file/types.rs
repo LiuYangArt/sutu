@@ -47,6 +47,7 @@ pub struct ProjectData {
 pub enum FileFormat {
     Ora,
     Tiff,
+    Psd,
 }
 
 impl FileFormat {
@@ -57,6 +58,8 @@ impl FileFormat {
             Some(FileFormat::Ora)
         } else if path_lower.ends_with(".tiff") || path_lower.ends_with(".tif") {
             Some(FileFormat::Tiff)
+        } else if path_lower.ends_with(".psd") {
+            Some(FileFormat::Psd)
         } else {
             None
         }
@@ -67,6 +70,7 @@ impl FileFormat {
         match self {
             FileFormat::Ora => "ora",
             FileFormat::Tiff => "tiff",
+            FileFormat::Psd => "psd",
         }
     }
 }
@@ -123,6 +127,9 @@ pub enum FileError {
 
     #[error("TIFF error: {0}")]
     Tiff(String),
+
+    #[error("PSD error: {0}")]
+    Psd(String),
 }
 
 impl From<FileError> for String {

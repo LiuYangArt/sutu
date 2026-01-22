@@ -572,7 +572,7 @@ pub async fn import_abr_file(path: String) -> Result<Vec<BrushPreset>, String> {
 // File Save/Load Commands
 // ============================================================================
 
-/// Save project to file (ORA or TIFF format)
+/// Save project to file (ORA or PSD format)
 #[tauri::command]
 pub async fn save_project(
     path: String,
@@ -585,7 +585,13 @@ pub async fn save_project(
 
     let result = match format {
         FileFormat::Ora => crate::file::ora::save_ora(path_ref, &project),
-        FileFormat::Tiff => crate::file::tiff::save_tiff(path_ref, &project),
+        FileFormat::Tiff => {
+            // TIFF format is disabled due to implementation issues
+            return Ok(FileOperationResult::error(
+                "TIFF format is currently disabled".to_string(),
+            ));
+        }
+        FileFormat::Psd => crate::file::psd::save_psd(path_ref, &project),
     };
 
     match result {
@@ -613,7 +619,11 @@ pub async fn load_project(path: String) -> Result<ProjectData, String> {
 
     let result = match format {
         FileFormat::Ora => crate::file::ora::load_ora(path_ref),
-        FileFormat::Tiff => crate::file::tiff::load_tiff(path_ref),
+        FileFormat::Tiff => {
+            // TIFF format is disabled due to implementation issues
+            return Err("TIFF format is currently disabled".to_string());
+        }
+        FileFormat::Psd => crate::file::psd::load_psd(path_ref),
     };
 
     match result {

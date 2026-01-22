@@ -119,6 +119,7 @@ export const useFileStore = create<FileState>((set) => ({
         title: 'Save Project',
         filters: [
           { name: 'OpenRaster', extensions: ['ora'] },
+          { name: 'Photoshop', extensions: ['psd'] },
           // TIFF layer support disabled - see docs/postmortem/tiff-layer-support.md
         ],
         defaultPath: targetPath || 'Untitled.ora',
@@ -129,11 +130,16 @@ export const useFileStore = create<FileState>((set) => ({
       }
 
       targetPath = result;
-      // Ensure .ora extension
-      if (!result.toLowerCase().endsWith('.ora')) {
+      // Detect format from extension
+      if (result.toLowerCase().endsWith('.psd')) {
+        targetFormat = 'psd';
+      } else if (result.toLowerCase().endsWith('.ora')) {
+        targetFormat = 'ora';
+      } else {
+        // Default to ORA if no recognized extension
         targetPath = result + '.ora';
+        targetFormat = 'ora';
       }
-      targetFormat = 'ora';
     }
 
     set({ isSaving: true, error: null });
@@ -186,7 +192,9 @@ export const useFileStore = create<FileState>((set) => ({
     const result = await open({
       title: 'Open Project',
       filters: [
+        { name: 'All Supported', extensions: ['ora', 'psd'] },
         { name: 'OpenRaster', extensions: ['ora'] },
+        { name: 'Photoshop', extensions: ['psd'] },
         // TIFF layer support disabled - see docs/postmortem/tiff-layer-support.md
       ],
       multiple: false,
@@ -207,8 +215,8 @@ export const useFileStore = create<FileState>((set) => ({
 
       const docStore = useDocumentStore.getState();
 
-      // Detect format from path (only ORA supported now)
-      const format: FileFormat = 'ora';
+      // Detect format from path
+      const format: FileFormat = filePath.toLowerCase().endsWith('.psd') ? 'psd' : 'ora';
 
       // Reset and initialize document with loaded data
       docStore.reset();
