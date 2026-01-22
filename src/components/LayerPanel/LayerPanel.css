@@ -194,6 +194,11 @@
   border-color: var(--primary);
 }
 
+.blend-mode-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
 .opacity-control {
   display: flex;
   align-items: center;
