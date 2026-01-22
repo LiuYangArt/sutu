@@ -143,28 +143,43 @@ PSD 使用的 RLE 变体（PackBits）是必须实现的：
 
 ### Phase 1: 基础架构与压缩
 
-- [ ] Rust: 实现 `PackBits` (RLE) 压缩与解压算法。
-- [ ] Rust: 定义 `PsdHeader` 和 `ChannelInfo` 等基础结构体 (参考 Krita `libs/psd/psd_header.h`)。
-- [ ] Rust: 实现二进制流写入器 `BigEndianWriter`。
+- [x] Rust: 实现 `PackBits` (RLE) 压缩与解压算法。
+- [x] Rust: 定义 `PsdHeader` 和 `ChannelInfo` 等基础结构体 (参考 Krita `libs/psd/psd_header.h`)。
+- [x] Rust: 实现二进制流写入器 `BigEndianWriter`。
 
 ### Phase 2: 简单导出 (Flattened)
 
-- [ ] Rust: 实现只写 Header + Image Data 的导出器。
-- [ ] 验证: 生成的文件能在 Photoshop/Krita 中打开（显示为单层背景）。
+- [x] Rust: 实现只写 Header + Image Data 的导出器。
+- [x] 验证: 生成的文件能在 Photoshop/Krita 中打开（显示为单层背景）。
 
 ### Phase 3: 图层导出 (Layered)
 
-- [ ] Rust: 实现 `LayerRecord` 的序列化。
-- [ ] Rust: 实现多图层通道数据的组织与写入。
-- [ ] Rust: 支持基本混合模式映射 (Normal, Multiply, Screen, Overlay)。
-- [ ] 验证: 导出多图层文件，检查层级和混合模式是否正确。
+- [x] Rust: 实现 `LayerRecord` 的序列化。
+- [x] Rust: 实现多图层通道数据的组织与写入。
+- [x] Rust: 支持基本混合模式映射 (Normal, Multiply, Screen, Overlay)。
+- [x] 验证: 导出多图层文件，检查层级和混合模式是否正确。
 
 ### Phase 4: 导入 (Parsing)
 
-- [ ] Rust: 实现/集成 PSD Parser。
-- [ ] 前端: 对接导入接口，恢复图层状态。
+- [x] Rust: 实现/集成 PSD Parser。
+- [x] 前端: 对接导入接口，恢复图层状态。
 
-## 5. 参考资料
+## 5. 后续规划 (Future Roadmap)
+
+### Phase 5: 高级特性与优化
+
+- [ ] **DPI/Resolution 读取**:
+  - 当前导入时 DPI默认为 72。需要解析 `Image Resources` (ID `0x03ED`) 以获取正确的文档分辨率并同步到 PaintBoard 项目设置。
+- [ ] **图层组 (Layer Groups)**:
+  - 实现 `lsct` (Section Divider Setting) 的解析与写入，以支持嵌套的图层组结构。
+  - 目前 PaintBoard 将图层处理为线性结构，完善图层组需要配合前端 `useDocumentStore` 的树状结构改造。
+- [ ] **性能优化**:
+  - **IPC 传输优化**: 目前 `commands.rs` 将图层数据转为 Base64 字符串传递给前端，这在处理大文件时并不高效。应探索 Tauri 的 Binary IPC 或 Shared ArrayBuffer 方案。
+  - **图层边界裁剪 (Trim Bounds)**: 导出时计算每个图层的实际有效像素范围 (Bounding Box)，而非总是保存全画布尺寸。这将显著减小文件体积并提升保存速度。
+- [ ] **色彩管理**:
+  - 支持 ICC Profile 的读写 (Image Resource ID `0x040F`)，确保跨软件的色彩一致性。
+
+## 6. 参考资料
 
 - **Adobe Photoshop File Format Specification**: [Link](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/)
 - **Krita Source**: `plugins/impex/psd/`
