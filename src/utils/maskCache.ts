@@ -76,6 +76,17 @@ export class MaskCache {
   private centerY: number = 0;
 
   /**
+   * Calculate hard edge anti-aliasing using Inner Mode (Krita-style)
+   * AA band is at [radius-1.0, radius], where radius is the absolute boundary
+   */
+  private static calcHardEdgeAA(physicalDist: number, radius: number): number {
+    const aaStart = radius - 1.0;
+    if (physicalDist <= aaStart) return 1.0;
+    if (physicalDist >= radius) return 0;
+    return 1.0 - (physicalDist - aaStart);
+  }
+
+  /**
    * Alpha Darken blend a single pixel
    * Shared by stampToBuffer and stampHardBrush to avoid duplication
    */
@@ -190,15 +201,8 @@ export class MaskCache {
         let maskValue: number;
 
         if (hardness >= 0.99) {
-          // Hard brush with 1px anti-aliased edge
-          const distFromEdge = normDist * radiusX - radiusX;
-          if (distFromEdge > 1.0) {
-            maskValue = 0;
-          } else if (distFromEdge > 0.0) {
-            maskValue = 1.0 - distFromEdge;
-          } else {
-            maskValue = 1.0;
-          }
+          // Inner Mode (Krita-style): AA band at [radiusX-1.0, radiusX]
+          maskValue = MaskCache.calcHardEdgeAA(normDist * radiusX, radiusX);
         } else if (maskType === 'gaussian') {
           // Krita-style Gaussian (erf-based) mask
           const physicalDist = normDist * radiusX;
@@ -386,20 +390,9 @@ export class MaskCache {
 
         // Physical distance from center along the ellipse normal
         const physicalDist = normDist * radiusX; // Approximate for circular brush
-        const edgeDist = radiusX; // Edge is at radius
 
-        // Calculate mask value: hard inside, 1px AA at edge
-        let maskValue: number;
-        if (physicalDist <= edgeDist - 0.5) {
-          // Fully inside
-          maskValue = 1.0;
-        } else if (physicalDist >= edgeDist + 0.5) {
-          // Fully outside
-          maskValue = 0;
-        } else {
-          // Within 1px AA band: linear falloff
-          maskValue = 0.5 - (physicalDist - edgeDist);
-        }
+        // Inner Mode (Krita-style): AA band at [radius-1.0, radius]
+        const maskValue = MaskCache.calcHardEdgeAA(physicalDist, radiusX);
 
         if (maskValue < 0.001) continue;
 
