@@ -1467,11 +1467,11 @@ export function Canvas() {
 
         case 'AltLeft':
         case 'AltRight':
-          console.log('[Canvas Debug] Alt KeyDown', {
-            currentTool,
-            altPressed,
-            previousToolRef: previousToolRef.current,
-          });
+          // console.log('[Canvas Debug] Alt KeyDown', {
+          //   currentTool,
+          //   altPressed,
+          //   previousToolRef: previousToolRef.current,
+          // });
           // Alt 键切换吸色工具仅对画笔和橡皮擦工具生效
           if (!altPressed && (currentTool === 'brush' || currentTool === 'eraser')) {
             // 如果正在绘制，先强制结束当前笔触
@@ -1481,7 +1481,7 @@ export function Canvas() {
             setAltPressed(true);
             previousToolRef.current = currentTool;
             setTool('eyedropper');
-            console.log('[Canvas Debug] Switched to eyedropper');
+            // console.log('[Canvas Debug] Switched to eyedropper');
           }
           break;
 
