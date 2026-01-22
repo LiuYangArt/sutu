@@ -1,64 +1,64 @@
-# Wet Edge Implementation v3.0
+# Wet Edge 实现文档 v3.0
 
-## Status: ✅ Implemented
+## 状态: ✅ 已实现
 
-## Problem Analysis
+## 问题分析
 
-### Original Issues
-1. **Edge detection approach creates artifacts** - 距离场计算产生锯齿感
-2. **Effect doesn't match Photoshop** - Photoshop 的 wet edge 在软边笔刷上更明显
-3. **Hard brush behavior wrong** - Photoshop 硬边笔刷几乎没有 wet edge（仅抗锯齿边缘）
+### 原始问题
+1. **边缘检测方法产生锯齿** - 距离场计算产生锯齿感
+2. **效果与 Photoshop 不符** - Photoshop 的 wet edge 在软边笔刷上更明显
+3. **硬边笔刷行为错误** - Photoshop 硬边笔刷几乎没有 wet edge（仅抗锯齿边缘）
 
-### Photoshop Behavior Observations
-| Brush Type | Wet Edge Behavior |
-|------------|-------------------|
-| Soft edge (hardness 0%) | Strong edge darkening, light center |
-| Hard edge (hardness 100%) | Almost no effect (only antialiasing edge) |
-| Medium (hardness 50%) | Moderate edge effect |
+### Photoshop 行为观察
+| 笔刷类型 | Wet Edge 行为 |
+|----------|---------------|
+| 软边 (hardness 0%) | 边缘明显加深，中心变淡 |
+| 硬边 (hardness 100%) | 几乎无效果（仅抗锯齿边缘） |
+| 中等 (hardness 50%) | 中等程度效果 |
 
-### Key Insight
+### 关键洞察
 Photoshop wet edge 效果与 **笔刷本身的 alpha 渐变** 直接相关，而非独立的边缘检测。
 
-## Final Algorithm: Alpha Inversion with Boost
+## 最终算法：Alpha 反转 + 增强
 
-### Core Concept
+### 核心概念
 ```
 alphaNorm = originalAlpha / 255
 wetMultiplier = edgeBoost - (edgeBoost - centerOpacity) * alphaNorm
 newAlpha = originalAlpha * wetMultiplier
 ```
 
-### Parameters (Tuned to Match Photoshop)
+### 参数（调优以匹配 Photoshop）
 ```typescript
-const centerOpacity = 0.45;  // Center keeps 45% of original opacity
-const edgeBoost = 2.2;       // Edge gets boosted to 220% of original
+const centerOpacity = 0.45;  // 中心保留 45% 的原始透明度
+const edgeBoost = 2.2;       // 边缘提升到 220%
 ```
 
-### Effect Mapping
+### 效果映射
 
-| Region | originalAlpha | alphaNorm | wetMultiplier | Result |
-|--------|---------------|-----------|---------------|--------|
-| Center | 255 | 1.0 | 0.45 | 45% opacity (faded) |
-| Mid-edge | 128 | 0.5 | 1.325 | 133% opacity |
-| Edge | 50 | 0.2 | 1.85 | 185% opacity (darkened) |
-| Far edge | 20 | 0.08 | 2.06 | 206% opacity (clamped to 255) |
+| 区域 | originalAlpha | alphaNorm | wetMultiplier | 结果 |
+|------|---------------|-----------|---------------|------|
+| 中心 | 255 | 1.0 | 0.45 | 45% 透明度（变淡） |
+| 中边缘 | 128 | 0.5 | 1.325 | 133% 透明度 |
+| 边缘 | 50 | 0.2 | 1.85 | 185% 透明度（加深） |
+| 远边缘 | 20 | 0.08 | 2.06 | 206% 透明度（限制为 255） |
 
-### Why This Works
+### 为什么有效
 
-1. **Center fades**: High alpha pixels get multiplied by ~0.45
-2. **Edge darkens**: Low alpha pixels get multiplied by up to 2.2
-3. **Smooth gradient**: Linear interpolation creates natural transition
-4. **Hard brushes unaffected**: Sudden alpha drop means no gradient area
+1. **中心变淡**：高 alpha 像素乘以 ~0.45
+2. **边缘加深**：低 alpha 像素乘以最高 2.2
+3. **平滑渐变**：线性插值产生自然过渡
+4. **硬边不受影响**：alpha 突变意味着没有渐变区域
 
-### Advantages
-- **No edge detection needed** - O(n) complexity, no neighbor lookups
-- **Naturally adapts to brush hardness** - Effect scales with alpha gradient
-- **Matches Photoshop behavior** - Hard brushes minimal effect, soft brushes strong effect
-- **No artifacts** - Uses actual alpha values, not spatial detection
+### 优势
+- **无需边缘检测** - O(n) 复杂度，无邻居查找
+- **自动适应笔刷硬度** - 效果随 alpha 渐变缩放
+- **匹配 Photoshop 行为** - 硬边几乎无效果，软边效果强
+- **无锯齿** - 使用实际 alpha 值，非空间检测
 
-## Implementation
+## 实现
 
-### File: `src/utils/strokeBuffer.ts`
+### 文件：`src/utils/strokeBuffer.ts`
 
 ```typescript
 private applyWetEdgeEffect(): void {
@@ -100,34 +100,34 @@ private applyWetEdgeEffect(): void {
 }
 ```
 
-### UI: `src/components/BrushPanel/settings/WetEdgeSettings.tsx`
+### UI：`src/components/BrushPanel/settings/WetEdgeSettings.tsx`
 
-- Enable/disable checkbox only
-- No strength slider (fixed at 1.0)
-- No width parameter (algorithm doesn't need it)
+- 仅启用/禁用复选框
+- 无强度滑块（固定为 1.0）
+- 无宽度参数（算法不需要）
 
-### Store: `src/stores/tool.ts`
+### Store：`src/stores/tool.ts`
 
-- `wetEdgeEnabled: boolean` - Toggle on/off
-- `wetEdge: number` - Strength (0-1), default 1.0
+- `wetEdgeEnabled: boolean` - 开关
+- `wetEdge: number` - 强度 (0-1)，默认 1.0
 
-## Testing Results
+## 测试结果
 
-- [x] Soft brush (hardness 0%): Strong edge effect, light center ✅
-- [x] Hard brush (hardness 100%): Minimal effect ✅
-- [x] Medium brush (hardness 50%): Moderate effect ✅
-- [x] Matches Photoshop visual comparison ✅
+- [x] 软边笔刷 (hardness 0%)：边缘效果强，中心变淡 ✅
+- [x] 硬边笔刷 (hardness 100%)：几乎无效果 ✅
+- [x] 中等笔刷 (hardness 50%)：中等效果 ✅
+- [x] 与 Photoshop 视觉对比匹配 ✅
 
-## Failed Approaches
+## 失败的方案
 
-See `docs/postmortem/wet-edge-implementation.md` for detailed analysis of:
-1. Per-dab edge detection (caterpillar effect)
-2. MAX blend mode (still showed dab boundaries)
-3. Distance field edge detection (artifacts, wrong behavior)
-4. Alpha inversion without boost (center too transparent)
+详见 `docs/postmortem/wet-edge-implementation.md`：
+1. Per-dab 边缘检测（毛毛虫效应）
+2. MAX 混合模式（仍显示 dab 边界）
+3. 距离场边缘检测（锯齿，行为错误）
+4. Alpha 反转无增强（中心过于透明）
 
 ---
 
-*Document version: 3.0 Final*
-*Created: 2025-01-21*
-*Status: ✅ Implemented and tested*
+*文档版本: 3.0 Final*
+*创建日期: 2025-01-21*
+*状态: ✅ 已实现并测试*
