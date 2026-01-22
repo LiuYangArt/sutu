@@ -9,6 +9,7 @@ use byteorder::ReadBytesExt;
 
 /// PackBits compression error
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)] // Reserved for PSD reading
 pub enum CompressionError {
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
@@ -85,6 +86,7 @@ pub fn packbits_encode(input: &[u8]) -> Vec<u8> {
 ///
 /// # Returns
 /// Decompressed data
+#[allow(dead_code)] // Reserved for PSD reading
 pub fn packbits_decode(input: &[u8], expected_len: usize) -> Result<Vec<u8>, CompressionError> {
     let mut output = Vec::with_capacity(expected_len);
     let mut cursor = Cursor::new(input);

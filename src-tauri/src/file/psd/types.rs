@@ -12,6 +12,7 @@ pub const PSD_SIGNATURE: &[u8; 4] = b"8BPS";
 /// PSD color modes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
+#[allow(dead_code)] // Reserved for extended color mode support
 pub enum ColorMode {
     Bitmap = 0,
     Grayscale = 1,
@@ -46,6 +47,7 @@ pub struct PsdHeader {
 
 impl PsdHeader {
     /// Header size in bytes
+    #[allow(dead_code)] // Used in tests and future PSD reading
     pub const SIZE: usize = 26;
 
     /// Create a new PSD header for RGBA image
@@ -85,6 +87,7 @@ pub struct ChannelInfo {
 
 impl ChannelInfo {
     /// Size of channel info record (2 + 4 = 6 bytes)
+    #[allow(dead_code)] // Reserved for PSD reading
     pub const SIZE: usize = 6;
 
     pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
@@ -125,6 +128,7 @@ impl LayerFlags {
         flags
     }
 
+    #[allow(dead_code)] // Reserved for PSD reading
     pub fn from_byte(b: u8) -> Self {
         Self {
             transparency_protected: (b & 0x01) != 0,
@@ -208,6 +212,7 @@ pub struct ResolutionInfo {
 
 impl ResolutionInfo {
     /// Size in bytes
+    #[allow(dead_code)] // Used in tests and future PSD reading
     pub const SIZE: usize = 16;
 
     /// Create resolution info with DPI
