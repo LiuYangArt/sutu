@@ -209,36 +209,26 @@ export const useFileStore = create<FileState>((set) => ({
     set({ isLoading: true, error: null });
 
     try {
+      const docStore = useDocumentStore.getState();
+
+      // Reset current document state BEFORE loading new file
+      // This ensures clean state and prevents conflicts with old layer data
+      docStore.reset();
+
       const projectData = await invoke<ProjectData>('load_project', {
         path: filePath,
       });
 
-      const docStore = useDocumentStore.getState();
-
-      // Detect format from path
+      // Convert and set document state in one operation
+      const loadedLayers = projectData.layers.map(layerDataToLayer);
       const format: FileFormat = filePath.toLowerCase().endsWith('.psd') ? 'psd' : 'ora';
 
-      // Reset and initialize document with loaded data
-      docStore.reset();
-
-      // Initialize document dimensions
-      docStore.initDocument({
+      useDocumentStore.setState({
         width: projectData.width,
         height: projectData.height,
         dpi: projectData.dpi,
-      });
-
-      // Clear default layer and add loaded layers
-      // Note: initDocument creates a default layer, we need to handle this
-
-      // Convert loaded layers
-      const loadedLayers = projectData.layers.map(layerDataToLayer);
-
-      // Replace layers directly using set
-      useDocumentStore.setState({
         layers: loadedLayers,
-        activeLayerId:
-          loadedLayers.length > 0 ? (loadedLayers[loadedLayers.length - 1]?.id ?? null) : null,
+        activeLayerId: loadedLayers.at(-1)?.id ?? null,
         filePath,
         fileFormat: format,
         isDirty: false,
