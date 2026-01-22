@@ -106,15 +106,16 @@ layer.image_data = Some(BASE64.encode(&img_data));
 - [x] 前端 crossOrigin: `img.crossOrigin = 'anonymous'` (`src/components/Canvas/index.tsx`)
   - **已修复**: Canvas Taint 问题 (详见 `docs/postmortem/2026-01-22-canvas-taint-crossorigin.md`)
 
-#### 第三阶段：ORA 适配自定义协议 (待第二阶段完成)
-- [ ] `load_ora` 仅返回图层元数据（不含 image_data）
-- [ ] 图层 PNG 数据存入缓存，通过协议按需加载
-- [ ] 实现微型缩略图（64px）用于图层面板预览
+#### 第三阶段：ORA 适配自定义协议 ✅ DONE
+- [x] `load_ora` 仅返回图层元数据（不含 image_data）
+- [x] 图层 PNG 数据存入缓存，通过协议按需加载
+- [ ] 实现微型缩略图（64px）用于图层面板预览 *(可选优化)*
 
-#### 第四阶段：PSD 适配自定义协议
-- [ ] PSD 解码后使用 WebP 无损编码（替代 PNG）
-- [ ] WebP 数据存入缓存，通过协议返回
-- [ ] 使用 Rayon 并行解码多图层
+#### 第四阶段：PSD 适配自定义协议 ✅ DONE
+- [x] PSD 解码后使用 WebP 无损编码（替代 PNG）
+- [x] WebP 数据存入缓存，通过协议返回
+- [x] 使用 Rayon 并行解码多图层
+- [x] `image_data` 设为 `None`，前端通过 `project://` 协议加载
 
 #### 第五阶段：懒加载与增量优化
 - [ ] 前端 `IntersectionObserver` 监听可见图层

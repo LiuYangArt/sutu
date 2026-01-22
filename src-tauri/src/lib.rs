@@ -38,6 +38,38 @@ fn build_response(data: Vec<u8>, mime_type: &str) -> Response<Vec<u8>> {
         .unwrap()
 }
 
+/// Build HTTP response for raw RGBA data with dimension headers
+fn build_rgba_response(data: Vec<u8>, width: u32, height: u32) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "image/x-rgba")
+        .header("Access-Control-Allow-Origin", "*")
+        .header(
+            "Access-Control-Expose-Headers",
+            "X-Image-Width, X-Image-Height",
+        )
+        .header("X-Image-Width", width.to_string())
+        .header("X-Image-Height", height.to_string())
+        .body(data)
+        .unwrap()
+}
+
+/// Build HTTP response for LZ4-compressed RGBA data with dimension headers
+fn build_rgba_lz4_response(data: Vec<u8>, width: u32, height: u32) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "image/x-rgba-lz4")
+        .header("Access-Control-Allow-Origin", "*")
+        .header(
+            "Access-Control-Expose-Headers",
+            "X-Image-Width, X-Image-Height",
+        )
+        .header("X-Image-Width", width.to_string())
+        .header("X-Image-Height", height.to_string())
+        .body(data)
+        .unwrap()
+}
+
 /// Build 404 response
 fn build_not_found() -> Response<Vec<u8>> {
     Response::builder()
@@ -70,7 +102,23 @@ pub fn run() {
                 let layer_id = &path[7..]; // Skip "/layer/"
                 tracing::info!("Looking up layer in cache: {}", layer_id);
                 if let Some(cached) = file::get_cached_layer(layer_id) {
-                    tracing::info!("Cache HIT: {} ({} bytes)", layer_id, cached.data.len());
+                    tracing::info!(
+                        "Cache HIT: {} ({} bytes, type: {})",
+                        layer_id,
+                        cached.data.len(),
+                        cached.mime_type
+                    );
+                    // Use special response for raw RGBA data (uncompressed or LZ4)
+                    if cached.mime_type == "image/x-rgba" {
+                        let width = cached.width.unwrap_or(0);
+                        let height = cached.height.unwrap_or(0);
+                        return build_rgba_response(cached.data, width, height);
+                    }
+                    if cached.mime_type == "image/x-rgba-lz4" {
+                        let width = cached.width.unwrap_or(0);
+                        let height = cached.height.unwrap_or(0);
+                        return build_rgba_lz4_response(cached.data, width, height);
+                    }
                     return build_response(cached.data, cached.mime_type);
                 } else {
                     tracing::warn!("Cache MISS: {}", layer_id);

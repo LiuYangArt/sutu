@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
+import { decompressLz4PrependSize } from '@/utils/lz4';
 import { useDocumentStore } from '@/stores/document';
 import { useToolStore, applyPressureCurve, ToolType } from '@/stores/tool';
 import { useSettingsStore } from '@/stores/settings';
@@ -382,44 +383,112 @@ export function Canvas() {
 
     // Load layer images when opening a file
     // Uses project:// custom protocol for zero-copy binary transfer
+    // Supports both encoded images (PNG/WebP) and raw RGBA data (with optional LZ4 compression)
     window.__loadLayerImages = async (
-      layersData: Array<{ id: string; imageData?: string }>
+      layersData: Array<{ id: string; imageData?: string; offset_x?: number; offset_y?: number }>
     ): Promise<void> => {
       if (!layerRendererRef.current) return;
+
+      const startTime = performance.now();
+      console.log(`[Frontend] Starting layer image loading (${layersData.length} layers)...`);
+
+      let fetchTotal = 0;
+      let decompressTotal = 0;
+      let renderTotal = 0;
+      let layersLoaded = 0;
 
       for (const layerData of layersData) {
         const layer = layerRendererRef.current.getLayer(layerData.id);
         if (!layer) continue;
 
+        // Get offset for layer positioning
+        const offsetX = layerData.offset_x ?? 0;
+        const offsetY = layerData.offset_y ?? 0;
+
         // Determine image source: project:// protocol or legacy base64
-        let imgSrc: string;
         if (layerData.imageData) {
           // Legacy: base64 data provided (for backward compatibility)
-          imgSrc = layerData.imageData.startsWith('data:')
+          const imgSrc = layerData.imageData.startsWith('data:')
             ? layerData.imageData
             : `data:image/png;base64,${layerData.imageData}`;
-        } else {
-          // New: use project:// custom protocol (zero-copy from Rust cache)
-          // Windows uses http://<scheme>.localhost/ format
-          imgSrc = `http://project.localhost/layer/${layerData.id}`;
-        }
 
-        // Load image
-        const img = new Image();
-        img.crossOrigin = 'anonymous'; // Required for cross-origin protocol (project://)
-        await new Promise<void>((resolve) => {
-          img.onload = () => {
-            layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-            layer.ctx.drawImage(img, 0, 0);
-            resolve();
-          };
-          img.onerror = (e) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise<void>((resolve) => {
+            img.onload = () => {
+              layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+              layer.ctx.drawImage(img, offsetX, offsetY);
+              resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = imgSrc;
+          });
+          layersLoaded++;
+        } else {
+          // New: use project:// custom protocol
+          const url = `http://project.localhost/layer/${layerData.id}`;
+          try {
+            const fetchStart = performance.now();
+            const response = await fetch(url);
+            const buffer = await response.arrayBuffer();
+            fetchTotal += performance.now() - fetchStart;
+
+            const contentType = response.headers.get('Content-Type') || '';
+            const imgWidth = parseInt(response.headers.get('X-Image-Width') || '0');
+            const imgHeight = parseInt(response.headers.get('X-Image-Height') || '0');
+
+            if (contentType === 'image/x-rgba-lz4') {
+              // LZ4-compressed RGBA data - decompress first
+              const decompressStart = performance.now();
+              const decompressed = decompressLz4PrependSize(new Uint8Array(buffer));
+              decompressTotal += performance.now() - decompressStart;
+
+              if (imgWidth > 0 && imgHeight > 0) {
+                const renderStart = performance.now();
+                const imageData = new ImageData(
+                  new Uint8ClampedArray(decompressed),
+                  imgWidth,
+                  imgHeight
+                );
+                layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+                layer.ctx.putImageData(imageData, offsetX, offsetY);
+                renderTotal += performance.now() - renderStart;
+              }
+              layersLoaded++;
+            } else if (contentType === 'image/x-rgba') {
+              // Raw RGBA data (uncompressed) - use ImageData for fast rendering
+              if (imgWidth > 0 && imgHeight > 0) {
+                const renderStart = performance.now();
+                const imageData = new ImageData(new Uint8ClampedArray(buffer), imgWidth, imgHeight);
+                layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+                layer.ctx.putImageData(imageData, offsetX, offsetY);
+                renderTotal += performance.now() - renderStart;
+              }
+              layersLoaded++;
+            } else {
+              // Encoded image (PNG/WebP) - use Image element
+              const renderStart = performance.now();
+              // Create blob from already-fetched buffer (response body was consumed by arrayBuffer())
+              const blob = new Blob([buffer], { type: contentType });
+              const bitmap = await createImageBitmap(blob);
+              layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+              layer.ctx.drawImage(bitmap, offsetX, offsetY);
+              renderTotal += performance.now() - renderStart;
+              layersLoaded++;
+            }
+          } catch (e) {
             console.warn(`Failed to load layer image: ${layerData.id}`, e);
-            resolve(); // Don't reject, continue with other layers
-          };
-          img.src = imgSrc;
-        });
+          }
+        }
       }
+
+      const totalTime = performance.now() - startTime;
+      console.log(`[Frontend] Layer loading complete:
+    - Total: ${totalTime.toFixed(1)}ms
+    - Fetch: ${fetchTotal.toFixed(1)}ms
+    - Decompress: ${decompressTotal.toFixed(1)}ms
+    - Render: ${renderTotal.toFixed(1)}ms
+    - Layers: ${layersLoaded}`);
 
       // Trigger re-render
       compositeAndRender();

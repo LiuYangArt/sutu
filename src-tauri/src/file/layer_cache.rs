@@ -4,16 +4,21 @@
 //! served via the `project://` custom protocol, eliminating Base64 overhead
 //! and enabling browser-native image decoding.
 
+use lz4_flex::compress_prepend_size;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 
 /// Cached layer image data
 #[derive(Debug, Clone)]
 pub struct CachedLayer {
-    /// Raw image bytes (PNG or WebP format)
+    /// Raw image bytes (PNG, WebP, or raw RGBA format)
     pub data: Vec<u8>,
     /// MIME type for Content-Type header
     pub mime_type: &'static str,
+    /// Image width (required for raw RGBA)
+    pub width: Option<u32>,
+    /// Image height (required for raw RGBA)
+    pub height: Option<u32>,
 }
 
 /// Global layer cache (using parking_lot::RwLock which doesn't poison)
@@ -44,6 +49,8 @@ impl LayerCache {
             CachedLayer {
                 data,
                 mime_type: "image/png",
+                width: None,
+                height: None,
             },
         );
     }
@@ -55,13 +62,42 @@ impl LayerCache {
             CachedLayer {
                 data,
                 mime_type: "image/webp",
+                width: None,
+                height: None,
+            },
+        );
+    }
+
+    /// Store a layer's raw RGBA data with LZ4 compression (fast compression, minimal overhead)
+    pub fn store_layer_rgba(&mut self, layer_id: String, data: Vec<u8>, width: u32, height: u32) {
+        // LZ4 compress with prepended size for easy decompression
+        let compressed = compress_prepend_size(&data);
+        tracing::debug!(
+            "Layer {} RGBA: {} -> {} bytes ({:.1}% of original)",
+            layer_id,
+            data.len(),
+            compressed.len(),
+            compressed.len() as f64 / data.len() as f64 * 100.0
+        );
+        self.layers.insert(
+            layer_id,
+            CachedLayer {
+                data: compressed,
+                mime_type: "image/x-rgba-lz4",
+                width: Some(width),
+                height: Some(height),
             },
         );
     }
 
     /// Store thumbnail
     pub fn store_thumbnail(&mut self, data: Vec<u8>, mime_type: &'static str) {
-        self.thumbnail = Some(CachedLayer { data, mime_type });
+        self.thumbnail = Some(CachedLayer {
+            data,
+            mime_type,
+            width: None,
+            height: None,
+        });
     }
 
     /// Get a layer's cached data
@@ -134,6 +170,17 @@ pub fn cache_layer_webp(layer_id: String, data: Vec<u8>) {
     }
     if let Some(cache) = guard.as_mut() {
         cache.store_layer_webp(layer_id, data);
+    }
+}
+
+/// Store layer raw RGBA data with LZ4 compression in global cache
+pub fn cache_layer_rgba(layer_id: String, data: Vec<u8>, width: u32, height: u32) {
+    let mut guard = LAYER_CACHE.write();
+    if guard.is_none() {
+        *guard = Some(LayerCache::new());
+    }
+    if let Some(cache) = guard.as_mut() {
+        cache.store_layer_rgba(layer_id, data, width, height);
     }
 }
 

@@ -136,13 +136,6 @@ fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
     Ok(img.to_rgba8())
 }
 
-/// Encode RGBA image to base64 PNG
-fn encode_png_to_base64(img: &RgbaImage) -> Result<String, FileError> {
-    let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, ImageFormat::Png)?;
-    Ok(BASE64.encode(buf.into_inner()))
-}
-
 /// Save project to ORA file
 pub fn save_ora(path: &Path, project: &ProjectData) -> Result<(), FileError> {
     let file = File::create(path)?;
