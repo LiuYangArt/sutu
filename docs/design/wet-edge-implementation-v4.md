@@ -51,14 +51,15 @@ multiplier = center - (center - center) * alpha = center
 ```typescript
 // 伪代码
 function getEdgeBoost(hardness: number): number {
-  const MAX_BOOST = 2.2;
-  const CENTER_OPACITY = 0.45;
+  const MAX_BOOST = 1.8;       // Soft brushes
+  const CENTER_OPACITY = 0.65; // Center keeps 65% of original opacity
+  const MIN_BOOST = 1.4;       // Hard brushes
 
   // 阈值控制：hardness 0.7 以上开始迅速衰减效果
   if (hardness > 0.7) {
     const t = (hardness - 0.7) / 0.3; // 0.0 -> 1.0
-    // 线性插值：从 MAX_BOOST 降到 CENTER_OPACITY
-    return MAX_BOOST * (1 - t) + CENTER_OPACITY * t;
+    // 线性插值：从 MAX_BOOST 降到 MIN_BOOST
+    return MAX_BOOST * (1 - t) + MIN_BOOST * t;
   }
   return MAX_BOOST;
 }
