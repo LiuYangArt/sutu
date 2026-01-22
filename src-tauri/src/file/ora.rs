@@ -6,6 +6,7 @@
 //! - Thumbnails/thumbnail.png: 256x256 preview
 //! - data/*.png: Individual layer pixel data
 
+use super::layer_cache::{cache_layer_png, cache_thumbnail, clear_cache};
 use super::types::{FileError, LayerData, ProjectData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use image::{ImageFormat, RgbaImage};
@@ -284,8 +285,14 @@ fn parse_stack_xml(
 
 /// Load project from ORA file
 pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
+    tracing::info!("Loading ORA file: {:?}", path);
+
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(BufReader::new(file))?;
+
+    // Clear previous cache before loading new project
+    tracing::debug!("Clearing layer cache");
+    clear_cache();
 
     // 1. Verify mimetype
     {
@@ -341,7 +348,7 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         (width, height, layers)
     };
 
-    // 3. Load layer image data
+    // 3. Load layer image data into cache
     // First, collect all layer image paths
     let layer_paths: HashMap<String, String> = layers
         .iter()
@@ -352,7 +359,7 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         })
         .collect();
 
-    // Load each layer's image data
+    // Load each layer's image data into cache (not Base64)
     for layer in &mut layers {
         if let Some(src_path) = layer_paths.get(&layer.id) {
             match archive.by_name(src_path) {
@@ -360,12 +367,14 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
                     let mut img_data = Vec::new();
                     img_file.read_to_end(&mut img_data)?;
 
-                    // Decode and re-encode to base64
-                    let img = image::load_from_memory_with_format(&img_data, ImageFormat::Png)?;
-                    layer.image_data = Some(encode_png_to_base64(&img.to_rgba8())?);
+                    // Store PNG data in cache for project:// protocol
+                    tracing::info!("Caching layer: {} ({} bytes)", layer.id, img_data.len());
+                    cache_layer_png(layer.id.clone(), img_data);
+
+                    // Clear image_data - frontend will use project://layer/{id}
+                    layer.image_data = None;
                 }
                 Err(_) => {
-                    // Layer image not found, clear the data
                     layer.image_data = None;
                     tracing::warn!("Layer image not found: {}", src_path);
                 }
@@ -373,13 +382,17 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         }
     }
 
-    // 4. Load thumbnail if exists
+    tracing::info!("ORA load complete: {} layers cached", layers.len());
+
+    // 4. Load thumbnail into cache
     let thumbnail = match archive.by_name("Thumbnails/thumbnail.png") {
         Ok(mut thumb_file) => {
             let mut thumb_data = Vec::new();
             thumb_file.read_to_end(&mut thumb_data)?;
-            let img = image::load_from_memory_with_format(&thumb_data, ImageFormat::Png)?;
-            Some(encode_png_to_base64(&img.to_rgba8())?)
+            // Store in cache for project://thumbnail
+            cache_thumbnail(thumb_data, "image/png");
+            // Return None - frontend will use project://thumbnail
+            None
         }
         Err(_) => None,
     };

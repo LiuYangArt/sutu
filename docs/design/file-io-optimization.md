@@ -82,7 +82,46 @@ layer.image_data = Some(BASE64.encode(&img_data));
 **调整**: 既然最终我们要上自定义协议，第一阶段先维持 "RGBA -> PNG (Fast Config) -> Base64"。
 **后续**: 在第二阶段直接切换到 `RGBA -> WebP -> Custom Protocol`。
 
-## 4. 验证
+## 4. 实施顺序与 TODO
+
+**推荐顺序**：先完成统一的第二阶段架构（自定义协议），再分别适配 ORA 和 PSD。
+
+理由：
+- 自定义协议是 ORA 和 PSD 共用的基础设施
+- 避免为 PSD 单独做第一阶段优化（Fast PNG）后又要重构
+- 一次性解决 Base64 膨胀、JS 主线程阻塞等根本问题
+
+### TODO List
+
+#### 第一阶段：ORA 快速优化 ✅ DONE
+- [x] ORA 直接透传 PNG 字节，跳过解码/重编码 (`ora.rs`)
+- [x] 缩略图同样直接透传
+
+#### 第二阶段：自定义协议基础设施 ✅ DONE
+- [x] 注册 `project://` 自定义协议 (Tauri `uri_scheme`)
+- [x] 实现图层数据内存缓存 (`HashMap<LayerId, Vec<u8>>`)
+- [x] 实现协议处理器：`project://layer/{id}` → 返回二进制流
+- [x] 前端适配：`http://project.localhost/layer/{id}` (Windows 格式)
+- [x] 后端 CORS header: `Access-Control-Allow-Origin: *` (`src-tauri/src/lib.rs`)
+- [x] 前端 crossOrigin: `img.crossOrigin = 'anonymous'` (`src/components/Canvas/index.tsx`)
+  - **已修复**: Canvas Taint 问题 (详见 `docs/postmortem/2026-01-22-canvas-taint-crossorigin.md`)
+
+#### 第三阶段：ORA 适配自定义协议 (待第二阶段完成)
+- [ ] `load_ora` 仅返回图层元数据（不含 image_data）
+- [ ] 图层 PNG 数据存入缓存，通过协议按需加载
+- [ ] 实现微型缩略图（64px）用于图层面板预览
+
+#### 第四阶段：PSD 适配自定义协议
+- [ ] PSD 解码后使用 WebP 无损编码（替代 PNG）
+- [ ] WebP 数据存入缓存，通过协议返回
+- [ ] 使用 Rayon 并行解码多图层
+
+#### 第五阶段：懒加载与增量优化
+- [ ] 前端 `IntersectionObserver` 监听可见图层
+- [ ] 仅加载视口内图层的高清数据
+- [ ] 图层面板使用微型缩略图，画布按需加载原图
+
+## 5. 验证
 
 1.  测量打开一个大型 `.ora` 文件的时间。
 2.  应用第一阶段修复。

@@ -381,30 +381,43 @@ export function Canvas() {
     };
 
     // Load layer images when opening a file
+    // Uses project:// custom protocol for zero-copy binary transfer
     window.__loadLayerImages = async (
       layersData: Array<{ id: string; imageData?: string }>
     ): Promise<void> => {
       if (!layerRendererRef.current) return;
 
       for (const layerData of layersData) {
-        if (!layerData.imageData) continue;
-
         const layer = layerRendererRef.current.getLayer(layerData.id);
         if (!layer) continue;
 
-        // Load image from base64
+        // Determine image source: project:// protocol or legacy base64
+        let imgSrc: string;
+        if (layerData.imageData) {
+          // Legacy: base64 data provided (for backward compatibility)
+          imgSrc = layerData.imageData.startsWith('data:')
+            ? layerData.imageData
+            : `data:image/png;base64,${layerData.imageData}`;
+        } else {
+          // New: use project:// custom protocol (zero-copy from Rust cache)
+          // Windows uses http://<scheme>.localhost/ format
+          imgSrc = `http://project.localhost/layer/${layerData.id}`;
+        }
+
+        // Load image
         const img = new Image();
-        await new Promise<void>((resolve, reject) => {
+        img.crossOrigin = 'anonymous'; // Required for cross-origin protocol (project://)
+        await new Promise<void>((resolve) => {
           img.onload = () => {
             layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
             layer.ctx.drawImage(img, 0, 0);
             resolve();
           };
-          img.onerror = reject;
-          // Handle both with and without data URL prefix
-          img.src = layerData.imageData!.startsWith('data:')
-            ? layerData.imageData!
-            : `data:image/png;base64,${layerData.imageData}`;
+          img.onerror = (e) => {
+            console.warn(`Failed to load layer image: ${layerData.id}`, e);
+            resolve(); // Don't reject, continue with other layers
+          };
+          img.src = imgSrc;
         });
       }
 

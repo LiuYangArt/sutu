@@ -8,6 +8,7 @@ pub mod commands;
 pub mod file;
 pub mod input;
 
+use tauri::http::{Response, StatusCode};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize the application
@@ -21,7 +22,29 @@ pub fn init() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // Initialize layer cache
+    file::init_cache();
+
     tracing::info!("PaintBoard initializing...");
+}
+
+/// Build HTTP response for custom protocol
+fn build_response(data: Vec<u8>, mime_type: &str) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", mime_type)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(data)
+        .unwrap()
+}
+
+/// Build 404 response
+fn build_not_found() -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header("Content-Type", "text/plain")
+        .body(b"Not Found".to_vec())
+        .unwrap()
 }
 
 /// Run the Tauri application
@@ -35,6 +58,31 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // Register custom protocol for serving layer images
+        // Usage: <img src="project://layer/{layer_id}" />
+        //        <img src="project://thumbnail" />
+        .register_uri_scheme_protocol("project", |_ctx, request| {
+            let path = request.uri().path();
+            tracing::info!("project:// request: {}", path);
+
+            // Parse path: /layer/{id} or /thumbnail
+            if path.starts_with("/layer/") {
+                let layer_id = &path[7..]; // Skip "/layer/"
+                tracing::info!("Looking up layer in cache: {}", layer_id);
+                if let Some(cached) = file::get_cached_layer(layer_id) {
+                    tracing::info!("Cache HIT: {} ({} bytes)", layer_id, cached.data.len());
+                    return build_response(cached.data, cached.mime_type);
+                } else {
+                    tracing::warn!("Cache MISS: {}", layer_id);
+                }
+            } else if path == "/thumbnail" {
+                if let Some(cached) = file::get_cached_thumbnail() {
+                    return build_response(cached.data, cached.mime_type);
+                }
+            }
+
+            build_not_found()
+        })
         .invoke_handler(tauri::generate_handler![
             commands::create_document,
             commands::get_system_info,
