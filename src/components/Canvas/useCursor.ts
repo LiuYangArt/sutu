@@ -237,15 +237,18 @@ export function useCursor({
   const showEyedropperDomCursor = currentTool === 'eyedropper' && !isInteracting;
 
   // Initialize DOM cursor position when it becomes visible
-  // This handles the case when brush size changes via keyboard (no pointer event)
+  // Handles: brush size change via keyboard, Alt key switching to eyedropper
   useEffect(() => {
-    const cursor = brushCursorRef.current;
     const lastPos = lastMousePosRef.current;
+    if (!lastPos) return;
 
-    if (showDomCursor && cursor && lastPos) {
-      setCursorPosition(cursor, lastPos.x, lastPos.y);
+    if (showDomCursor && brushCursorRef.current) {
+      setCursorPosition(brushCursorRef.current, lastPos.x, lastPos.y);
     }
-  }, [showDomCursor, brushCursorRef]);
+    if (showEyedropperDomCursor && eyedropperCursorRef.current) {
+      setCursorPosition(eyedropperCursorRef.current, lastPos.x, lastPos.y);
+    }
+  }, [showDomCursor, showEyedropperDomCursor, brushCursorRef, eyedropperCursorRef]);
 
   let cursorStyle = TOOL_CURSORS[currentTool];
   if (isInteracting) {
