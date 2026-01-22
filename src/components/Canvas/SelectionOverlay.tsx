@@ -1,9 +1,7 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useSelectionStore } from '@/stores/selection';
 
 interface SelectionOverlayProps {
-  width: number;
-  height: number;
   scale: number;
   offsetX: number;
   offsetY: number;
@@ -15,6 +13,7 @@ interface SelectionOverlayProps {
  */
 export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 1920, height: 1080 });
   const {
     hasSelection,
     selectionPath,
@@ -27,6 +26,31 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
   // Get the path to render (either committed selection or creation in progress)
   const pathToRender = isCreating ? creationPoints : selectionPath;
   const shouldRender = hasSelection || (isCreating && pathToRender.length >= 2);
+
+  // Track container size with ResizeObserver to match canvas buffer to display size
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const updateSize = () => {
+      // Use the canvas element's actual display size (set by CSS 100%)
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+      if (width > 0 && height > 0) {
+        setCanvasSize({ width, height });
+      }
+    };
+
+    // Initial size
+    updateSize();
+
+    // Observe size changes
+    const resizeObserver = new ResizeObserver(updateSize);
+    resizeObserver.observe(canvas);
+
+    return () => resizeObserver.disconnect();
+  }, []);
 
   // Marching ants animation loop
   useEffect(() => {
@@ -56,7 +80,9 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     // Save context state
     ctx.save();
 
-    // Apply viewport transform
+    // Apply viewport transform to match CSS: transform: translate(offsetX, offsetY) scale(scale)
+    // CSS transform order: translate first, then scale (scale doesn't affect the translation)
+    // Canvas equivalent: translate, then scale
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
 
@@ -96,15 +122,11 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     ctx.restore();
   }, [pathToRender, hasSelection, shouldRender, marchingAntsOffset, scale, offsetX, offsetY]);
 
-  // Get container dimensions (full viewport)
-  const containerWidth = typeof window !== 'undefined' ? window.innerWidth : 1920;
-  const containerHeight = typeof window !== 'undefined' ? window.innerHeight : 1080;
-
   return (
     <canvas
       ref={canvasRef}
-      width={containerWidth}
-      height={containerHeight}
+      width={canvasSize.width}
+      height={canvasSize.height}
       className="selection-overlay"
       style={{
         position: 'absolute',

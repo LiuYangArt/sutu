@@ -1501,13 +1501,7 @@ export function Canvas() {
       style={{ cursor: cursorStyle }}
     >
       <div className="canvas-checkerboard" style={{ clipPath: clipPathKey }} />
-      <SelectionOverlay
-        width={width}
-        height={height}
-        scale={scale}
-        offsetX={offsetX}
-        offsetY={offsetY}
-      />
+      <SelectionOverlay scale={scale} offsetX={offsetX} offsetY={offsetY} />
       <div className="canvas-viewport" style={viewportStyle}>
         <canvas
           ref={canvasRef}
