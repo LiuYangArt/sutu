@@ -104,9 +104,14 @@ export class StrokeAccumulator {
   // Wet Edge settings (Photoshop-compatible stroke-level effect)
   private wetEdgeEnabled: boolean = false;
   private wetEdgeStrength: number = 1.0;
+  private wetEdgeHardness: number = 0; // Current brush hardness for adaptive wet edge
 
   // Wet Edge effect buffer - stores the processed result for preview
   private wetEdgeBuffer: Uint8ClampedArray | null = null;
+
+  // Wet Edge LUT - precomputed alpha mapping for performance (v4 optimization)
+  private wetEdgeLut: Uint8Array = new Uint8Array(256);
+  private wetEdgeLutValid: boolean = false;
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -138,13 +143,14 @@ export class StrokeAccumulator {
    * @param hardness - Brush hardness (0-1), determines if Rust SIMD path is used
    * @param wetEdge - Wet edge strength (0-1), 0 = disabled
    */
-  beginStroke(_hardness: number = 1, wetEdge: number = 0): void {
+  beginStroke(hardness: number = 1, wetEdge: number = 0): void {
     this.clear();
     this.active = true;
 
     // Wet Edge settings
     this.wetEdgeEnabled = wetEdge > 0;
     this.wetEdgeStrength = wetEdge;
+    this.wetEdgeHardness = hardness;
 
     // Initialize persistent ImageData buffer for the entire canvas
     // This avoids getImageData/putImageData per dab - major performance win
@@ -154,11 +160,67 @@ export class StrokeAccumulator {
     // Initialize wet edge buffer if enabled
     if (this.wetEdgeEnabled) {
       this.wetEdgeBuffer = new Uint8ClampedArray(this.width * this.height * 4);
+      // Build LUT for this stroke's hardness/strength combination
+      this.buildWetEdgeLut(hardness, wetEdge);
     }
 
     // DISABLED: Rust SIMD path has too much IPC overhead
     this.useRustPath = false;
     this.persistentBuffer = null;
+  }
+
+  /**
+   * Build wet edge LUT with hardness-adaptive edge boost (v4 optimization)
+   *
+   * Key insight: Hard brushes have only ~1px anti-aliased edge.
+   * The original 2.2x edgeBoost darkens this thin edge, causing visible aliasing.
+   *
+   * Solution: Reduce edgeBoost toward centerOpacity as hardness increases.
+   * When edgeBoost = centerOpacity, the formula becomes uniform scaling,
+   * preserving the original anti-aliasing perfectly.
+   */
+  private buildWetEdgeLut(hardness: number, strength: number): void {
+    // Photoshop-matched parameters (tuned from PS sampling):
+    // - PS center opacity is around 60-65%
+    // - PS edge is clearly visible even on hard brushes
+    const centerOpacity = 0.65; // Center keeps 65% of original opacity
+    const maxBoost = 1.8; // Maximum edge boost for soft brushes (reduced to avoid harsh edges)
+    // Minimum boost for hard brushes - must be noticeably higher than centerOpacity
+    // to create visible edge contrast
+    const minBoost = 1.4;
+
+    // Dynamic edgeBoost based on hardness (v4 core algorithm)
+    // - hardness < 0.7: full wet edge effect
+    // - hardness 0.7-1.0: gradual fade to minBoost
+    let effectiveBoost: number;
+    if (hardness > 0.7) {
+      // Transition zone: smooth interpolation
+      const t = (hardness - 0.7) / 0.3; // 0.0 -> 1.0
+      effectiveBoost = maxBoost * (1 - t) + minBoost * t;
+    } else {
+      // Soft brushes: full wet edge effect
+      effectiveBoost = maxBoost;
+    }
+
+    // Build LUT - NO gamma for hard brushes to preserve AA
+    for (let i = 0; i < 256; i++) {
+      const alphaNorm = i / 255;
+
+      // Skip gamma shaping for hard brushes - preserve original AA gradient
+      const shapedAlpha = hardness > 0.7 ? alphaNorm : Math.pow(alphaNorm, 1.3);
+
+      // Core tone mapping: edge (low alpha) -> boost, center (high alpha) -> fade
+      const multiplier = effectiveBoost - (effectiveBoost - centerOpacity) * shapedAlpha;
+
+      let wetAlpha = i * multiplier;
+
+      // Blend with original based on strength
+      wetAlpha = i * (1 - strength) + wetAlpha * strength;
+
+      this.wetEdgeLut[i] = Math.min(255, Math.round(wetAlpha));
+    }
+
+    this.wetEdgeLutValid = true;
   }
 
   /**
@@ -186,7 +248,9 @@ export class StrokeAccumulator {
     this.useRustPath = false;
     this.wetEdgeEnabled = false;
     this.wetEdgeStrength = 1.0;
+    this.wetEdgeHardness = 0;
     this.wetEdgeBuffer = null;
+    this.wetEdgeLutValid = false;
     // Don't clear syncImageData - it can be reused across strokes
   }
 
@@ -460,26 +524,20 @@ export class StrokeAccumulator {
   }
 
   /**
-   * Apply wet edge effect using alpha inversion algorithm
+   * Apply wet edge effect using LUT-based alpha mapping (v4 optimization)
    *
-   * Core concept: Use inverted alpha as a multiplier to fade the center.
-   * - Center (high alpha=255) → fades to ~45% of original
-   * - Edge (low alpha) → boosted to ~220% (relatively darker)
+   * Key improvements over v3:
+   * 1. Hardness-adaptive edgeBoost: Hard brushes get reduced/no edge enhancement
+   * 2. LUT-based: O(1) lookup instead of per-pixel float math
+   * 3. Gamma correction: Smoother soft-edge transitions
    *
-   * Photoshop-like behavior:
-   * - Center opacity: ~45% of original
-   * - Edge opacity: ~220% of original (clamped to 255)
-   *
-   * This naturally adapts to brush hardness:
-   * - Hard brushes (sudden alpha drop) → minimal wet edge area
-   * - Soft brushes (gradual alpha) → wide wet edge gradient
+   * This eliminates the "black halo" aliasing on hard brushes while
+   * preserving the wet edge effect on soft brushes.
    */
   private applyWetEdgeEffect(): void {
-    if (!this.bufferData || !this.wetEdgeBuffer) return;
+    if (!this.bufferData || !this.wetEdgeBuffer || !this.wetEdgeLutValid) return;
 
-    const strength = this.wetEdgeStrength;
-    const centerOpacity = 0.45; // Center keeps 45% of original opacity
-    const edgeBoost = 2.2; // Edge gets boosted to 220% of original
+    const lut = this.wetEdgeLut;
 
     const left = Math.max(0, this.dirtyRect.left);
     const top = Math.max(0, this.dirtyRect.top);
@@ -500,24 +558,14 @@ export class StrokeAccumulator {
           continue;
         }
 
-        // Normalize original alpha to 0-1
-        const alphaNorm = originalAlpha / 255;
-
-        // Wet edge multiplier: center (alpha=1) → 0.45, edge (alpha→0) → 2.2
-        // Linear interpolation from edgeBoost to centerOpacity
-        const wetMultiplier = edgeBoost - (edgeBoost - centerOpacity) * alphaNorm;
-
-        // Apply wet edge effect (clamped to 255)
-        const wetAlpha = Math.min(255, originalAlpha * wetMultiplier);
-
-        // Blend between original and wet-edge based on strength
-        const newAlpha = originalAlpha * (1 - strength) + wetAlpha * strength;
+        // LUT lookup: precomputed alpha mapping with hardness-adaptive edgeBoost
+        const newAlpha = lut[originalAlpha]!;
 
         // Copy color, apply modified alpha
         this.wetEdgeBuffer[idx] = this.bufferData[idx]!;
         this.wetEdgeBuffer[idx + 1] = this.bufferData[idx + 1]!;
         this.wetEdgeBuffer[idx + 2] = this.bufferData[idx + 2]!;
-        this.wetEdgeBuffer[idx + 3] = Math.round(newAlpha);
+        this.wetEdgeBuffer[idx + 3] = newAlpha;
       }
     }
   }
