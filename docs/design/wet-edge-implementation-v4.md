@@ -62,7 +62,18 @@ function getEdgeBoost(hardness: number): number {
   }
   return MAX_BOOST;
 }
+  return MAX_BOOST;
+}
 ```
+
+### 3.3 特殊边界情况：纹理笔刷 (Texture Brushes)
+
+**问题**：纹理笔刷通常使用位图印章，其内部 Alpha 变化丰富。如果在此类笔刷上开启 wet edge，我们通常希望获得完整的边缘增强效果。然而，系统可能会根据 UI 设置传递 `hardness = 1.0` (默认值)，导致 wet edge 效果被错误地关闭（因触发硬边优化）。
+
+**解决方案**：
+
+- 对于 **Texture Brushes**，强制设定传入 Wet Edge Shader 的 `hardness` 为 `0.0`。
+- 这确保了纹理笔刷始终应用最大强度的边缘增强 (`maxBoost`) 和 Gamma 修正，保留丰富的纹理细节。
 
 ## 4. 性能与画质优化：预计算 LUT
 

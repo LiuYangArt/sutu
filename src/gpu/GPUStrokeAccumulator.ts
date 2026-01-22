@@ -671,7 +671,7 @@ export class GPUStrokeAccumulator {
             this.pingPongBuffer.source, // Raw buffer (input, read-only)
             this.pingPongBuffer.display, // Display buffer (output)
             this.dirtyRect,
-            this.wetEdgeHardness,
+            0.0, // Texture brushes: always treat as soft to enable full wet edge effect
             this.wetEdgeStrength,
             this.currentRenderScale
           );
