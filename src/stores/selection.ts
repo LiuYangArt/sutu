@@ -40,6 +40,7 @@ interface SelectionState {
   // Interaction state
   isCreating: boolean; // Currently creating selection
   creationPoints: SelectionPoint[]; // Temporary points during creation
+  previewPoint: SelectionPoint | null; // Preview point for polygonal mode (cursor position)
   creationStart: SelectionPoint | null; // Start point for rect selection
   selectionMode: SelectionMode; // Boolean operation mode
   lassoMode: LassoMode; // Lasso sub-mode
@@ -60,6 +61,7 @@ interface SelectionState {
   // Selection creation
   beginSelection: (startPoint?: SelectionPoint) => void;
   addCreationPoint: (point: SelectionPoint) => void;
+  updatePreviewPoint: (point: SelectionPoint | null) => void; // For polygonal mode preview line
   updateCreationRect: (start: SelectionPoint, end: SelectionPoint) => void;
   commitSelection: (documentWidth: number, documentHeight: number) => void;
   cancelSelection: () => void;
@@ -166,6 +168,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
 
   isCreating: false,
   creationPoints: [],
+  previewPoint: null,
   creationStart: null,
   selectionMode: 'new',
   lassoMode: 'freehand',
@@ -192,7 +195,13 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   addCreationPoint: (point) =>
     set((state) => ({
       creationPoints: [...state.creationPoints, point],
+      previewPoint: null, // Clear preview when adding actual point
     })),
+
+  updatePreviewPoint: (point) =>
+    set({
+      previewPoint: point,
+    }),
 
   updateCreationRect: (start, end) =>
     set({
@@ -209,6 +218,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       set({
         isCreating: false,
         creationPoints: [],
+        previewPoint: null, // Clear preview point
         creationStart: null,
       });
       return;
@@ -227,6 +237,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       bounds,
       isCreating: false,
       creationPoints: [],
+      previewPoint: null, // Clear preview point
       creationStart: null,
     });
   },
@@ -235,6 +246,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     set({
       isCreating: false,
       creationPoints: [],
+      previewPoint: null, // Clear preview point
       creationStart: null,
     }),
 
@@ -263,6 +275,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       bounds: null,
       isCreating: false,
       creationPoints: [],
+      previewPoint: null, // Clear preview point
       creationStart: null,
       // Also clear move state
       isMoving: false,

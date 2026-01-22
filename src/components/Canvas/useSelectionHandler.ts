@@ -61,6 +61,7 @@ export function useSelectionHandler({
     isMoving,
     beginSelection,
     addCreationPoint,
+    updatePreviewPoint,
     updateCreationRect,
     commitSelection,
     isPointInBounds,
@@ -78,34 +79,86 @@ export function useSelectionHandler({
   // Track if we started on existing selection (for click-to-deselect)
   const startedOnSelectionRef = useRef(false);
 
+  // Track drag in polygonal mode to switch back to freehand
+  const polygonalDragStartRef = useRef<SelectionPoint | null>(null);
+  const DRAG_THRESHOLD = 5; // pixels
+
+  // Track if mouse is currently pressed (for Alt release handling)
+  const isMouseDownRef = useRef(false);
+
   // Track Alt key state for real-time mode switching during selection
   const [altPressed, setAltPressed] = useState(false);
   // Track previous Alt state to detect transitions
   const prevAltRef = useRef(false);
+  // Use ref for immediate Alt state access in event handlers (avoids React state async delay)
+  const altPressedRef = useRef(false);
+
+  // Use ref to avoid stale closure in event handlers
+  const currentToolRef = useRef(currentTool);
+  currentToolRef.current = currentTool;
 
   // Listen for Alt key changes globally
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
+        const tool = currentToolRef.current;
+        console.log('[Lasso Debug] Alt KeyDown', {
+          currentTool: tool,
+          isSelecting: isSelectingRef.current,
+          lastPoint: lastPointRef.current,
+          prevAlt: prevAltRef.current,
+          isMouseDown: isMouseDownRef.current,
+        });
+
         // When Alt is pressed during lasso selection, anchor current position
         if (
-          currentTool === 'lasso' &&
+          tool === 'lasso' &&
           isSelectingRef.current &&
           lastPointRef.current &&
           !prevAltRef.current
         ) {
           // Add current mouse position as anchor point when entering polygonal mode
+          console.log('[Lasso Debug] Adding anchor point at', lastPointRef.current);
           addCreationPoint(lastPointRef.current);
         }
         prevAltRef.current = true;
+        altPressedRef.current = true;
         setAltPressed(true);
+        console.log('[Lasso Debug] altPressed set to true');
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
+        const tool = currentToolRef.current;
+        console.log('[Lasso Debug] Alt KeyUp', {
+          currentTool: tool,
+          isSelecting: isSelectingRef.current,
+          prevAlt: prevAltRef.current,
+          isMouseDown: isMouseDownRef.current,
+        });
+
+        // When releasing Alt during lasso selection:
+        // - If in polygonal mode (prevAlt=true) and actively selecting, commit the selection
+        // - This is the Photoshop behavior: release Alt = complete selection
+        if (tool === 'lasso' && isSelectingRef.current && prevAltRef.current) {
+          console.log('[Lasso Debug] Committing selection on Alt release');
+          const { width, height } = useDocumentStore.getState();
+          commitSelection(width, height);
+
+          // Reset all selection state
+          isSelectingRef.current = false;
+          startPointRef.current = null;
+          lastPointRef.current = null;
+          hasDraggedRef.current = false;
+          polygonalDragStartRef.current = null;
+          isMouseDownRef.current = false;
+        }
+
         prevAltRef.current = false;
+        altPressedRef.current = false;
         setAltPressed(false);
+        console.log('[Lasso Debug] altPressed set to false');
       }
     };
 
@@ -116,7 +169,7 @@ export function useSelectionHandler({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [currentTool, addCreationPoint]);
+  }, [addCreationPoint, commitSelection]);
 
   const isSelectionToolActive = currentTool === 'select' || currentTool === 'lasso';
 
@@ -127,17 +180,29 @@ export function useSelectionHandler({
     (canvasX: number, canvasY: number, e: PointerEvent | React.PointerEvent): boolean => {
       if (!isSelectionToolActive) return false;
 
+      // Track mouse down state for Alt release handling
+      isMouseDownRef.current = true;
+
       const point: SelectionPoint = { x: canvasX, y: canvasY };
       const isAltPressed = e.altKey;
+
+      console.log('[Lasso Debug] PointerDown', {
+        currentTool,
+        isAltPressed,
+        isCreating,
+        hasSelection,
+        point,
+      });
 
       // Reset drag tracking
       hasDraggedRef.current = false;
       startedOnSelectionRef.current = false;
 
-      // For lasso tool in polygonal mode (Alt held) while already creating, just add a vertex
+      // For lasso tool in polygonal mode (Alt held) while already creating
+      // Don't add point here - will be added in pointerUp to avoid duplicates
       if (currentTool === 'lasso' && isAltPressed && isCreating) {
-        addCreationPoint(point);
         lastPointRef.current = point;
+        polygonalDragStartRef.current = point; // Start tracking potential drag
         return true;
       }
 
@@ -177,7 +242,7 @@ export function useSelectionHandler({
   );
 
   const handleSelectionPointerMove = useCallback(
-    (canvasX: number, canvasY: number, e: PointerEvent | React.PointerEvent) => {
+    (canvasX: number, canvasY: number, _e: PointerEvent | React.PointerEvent) => {
       const point: SelectionPoint = { x: canvasX, y: canvasY };
 
       // Handle move mode
@@ -190,8 +255,6 @@ export function useSelectionHandler({
 
       if (!isSelectingRef.current || !startPointRef.current) return;
 
-      const isAltPressed = e.altKey;
-
       // Always update lastPointRef for tracking current mouse position
       lastPointRef.current = point;
 
@@ -200,20 +263,53 @@ export function useSelectionHandler({
         updateCreationRect(startPointRef.current, point);
       } else if (currentTool === 'lasso') {
         // Lasso tool: mode depends on Alt key state
-        if (isAltPressed) {
-          // Polygonal mode (Alt held): don't add points during move
-          // Points are added on click or when Alt is first pressed
+        // Use ref for immediate access (React state updates are async)
+        const isAltMode = altPressedRef.current;
+        if (isAltMode) {
+          // Polygonal mode behavior:
+          // 1. If mouse is DOWN (dragging), check if we should switch back to freehand
+          // 2. If mouse is UP (just moving), update preview line to follow cursor
+          if (isMouseDownRef.current) {
+            // Mouse is pressed - detect drag to switch back to freehand
+            if (!polygonalDragStartRef.current) {
+              // Record drag start position
+              polygonalDragStartRef.current = point;
+            } else {
+              // Check if drag exceeds threshold
+              const dx = point.x - polygonalDragStartRef.current.x;
+              const dy = point.y - polygonalDragStartRef.current.y;
+              const distance = Math.sqrt(dx * dx + dy * dy);
+
+              if (distance > DRAG_THRESHOLD) {
+                // Switch to freehand: add anchor point and start drawing
+                addCreationPoint(polygonalDragStartRef.current);
+                addCreationPoint(point);
+                polygonalDragStartRef.current = null;
+                // Note: altPressedRef is still true, but we're now in "freehand within polygonal" mode
+                // This allows mixed freehand+polygonal paths
+              }
+            }
+          } else {
+            // Mouse is not pressed - update preview line to follow cursor
+            updatePreviewPoint(point);
+            polygonalDragStartRef.current = null; // Reset drag tracking
+          }
         } else {
           // Freehand mode: accumulate points continuously
+          polygonalDragStartRef.current = null; // Reset drag tracking
+          updatePreviewPoint(null); // Clear preview point
           addCreationPoint(point);
         }
       }
     },
-    [currentTool, isMoving, updateMove, updateCreationRect, addCreationPoint]
+    [currentTool, isMoving, updateMove, updateCreationRect, addCreationPoint, updatePreviewPoint]
   );
 
   const handleSelectionPointerUp = useCallback(
     (canvasX: number, canvasY: number) => {
+      // Always reset mouse down state
+      isMouseDownRef.current = false;
+
       // Handle move mode completion
       if (isMoving) {
         const { width, height } = useDocumentStore.getState();
@@ -241,12 +337,13 @@ export function useSelectionHandler({
       const point: SelectionPoint = { x: canvasX, y: canvasY };
 
       // For lasso tool in polygonal mode (Alt pressed), don't commit yet
-      // User needs to release Alt and continue or double-click to finish
+      // User needs to release Alt to finish (handled in handleKeyUp)
       if (currentTool === 'lasso' && altPressed) {
         // Add the point as a vertex
         addCreationPoint(point);
         lastPointRef.current = point;
-        // Keep isSelectingRef true so user can continue in freehand when Alt released
+        polygonalDragStartRef.current = null; // Reset for next click
+        // Keep isSelectingRef true so user can continue
         return;
       }
 
@@ -257,6 +354,7 @@ export function useSelectionHandler({
       isSelectingRef.current = false;
       startPointRef.current = null;
       lastPointRef.current = null;
+      polygonalDragStartRef.current = null;
       hasDraggedRef.current = false;
       startedOnSelectionRef.current = false;
     },

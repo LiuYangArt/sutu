@@ -18,13 +18,16 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     hasSelection,
     selectionPath,
     creationPoints,
+    previewPoint,
     isCreating,
     marchingAntsOffset,
     updateMarchingAnts,
   } = useSelectionStore();
 
   // Get the path to render (either committed selection or creation in progress)
-  const pathToRender = isCreating ? creationPoints : selectionPath;
+  // Include preview point for polygonal mode
+  const basePath = isCreating ? creationPoints : selectionPath;
+  const pathToRender = isCreating && previewPoint ? [...basePath, previewPoint] : basePath;
   const shouldRender = hasSelection || (isCreating && pathToRender.length >= 2);
 
   // Track container size with ResizeObserver to match canvas buffer to display size

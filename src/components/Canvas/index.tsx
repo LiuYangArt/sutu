@@ -1376,6 +1376,11 @@ export function Canvas() {
 
         case 'AltLeft':
         case 'AltRight':
+          console.log('[Canvas Debug] Alt KeyDown', {
+            currentTool,
+            altPressed,
+            previousToolRef: previousToolRef.current,
+          });
           // Alt 键切换吸色工具仅对画笔和橡皮擦工具生效
           if (!altPressed && (currentTool === 'brush' || currentTool === 'eraser')) {
             // 如果正在绘制，先强制结束当前笔触
@@ -1385,6 +1390,7 @@ export function Canvas() {
             setAltPressed(true);
             previousToolRef.current = currentTool;
             setTool('eyedropper');
+            console.log('[Canvas Debug] Switched to eyedropper');
           }
           break;
 
@@ -1442,10 +1448,12 @@ export function Canvas() {
         panStartRef.current = null;
       }
 
-      // Release Alt: restore previous tool
+      // Release Alt: restore previous tool (only for brush/eraser eyedropper mode)
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
         setAltPressed(false);
-        if (previousToolRef.current) {
+        // Only restore if current tool is eyedropper (Alt was used for color picking)
+        // Don't interfere with lasso tool's Alt handling
+        if (previousToolRef.current && currentTool === 'eyedropper') {
           setTool(previousToolRef.current as ToolType);
           previousToolRef.current = null;
         }
