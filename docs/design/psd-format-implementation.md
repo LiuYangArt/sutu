@@ -156,25 +156,26 @@ src-tauri/src/file/psd/
 
 ### 4.2 代码使用情况
 
-| 文件 | 组件 | 状态 | 说明 |
-|------|------|------|------|
-| `writer.rs` | 整体 | ✅ 生产 | 完整的 PSD 写入功能 |
-| `reader.rs` | 整体 | ✅ 生产 | 使用外部 `psd` crate 实现读取 |
-| `compression.rs` | `packbits_encode()` | ✅ 生产 | 写入时压缩通道数据 |
-| `compression.rs` | `packbits_decode()` | 🔒 保留 | 供测试验证 + 未来自研读取 |
-| `compression.rs` | `CompressionError` | 🔒 保留 | 解压错误类型 |
-| `types.rs` | `ColorMode::Rgb` | ✅ 生产 | 写入 PSD header |
-| `types.rs` | `ColorMode` 其他变体 | 🔒 保留 | 完整规范定义，供未来扩展 |
-| `types.rs` | `PsdHeader::write()` | ✅ 生产 | 写入文件头 |
-| `types.rs` | `PsdHeader::SIZE` | 🔒 保留 | 测试验证用 |
-| `types.rs` | `ChannelInfo::write()` | ✅ 生产 | 写入通道信息 |
-| `types.rs` | `ChannelInfo::SIZE` | 🔒 保留 | 未来读取用 |
-| `types.rs` | `LayerFlags::to_byte()` | ✅ 生产 | 写入图层标志 |
-| `types.rs` | `LayerFlags::from_byte()` | 🔒 保留 | 未来自研读取用 |
-| `types.rs` | `ResolutionInfo::write()` | ✅ 生产 | 写入分辨率信息 |
-| `types.rs` | `ResolutionInfo::SIZE` | 🔒 保留 | 测试验证用 |
+| 文件             | 组件                      | 状态    | 说明                          |
+| ---------------- | ------------------------- | ------- | ----------------------------- |
+| `writer.rs`      | 整体                      | ✅ 生产 | 完整的 PSD 写入功能           |
+| `reader.rs`      | 整体                      | ✅ 生产 | 使用外部 `psd` crate 实现读取 |
+| `compression.rs` | `packbits_encode()`       | ✅ 生产 | 写入时压缩通道数据            |
+| `compression.rs` | `packbits_decode()`       | 🔒 保留 | 供测试验证 + 未来自研读取     |
+| `compression.rs` | `CompressionError`        | 🔒 保留 | 解压错误类型                  |
+| `types.rs`       | `ColorMode::Rgb`          | ✅ 生产 | 写入 PSD header               |
+| `types.rs`       | `ColorMode` 其他变体      | 🔒 保留 | 完整规范定义，供未来扩展      |
+| `types.rs`       | `PsdHeader::write()`      | ✅ 生产 | 写入文件头                    |
+| `types.rs`       | `PsdHeader::SIZE`         | 🔒 保留 | 测试验证用                    |
+| `types.rs`       | `ChannelInfo::write()`    | ✅ 生产 | 写入通道信息                  |
+| `types.rs`       | `ChannelInfo::SIZE`       | 🔒 保留 | 未来读取用                    |
+| `types.rs`       | `LayerFlags::to_byte()`   | ✅ 生产 | 写入图层标志                  |
+| `types.rs`       | `LayerFlags::from_byte()` | 🔒 保留 | 未来自研读取用                |
+| `types.rs`       | `ResolutionInfo::write()` | ✅ 生产 | 写入分辨率信息                |
+| `types.rs`       | `ResolutionInfo::SIZE`    | 🔒 保留 | 测试验证用                    |
 
 > **🔒 保留代码说明**: 标记为 `#[allow(dead_code)]` 的代码虽未在生产中直接调用，但有明确用途：
+>
 > 1. 测试覆盖（如 roundtrip 验证压缩算法）
 > 2. 规范完整性（如 `ColorMode` 枚举）
 > 3. 未来自研 PSD 读取功能预留
@@ -182,6 +183,7 @@ src-tauri/src/file/psd/
 ### 4.3 设计决策
 
 **PSD 读取策略**: 当前使用外部 `psd` crate 而非自研实现，原因：
+
 - `psd` crate 已处理大量边缘情况和兼容性问题
 - 自研读取器的 ROI 不高，写入功能更重要
 - 保留 `packbits_decode()` 和 `from_byte()` 等代码，以便未来需要时可快速切换到自研实现
@@ -220,8 +222,11 @@ src-tauri/src/file/psd/
 - [ ] **图层组 (Layer Groups)**:
   - 实现 `lsct` (Section Divider Setting) 的解析与写入，以支持嵌套的图层组结构。
   - 目前 PaintBoard 将图层处理为线性结构，完善图层组需要配合前端 `useDocumentStore` 的树状结构改造。
-- [ ] **性能优化**:
-  - **IPC 传输优化**: 目前 `commands.rs` 将图层数据转为 Base64 字符串传递给前端，这在处理大文件时并不高效。应探索 Tauri 的 Binary IPC 或 Shared ArrayBuffer 方案。
+- [ ] **性能优化 (Performance Optimization)**:
+  - **Custom Protocol 传输 (参考 `docs/design/file-io-optimization.md`)**:
+    - 目前 `commands.rs` 将图层数据转为 Base64 字符串传递给前端，导致内存和解析瓶颈。
+    - **新方案**: 采用自定义协议 (`project://`) + 无损 WebP 格式。
+    - 后端解析 PSD 获取 RGBA -> 编码为 WebP -> 浏览器通过网络线程直接请求 `project://layer/{id}` 加载，实现零 JS 主线程阻塞。
   - **图层边界裁剪 (Trim Bounds)**: 导出时计算每个图层的实际有效像素范围 (Bounding Box)，而非总是保存全画布尺寸。这将显著减小文件体积并提升保存速度。
 - [ ] **色彩管理**:
   - 支持 ICC Profile 的读写 (Image Resource ID `0x040F`)，确保跨软件的色彩一致性。
