@@ -482,6 +482,13 @@ use crate::brush::soft_dab::{render_soft_dab, GaussParams};
 
 use crate::abr::{AbrParser, BrushPreset};
 
+// ============================================================================
+// File Format Support (ORA, TIFF)
+// ============================================================================
+
+use crate::file::{FileFormat, FileOperationResult, ProjectData};
+use std::path::Path;
+
 /// Dirty rectangle from soft dab rendering
 pub type SoftDabResult = (Vec<u8>, (usize, usize, usize, usize));
 
@@ -559,6 +566,77 @@ pub async fn import_abr_file(path: String) -> Result<Vec<BrushPreset>, String> {
     let presets: Vec<BrushPreset> = abr_file.brushes.into_iter().map(|b| b.into()).collect();
 
     Ok(presets)
+}
+
+// ============================================================================
+// File Save/Load Commands
+// ============================================================================
+
+/// Save project to file (ORA or TIFF format)
+#[tauri::command]
+pub async fn save_project(
+    path: String,
+    format: FileFormat,
+    project: ProjectData,
+) -> Result<FileOperationResult, String> {
+    tracing::info!("Saving project to: {} (format: {:?})", path, format);
+
+    let path_ref = Path::new(&path);
+
+    let result = match format {
+        FileFormat::Ora => crate::file::ora::save_ora(path_ref, &project),
+        FileFormat::Tiff => crate::file::tiff::save_tiff(path_ref, &project),
+    };
+
+    match result {
+        Ok(()) => {
+            tracing::info!("Project saved successfully: {}", path);
+            Ok(FileOperationResult::success(path))
+        }
+        Err(e) => {
+            tracing::error!("Failed to save project: {}", e);
+            Ok(FileOperationResult::error(e.to_string()))
+        }
+    }
+}
+
+/// Load project from file (auto-detects format from extension)
+#[tauri::command]
+pub async fn load_project(path: String) -> Result<ProjectData, String> {
+    tracing::info!("Loading project from: {}", path);
+
+    let path_ref = Path::new(&path);
+
+    // Auto-detect format from extension
+    let format =
+        FileFormat::from_path(&path).ok_or_else(|| format!("Unknown file format: {}", path))?;
+
+    let result = match format {
+        FileFormat::Ora => crate::file::ora::load_ora(path_ref),
+        FileFormat::Tiff => crate::file::tiff::load_tiff(path_ref),
+    };
+
+    match result {
+        Ok(project) => {
+            tracing::info!(
+                "Project loaded: {}x{}, {} layers",
+                project.width,
+                project.height,
+                project.layers.len()
+            );
+            Ok(project)
+        }
+        Err(e) => {
+            tracing::error!("Failed to load project: {}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Detect file format from path extension
+#[tauri::command]
+pub fn detect_file_format(path: String) -> Option<FileFormat> {
+    FileFormat::from_path(&path)
 }
 
 #[cfg(test)]

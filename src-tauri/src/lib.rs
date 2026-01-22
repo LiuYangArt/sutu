@@ -5,6 +5,7 @@
 pub mod abr;
 pub mod brush;
 pub mod commands;
+pub mod file;
 pub mod input;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -47,6 +48,10 @@ pub fn run() {
             commands::push_pointer_event,
             commands::stamp_soft_dab,
             commands::import_abr_file,
+            // File operations
+            commands::save_project,
+            commands::load_project,
+            commands::detect_file_format,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

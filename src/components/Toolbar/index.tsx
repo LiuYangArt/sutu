@@ -9,6 +9,7 @@ import {
   Settings,
   LayoutGrid,
   Save,
+  FolderOpen,
   LogOut,
   ChevronRight,
   Eye,
@@ -20,6 +21,8 @@ import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { usePanelStore } from '@/stores/panel';
 import { useSettingsStore } from '@/stores/settings';
+import { useFileStore } from '@/stores/file';
+import { useDocumentStore } from '@/stores/document';
 import './Toolbar.css';
 
 /** Common icon props for toolbar icons */
@@ -60,6 +63,13 @@ function AppMenu() {
   // Settings
   const openSettings = useSettingsStore((s) => s.openSettings);
 
+  // File operations
+  const fileSave = useFileStore((s) => s.save);
+  const fileOpen = useFileStore((s) => s.open);
+  const isSaving = useFileStore((s) => s.isSaving);
+  const isLoading = useFileStore((s) => s.isLoading);
+  const isDirty = useDocumentStore((s) => s.isDirty);
+
   // Close menu when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -87,6 +97,21 @@ function AppMenu() {
     openSettings();
   };
 
+  const handleOpen = async () => {
+    setIsOpen(false);
+    await fileOpen();
+  };
+
+  const handleSave = async () => {
+    setIsOpen(false);
+    await fileSave(false);
+  };
+
+  const handleSaveAs = async () => {
+    setIsOpen(false);
+    await fileSave(true);
+  };
+
   return (
     <div className="app-menu" ref={menuRef}>
       <button className="menu-btn" onClick={() => setIsOpen(!isOpen)} title="Menu">
@@ -95,6 +120,26 @@ function AppMenu() {
 
       {isOpen && (
         <div className="menu-dropdown">
+          <button className="menu-item" onClick={handleOpen} disabled={isLoading}>
+            <FolderOpen size={16} />
+            <span>Open</span>
+            <span className="shortcut">Ctrl+O</span>
+          </button>
+
+          <button className="menu-item" onClick={handleSave} disabled={isSaving}>
+            <Save size={16} />
+            <span>Save{isDirty ? ' *' : ''}</span>
+            <span className="shortcut">Ctrl+S</span>
+          </button>
+
+          <button className="menu-item" onClick={handleSaveAs} disabled={isSaving}>
+            <Save size={16} />
+            <span>Save As...</span>
+            <span className="shortcut">Ctrl+Shift+S</span>
+          </button>
+
+          <div className="menu-divider" />
+
           <button className="menu-item" onClick={handleOpenSettings}>
             <Settings size={16} />
             <span>Settings</span>
@@ -120,11 +165,6 @@ function AppMenu() {
           </div>
 
           <div className="menu-divider" />
-
-          <button className="menu-item" onClick={() => setIsOpen(false)}>
-            <Save size={16} />
-            <span>Save</span>
-          </button>
 
           <button className="menu-item" onClick={() => setIsOpen(false)}>
             <LogOut size={16} />

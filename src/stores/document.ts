@@ -34,11 +34,18 @@ export type BlendMode =
   | 'color'
   | 'luminosity';
 
+export type FileFormat = 'ora' | 'tiff';
+
 interface DocumentState {
   // Document properties
   width: number;
   height: number;
   dpi: number;
+
+  // File management
+  filePath: string | null;
+  fileFormat: FileFormat | null;
+  isDirty: boolean;
 
   // Layers
   layers: Layer[];
@@ -60,6 +67,11 @@ interface DocumentState {
   renameLayer: (id: string, name: string) => void;
   updateLayerThumbnail: (id: string, thumbnail: string) => void;
   moveLayer: (id: string, toIndex: number) => void;
+
+  // File management actions
+  setFilePath: (path: string | null, format: FileFormat | null) => void;
+  setDirty: (dirty: boolean) => void;
+  markDirty: () => void;
 }
 
 // Helper to generate unique IDs
@@ -70,6 +82,9 @@ const initialState = {
   width: 4000,
   height: 3000,
   dpi: 72,
+  filePath: null as string | null,
+  fileFormat: null as FileFormat | null,
+  isDirty: false,
   layers: [] as Layer[],
   activeLayerId: null as string | null,
 };
@@ -224,6 +239,26 @@ export const useDocumentStore = create<DocumentState>()(
         if (layer) {
           state.layers.splice(toIndex, 0, layer);
         }
+      }),
+
+    // File management actions
+    setFilePath: (path, format) =>
+      set((state) => {
+        state.filePath = path;
+        state.fileFormat = format;
+        if (path) {
+          state.isDirty = false;
+        }
+      }),
+
+    setDirty: (dirty) =>
+      set((state) => {
+        state.isDirty = dirty;
+      }),
+
+    markDirty: () =>
+      set((state) => {
+        state.isDirty = true;
       }),
   }))
 );

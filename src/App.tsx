@@ -6,6 +6,7 @@ import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
 import { useToolStore } from './stores/tool';
 import { useSettingsStore, initializeSettings } from './stores/settings';
+import { useFileStore } from './stores/file';
 import { LeftToolbar, RightPanel } from './components/SidePanel';
 import { PanelLayer } from './components/UI/PanelLayer';
 import { usePanelStore } from './stores/panel';
@@ -49,12 +50,29 @@ function App() {
   }, []);
 
   // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill), F5 (brush panel), Ctrl+Alt+Shift+U (settings)
+  // File shortcuts: Ctrl+S (save), Ctrl+Shift+S (save as), Ctrl+O (open)
   const togglePanel = usePanelStore((s) => s.togglePanel);
   const isSettingsOpen = useSettingsStore((s) => s.isOpen);
   const openSettings = useSettingsStore((s) => s.openSettings);
   const closeSettings = useSettingsStore((s) => s.closeSettings);
+  const fileSave = useFileStore((s) => s.save);
+  const fileOpen = useFileStore((s) => s.open);
   const handleDrawingShortcuts = useCallback(
     (e: KeyboardEvent) => {
+      // Ctrl+S: Save / Ctrl+Shift+S: Save As
+      if (e.ctrlKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        fileSave(e.shiftKey); // shiftKey = saveAs
+        return;
+      }
+
+      // Ctrl+O: Open
+      if (e.ctrlKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        fileOpen();
+        return;
+      }
+
       // Ctrl+Alt+Shift+U: Toggle settings panel
       if (e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === 'u') {
         e.preventDefault();
@@ -106,7 +124,7 @@ function App() {
         return;
       }
     },
-    [togglePanel, isSettingsOpen, openSettings, closeSettings]
+    [togglePanel, isSettingsOpen, openSettings, closeSettings, fileSave, fileOpen]
   );
 
   useEffect(() => {

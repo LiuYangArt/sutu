@@ -46,6 +46,12 @@ base64 = "0.22"
 # PSD file support
 psd = "0.3"
 
+# File format support (ORA, TIFF)
+zip = { version = "2.1", default-features = false, features = ["deflate"] }
+quick-xml = { version = "0.31", features = ["serialize"] }
+tiff = "0.9"
+rayon = "1.10"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 

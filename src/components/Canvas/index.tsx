@@ -28,6 +28,11 @@ declare global {
       onStrokeEnd: () => void;
     };
     __canvasFillLayer?: (color: string) => void;
+    // File save/load interfaces
+    __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
+    __getFlattenedImage?: () => Promise<string | undefined>;
+    __getThumbnail?: () => Promise<string | undefined>;
+    __loadLayerImages?: (layers: Array<{ id: string; imageData?: string }>) => Promise<void>;
   }
 }
 
@@ -328,6 +333,91 @@ export function Canvas() {
       delete window.__canvasFillLayer;
     };
   }, [fillActiveLayer]);
+
+  // Expose layer data export interfaces for file save/load
+  useEffect(() => {
+    // Get single layer image data as Base64 PNG data URL
+    window.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
+      if (!layerRendererRef.current) return undefined;
+      const layer = layerRendererRef.current.getLayer(layerId);
+      if (!layer) return undefined;
+
+      // Export canvas as PNG data URL
+      return layer.canvas.toDataURL('image/png');
+    };
+
+    // Get flattened (composited) image
+    window.__getFlattenedImage = async (): Promise<string | undefined> => {
+      if (!layerRendererRef.current) return undefined;
+      const compositeCanvas = layerRendererRef.current.composite();
+      return compositeCanvas.toDataURL('image/png');
+    };
+
+    // Get thumbnail (256x256)
+    window.__getThumbnail = async (): Promise<string | undefined> => {
+      if (!layerRendererRef.current) return undefined;
+      const compositeCanvas = layerRendererRef.current.composite();
+
+      // Create thumbnail canvas
+      const thumbCanvas = document.createElement('canvas');
+      thumbCanvas.width = 256;
+      thumbCanvas.height = 256;
+      const ctx = thumbCanvas.getContext('2d');
+      if (!ctx) return undefined;
+
+      // Scale to fit 256x256 maintaining aspect ratio
+      const scale = Math.min(256 / compositeCanvas.width, 256 / compositeCanvas.height);
+      const w = compositeCanvas.width * scale;
+      const h = compositeCanvas.height * scale;
+      const x = (256 - w) / 2;
+      const y = (256 - h) / 2;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 256, 256);
+      ctx.drawImage(compositeCanvas, x, y, w, h);
+
+      return thumbCanvas.toDataURL('image/png');
+    };
+
+    // Load layer images when opening a file
+    window.__loadLayerImages = async (
+      layersData: Array<{ id: string; imageData?: string }>
+    ): Promise<void> => {
+      if (!layerRendererRef.current) return;
+
+      for (const layerData of layersData) {
+        if (!layerData.imageData) continue;
+
+        const layer = layerRendererRef.current.getLayer(layerData.id);
+        if (!layer) continue;
+
+        // Load image from base64
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => {
+            layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+            layer.ctx.drawImage(img, 0, 0);
+            resolve();
+          };
+          img.onerror = reject;
+          // Handle both with and without data URL prefix
+          img.src = layerData.imageData!.startsWith('data:')
+            ? layerData.imageData!
+            : `data:image/png;base64,${layerData.imageData}`;
+        });
+      }
+
+      // Trigger re-render
+      compositeAndRender();
+    };
+
+    return () => {
+      delete window.__getLayerImageData;
+      delete window.__getFlattenedImage;
+      delete window.__getThumbnail;
+      delete window.__loadLayerImages;
+    };
+  }, [compositeAndRender]);
 
   // Update layer thumbnail
   const updateThumbnail = useCallback(
