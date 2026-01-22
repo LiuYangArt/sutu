@@ -11,12 +11,14 @@
 
 所有文件读写操作将在 **Rust 后端** (`src-tauri`) 完成，以利用 Rust 强大的二进制处理能力和并发性能。
 
-| 功能           | OpenRaster (.ora)      | TIFF (.tiff)                 |
-| :------------- | :--------------------- | :--------------------------- |
-| **容器/压缩**  | `zip` crate (Deflate)  | `tiff` crate / `image` crate |
-| **元数据解析** | `quick-xml` (读写 XML) | 自定义 TIFF Tag (存储 JSON)  |
-| **图像编解码** | `image` crate (PNG)    | `image` crate (TIFF Encoder) |
-| **序列化**     | `serde`, `serde_json`  | `serde`, `serde_json`        |
+| 功能           | OpenRaster (.ora)      | TIFF (.tiff)                 | PSD (.psd)                  |
+| :------------- | :--------------------- | :--------------------------- | :-------------------------- |
+| **容器/压缩**  | `zip` crate (Deflate)  | `tiff` crate / `image` crate | Custom / RLE (PackBits)     |
+| **元数据解析** | `quick-xml` (读写 XML) | 自定义 TIFF Tag (存储 JSON)  | Binary Parsing (Big Endian) |
+| **图像编解码** | `image` crate (PNG)    | `image` crate (TIFF Encoder) | Custom Raw Channel Writer   |
+| **序列化**     | `serde`, `serde_json`  | `serde`, `serde_json`        | Custom Binary Serializer    |
+
+> **注意**: PSD 的详细实现方案请参阅 [PSD Implementaion Design](./psd-format-implementation.md)。
 
 ---
 
