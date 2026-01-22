@@ -34,23 +34,33 @@
     - **动作**: 使用更快的压缩设置或格式进行 IPC 传输，或者如果可能的话跳过 PNG 编码（尽管原始 RGBA 数据量巨大）。
     - **替代方案**: 使用 `FAST` 压缩预设进行 PNG 编码，而非默认设置。
 
-### 第二阶段：架构重构 (推荐)
+### 第二阶段：架构重构 (深度优化 - 推荐)
 
-目标: 所有格式，大文件
+目标: 所有格式，大文件，**零 JS 主线程阻塞**。
 
-1.  **分离元数据与图像数据 (懒加载)**:
-    - **逻辑**: `load_project` 仅返回 `ProjectMetadata` (尺寸, 图层信息, IDs)，_不包含_ 图像数据。
-    - **UI**: 前端立即显示图层列表和占位符。
-    - **获取**: 前端单独请求图层图像 (例如: `get_layer_image(layer_id)`)。
+1.  **采用自定义协议 (Custom Protocol) - _核心变更_**:
+    - **现状**: `Rust -> Base64/IPC -> JS String -> Image Object`。路径长，内存占用双倍，阻塞主线程。
+    - **新方案**: 注册 `project://` 协议 (Tauri `uri_scheme`)。
+    - **流程**:
+      1.  Rust 解析文件，将图层数据缓存在内存 (HashMap) 或临时文件。
+      2.  前端 `<img src="project://layer/{id}.png" />`。
+      3.  浏览器网络线程直接请求 Rust，Rust 返回二进制流。
+    - **收益**: **零 JS 开销**，利用浏览器原生图像解码，支持流式传输和缓存。
 
-2.  **二进制数据传输**:
-    - **动作**: 停止在 JSON 中使用 Base64。
-    - **方法**:
-      - 使用 Tauri 2.0 高效的二进制命令通道 (如果可用且稳定)。
-      - 或者返回 `Vec<u8>`，Tauri 会将其作为字节数组处理 (v1 中仍有 JSON 开销，但 v2 中更好)。
+2.  **PSD 优化策略 (WebP/LZ4)**:
+    - **放弃 QOI**: 浏览器原生不支持 QOI，JS/WASM 解码会阻塞 UI 线程。
+    - **新策略 (配合自定义协议)**:
+      - Rust 解析 PSD -> RGBA。
+      - 编码为 **无损 WebP (Lossless WebP)** (编码速度快于 PNG，浏览器原生支持)。
+      - 通过 `project://` 协议直接返回 WebP 数据。
+    - **替代策略 (WebGL)**: 如果是 WebGL 渲染，可使用 LZ4 压缩原始数据，前端 WASM 极速解压上传 GPU。
 
-3.  **并行化**:
-    - 图层可以并行加载，更有效地利用后端的多线程特性。
+3.  **缩略图优先与懒加载**:
+    - `load_project` 仅返回图层树结构 + **微型缩略图** (Base64, ~64px)。
+    - 前端利用 `IntersectionObserver` 监听视口，仅当图层可见时通过 `project://` 加载高清大图。
+
+4.  **并行化**:
+    - 图层数据解析与转换在 Rust 端并行执行 (Rayon)。
 
 ## 3. 实现计划 (第一阶段)
 
@@ -68,9 +78,9 @@ layer.image_data = Some(BASE64.encode(&img_data));
 
 **文件**: `src-tauri/src/file/psd/reader.rs`
 
-对于 PSD，我们仍然只有原始 RGBA 数据。生成 PNG 很慢。
-**选项**: 使用 `qoi` (Quite OK Image Format) 进行 IPC 传输？它的编码速度极快，且在 JS 端解码也很快 (通过 WASM 或简单的 JS 解析器)。
-**选项**: 如果 IPC 通道支持高效传输，则发送原始 RGBA 字节。
+对于 PSD，我们仍然只有原始 RGBA 数据。
+**调整**: 既然最终我们要上自定义协议，第一阶段先维持 "RGBA -> PNG (Fast Config) -> Base64"。
+**后续**: 在第二阶段直接切换到 `RGBA -> WebP -> Custom Protocol`。
 
 ## 4. 验证
 
