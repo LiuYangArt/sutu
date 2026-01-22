@@ -197,6 +197,7 @@ export function Canvas() {
           cursorBounds: brushTexture.cursorBounds,
         }
       : null,
+    canvasRef,
   });
 
   const { pushStroke, pushAddLayer, pushRemoveLayer, undo, redo } = useHistoryStore();
