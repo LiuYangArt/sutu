@@ -1,4 +1,6 @@
-# Rust 笔刷引擎回归方案 (The Rust Brush Engine Revival)
+# Rust 笔刷引擎回归方案 v2.1 (The Rust Brush Engine Revival)
+
+> **基于 Review 反馈的优化版本**: 针对原方案中 `project://` 流式传输可能存在的延迟风险，本方案引入了更稳健的传输层候选项，并制定了基准测试计划。
 
 ## 1. 背景与回顾
 
@@ -7,27 +9,22 @@
 在项目的早期架构设计中，我们尝试过 `Input (Rust) -> Process (Rust) -> IPC -> Render (Frontend)` 的方案。
 当时被废弃并降级为 "Frontend-First" 架构的主要原因是：
 
-1.  **IPC 序列化开销**: 如果通过标准的 Tauri Event 发送 JSON 数据，由于 Base64 编码和 JSON 序列化/反序列化，导致了严重的 CPU 消耗和延迟。
-2.  **主线程阻塞**: 大量的 IPC 消息涌入 JS 主线程，导致事件循环拥堵，渲染帧率下降。
-3.  **延迟**: 无法满足 <12ms 的端到端延迟目标。
+1.  **IPC 序列化开销**: 标准 Tauri Event 发送 JSON 数据会导致严重的 CPU 消耗（序列化/Base64）和延迟。
+2.  **主线程阻塞**: 大量消息涌入 JS 主线程，导致事件循环拥堵。
 
 ### 1.2 新的契机
 
-近期在 `docs/design/file-io-optimization.md` 和 `docs/design/abr-loading-optimization.md` 中，我们成功实现了基于 **自定义协议 (`project://`)** 的高效二进制传输机制。
-这为我们重新引入 Rust 笔刷引擎提供了关键的基础设施：**高速的二进制数据通道**。
+随着 **Tauri v2** 的发布以及我们在文件 IO 优化中积累的**二进制传输**经验，我们现在有机会构建一条**高效、零拷贝（或近零拷贝）的二进制高速公路**，从而重新引入 Rust 笔刷引擎。
 
-## 2. 核心价值：为什么我们需要 Rust 引擎？
+## 2. 核心价值
 
-尽管前端 TS 引擎已经能工作，但在某些场景下仍然存在瓶颈：
+1.  **性能**: 解锁 Rust SIMD 计算能力（用于湿边、涂抹、物理模拟）。
+2.  **零 GC**: 消除 JS 端频繁创建临时对象引发的垃圾回收抖动。
+3.  **输入稳定性**: 操作系统级输入直接在 Rust 消费，减少抖动。
 
-1.  **复杂计算性能**: 对于 "Wet Edges" (湿边)、"Smudge" (涂抹) 等需要大量像素级读写或复杂数学运算（如流体模拟、贝塞尔高阶拟合）的效果，JS (即便 V8 优化) 仍不如 Rust SIMD 高效。
-2.  **GC 压力**: TS 引擎在高频笔触下会创建大量临时对象 (Points, Dabs context)，导致 GC 抖动。Rust 可以做到零 GC。
-3.  **输入稳定性**: 操作系统级输入 (`octotablet`) 直接在 Rust 消费，避免了 `Rust -> IPC -> JS` 这第一层转发的抖动。
-4.  **并行化潜力**: Rust 引擎可以无缝利用 `Rayon` 进行多线程计算（例如同时计算粒子系统的物理模拟）。
+## 3. 架构设计 v2.1：流式混合引擎 (Streaming Hybrid Engine)
 
-## 3. 架构设计：基于流式传输的 Hybrid Engine 2.0
-
-我们将不再使用简单的 "Tauri Events" 来推送笔刷数据，而是建立一条 **独占的二进制笔刷流 (Binary Brush Stream)**。
+我们不再依赖单一的 `project://` 请求响应模式，而是构建一个**真正的流式管线**。
 
 ### 3.1 数据流图
 
@@ -37,131 +34,118 @@ graph LR
 
     subgraph "Rust Backend (High Performance)"
         RustInput -->|Raw Points| RustEngine[Rust Brush Engine]
-        RustEngine -->|SIMD/Math| Dabs[Dab Buffer (Ring)]
+        RustEngine -->|SIMD/Math| Batcher[Batching System]
+        Batcher -->|Flush Criteria| Transport[Transport Layer]
     end
 
-    subgraph "Transport (The Tunnel)"
-        Dabs -->|Streaming| CustomProto[project://brush-stream]
+    subgraph "The Tunnel (Pluggable)"
+        Transport -.->|Candidate A| IPC[Tauri v2 Channel]
+        Transport -.->|Candidate B| WS[WebSocket (Localhost)]
+        Transport -.->|Candidate C| Proto[Custom Protocol Stream]
     end
 
     subgraph "Frontend (WebGPU)"
-        CustomProto -->|ReadableStream| JSReader[Stream Reader (Worker)]
-        JSReader -->|Float32Array| GPU[WebGPU Stroke Buffer]
+        IPC & WS & Proto -->|Binary Bytes| Receiver[Receiver Worker]
+        Receiver -->|Ring Buffer| Queue[Dab Queue]
+        Queue -->|Float32Array| GPU[WebGPU Stroke Buffer]
     end
 ```
 
-### 3.2 关键技术点
+### 3.2 关键技术优化
 
-#### A. 自定义协议流 (The Stream)
+#### A. 紧凑数据结构 (Packed Data)
 
-不同于文件加载的 "一次性请求"，笔刷流是一个 **长连接 (Long-lived Connection)**。
-
-1.  **前端**: 发起请求 `const response = await fetch('project://stream/brush-events', { method: 'POST' });`
-2.  **后端**:
-    - 接收请求后，**不立即关闭连接**。
-    - 持有一个 `mpsc::Receiver` 或 `RingBuffer` 读取端。
-    - 当 Rust 引擎生成新的 Dabs 时，通过 HTTP `Chunked Transfer Encoding` (或 Tauri 的流式响应接口) 将二进制数据写入 Response Body。
-3.  **传输格式**:
-    - 纯二进制结构体 (Packed Setup)。
-    - **不进行 JSON 序列化**。
-    - **不进行 Base64 编码**。
-
-**数据包结构 (示例)**:
+为了最大化传输效率并方便 WebGPU 直接读取（对齐 `vec4`），我们定义紧凑的二进制结构：
 
 ```rust
-#[repr(C)] // 保证内存布局一致
+#[repr(C)]
 struct DabPacket {
-    x: f32,
-    y: f32,
-    size: f32,
-    opacity: f32, // 0.0-1.0
-    rotation: f32, // Radians
-    tex_index: u32,
-    // total 24 bytes per dab
+    x: f32,       // 4 bytes
+    y: f32,       // 4 bytes
+    size: f32,    // 4 bytes
+    // 压缩字段：将 rotation 和 opacity 压缩为 u16
+    rotation: u16, // 2 bytes (0-65535 映射 0-2PI)
+    opacity: u16,  // 2 bytes (0-65535 映射 0.0-1.0)
+    tex_index: u32,// 4 bytes
+    padding: u32   // 4 bytes (凑齐 24 bytes 或 32 bytes 对齐)
 }
 ```
 
-#### B. 共享内存 (备选方案)
+#### B. 批量发送策略 (Batching Strategy)
 
-如果 `project://` 流式传输存在 HTTP 协议头开销或 Tauri 实现限制，备选方案是使用 **Shared Memory (Mapped Buffer)**。
-_(注意：Tauri v2 本身不直接暴露 SharedBuffer 给 Webview，通常需要 native 插件支持，因此优先尝试 Stream 方案，若延迟不达标则回退到 Binary Payload Event)_。
+单点发送会导致过多的 Context Switch。我们需要一个智能的 Batcher：
 
-**Tauri 2.0 Binary Channel 优化**:
-Tauri v2 的 IPC (`Event`) 已经支持 `Uint8Array` 直接透传（Zero-copy 优化）。如果流式 HTTP 过于复杂，我们可以直接使用 `emit('brush-data', bytes)`。现在的关键区别是我们发送的是 **Compact Binary Bytes** 而不是 JSON 对象。
+- **缓冲区**: `Vec<DabPacket>`
+- **Flush 条件 A**: 缓冲区满 N 个点（如 16 个）。
+- **Flush 条件 B**: 距离上次 Flush 超过 T 毫秒（如 4ms，对应 240Hz）。
 
-### 3.3 混合模式策略
+#### C. 前端解耦 (Decoupling)
 
-我们将保留 JS 引擎作为 "即时反馈" 或 "轻量级" 选项吗？
-建议策略：**完全切换 (Full Switch)**。
-为了维护简便性，一旦 Rust 引擎就绪，除了极简单的 UI 交互（如光标跟随），实际的笔触生成逻辑应完全下沉至 Rust。
+前端接收网络数据和渲染必须解耦，使用 **Ring Buffer** 模式：
 
-## 4. 详细设计方案
+1. **Worker**: 收到二进制包 -> 写入 Ring Buffer (仅内存拷贝)。
+2. **Main Loop**: `requestAnimationFrame` -> 从 Ring Buffer 读取当前所有可用数据 -> 一次性上传 GPU。
 
-### 4.1 Rust 端 (`src-tauri/src/brush_engine/`)
+## 4. 传输协议基准测试计划 (Benchmark Plan)
 
-1.  **StrokeAccumulator**: 接收 RawInput，累积并进行贝塞尔插值。
-2.  **Dynamics**: 应用压力曲线、倾斜映射（复用现有逻辑，但移至 Rust）。
-3.  **Streamer**:
-    - 维护一个 `Vec<u8>` 缓冲区。
-    - 达到阈值（如 10个 dabs 或 5ms 超时）即 flush 到传输通道。
+鉴于 Review 中指出的 `project://` 流式传输风险（浏览器缓冲、线头阻塞），我们需要通过实测选出最佳方案。
 
-```rust
-// 伪代码
-fn process_input(input: RawInputPoint) {
-    let dabs = engine.compute_dabs(input);
-    let bytes = dabs.to_bytes(); // Direct memory copy
-    stream_channel.send(bytes);
-}
+### 4.1 候选协议
 
-// 协议处理器
-fn brush_stream_handler(req: Request) -> Response {
-    let (tx, body) = StreamBody::new();
-    GLOBAL_STREAM_TX.set(tx);
-    Response::new(body)
-}
-```
+| 协议                          | 描述                                         | 优势                                         | 劣势/风险                                           |
+| :---------------------------- | :------------------------------------------- | :------------------------------------------- | :-------------------------------------------------- |
+| **A. Tauri v2 IPC Channel**   | 使用 Tauri `Event` 或 `Channel` 发送 `Bytes` | 原生集成，无需额外端口，v2 有 Zero-copy 优化 | 仍经过 IPC 层，可能受限于消息队列长度               |
+| **B. WebSocket (Local)**      | Rust 启动 `ws://127.0.0.1` 服务              | 极其成熟，低延迟，浏览器原生支持二进制帧     | 需要管理额外端口，防火墙/权限隐患                   |
+| **C. Custom Protocol Stream** | `fetch('project://stream')`                  | 复用现有基础设施，无跨域问题                 | **高风险**: 浏览器 fetch 缓冲不可控，可能导致微卡顿 |
 
-### 4.2 前端端 (`src/brush/RemoteEngine.ts`)
+### 4.2 测试方法
 
-1.  **Stream Reader**:
-    ```typescript
-    const reader = response.body.getReader();
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      // value is Uint8Array
-      // 直接创建 Float32Array 视图，无需解析
-      const dabs = new Float32Array(value.buffer);
-      gpuRenderer.upload(dabs);
-    }
-    ```
-2.  **Web Worker**: 建议将 Reader 放入 Web Worker，避免主线程任何可能的 IO 阻塞。
+**目标**: 模拟高频笔刷输入，测量“端到端延迟”和“传输抖动”。
 
-## 5. 预期收益与风险
+**测试工具**: 开发一个独立的 Benchmark 模块（不依赖绘图逻辑）。
 
-### 收益
+**测试步骤**:
 
-1.  **性能**: CPU 占用预期下降 40% (去除 JS 逻辑和 JSON 序列化)。
-2.  **功能上限**: 解锁 Rust 生态的数学库 (nalgebra, parry) 用于实现高级笔刷物理效果。
-3.  **代码复用**: 笔刷逻辑可以与未来可能的 iPad/Android 原生版本共享 (通过 Rust)。
+1.  **发送端 (Rust)**:
+    - 以 **120Hz** 和 **240Hz** 的频率发送固定大小的数据包（模拟 Dab Batch）。
+    - 每个数据包包含发送时的**高精度时间戳 (Rust Instant)**。
+2.  **接收端 (Frontend)**:
+    - 收到数据包后，记录当前时间 (`performance.now()`)。
+    - 计算 **Delta** (需先进行时钟同步，或仅计算 Round-Trip Time)。
+    - **更佳方案 (RTT)**: 前端收到后立即回传一个 ACK 包，Rust 端计算 RTT。
 
-### 风险
+**关键指标**:
 
-1.  **实现复杂度**: 调试 "二进制流" 比调试 JSON 困难得多。需要开发专用的调试工具 (Hex Viewer / Visualizer)。
-2.  **Tauri 限制**: 需确认 Tauri 的 Custom Protocol Response 是否完美支持无限长度的 Chunked Stream 且不缓存导致内存泄漏。
+1.  **Average RTT**: 平均往返时延 (越低越好，目标 < 4ms)。
+2.  **Jitter (Std Dev)**: 时延标准差 (越小越好，决定是否跟手)。
+3.  **Max Latency**: 最大时延 (检测长尾卡顿)。
+4.  **Throughput**: 极限吞吐量 (MB/s)。
 
-## 6. 实施路线图
+### 4.3 实施计划
 
-1.  **原型验证 (PoC)**:
-    - 编写一个简单的 `project://stream/test`，后端死循环发送计数器字节。
-    - 前端读取并打印，测量延迟和频率。
-2.  **Rust 引擎移植**:
-    - 将 `BrushStamper.ts` 中的 间距/抖动 逻辑移植回 Rust。
-3.  **协议对接**:
-    - 连接 Input -> Engine -> Stream。
-4.  **前端渲染对接**:
-    - 修改 `WebGPURenderer` 接受 `Float32Array` 形式的 Dab 列表。
+1.  **Step 1: 搭建 Benchmark 环境**
+    - 创建 `src-tauri/src/bench/` 模块。
+    - 实现三种传输方式的最小化 Demo。
+2.  **Step 2: 运行测试**
+    - 在不同配置机器上运行。
+    - 特别关注低端机表现。
+3.  **Step 3: 选型**
+    - 根据数据选择最终方案（预计 WebSocket 或 Tauri IPC 胜出）。
 
-## 7. 结论
+## 5. 实施路线图 (Roadmap)
 
-利用现有的 `project://` 通道技术，**Rust 笔刷引擎的回归是完全可行的**，并且是迈向 "Professional Grade" 性能的关键一步。它消除了 JS 单线程瓶颈，让 PaintBoard 能够承载更复杂的笔刷算法。
+1.  **Phase 1: 协议选型 (Benchmark)** [本周]
+    - 完成上述 Benchmark。
+    - 确定最终通信管道。
+2.  **Phase 2: 引擎移植 (Rust)**
+    - 移植间距计算 (Spacing)、抖动 (Jitter)、动态参数 (Dynamics)。
+    - 实现 Dab 生成逻辑。
+3.  **Phase 3: 前端对接**
+    - 实现 Worker 接收器 + Ring Buffer。
+    - 对接 WebGPU 渲染接口。
+4.  **Phase 4: 验证**
+    - 启用 Input Recorder，回放真实绘画轨迹，对比新旧引擎渲染结果。
+
+## 6. 结论
+
+通过引入基准测试和更稳健的协议选项，我们不仅保留了 Rust 引擎的高性能潜力，还规避了单一技术选型的风险。这将是 PaintBoard 迈向专业级性能（<12ms 延迟，无卡顿）的确切路径。
