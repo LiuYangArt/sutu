@@ -71,6 +71,22 @@ fn build_rgba_lz4_response(data: Vec<u8>, width: u32, height: u32) -> Response<V
         .unwrap()
 }
 
+/// Build HTTP response for LZ4-compressed Gray8 data with dimension headers
+fn build_gray_lz4_response(data: Vec<u8>, width: u32, height: u32) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "image/x-gray-lz4")
+        .header("Access-Control-Allow-Origin", "*")
+        .header(
+            "Access-Control-Expose-Headers",
+            "X-Image-Width, X-Image-Height",
+        )
+        .header("X-Image-Width", width.to_string())
+        .header("X-Image-Height", height.to_string())
+        .body(data)
+        .unwrap()
+}
+
 /// Build 404 response
 fn build_not_found() -> Response<Vec<u8>> {
     Response::builder()
@@ -98,7 +114,7 @@ pub fn run() {
             let path = request.uri().path();
             tracing::info!("project:// request: {}", path);
 
-            // Parse path: /layer/{id} or /thumbnail
+            // Parse path: /layer/{id} or /thumbnail or /brush/{id}
             if path.starts_with("/layer/") {
                 let layer_id = &path[7..]; // Skip "/layer/"
                 tracing::info!("Looking up layer in cache: {}", layer_id);
@@ -123,6 +139,22 @@ pub fn run() {
                     return build_response(cached.data, cached.mime_type);
                 } else {
                     tracing::warn!("Cache MISS: {}", layer_id);
+                }
+            } else if path.starts_with("/brush/") {
+                // Brush texture endpoint: /brush/{id}
+                let brush_id = &path[7..]; // Skip "/brush/"
+                tracing::debug!("Looking up brush in cache: {}", brush_id);
+                if let Some(cached) = brush::get_cached_brush(brush_id) {
+                    tracing::debug!(
+                        "Brush cache HIT: {} ({} bytes, {}x{})",
+                        brush_id,
+                        cached.data.len(),
+                        cached.width,
+                        cached.height
+                    );
+                    return build_gray_lz4_response(cached.data, cached.width, cached.height);
+                } else {
+                    tracing::warn!("Brush cache MISS: {}", brush_id);
                 }
             } else if path == "/thumbnail" {
                 if let Some(cached) = file::get_cached_thumbnail() {

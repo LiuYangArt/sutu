@@ -12,6 +12,7 @@
  */
 
 import type { BrushTexture } from '@/stores/tool';
+import { loadBrushTexture } from '@/utils/brushLoader';
 import { decodeBase64ToImageData } from '@/utils/imageUtils';
 
 export interface GPUBrushTexture {
@@ -69,7 +70,19 @@ export class TextureAtlas {
     // Need to upload - first ensure ImageData is available
     let imageData = texture.imageData;
     if (!imageData) {
-      imageData = await decodeBase64ToImageData(texture.data, texture.width, texture.height);
+      // Try to load via protocol first (new optimized path)
+      imageData = await loadBrushTexture(textureId, texture.width, texture.height);
+
+      // Fallback to Base64 if protocol fails and data is available
+      if (!imageData && texture.data) {
+        imageData = await decodeBase64ToImageData(texture.data, texture.width, texture.height);
+      }
+
+      if (!imageData) {
+        console.error(`[TextureAtlas] Failed to load texture: ${textureId}`);
+        return false;
+      }
+
       texture.imageData = imageData; // Cache in the texture object
     }
 
@@ -117,7 +130,11 @@ export class TextureAtlas {
       return true;
     }
 
-    // Need async loading
+    // Need async loading - trigger it in background
+    this.setTexture(texture).catch((err) => {
+      console.error(`[TextureAtlas] Background texture load failed:`, err);
+    });
+
     return false;
   }
 

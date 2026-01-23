@@ -480,7 +480,38 @@ use crate::brush::soft_dab::{render_soft_dab, GaussParams};
 // ABR Brush Import
 // ============================================================================
 
-use crate::abr::{AbrParser, BrushPreset};
+use crate::abr::{AbrBrush, AbrParser, BrushPreset};
+use crate::brush::cache_brush_gray;
+
+/// ABR import result with benchmark info
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAbrResult {
+    /// Brush presets (metadata only, textures via protocol)
+    pub presets: Vec<BrushPreset>,
+    /// Benchmark timing info
+    pub benchmark: AbrBenchmark,
+}
+
+/// ABR import benchmark timing
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbrBenchmark {
+    /// Total import time in milliseconds
+    pub total_ms: f64,
+    /// File read time in milliseconds
+    pub read_ms: f64,
+    /// Parse time in milliseconds
+    pub parse_ms: f64,
+    /// Cache time in milliseconds
+    pub cache_ms: f64,
+    /// Number of brushes loaded
+    pub brush_count: usize,
+    /// Total raw texture bytes
+    pub raw_bytes: usize,
+    /// Total compressed bytes
+    pub compressed_bytes: usize,
+}
 
 // ============================================================================
 // File Format Support (ORA, TIFF)
@@ -544,28 +575,149 @@ pub fn stamp_soft_dab(
 // ABR Brush Import Command
 // ============================================================================
 
-/// Import brushes from an ABR file
+/// Import brushes from an ABR file (optimized: zero-encoding, LZ4 compression)
 ///
-/// Parses a Photoshop ABR brush file and returns the extracted brush presets.
-/// Supports ABR versions 1, 2, 6, 7, and 10.
+/// Parses a Photoshop ABR brush file, caches textures via BrushCache,
+/// and returns lightweight metadata. Textures are served via `project://brush/{id}`.
 #[tauri::command]
-pub async fn import_abr_file(path: String) -> Result<Vec<BrushPreset>, String> {
-    tracing::info!("Importing ABR file: {}", path);
+pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
+    let total_start = std::time::Instant::now();
 
+    tracing::info!("[ABR Import] Starting import: {}", path);
+
+    // Step 1: Read file
+    let read_start = std::time::Instant::now();
     let data = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
-
-    let abr_file =
-        AbrParser::parse(&data).map_err(|e| format!("Failed to parse ABR file: {}", e))?;
-
-    tracing::info!(
-        "Parsed ABR file: version={:?}, {} brushes",
-        abr_file.version,
-        abr_file.brushes.len()
+    let read_ms = read_start.elapsed().as_secs_f64() * 1000.0;
+    tracing::debug!(
+        "[ABR Import] File read: {} bytes in {:.2}ms",
+        data.len(),
+        read_ms
     );
 
-    let presets: Vec<BrushPreset> = abr_file.brushes.into_iter().map(|b| b.into()).collect();
+    // Step 2: Parse ABR
+    let parse_start = std::time::Instant::now();
+    let abr_file =
+        AbrParser::parse(&data).map_err(|e| format!("Failed to parse ABR file: {}", e))?;
+    let parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
+    tracing::debug!(
+        "[ABR Import] Parsed: version={:?}, {} brushes in {:.2}ms",
+        abr_file.version,
+        abr_file.brushes.len(),
+        parse_ms
+    );
 
-    Ok(presets)
+    // Step 3: Cache textures and build presets
+    let cache_start = std::time::Instant::now();
+    let mut raw_bytes: usize = 0;
+    let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
+
+    for brush in abr_file.brushes {
+        // Generate ID first (before moving brush)
+        let id = brush.uuid.clone().unwrap_or_else(|| {
+            // Generate simple UUID
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default();
+            format!("{:x}{:x}", now.as_secs(), now.subsec_nanos())
+        });
+
+        // Cache texture if present
+        if let Some(ref tip) = brush.tip_image {
+            raw_bytes += tip.data.len();
+            cache_brush_gray(
+                id.clone(),
+                tip.data.clone(),
+                tip.width,
+                tip.height,
+                brush.name.clone(),
+            );
+        }
+
+        // Build preset with the ID we generated
+        let preset = build_preset_with_id(brush, id);
+        presets.push(preset);
+    }
+
+    let cache_ms = cache_start.elapsed().as_secs_f64() * 1000.0;
+
+    // Get compressed size from cache stats
+    let (_, compressed_bytes) = crate::brush::get_brush_cache_stats();
+    let brush_count = presets.len();
+
+    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+
+    // Benchmark logging
+    let compression_ratio = if raw_bytes > 0 {
+        compressed_bytes as f64 / raw_bytes as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    tracing::info!(
+        "[ABR Benchmark] Loaded {} brushes in {:.2}ms (read: {:.2}ms, parse: {:.2}ms, cache: {:.2}ms)",
+        brush_count,
+        total_ms,
+        read_ms,
+        parse_ms,
+        cache_ms
+    );
+    tracing::info!(
+        "[ABR Benchmark] Texture data: {} KB raw -> {} KB compressed ({:.1}%)",
+        raw_bytes / 1024,
+        compressed_bytes / 1024,
+        compression_ratio
+    );
+
+    Ok(ImportAbrResult {
+        presets,
+        benchmark: AbrBenchmark {
+            total_ms,
+            read_ms,
+            parse_ms,
+            cache_ms,
+            brush_count,
+            raw_bytes,
+            compressed_bytes,
+        },
+    })
+}
+
+/// Build BrushPreset with a specific ID (used when we generate ID before caching)
+fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
+    let dynamics = brush.dynamics.as_ref();
+
+    // Generate cursor outline from texture if available
+    let (cursor_path, cursor_bounds) = brush
+        .tip_image
+        .as_ref()
+        .map(|img| {
+            let path = crate::abr::cursor::extract_cursor_outline(img, 128);
+            let bounds = path.as_ref().map(|_| crate::abr::CursorBoundsData {
+                width: img.width as f32,
+                height: img.height as f32,
+            });
+            (path, bounds)
+        })
+        .unwrap_or((None, None));
+
+    BrushPreset {
+        id,
+        name: brush.name,
+        diameter: brush.diameter,
+        spacing: brush.spacing * 100.0,
+        hardness: brush.hardness.unwrap_or(100.0),
+        angle: brush.angle,
+        roundness: brush.roundness * 100.0,
+        has_texture: brush.tip_image.is_some(),
+        texture_width: brush.tip_image.as_ref().map(|img| img.width),
+        texture_height: brush.tip_image.as_ref().map(|img| img.height),
+        size_pressure: dynamics.map(|d| d.size_control == 2).unwrap_or(false),
+        opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
+        cursor_path,
+        cursor_bounds,
+    }
 }
 
 // ============================================================================

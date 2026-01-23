@@ -6,7 +6,7 @@
  * rotated according to brush settings.
  *
  * Key responsibilities:
- * - Decode base64 PNG texture to ImageData (cached)
+ * - Load texture from protocol or decode base64 PNG (cached)
  * - Scale texture to current brush size
  * - Apply rotation and roundness transforms
  * - Stamp texture to buffer using Alpha Darken blending
@@ -14,6 +14,7 @@
 
 import type { Rect } from './strokeBuffer';
 import type { BrushTexture } from '@/stores/tool';
+import { loadBrushTexture } from './brushLoader';
 import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUtils';
 
 export interface TextureMaskParams {
@@ -68,8 +69,18 @@ export class TextureMaskCache {
       return;
     }
 
-    // Decode base64 to ImageData
-    const imageData = await decodeBase64ToImageData(texture.data, texture.width, texture.height);
+    // Try to load via protocol first (new optimized path)
+    let imageData = await loadBrushTexture(textureId, texture.width, texture.height);
+
+    // Fallback to Base64 if protocol fails and data is available
+    if (!imageData && texture.data) {
+      imageData = await decodeBase64ToImageData(texture.data, texture.width, texture.height);
+    }
+
+    if (!imageData) {
+      console.error(`[TextureMaskCache] Failed to load texture: ${textureId}`);
+      return;
+    }
 
     // Cache in the texture object for future use
     texture.imageData = imageData;
@@ -98,16 +109,24 @@ export class TextureMaskCache {
       return true;
     }
 
-    const imageData = decodeBase64ToImageDataSync(texture.data, texture.width, texture.height);
-    if (!imageData) {
-      return false;
+    // Try Base64 fallback for sync path
+    if (texture.data) {
+      const imageData = decodeBase64ToImageDataSync(texture.data, texture.width, texture.height);
+      if (imageData) {
+        texture.imageData = imageData;
+        this.sourceImageData = imageData;
+        this.currentTextureId = textureId;
+        this.invalidateCache();
+        return true;
+      }
     }
 
-    texture.imageData = imageData;
-    this.sourceImageData = imageData;
-    this.currentTextureId = textureId;
-    this.invalidateCache();
-    return true;
+    // Need async loading - trigger it in background
+    this.setTexture(texture).catch(() => {
+      // Silent fail - will retry on next paint
+    });
+
+    return false;
   }
 
   /**
