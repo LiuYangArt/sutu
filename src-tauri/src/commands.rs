@@ -634,6 +634,12 @@ pub async fn load_project(path: String) -> Result<ProjectData, String> {
                 project.height,
                 project.layers.len()
             );
+
+            // Start benchmark session if benchmark data is present
+            if let Some(ref benchmark) = project.benchmark {
+                crate::benchmark::start_session(benchmark.clone());
+            }
+
             Ok(project)
         }
         Err(e) => {
@@ -641,6 +647,15 @@ pub async fn load_project(path: String) -> Result<ProjectData, String> {
             Err(e.to_string())
         }
     }
+}
+
+/// Report frontend benchmark phase timing
+///
+/// Called by frontend after each loading phase completes.
+/// When phase is "complete", outputs the unified benchmark report.
+#[tauri::command]
+pub fn report_benchmark(session_id: String, phase: String, duration_ms: f64) {
+    crate::benchmark::report_phase(&session_id, &phase, duration_ms);
 }
 
 /// Detect file format from path extension

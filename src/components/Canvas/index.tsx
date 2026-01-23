@@ -385,17 +385,14 @@ export function Canvas() {
     // Uses project:// custom protocol for zero-copy binary transfer
     // Supports both encoded images (PNG/WebP) and raw RGBA data (with optional LZ4 compression)
     window.__loadLayerImages = async (
-      layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>
+      layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>,
+      benchmarkSessionId?: string
     ): Promise<void> => {
       if (!layerRendererRef.current) return;
-
-      const startTime = performance.now();
-      console.log(`[Frontend] Starting layer image loading (${layersData.length} layers)...`);
 
       let fetchTotal = 0;
       let decompressTotal = 0;
       let renderTotal = 0;
-      let layersLoaded = 0;
 
       for (const layerData of layersData) {
         const layer = layerRendererRef.current.getLayer(layerData.id);
@@ -423,7 +420,6 @@ export function Canvas() {
             img.onerror = () => resolve();
             img.src = imgSrc;
           });
-          layersLoaded++;
         } else {
           // New: use project:// custom protocol
           const url = `http://project.localhost/layer/${layerData.id}`;
@@ -454,7 +450,6 @@ export function Canvas() {
                 layer.ctx.putImageData(imageData, offsetX, offsetY);
                 renderTotal += performance.now() - renderStart;
               }
-              layersLoaded++;
             } else if (contentType === 'image/x-rgba') {
               // Raw RGBA data (uncompressed) - use ImageData for fast rendering
               if (imgWidth > 0 && imgHeight > 0) {
@@ -464,7 +459,6 @@ export function Canvas() {
                 layer.ctx.putImageData(imageData, offsetX, offsetY);
                 renderTotal += performance.now() - renderStart;
               }
-              layersLoaded++;
             } else {
               // Encoded image (PNG/WebP) - use Image element
               const renderStart = performance.now();
@@ -474,7 +468,6 @@ export function Canvas() {
               layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
               layer.ctx.drawImage(bitmap, offsetX, offsetY);
               renderTotal += performance.now() - renderStart;
-              layersLoaded++;
             }
           } catch (e) {
             console.warn(`Failed to load layer image: ${layerData.id}`, e);
@@ -482,13 +475,31 @@ export function Canvas() {
         }
       }
 
-      const totalTime = performance.now() - startTime;
-      console.log(`[Frontend] Layer loading complete:
-    - Total: ${totalTime.toFixed(1)}ms
-    - Fetch: ${fetchTotal.toFixed(1)}ms
-    - Decompress: ${decompressTotal.toFixed(1)}ms
-    - Render: ${renderTotal.toFixed(1)}ms
-    - Layers: ${layersLoaded}`);
+      // Report benchmark phases to backend if session ID is provided
+      if (benchmarkSessionId) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'fetch',
+          durationMs: fetchTotal,
+        });
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'decompress',
+          durationMs: decompressTotal,
+        });
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'render',
+          durationMs: renderTotal,
+        });
+        // Signal completion to trigger final report
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'complete',
+          durationMs: 0,
+        });
+      }
 
       // Trigger re-render
       compositeAndRender();

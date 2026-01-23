@@ -3,6 +3,7 @@
 //! This is the main library crate that exposes all modules for the Tauri backend.
 
 pub mod abr;
+pub mod benchmark;
 pub mod brush;
 pub mod commands;
 pub mod file;
@@ -148,6 +149,8 @@ pub fn run() {
             commands::save_project,
             commands::load_project,
             commands::detect_file_format,
+            // Benchmark
+            commands::report_benchmark,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

@@ -3,6 +3,7 @@
 //! Converts PSD files to PaintBoard's ProjectData format.
 //! Optimized with WebP encoding and parallel processing via Rayon.
 
+use crate::benchmark::{generate_session_id, BackendBenchmark};
 use crate::file::layer_cache::{cache_layer_rgba, clear_cache};
 use crate::file::types::{FileError, LayerData, ProjectData};
 use image::RgbaImage;
@@ -22,6 +23,8 @@ use std::time::Instant;
 /// - Uses layer offset_x/y for positioning instead of full canvas composite
 pub fn load_psd(path: &Path) -> Result<ProjectData, FileError> {
     let total_start = Instant::now();
+    let session_id = generate_session_id();
+    let file_path = path.to_string_lossy().to_string();
     tracing::info!("[PSD] Loading file: {:?}", path);
 
     // Clear previous cache before loading new project
@@ -30,9 +33,10 @@ pub fn load_psd(path: &Path) -> Result<ProjectData, FileError> {
     // Phase 1: File read
     let t1 = Instant::now();
     let data = std::fs::read(path)?;
+    let file_read_ms = t1.elapsed().as_secs_f64() * 1000.0;
     tracing::info!(
-        "[PSD] Phase 1 - File read: {:?} ({} bytes)",
-        t1.elapsed(),
+        "[PSD] Phase 1 - File read: {:.1}ms ({} bytes)",
+        file_read_ms,
         data.len()
     );
 
@@ -40,7 +44,8 @@ pub fn load_psd(path: &Path) -> Result<ProjectData, FileError> {
     let t2 = Instant::now();
     let psd = Psd::from_bytes(&data)
         .map_err(|e| FileError::InvalidFormat(format!("PSD parse error: {}", e)))?;
-    tracing::info!("[PSD] Phase 2 - PSD parse: {:?}", t2.elapsed());
+    let format_parse_ms = t2.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!("[PSD] Phase 2 - PSD parse: {:.1}ms", format_parse_ms);
 
     let width = psd.width();
     let height = psd.height();
@@ -57,9 +62,10 @@ pub fn load_psd(path: &Path) -> Result<ProjectData, FileError> {
         .map(|(idx, psd_layer)| process_layer_parallel(psd_layer, idx, width, height))
         .collect();
 
+    let decode_cache_ms = t3.elapsed().as_secs_f64() * 1000.0;
     tracing::info!(
-        "[PSD] Phase 3+4 - Parallel decode+encode: {:?} ({} layers)",
-        t3.elapsed(),
+        "[PSD] Phase 3+4 - Parallel decode+cache: {:.1}ms ({} layers)",
+        decode_cache_ms,
         layer_results.len()
     );
 
@@ -88,11 +94,25 @@ pub fn load_psd(path: &Path) -> Result<ProjectData, FileError> {
     // PSD stores layers top-to-bottom
     layers.reverse();
 
+    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
     tracing::info!(
-        "[PSD] Total load time: {:?} ({} layers)",
-        total_start.elapsed(),
+        "[PSD] Total load time: {:.1}ms ({} layers)",
+        total_ms,
         layers.len()
     );
+
+    // Build benchmark data
+    let benchmark = BackendBenchmark {
+        session_id,
+        file_path,
+        format: "psd".to_string(),
+        file_read_ms,
+        format_parse_ms,
+        decode_cache_ms,
+        total_ms,
+        layer_count: layers.len(),
+        send_timestamp: None,
+    };
 
     Ok(ProjectData {
         width,
@@ -101,6 +121,7 @@ pub fn load_psd(path: &Path) -> Result<ProjectData, FileError> {
         layers,
         flattened_image: None,
         thumbnail: None,
+        benchmark: Some(benchmark),
     })
 }
 

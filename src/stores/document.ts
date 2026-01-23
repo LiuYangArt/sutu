@@ -34,7 +34,7 @@ export type BlendMode =
   | 'color'
   | 'luminosity';
 
-export type FileFormat = 'ora' | 'tiff';
+export type FileFormat = 'ora' | 'tiff' | 'psd';
 
 interface DocumentState {
   // Document properties

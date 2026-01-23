@@ -8,6 +8,7 @@
 
 use super::layer_cache::{cache_layer_png, cache_thumbnail, clear_cache};
 use super::types::{FileError, LayerData, ProjectData};
+use crate::benchmark::{generate_session_id, BackendBenchmark};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use image::{ImageFormat, RgbaImage};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
@@ -16,6 +17,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Write};
 use std::path::Path;
+use std::time::Instant;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
@@ -278,14 +280,24 @@ fn parse_stack_xml(
 
 /// Load project from ORA file
 pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
-    tracing::info!("Loading ORA file: {:?}", path);
+    let total_start = Instant::now();
+    let session_id = generate_session_id();
+    let file_path = path.to_string_lossy().to_string();
+    tracing::info!("[ORA] Loading file: {:?}", path);
 
+    // Phase 1: File open and ZIP archive initialization
+    let t1 = Instant::now();
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(BufReader::new(file))?;
+    let file_read_ms = t1.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!("[ORA] Phase 1 - File open: {:.1}ms", file_read_ms);
 
     // Clear previous cache before loading new project
     tracing::debug!("Clearing layer cache");
     clear_cache();
+
+    // Phase 2: Parse mimetype and stack.xml
+    let t2 = Instant::now();
 
     // 1. Verify mimetype
     {
@@ -341,7 +353,12 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         (width, height, layers)
     };
 
-    // 3. Load layer image data into cache
+    let format_parse_ms = t2.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!("[ORA] Phase 2 - Format parse: {:.1}ms", format_parse_ms);
+
+    // Phase 3+4: Load layer image data into cache
+    let t3 = Instant::now();
+
     // First, collect all layer image paths
     let layer_paths: HashMap<String, String> = layers
         .iter()
@@ -361,7 +378,7 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
                     img_file.read_to_end(&mut img_data)?;
 
                     // Store PNG data in cache for project:// protocol
-                    tracing::info!("Caching layer: {} ({} bytes)", layer.id, img_data.len());
+                    tracing::debug!("Caching layer: {} ({} bytes)", layer.id, img_data.len());
                     cache_layer_png(layer.id.clone(), img_data);
 
                     // Clear image_data - frontend will use project://layer/{id}
@@ -375,7 +392,12 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         }
     }
 
-    tracing::info!("ORA load complete: {} layers cached", layers.len());
+    let decode_cache_ms = t3.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!(
+        "[ORA] Phase 3+4 - Decode+cache: {:.1}ms ({} layers)",
+        decode_cache_ms,
+        layers.len()
+    );
 
     // 4. Load thumbnail into cache
     let thumbnail = match archive.by_name("Thumbnails/thumbnail.png") {
@@ -390,6 +412,26 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         Err(_) => None,
     };
 
+    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!(
+        "[ORA] Total load time: {:.1}ms ({} layers)",
+        total_ms,
+        layers.len()
+    );
+
+    // Build benchmark data
+    let benchmark = BackendBenchmark {
+        session_id,
+        file_path,
+        format: "ora".to_string(),
+        file_read_ms,
+        format_parse_ms,
+        decode_cache_ms,
+        total_ms,
+        layer_count: layers.len(),
+        send_timestamp: None,
+    };
+
     Ok(ProjectData {
         width,
         height,
@@ -397,6 +439,7 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         layers,
         flattened_image: None,
         thumbnail,
+        benchmark: Some(benchmark),
     })
 }
 
@@ -433,6 +476,7 @@ mod tests {
             }],
             flattened_image: None,
             thumbnail: None,
+            benchmark: None,
         };
 
         let xml = generate_stack_xml(&project).unwrap();

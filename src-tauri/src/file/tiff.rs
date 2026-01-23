@@ -247,6 +247,7 @@ pub fn load_tiff(path: &Path) -> Result<ProjectData, FileError> {
             layers,
             flattened_image: None,
             thumbnail: None,
+            benchmark: None,
         })
     } else {
         // Regular TIFF - import as single background layer
@@ -301,6 +302,7 @@ pub fn load_tiff(path: &Path) -> Result<ProjectData, FileError> {
             layers: vec![layer],
             flattened_image: None,
             thumbnail: None,
+            benchmark: None,
         })
     }
 }

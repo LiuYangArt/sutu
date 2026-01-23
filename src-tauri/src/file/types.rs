@@ -39,6 +39,9 @@ pub struct ProjectData {
     pub flattened_image: Option<String>,
     /// Base64-encoded 256x256 thumbnail (used for ORA)
     pub thumbnail: Option<String>,
+    /// Backend benchmark data for performance monitoring
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub benchmark: Option<crate::benchmark::BackendBenchmark>,
 }
 
 /// Supported file formats
