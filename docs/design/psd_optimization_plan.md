@@ -39,6 +39,12 @@ for (const layer of layers) {
 await Promise.all(layers.map((layer) => load(layer)));
 ```
 
+**风险提示与保障机制：**
+虽然 `Promise.all` 会保持结果顺序与输入数组一致，但如果改为完全流式（即加载完一张显示一张），则必须引入 **ID 索引机制**。单纯依赖请求返回顺序会导致图层层级（Z-Order）错乱。
+详见下文 [2.3 数据一致性保障](#23-数据一致性保障-safety--consistency)。
+
+```
+
 ### 第二阶段：流式架构 (Backend + Frontend)
 
 为了实现“秒开”体验，我们需要将**结构解析**与**像素解码**解耦。
@@ -67,7 +73,24 @@ await Promise.all(layers.map((layer) => load(layer)));
       - 如果图层正在处理 -> 阻塞请求直到就绪（或返回 202 Pending）。
     - **推送模式 (事件驱动)**：后端发送 `layer-ready` 事件，携带 `layerId`。
       - 前端监听到事件后，触发该图层的 `fetch` 请求。
+      - 前端监听到事件后，触发该图层的 `fetch` 请求。
 
+### 2.3 数据一致性保障 (Safety & Consistency)
+
+为了防止并行/流式传输导致的图层顺序错乱（Z-Order Confusion），必须严格遵守以下原则：
+
+1.  **结构优先 (Structure-First Source of Truth)**
+    - 前端必须先拿到完整的**图层树结构**（包含 Layer ID, Z-Order, Group 等元数据）。
+    - 渲染列表的顺序**永远**由这个结构决定，而不是图片下载的顺序。
+
+2.  **ID 锚定 (ID-Based Addressing)**
+    - 所有的并行请求或流式事件必须携带 `layer_id`。
+    - 前端收到数据后，通过 `layer_id` 找到对应的图层对象进行更新，**严禁**直接 `push` 到渲染数组中。
+    - *反例*：`images.push(downloadedImage)` -> **错误**，会导致先下载的图层盖在上面。
+    - *正解*：`layerMap.get(id).image = downloadedImage` -> **正确**。
+
+3.  **版本/指纹校验 (可选)**
+    - 为防止极端的竞态条件（如快速切换文件），每个请求可带上 `project_session_id`。如果不匹配当前打开的项目，则丢弃数据。
 ## 3. 实施计划
 
 ### 3.1 后端变更 (`src-tauri/`)
@@ -93,3 +116,4 @@ await Promise.all(layers.map((layer) => load(layer)));
 1.  **Day 1**：修复 Benchmark 报告 & 实现前端并行获取（第一阶段）。
 2.  **Day 2**：设计 `parse_psd_structure` 拆分与后台处理的原型。
 3.  **Day 3**：实现前端的 "Loading" 状态与异步事件处理。
+```
