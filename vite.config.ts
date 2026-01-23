@@ -24,10 +24,18 @@ export default defineConfig({
 
   envPrefix: ['VITE_', 'TAURI_'],
 
+  // Force pre-bundle CommonJS dependencies
+  optimizeDeps: {
+    include: ['lz4js'],
+  },
+
   build: {
     // Tauri 使用 Chromium，支持最新 ES 特性
     target: ['es2021', 'chrome100', 'safari13'],
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
+    commonjsOptions: {
+      include: [/lz4js/, /node_modules/],
+    },
   },
 });
