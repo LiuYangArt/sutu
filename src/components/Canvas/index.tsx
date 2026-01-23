@@ -385,7 +385,7 @@ export function Canvas() {
     // Uses project:// custom protocol for zero-copy binary transfer
     // Supports both encoded images (PNG/WebP) and raw RGBA data (with optional LZ4 compression)
     window.__loadLayerImages = async (
-      layersData: Array<{ id: string; imageData?: string; offset_x?: number; offset_y?: number }>
+      layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>
     ): Promise<void> => {
       if (!layerRendererRef.current) return;
 
@@ -402,8 +402,8 @@ export function Canvas() {
         if (!layer) continue;
 
         // Get offset for layer positioning
-        const offsetX = layerData.offset_x ?? 0;
-        const offsetY = layerData.offset_y ?? 0;
+        const offsetX = layerData.offsetX ?? 0;
+        const offsetY = layerData.offsetY ?? 0;
 
         // Determine image source: project:// protocol or legacy base64
         if (layerData.imageData) {
