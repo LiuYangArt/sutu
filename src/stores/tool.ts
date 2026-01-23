@@ -122,6 +122,33 @@ export const DEFAULT_COLOR_DYNAMICS: ColorDynamicsSettings = {
 };
 
 /**
+ * Transfer settings (Photoshop Transfer panel compatible)
+ * Controls how opacity and flow vary during a stroke
+ */
+export interface TransferSettings {
+  // Opacity Jitter
+  opacityJitter: number; // 0-100 (percentage)
+  opacityControl: ControlSource; // What controls opacity
+  minimumOpacity: number; // 0-100 (percentage of base opacity)
+
+  // Flow Jitter
+  flowJitter: number; // 0-100 (percentage)
+  flowControl: ControlSource; // What controls flow
+  minimumFlow: number; // 0-100 (percentage of base flow)
+}
+
+/** Default Transfer settings (all off) */
+export const DEFAULT_TRANSFER_SETTINGS: TransferSettings = {
+  opacityJitter: 0,
+  opacityControl: 'off',
+  minimumOpacity: 0,
+
+  flowJitter: 0,
+  flowControl: 'off',
+  minimumFlow: 0,
+};
+
+/**
  * Brush texture data for sampled/imported brushes (e.g., from ABR files)
  * When set, the brush uses this texture instead of procedural mask generation
  */
@@ -216,6 +243,10 @@ interface ToolState {
   wetEdgeEnabled: boolean;
   wetEdge: number; // Wet edge strength (0-1)
 
+  // Transfer settings (Photoshop-compatible)
+  transferEnabled: boolean;
+  transfer: TransferSettings;
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -264,6 +295,12 @@ interface ToolState {
   setWetEdgeEnabled: (enabled: boolean) => void;
   toggleWetEdge: () => void;
   setWetEdge: (value: number) => void;
+
+  // Transfer actions
+  setTransferEnabled: (enabled: boolean) => void;
+  toggleTransfer: () => void;
+  setTransfer: (settings: Partial<TransferSettings>) => void;
+  resetTransfer: () => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -304,6 +341,10 @@ export const useToolStore = create<ToolState>()(
       // Wet Edge (default: disabled, full strength when enabled)
       wetEdgeEnabled: false,
       wetEdge: 1.0,
+
+      // Transfer (default: disabled with all jitter at 0)
+      transferEnabled: false,
+      transfer: { ...DEFAULT_TRANSFER_SETTINGS },
 
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
@@ -418,6 +459,18 @@ export const useToolStore = create<ToolState>()(
       toggleWetEdge: () => set((state) => ({ wetEdgeEnabled: !state.wetEdgeEnabled })),
 
       setWetEdge: (value) => set({ wetEdge: Math.max(0, Math.min(1, value)) }),
+
+      // Transfer actions
+      setTransferEnabled: (enabled) => set({ transferEnabled: enabled }),
+
+      toggleTransfer: () => set((state) => ({ transferEnabled: !state.transferEnabled })),
+
+      setTransfer: (settings) =>
+        set((state) => ({
+          transfer: { ...state.transfer, ...settings },
+        })),
+
+      resetTransfer: () => set({ transfer: { ...DEFAULT_TRANSFER_SETTINGS } }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -446,6 +499,8 @@ export const useToolStore = create<ToolState>()(
         colorDynamics: state.colorDynamics,
         wetEdgeEnabled: state.wetEdgeEnabled,
         wetEdge: state.wetEdge,
+        transferEnabled: state.transferEnabled,
+        transfer: state.transfer,
       }),
     }
   )

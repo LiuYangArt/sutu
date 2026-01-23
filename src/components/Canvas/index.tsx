@@ -139,6 +139,8 @@ export function Canvas() {
     colorDynamics,
     wetEdgeEnabled,
     wetEdge,
+    transferEnabled,
+    transfer,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
@@ -169,6 +171,8 @@ export function Canvas() {
     colorDynamics: s.colorDynamics,
     wetEdgeEnabled: s.wetEdgeEnabled,
     wetEdge: s.wetEdge,
+    transferEnabled: s.transferEnabled,
+    transfer: s.transfer,
   }));
 
   // Get render mode from settings store (persisted to settings.json)
@@ -899,6 +903,8 @@ export function Canvas() {
       colorDynamics,
       wetEdgeEnabled,
       wetEdge,
+      transferEnabled,
+      transfer,
     };
   }, [
     currentSize,
@@ -924,6 +930,8 @@ export function Canvas() {
     colorDynamics,
     wetEdgeEnabled,
     wetEdge,
+    transferEnabled,
+    transfer,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position
