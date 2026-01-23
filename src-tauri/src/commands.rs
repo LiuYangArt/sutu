@@ -804,10 +804,10 @@ pub async fn load_project(path: String) -> Result<ProjectData, String> {
 /// Report frontend benchmark phase timing
 ///
 /// Called by frontend after each loading phase completes.
-/// When phase is "complete", outputs the unified benchmark report.
+/// When phase is "complete", outputs the unified benchmark report and returns it for console logging.
 #[tauri::command]
-pub fn report_benchmark(session_id: String, phase: String, duration_ms: f64) {
-    crate::benchmark::report_phase(&session_id, &phase, duration_ms);
+pub fn report_benchmark(session_id: String, phase: String, duration_ms: f64) -> Option<String> {
+    crate::benchmark::report_phase(&session_id, &phase, duration_ms)
 }
 
 /// Detect file format from path extension

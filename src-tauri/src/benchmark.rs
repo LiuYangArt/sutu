@@ -55,7 +55,9 @@ pub fn start_session(benchmark: BackendBenchmark) {
 }
 
 /// Report a frontend phase timing
-pub fn report_phase(session_id: &str, phase: &str, duration_ms: f64) {
+///
+/// Returns the formatted report string when phase is "complete", for frontend console logging.
+pub fn report_phase(session_id: &str, phase: &str, duration_ms: f64) -> Option<String> {
     let mut session_guard = CURRENT_SESSION.lock().unwrap_or_else(|e| e.into_inner());
 
     if let Some(session) = session_guard.as_mut() {
@@ -67,7 +69,7 @@ pub fn report_phase(session_id: &str, phase: &str, duration_ms: f64) {
                     backend.session_id,
                     session_id
                 );
-                return;
+                return None;
             }
         }
 
@@ -75,93 +77,110 @@ pub fn report_phase(session_id: &str, phase: &str, duration_ms: f64) {
         match phase {
             "ipc_transfer" => {
                 session.ipc_transfer_ms = Some(duration_ms);
+                None
             }
             "complete" => {
-                // Print the final report
-                print_report(session);
+                // Print the final report and get the formatted string
+                let report = format_report(session);
+                // Print to terminal
+                println!("{}", report);
                 // Clear session after report
                 *session_guard = None;
+                // Return for frontend console
+                Some(report)
             }
             _ => {
                 session
                     .frontend_phases
                     .insert(phase.to_string(), duration_ms);
+                None
             }
         }
+    } else {
+        None
     }
 }
 
-/// Print the formatted benchmark report
-fn print_report(session: &BenchmarkSession) {
+/// Format the benchmark report as a string
+fn format_report(session: &BenchmarkSession) -> String {
+    use std::fmt::Write;
+
     let Some(backend) = &session.backend else {
-        return;
+        return String::new();
     };
 
-    // Calculate frontend subtotal
     let frontend_subtotal: f64 = session.frontend_phases.values().sum();
     let ipc_ms = session.ipc_transfer_ms.unwrap_or(0.0);
-
-    // Calculate grand total
     let total = backend.total_ms + ipc_ms + frontend_subtotal;
 
-    // Extract file name from path
     let file_name = std::path::Path::new(&backend.file_path)
         .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| backend.file_path.clone());
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_else(|| backend.file_path.as_str().into());
 
-    // Build the report
-    let width = 62;
-    let line = "=".repeat(width);
-    let thin_line = "-".repeat(width);
+    const W: usize = 62;
+    let line = "=".repeat(W);
+    let thin = "-".repeat(W);
 
-    println!();
-    println!("{}", line);
-    println!(
-        "{:^width$}",
-        format!("File Open Benchmark [{}]", backend.format.to_uppercase()),
-        width = width
+    let mut out = String::with_capacity(1024);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "{line}");
+    let _ = writeln!(
+        out,
+        "{:^W$}",
+        format!("File Open Benchmark [{}]", backend.format.to_uppercase())
     );
-    println!("{}", line);
-    println!(" File: {}", file_name);
-    println!("{}", thin_line);
+    let _ = writeln!(out, "{line}");
+    let _ = writeln!(out, " File: {file_name}");
+    let _ = writeln!(out, "{thin}");
 
-    // Backend section
-    println!(" Backend");
-    println!("   File read:         {:>8.1} ms", backend.file_read_ms);
-    println!("   Format parse:      {:>8.1} ms", backend.format_parse_ms);
-    println!("   Decode + Cache:    {:>8.1} ms", backend.decode_cache_ms);
-    println!("   --------------------------------");
-    println!("   Subtotal:          {:>8.1} ms", backend.total_ms);
+    // Backend
+    let _ = writeln!(out, " Backend");
+    let _ = writeln!(
+        out,
+        "   File read:         {:>8.1} ms",
+        backend.file_read_ms
+    );
+    let _ = writeln!(
+        out,
+        "   Format parse:      {:>8.1} ms",
+        backend.format_parse_ms
+    );
+    let _ = writeln!(
+        out,
+        "   Decode + Cache:    {:>8.1} ms",
+        backend.decode_cache_ms
+    );
+    let _ = writeln!(out, "   --------------------------------");
+    let _ = writeln!(out, "   Subtotal:          {:>8.1} ms", backend.total_ms);
+    let _ = writeln!(out, "{thin}");
 
-    println!("{}", thin_line);
+    // IPC
+    let _ = writeln!(out, " IPC Transfer:        {:>8.1} ms", ipc_ms);
+    let _ = writeln!(out, "{thin}");
 
-    // IPC section
-    println!(" IPC Transfer:        {:>8.1} ms", ipc_ms);
-
-    println!("{}", thin_line);
-
-    // Frontend section
-    println!(" Frontend");
-    if let Some(fetch) = session.frontend_phases.get("fetch") {
-        println!("   Fetch layers:      {:>8.1} ms", fetch);
+    // Frontend
+    let _ = writeln!(out, " Frontend");
+    if let Some(v) = session.frontend_phases.get("fetch") {
+        let _ = writeln!(out, "   Fetch layers:      {:>8.1} ms", v);
     }
-    if let Some(decompress) = session.frontend_phases.get("decompress") {
-        println!("   Decompress:        {:>8.1} ms", decompress);
+    if let Some(v) = session.frontend_phases.get("decompress") {
+        let _ = writeln!(out, "   Decompress:        {:>8.1} ms", v);
     }
-    if let Some(render) = session.frontend_phases.get("render") {
-        println!("   Render:            {:>8.1} ms", render);
+    if let Some(v) = session.frontend_phases.get("render") {
+        let _ = writeln!(out, "   Render:            {:>8.1} ms", v);
     }
-    println!("   --------------------------------");
-    println!("   Subtotal:          {:>8.1} ms", frontend_subtotal);
-
-    println!("{}", line);
-    println!(
+    let _ = writeln!(out, "   --------------------------------");
+    let _ = writeln!(out, "   Subtotal:          {:>8.1} ms", frontend_subtotal);
+    let _ = writeln!(out, "{line}");
+    let _ = writeln!(
+        out,
         " TOTAL:               {:>8.1} ms ({} layers)",
         total, backend.layer_count
     );
-    println!("{}", line);
-    println!();
+    let _ = write!(out, "{line}");
+
+    out
 }
 
 /// Generate a simple session ID

@@ -498,11 +498,15 @@ export function Canvas() {
           durationMs: renderTotal,
         });
         // Signal completion to trigger final report
-        await invoke('report_benchmark', {
+        const report = await invoke<string | null>('report_benchmark', {
           sessionId: benchmarkSessionId,
           phase: 'complete',
           durationMs: 0,
         });
+        // Output benchmark report to browser console
+        if (report) {
+          console.log(report);
+        }
       }
 
       // Trigger re-render
