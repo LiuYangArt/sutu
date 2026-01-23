@@ -383,6 +383,9 @@ export class GPUStrokeAccumulator {
 
     // Parametric brush path (unchanged)
     const radius = params.size / 2;
+    // Precompute angle trigonometry and clamp roundness on CPU
+    const roundness = Math.max(params.roundness ?? 1.0, 0.01);
+    const angleRad = ((params.angle ?? 0) * Math.PI) / 180;
     const dabData: DabInstanceData = {
       x: params.x * scale,
       y: params.y * scale,
@@ -393,6 +396,9 @@ export class GPUStrokeAccumulator {
       b: rgb.b / 255,
       dabOpacity: params.dabOpacity ?? 1.0,
       flow: params.flow,
+      roundness: roundness,
+      angleCos: Math.cos(angleRad),
+      angleSin: Math.sin(angleRad),
     };
 
     this.instanceBuffer.push(dabData);

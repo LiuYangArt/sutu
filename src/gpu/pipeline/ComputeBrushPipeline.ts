@@ -350,7 +350,9 @@ export class ComputeBrushPipeline {
       data[offset + 6] = dab.b;
       data[offset + 7] = dab.dabOpacity;
       data[offset + 8] = dab.flow;
-      // padding [9-11] = 0
+      data[offset + 9] = dab.roundness; // roundness (pre-clamped to >= 0.01)
+      data[offset + 10] = dab.angleCos; // cos(angle), precomputed
+      data[offset + 11] = dab.angleSin; // sin(angle), precomputed
     }
 
     return data;

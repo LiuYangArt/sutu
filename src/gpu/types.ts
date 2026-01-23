@@ -9,7 +9,7 @@ import type { BrushTexture } from '@/stores/tool';
 
 /**
  * Dab instance data for GPU instancing
- * Layout: 36 bytes per instance (9 floats)
+ * Layout: 48 bytes per instance (12 floats)
  */
 export interface DabInstanceData {
   x: number; // Dab center X
@@ -21,6 +21,9 @@ export interface DabInstanceData {
   b: number; // Color B (0-1)
   dabOpacity: number; // Alpha ceiling for Alpha Darken (0-1)
   flow: number; // Per-dab flow multiplier (0-1)
+  roundness: number; // Brush roundness (0.01-1.0, pre-clamped)
+  angleCos: number; // cos(angle) - precomputed on CPU
+  angleSin: number; // sin(angle) - precomputed on CPU
 }
 
 /**
@@ -108,8 +111,8 @@ export interface GPUDabParams {
 /**
  * Instance buffer layout constants for parametric brushes
  */
-export const DAB_INSTANCE_SIZE = 36; // bytes per instance
-export const DAB_FLOATS_PER_INSTANCE = 9; // floats per instance
+export const DAB_INSTANCE_SIZE = 48; // bytes per instance (12 floats)
+export const DAB_FLOATS_PER_INSTANCE = 12; // floats per instance
 export const INITIAL_INSTANCE_CAPACITY = 1024;
 
 /**
@@ -144,14 +147,19 @@ export const BATCH_SIZE_THRESHOLD = 64; // Dabs per encoder submit (per-dab loop
 export const BATCH_TIME_THRESHOLD_MS = 4; // Flush after N ms
 
 /**
- * Calculate effective radius for soft brush quad expansion.
- * Must match brush.wgsl vertex shader logic.
- *
- * Uses larger geometric expansion (2.5x) to prevent edge clipping
- * while Fragment Shader keeps original fade (2.0x) for Gaussian curve shape.
+ * Calculate effective radius for bounding box and early culling.
+ * Must match computeBrush.wgsl calculate_effective_radius logic.
  */
 export function calculateEffectiveRadius(radius: number, hardness: number): number {
-  if (hardness >= 0.99) return radius;
+  // Small brush: ensure minimum effective radius (matches WGSL)
+  if (radius < 2.0) {
+    return Math.max(1.5, radius + 1.0);
+  }
+  // Hard brush: slight expansion for AA band
+  if (hardness >= 0.99) {
+    return radius * 1.1;
+  }
+  // Soft brush: geometric fade expansion
   const geometricFade = (1.0 - hardness) * 2.5;
-  return radius * Math.max(1.5, 1.0 + geometricFade);
+  return radius * Math.max(1.1, 1.0 + geometricFade);
 }
