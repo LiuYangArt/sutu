@@ -22,6 +22,7 @@ import { useSelectionStore } from '@/stores/selection';
 import { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
 import { ComputeBrushPipeline } from './pipeline/ComputeBrushPipeline';
 import { ComputeTextureBrushPipeline } from './pipeline/ComputeTextureBrushPipeline';
+import { ComputeWetEdgePipeline } from './pipeline/ComputeWetEdgePipeline';
 import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore } from '@/stores/tool';
@@ -89,6 +90,12 @@ export class GPUStrokeAccumulator {
   // Performance timing
   private cpuTimer: CPUTimer = new CPUTimer();
 
+  // Wet Edge post-processing (stroke-level effect)
+  private wetEdgePipeline: ComputeWetEdgePipeline;
+  private wetEdgeEnabled: boolean = false;
+  private wetEdgeStrength: number = 0;
+  private wetEdgeHardness: number = 0;
+
   constructor(device: GPUDevice, width: number, height: number) {
     this.device = device;
     this.width = width;
@@ -110,6 +117,10 @@ export class GPUStrokeAccumulator {
     this.computeTextureBrushPipeline = new ComputeTextureBrushPipeline(device);
     this.computeTextureBrushPipeline.updateCanvasSize(width, height);
     this.textureAtlas = new TextureAtlas(device);
+
+    // Initialize wet edge post-processing pipeline
+    this.wetEdgePipeline = new ComputeWetEdgePipeline(device);
+    this.wetEdgePipeline.updateCanvasSize(width, height);
 
     // Initialize preview canvas
     this.previewCanvas = document.createElement('canvas');
@@ -194,6 +205,10 @@ export class GPUStrokeAccumulator {
       this.pingPongBuffer.textureWidth,
       this.pingPongBuffer.textureHeight
     );
+    this.wetEdgePipeline.updateCanvasSize(
+      this.pingPongBuffer.textureWidth,
+      this.pingPongBuffer.textureHeight
+    );
 
     this.previewCanvas.width = width;
     this.previewCanvas.height = height;
@@ -219,6 +234,26 @@ export class GPUStrokeAccumulator {
 
     // Sync render scale from store
     this.syncRenderScale();
+
+    // Sync wet edge settings from store
+    this.syncWetEdgeSettings();
+
+    // Pre-warm display texture if wet edge is enabled
+    // This moves the lazy initialization cost from the first flushBatch to beginStroke
+    if (this.wetEdgeEnabled) {
+      this.pingPongBuffer.ensureDisplayTexture();
+    }
+  }
+
+  /**
+   * Sync wet edge settings from store
+   */
+  private syncWetEdgeSettings(): void {
+    const { wetEdgeEnabled, wetEdge, brushHardness } = useToolStore.getState();
+    this.wetEdgeEnabled = wetEdgeEnabled && wetEdge > 0;
+    this.wetEdgeStrength = wetEdge;
+    // Convert hardness from 0-100 to 0-1 range
+    this.wetEdgeHardness = brushHardness / 100;
   }
 
   /**
@@ -348,6 +383,9 @@ export class GPUStrokeAccumulator {
 
     // Parametric brush path (unchanged)
     const radius = params.size / 2;
+    // Precompute angle trigonometry and clamp roundness on CPU
+    const roundness = Math.max(params.roundness ?? 1.0, 0.01);
+    const angleRad = ((params.angle ?? 0) * Math.PI) / 180;
     const dabData: DabInstanceData = {
       x: params.x * scale,
       y: params.y * scale,
@@ -358,6 +396,9 @@ export class GPUStrokeAccumulator {
       b: rgb.b / 255,
       dabOpacity: params.dabOpacity ?? 1.0,
       flow: params.flow,
+      roundness: roundness,
+      angleCos: Math.cos(angleRad),
+      angleSin: Math.sin(angleRad),
     };
 
     this.instanceBuffer.push(dabData);
@@ -447,6 +488,22 @@ export class GPUStrokeAccumulator {
       if (success) {
         // Swap so next flushBatch reads from the updated texture
         this.pingPongBuffer.swap();
+
+        // Apply wet edge post-processing if enabled
+        // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
+        // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
+        if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+          this.wetEdgePipeline.dispatch(
+            encoder,
+            this.pingPongBuffer.source, // Raw buffer (input, read-only)
+            this.pingPongBuffer.display, // Display buffer (output)
+            this.dirtyRect,
+            this.wetEdgeHardness,
+            this.wetEdgeStrength,
+            this.currentRenderScale
+          );
+          // Note: No swap here - display buffer is separate from ping-pong
+        }
 
         void this.profiler.resolveTimestamps(encoder);
         this.device.queue.submit([encoder.finish()]);
@@ -610,6 +667,22 @@ export class GPUStrokeAccumulator {
       if (success) {
         // Swap so next flushBatch reads from the updated texture
         this.pingPongBuffer.swap();
+
+        // Apply wet edge post-processing if enabled
+        // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
+        // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
+        if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+          this.wetEdgePipeline.dispatch(
+            encoder,
+            this.pingPongBuffer.source, // Raw buffer (input, read-only)
+            this.pingPongBuffer.display, // Display buffer (output)
+            this.dirtyRect,
+            0.0, // Texture brushes: always treat as soft to enable full wet edge effect
+            this.wetEdgeStrength,
+            this.currentRenderScale
+          );
+          // Note: No swap here - display buffer is separate from ping-pong
+        }
 
         void this.profiler.resolveTimestamps(encoder);
         this.device.queue.submit([encoder.finish()]);
@@ -822,8 +895,9 @@ export class GPUStrokeAccumulator {
         const encoder = this.device.createCommandEncoder();
         const texW = this.pingPongBuffer.textureWidth;
         const texH = this.pingPongBuffer.textureHeight;
+        // Use getPresentableTexture() to get the correct texture (with or without wet edge)
         encoder.copyTextureToBuffer(
-          { texture: this.pingPongBuffer.source },
+          { texture: this.getPresentableTexture() },
           { buffer: this.previewReadbackBuffer!, bytesPerRow: this.readbackBytesPerRow },
           [texW, texH]
         );
@@ -1103,6 +1177,18 @@ export class GPUStrokeAccumulator {
   }
 
   /**
+   * Get the presentable texture for preview/composite.
+   * Returns the display texture (with wet edge applied) if wet edge is enabled,
+   * otherwise returns the raw accumulator texture.
+   */
+  public getPresentableTexture(): GPUTexture {
+    if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+      return this.pingPongBuffer.display; // Wet edge applied texture
+    }
+    return this.pingPongBuffer.source; // Raw accumulator texture
+  }
+
+  /**
    * Parse hex color to RGB
    */
   private hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -1129,6 +1215,7 @@ export class GPUStrokeAccumulator {
     this.textureBrushPipeline.destroy();
     this.computeTextureBrushPipeline.destroy();
     this.textureAtlas.destroy();
+    this.wetEdgePipeline.destroy();
     this.readbackBuffer?.destroy();
     this.previewReadbackBuffer?.destroy();
     this.profiler.destroy();

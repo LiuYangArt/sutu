@@ -37,4 +37,6 @@ pub use defaults::AbrDefaults;
 pub use error::AbrError;
 pub use parser::AbrParser;
 pub use samp::normalize_brush_texture;
-pub use types::{AbrBrush, AbrDynamics, AbrFile, AbrVersion, BrushPreset, GrayscaleImage};
+pub use types::{
+    AbrBrush, AbrDynamics, AbrFile, AbrVersion, BrushPreset, CursorBoundsData, GrayscaleImage,
+};

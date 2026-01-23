@@ -6,7 +6,9 @@
 //! - Thumbnails/thumbnail.png: 256x256 preview
 //! - data/*.png: Individual layer pixel data
 
+use super::layer_cache::{cache_layer_png, cache_thumbnail, clear_cache};
 use super::types::{FileError, LayerData, ProjectData};
+use crate::benchmark::{generate_session_id, BackendBenchmark};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use image::{ImageFormat, RgbaImage};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
@@ -15,6 +17,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Write};
 use std::path::Path;
+use std::time::Instant;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
@@ -133,13 +136,6 @@ fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
     let bytes = BASE64.decode(base64_data)?;
     let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png)?;
     Ok(img.to_rgba8())
-}
-
-/// Encode RGBA image to base64 PNG
-fn encode_png_to_base64(img: &RgbaImage) -> Result<String, FileError> {
-    let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, ImageFormat::Png)?;
-    Ok(BASE64.encode(buf.into_inner()))
 }
 
 /// Save project to ORA file
@@ -284,8 +280,24 @@ fn parse_stack_xml(
 
 /// Load project from ORA file
 pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
+    let total_start = Instant::now();
+    let session_id = generate_session_id();
+    let file_path = path.to_string_lossy().to_string();
+    tracing::info!("[ORA] Loading file: {:?}", path);
+
+    // Phase 1: File open and ZIP archive initialization
+    let t1 = Instant::now();
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(BufReader::new(file))?;
+    let file_read_ms = t1.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!("[ORA] Phase 1 - File open: {:.1}ms", file_read_ms);
+
+    // Clear previous cache before loading new project
+    tracing::debug!("Clearing layer cache");
+    clear_cache();
+
+    // Phase 2: Parse mimetype and stack.xml
+    let t2 = Instant::now();
 
     // 1. Verify mimetype
     {
@@ -341,7 +353,12 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         (width, height, layers)
     };
 
-    // 3. Load layer image data
+    let format_parse_ms = t2.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!("[ORA] Phase 2 - Format parse: {:.1}ms", format_parse_ms);
+
+    // Phase 3+4: Load layer image data into cache
+    let t3 = Instant::now();
+
     // First, collect all layer image paths
     let layer_paths: HashMap<String, String> = layers
         .iter()
@@ -352,7 +369,7 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         })
         .collect();
 
-    // Load each layer's image data
+    // Load each layer's image data into cache (not Base64)
     for layer in &mut layers {
         if let Some(src_path) = layer_paths.get(&layer.id) {
             match archive.by_name(src_path) {
@@ -360,12 +377,14 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
                     let mut img_data = Vec::new();
                     img_file.read_to_end(&mut img_data)?;
 
-                    // Decode and re-encode to base64
-                    let img = image::load_from_memory_with_format(&img_data, ImageFormat::Png)?;
-                    layer.image_data = Some(encode_png_to_base64(&img.to_rgba8())?);
+                    // Store PNG data in cache for project:// protocol
+                    tracing::debug!("Caching layer: {} ({} bytes)", layer.id, img_data.len());
+                    cache_layer_png(layer.id.clone(), img_data);
+
+                    // Clear image_data - frontend will use project://layer/{id}
+                    layer.image_data = None;
                 }
                 Err(_) => {
-                    // Layer image not found, clear the data
                     layer.image_data = None;
                     tracing::warn!("Layer image not found: {}", src_path);
                 }
@@ -373,15 +392,44 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         }
     }
 
-    // 4. Load thumbnail if exists
+    let decode_cache_ms = t3.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!(
+        "[ORA] Phase 3+4 - Decode+cache: {:.1}ms ({} layers)",
+        decode_cache_ms,
+        layers.len()
+    );
+
+    // 4. Load thumbnail into cache
     let thumbnail = match archive.by_name("Thumbnails/thumbnail.png") {
         Ok(mut thumb_file) => {
             let mut thumb_data = Vec::new();
             thumb_file.read_to_end(&mut thumb_data)?;
-            let img = image::load_from_memory_with_format(&thumb_data, ImageFormat::Png)?;
-            Some(encode_png_to_base64(&img.to_rgba8())?)
+            // Store in cache for project://thumbnail
+            cache_thumbnail(thumb_data, "image/png");
+            // Return None - frontend will use project://thumbnail
+            None
         }
         Err(_) => None,
+    };
+
+    let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+    tracing::info!(
+        "[ORA] Total load time: {:.1}ms ({} layers)",
+        total_ms,
+        layers.len()
+    );
+
+    // Build benchmark data
+    let benchmark = BackendBenchmark {
+        session_id,
+        file_path,
+        format: "ora".to_string(),
+        file_read_ms,
+        format_parse_ms,
+        decode_cache_ms,
+        total_ms,
+        layer_count: layers.len(),
+        send_timestamp: None,
     };
 
     Ok(ProjectData {
@@ -391,6 +439,7 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
         layers,
         flattened_image: None,
         thumbnail,
+        benchmark: Some(benchmark),
     })
 }
 
@@ -427,6 +476,7 @@ mod tests {
             }],
             flattened_image: None,
             thumbnail: None,
+            benchmark: None,
         };
 
         let xml = generate_stack_xml(&project).unwrap();

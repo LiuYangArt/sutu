@@ -18,6 +18,7 @@ import {
   ShapeDynamicsSettings,
   ScatterSettings,
   ColorDynamicsSettings,
+  TransferSettings,
 } from '@/stores/tool';
 import { RenderMode } from '@/stores/settings';
 import { LatencyProfiler } from '@/benchmark';
@@ -36,6 +37,7 @@ import {
 } from '@/utils/shapeDynamics';
 import { applyScatter, isScatterActive } from '@/utils/scatterDynamics';
 import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
+import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { useSelectionStore } from '@/stores/selection';
 
 export interface BrushRenderConfig {
@@ -66,6 +68,9 @@ export interface BrushRenderConfig {
   // Wet Edge settings (Photoshop-compatible)
   wetEdgeEnabled: boolean;
   wetEdge: number; // Wet edge strength (0-1)
+  // Transfer settings (Photoshop-compatible)
+  transferEnabled: boolean;
+  transfer?: TransferSettings;
 }
 
 export interface UseBrushRendererProps {
@@ -253,6 +258,10 @@ export function useBrushRenderer({
         config.colorDynamics &&
         isColorDynamicsActive(config.colorDynamics);
 
+      // Transfer: Check if we need to apply transfer dynamics
+      const useTransfer =
+        config.transferEnabled && config.transfer && isTransferActive(config.transfer);
+
       // Selection constraint: get state once before loop for performance
       const selectionState = useSelectionStore.getState();
       const hasSelection = selectionState.hasSelection;
@@ -265,11 +274,6 @@ export function useBrushRenderer({
 
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         let dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
-        const dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
-
-        const dabOpacity = config.pressureOpacityEnabled
-          ? config.opacity * dabPressure
-          : config.opacity;
 
         // Shape Dynamics: Calculate direction and apply dynamics
         let dabRoundness = config.roundness / 100;
@@ -277,7 +281,7 @@ export function useBrushRenderer({
         let dabFlipX = false;
         let dabFlipY = false;
 
-        // Calculate direction from previous dab (needed for Shape Dynamics, Scatter, and Color Dynamics)
+        // Calculate direction from previous dab (needed for Shape Dynamics, Scatter, Color Dynamics, and Transfer)
         let direction = 0;
         if (prevDabPosRef.current) {
           direction = calculateDirection(
@@ -292,7 +296,7 @@ export function useBrushRenderer({
           }
         }
 
-        // Prepare dynamics input (shared by Shape Dynamics, Scatter, and Color Dynamics)
+        // Prepare dynamics input (shared by Shape Dynamics, Scatter, Color Dynamics, and Transfer)
         const dynamicsInput: DynamicsInput = {
           pressure: dabPressure,
           tiltX: 0, // TODO: Get from dab if available
@@ -302,6 +306,28 @@ export function useBrushRenderer({
           initialDirection: initialDirectionRef.current,
           fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
         };
+
+        // Calculate Flow and Opacity using Transfer system or legacy pressure toggles
+        let dabFlow: number;
+        let dabOpacity: number;
+
+        if (useTransfer && config.transfer) {
+          // Use Transfer dynamics system (Photoshop-compatible)
+          const transferResult = computeDabTransfer(
+            config.opacity,
+            config.flow,
+            config.transfer,
+            dynamicsInput
+          );
+          dabFlow = transferResult.flow;
+          dabOpacity = transferResult.opacity;
+        } else {
+          // Legacy pressure toggles (backward compatibility)
+          dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
+          dabOpacity = config.pressureOpacityEnabled
+            ? config.opacity * dabPressure
+            : config.opacity;
+        }
 
         if (useShapeDynamics && config.shapeDynamics) {
           // Compute dynamic shape

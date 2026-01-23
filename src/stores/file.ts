@@ -21,6 +21,17 @@ interface LayerData {
   offsetY: number;
 }
 
+interface BackendBenchmark {
+  sessionId: string;
+  filePath: string;
+  format: string;
+  fileReadMs: number;
+  formatParseMs: number;
+  decodeCacheMs: number;
+  totalMs: number;
+  layerCount: number;
+}
+
 interface ProjectData {
   width: number;
   height: number;
@@ -28,6 +39,7 @@ interface ProjectData {
   layers: LayerData[];
   flattenedImage?: string;
   thumbnail?: string;
+  benchmark?: BackendBenchmark;
 }
 
 interface FileOperationResult {
@@ -209,36 +221,38 @@ export const useFileStore = create<FileState>((set) => ({
     set({ isLoading: true, error: null });
 
     try {
+      const docStore = useDocumentStore.getState();
+
+      // Reset current document state BEFORE loading new file
+      // This ensures clean state and prevents conflicts with old layer data
+      docStore.reset();
+
+      // Measure IPC transfer time
+      const ipcStart = performance.now();
       const projectData = await invoke<ProjectData>('load_project', {
         path: filePath,
       });
+      const ipcTransferMs = performance.now() - ipcStart;
 
-      const docStore = useDocumentStore.getState();
+      // Report IPC transfer time to backend
+      if (projectData.benchmark?.sessionId) {
+        invoke('report_benchmark', {
+          sessionId: projectData.benchmark.sessionId,
+          phase: 'ipc_transfer',
+          durationMs: ipcTransferMs,
+        });
+      }
 
-      // Detect format from path
+      // Convert and set document state in one operation
+      const loadedLayers = projectData.layers.map(layerDataToLayer);
       const format: FileFormat = filePath.toLowerCase().endsWith('.psd') ? 'psd' : 'ora';
 
-      // Reset and initialize document with loaded data
-      docStore.reset();
-
-      // Initialize document dimensions
-      docStore.initDocument({
+      useDocumentStore.setState({
         width: projectData.width,
         height: projectData.height,
         dpi: projectData.dpi,
-      });
-
-      // Clear default layer and add loaded layers
-      // Note: initDocument creates a default layer, we need to handle this
-
-      // Convert loaded layers
-      const loadedLayers = projectData.layers.map(layerDataToLayer);
-
-      // Replace layers directly using set
-      useDocumentStore.setState({
         layers: loadedLayers,
-        activeLayerId:
-          loadedLayers.length > 0 ? (loadedLayers[loadedLayers.length - 1]?.id ?? null) : null,
+        activeLayerId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
         filePath,
         fileFormat: format,
         isDirty: false,
@@ -255,12 +269,15 @@ export const useFileStore = create<FileState>((set) => ({
       // Small additional delay to ensure LayerRenderer has created layers
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
 
-      // Trigger canvas reload with layer data
+      // Trigger canvas reload with layer data, passing benchmark session ID
       const win = window as Window & {
-        __loadLayerImages?: (layers: ProjectData['layers']) => Promise<void>;
+        __loadLayerImages?: (
+          layers: ProjectData['layers'],
+          benchmarkSessionId?: string
+        ) => Promise<void>;
       };
       if (win.__loadLayerImages) {
-        await win.__loadLayerImages(projectData.layers);
+        await win.__loadLayerImages(projectData.layers, projectData.benchmark?.sessionId);
       }
 
       return true;

@@ -16,6 +16,10 @@ export class PingPongBuffer {
   private currentDest: GPUTexture;
   private device: GPUDevice;
 
+  // Display texture for wet edge post-processing (lazy initialized to save VRAM)
+  // This texture is separate from ping-pong to avoid idempotency issues
+  private displayTexture: GPUTexture | null = null;
+
   readonly format: GPUTextureFormat = 'rgba32float'; // Changed from rgba16float for easy readback
   private _width: number; // Logical width (canvas size)
   private _height: number; // Logical height (canvas size)
@@ -95,6 +99,33 @@ export class PingPongBuffer {
   /** Current render scale (0.5-1.0) */
   get renderScale(): number {
     return this._renderScale;
+  }
+
+  /**
+   * Get or create the display texture for wet edge post-processing.
+   * Lazy initialization to save ~32MB VRAM for 4K canvas when wet edge is not used.
+   * This texture is separate from ping-pong swap to avoid idempotency issues.
+   */
+  ensureDisplayTexture(): GPUTexture {
+    if (!this.displayTexture) {
+      this.displayTexture = this.device.createTexture({
+        label: 'Wet Edge Display Texture',
+        size: [this._textureWidth, this._textureHeight],
+        format: this.format,
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.STORAGE_BINDING |
+          GPUTextureUsage.COPY_SRC,
+      });
+    }
+    return this.displayTexture;
+  }
+
+  /**
+   * Get display texture for wet edge output (lazy initialized)
+   */
+  get display(): GPUTexture {
+    return this.ensureDisplayTexture();
   }
 
   /**
@@ -190,6 +221,11 @@ export class PingPongBuffer {
 
     this.textureA.destroy();
     this.textureB.destroy();
+    // Destroy display texture if it was created (lazy init)
+    if (this.displayTexture) {
+      this.displayTexture.destroy();
+      this.displayTexture = null;
+    }
 
     this.textureA = this.device.createTexture(
       this.createTextureDescriptor(newTextureW, newTextureH, 'A')
@@ -220,5 +256,10 @@ export class PingPongBuffer {
   destroy(): void {
     this.textureA.destroy();
     this.textureB.destroy();
+    // Destroy display texture if it was created (lazy init)
+    if (this.displayTexture) {
+      this.displayTexture.destroy();
+      this.displayTexture = null;
+    }
   }
 }

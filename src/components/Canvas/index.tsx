@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
+import { decompressLz4PrependSize } from '@/utils/lz4';
 import { useDocumentStore } from '@/stores/document';
 import { useToolStore, applyPressureCurve, ToolType } from '@/stores/tool';
 import { useSettingsStore } from '@/stores/settings';
@@ -138,6 +139,8 @@ export function Canvas() {
     colorDynamics,
     wetEdgeEnabled,
     wetEdge,
+    transferEnabled,
+    transfer,
   } = useToolStore((s) => ({
     currentTool: s.currentTool,
     brushSize: s.brushSize,
@@ -168,6 +171,8 @@ export function Canvas() {
     colorDynamics: s.colorDynamics,
     wetEdgeEnabled: s.wetEdgeEnabled,
     wetEdge: s.wetEdge,
+    transferEnabled: s.transferEnabled,
+    transfer: s.transfer,
   }));
 
   // Get render mode from settings store (persisted to settings.json)
@@ -381,30 +386,122 @@ export function Canvas() {
     };
 
     // Load layer images when opening a file
+    // Uses project:// custom protocol for zero-copy binary transfer
+    // Supports both encoded images (PNG/WebP) and raw RGBA data (with optional LZ4 compression)
     window.__loadLayerImages = async (
-      layersData: Array<{ id: string; imageData?: string }>
+      layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>,
+      benchmarkSessionId?: string
     ): Promise<void> => {
       if (!layerRendererRef.current) return;
 
-      for (const layerData of layersData) {
-        if (!layerData.imageData) continue;
+      let fetchTotal = 0;
+      let decompressTotal = 0;
+      let renderTotal = 0;
 
+      for (const layerData of layersData) {
         const layer = layerRendererRef.current.getLayer(layerData.id);
         if (!layer) continue;
 
-        // Load image from base64
-        const img = new Image();
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => {
-            layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-            layer.ctx.drawImage(img, 0, 0);
-            resolve();
-          };
-          img.onerror = reject;
-          // Handle both with and without data URL prefix
-          img.src = layerData.imageData!.startsWith('data:')
-            ? layerData.imageData!
+        // Get offset for layer positioning
+        const offsetX = layerData.offsetX ?? 0;
+        const offsetY = layerData.offsetY ?? 0;
+
+        // Determine image source: project:// protocol or legacy base64
+        if (layerData.imageData) {
+          // Legacy: base64 data provided (for backward compatibility)
+          const imgSrc = layerData.imageData.startsWith('data:')
+            ? layerData.imageData
             : `data:image/png;base64,${layerData.imageData}`;
+
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise<void>((resolve) => {
+            img.onload = () => {
+              layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+              layer.ctx.drawImage(img, offsetX, offsetY);
+              resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = imgSrc;
+          });
+        } else {
+          // New: use project:// custom protocol
+          const url = `http://project.localhost/layer/${layerData.id}`;
+          try {
+            const fetchStart = performance.now();
+            const response = await fetch(url);
+            const buffer = await response.arrayBuffer();
+            fetchTotal += performance.now() - fetchStart;
+
+            const contentType = response.headers.get('Content-Type') || '';
+            const imgWidth = parseInt(response.headers.get('X-Image-Width') || '0');
+            const imgHeight = parseInt(response.headers.get('X-Image-Height') || '0');
+
+            if (contentType === 'image/x-rgba-lz4') {
+              // LZ4-compressed RGBA data - decompress first
+              const decompressStart = performance.now();
+              const decompressed = decompressLz4PrependSize(new Uint8Array(buffer));
+              decompressTotal += performance.now() - decompressStart;
+
+              if (imgWidth > 0 && imgHeight > 0) {
+                const renderStart = performance.now();
+                const imageData = new ImageData(
+                  new Uint8ClampedArray(decompressed),
+                  imgWidth,
+                  imgHeight
+                );
+                layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+                layer.ctx.putImageData(imageData, offsetX, offsetY);
+                renderTotal += performance.now() - renderStart;
+              }
+            } else if (contentType === 'image/x-rgba') {
+              // Raw RGBA data (uncompressed) - use ImageData for fast rendering
+              if (imgWidth > 0 && imgHeight > 0) {
+                const renderStart = performance.now();
+                const imageData = new ImageData(new Uint8ClampedArray(buffer), imgWidth, imgHeight);
+                layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+                layer.ctx.putImageData(imageData, offsetX, offsetY);
+                renderTotal += performance.now() - renderStart;
+              }
+            } else {
+              // Encoded image (PNG/WebP) - use Image element
+              const renderStart = performance.now();
+              // Create blob from already-fetched buffer (response body was consumed by arrayBuffer())
+              const blob = new Blob([buffer], { type: contentType });
+              const bitmap = await createImageBitmap(blob);
+              layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+              layer.ctx.drawImage(bitmap, offsetX, offsetY);
+              renderTotal += performance.now() - renderStart;
+            }
+          } catch (e) {
+            console.warn(`Failed to load layer image: ${layerData.id}`, e);
+          }
+        }
+      }
+
+      // Report benchmark phases to backend if session ID is provided
+      if (benchmarkSessionId) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'fetch',
+          durationMs: fetchTotal,
+        });
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'decompress',
+          durationMs: decompressTotal,
+        });
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'render',
+          durationMs: renderTotal,
+        });
+        // Signal completion to trigger final report
+        await invoke('report_benchmark', {
+          sessionId: benchmarkSessionId,
+          phase: 'complete',
+          durationMs: 0,
         });
       }
 
@@ -806,6 +903,8 @@ export function Canvas() {
       colorDynamics,
       wetEdgeEnabled,
       wetEdge,
+      transferEnabled,
+      transfer,
     };
   }, [
     currentSize,
@@ -831,6 +930,8 @@ export function Canvas() {
     colorDynamics,
     wetEdgeEnabled,
     wetEdge,
+    transferEnabled,
+    transfer,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position

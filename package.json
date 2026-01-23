@@ -1,6 +1,6 @@
 {
   "name": "paintboard",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "description": "Professional painting software with low-latency pen input",
   "type": "module",
   "scripts": {
@@ -28,6 +28,7 @@
     "@tauri-apps/plugin-fs": "^2.0.0",
     "immer": "^10.0.0",
     "lucide-react": "^0.562.0",
+    "lz4js": "^0.2.0",
     "react": "^18.2.0",
     "react-colorful": "^5.6.1",
     "react-dom": "^18.2.0",
@@ -54,7 +55,6 @@
     "lint-staged": "^15.2.0",
     "prettier": "^3.2.0",
     "typescript": "^5.3.0",
-    "vibe-kanban-web-companion": "^0.0.5",
     "vite": "^5.0.0",
     "vitest": "^1.2.0"
   },

@@ -366,6 +366,15 @@ export class StrokeAccumulator {
 
     // Texture brush path - use TextureMaskCache for sampled brushes
     if (texture) {
+      // Fix for Wet Edge on Texture Brushes (v4 regression fix)
+      // If we are using a texture brush, we MUST use soft-brush wet edge settings (hardness=0)
+      // to ensure full edge boost and gamma are applied.
+      // If the stroke started with hardness > 0 (e.g. default 1.0), we need to rebuild the LUT now.
+      if (this.wetEdgeEnabled && this.wetEdgeHardness > 0) {
+        this.wetEdgeHardness = 0;
+        this.buildWetEdgeLut(0, this.wetEdgeStrength);
+      }
+
       // Always try to set texture - TextureMaskCache handles change detection internally
       // This ensures we switch to the new texture when brush preset changes
       if (!this.textureMaskCache.setTextureSync(texture)) {

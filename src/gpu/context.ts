@@ -76,8 +76,9 @@ export class GPUContext {
       const device = await adapter.requestDevice({
         requiredFeatures,
         requiredLimits: {
-          // 256MB buffer for large canvases (4K+)
-          maxBufferSize: 256 * 1024 * 1024,
+          // 512MB buffer for very large canvases (8K+)
+          // Use adapter's maxBufferSize if available, capped at 512MB for safety
+          maxBufferSize: Math.min(512 * 1024 * 1024, adapter.limits.maxBufferSize),
         },
       });
 

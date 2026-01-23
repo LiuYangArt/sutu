@@ -28,9 +28,9 @@ struct DabData {
   color_b: f32,           // RGB color B (offset 24)
   dab_opacity: f32,       // Alpha Darken ceiling (offset 28)
   flow: f32,              // Flow multiplier (offset 32)
-  _padding0: f32,         // Padding (offset 36)
-  _padding1: f32,         // Padding (offset 40)
-  _padding2: f32,         // Padding (offset 44)
+  roundness: f32,         // Brush roundness 0.01-1.0 (offset 36)
+  angle_cos: f32,         // cos(angle), precomputed on CPU (offset 40)
+  angle_sin: f32,         // sin(angle), precomputed on CPU (offset 44)
 };
 
 struct Uniforms {
@@ -55,7 +55,7 @@ var<workgroup> shared_dabs: array<DabData, MAX_SHARED_DABS>;
 var<workgroup> shared_dab_count: u32;
 
 // ============================================================================
-// Error Function Approximation (matches brush.wgsl exactly)
+// Error Function Approximation
 // ============================================================================
 fn erf_approx(x: f32) -> f32 {
   let sign_x = sign(x);
@@ -82,14 +82,14 @@ fn erf_approx(x: f32) -> f32 {
 }
 
 // ============================================================================
-// Quantize to 8-bit (matches brush.wgsl)
+// Quantize to 8-bit
 // ============================================================================
 fn quantize_to_8bit(val: f32) -> f32 {
   return floor(val * 255.0 + 0.5) / 255.0;
 }
 
 // ============================================================================
-// Alpha Darken Blend (matches brush.wgsl exactly)
+// Alpha Darken Blend
 // ============================================================================
 // Fixed: Each dab's ceiling only limits ITS OWN contribution, not whether to skip.
 // This ensures later dabs with lower opacity still paint ON TOP of earlier dabs.
@@ -124,9 +124,9 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
 }
 
 // ============================================================================
-// Compute Mask (matches CPU maskCache.ts implementation)
+// Compute Mask
 // ============================================================================
-// For hard brushes: 1px physical AA band (not normalized distance!)
+// For hard brushes: 1px physical AA band
 // For soft brushes: Gaussian erf-based falloff
 fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
   // =========================================================================
@@ -200,6 +200,7 @@ fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
 // Calculate effective radius (unified for all hardness levels)
 // ============================================================================
 // Ensures proper pixel coverage for both large and small brushes
+// Note: Uses radius (not considering roundness) since ellipse is always inside circle
 fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
   // For small brushes (< 2px), ensure minimum effective radius of 1.5px
   // This prevents missing pixels due to dab culling
@@ -211,6 +212,25 @@ fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
   // and slight expansion for hard brushes to capture AA band
   let geometric_fade = (1.0 - hardness) * 2.5;
   return radius * max(1.1, 1.0 + geometric_fade);
+}
+
+// ============================================================================
+// Compute ellipse distance (handles roundness and rotation)
+// ============================================================================
+// Transforms pixel position to dab's local space, applies roundness scaling
+fn compute_ellipse_distance(pixel: vec2<f32>, dab: DabData) -> f32 {
+  let delta = pixel - vec2<f32>(dab.center_x, dab.center_y);
+
+  // Inverse rotation to dab's local space (using CPU-precomputed cos/sin)
+  // Rotation matrix inverse: [cos, sin; -sin, cos]
+  let rotated_x = delta.x * dab.angle_cos + delta.y * dab.angle_sin;
+  let rotated_y = delta.y * dab.angle_cos - delta.x * dab.angle_sin;
+
+  // Scale Y axis by 1/roundness to normalize ellipse to circle
+  // roundness is already clamped to >= 0.01 on CPU side
+  let scaled_y = rotated_y / dab.roundness;
+
+  return sqrt(rotated_x * rotated_x + scaled_y * scaled_y);
 }
 
 // ============================================================================
@@ -278,14 +298,18 @@ fn main(
     let dab_center = vec2<f32>(dab.center_x, dab.center_y);
     let dab_color = vec3<f32>(dab.color_r, dab.color_g, dab.color_b);
 
-    // Fast distance check (early culling)
+    // Fast distance check (early culling) - use simple Euclidean distance
+    // Since roundness <= 1.0, ellipse is always inside the circle
     let effective_radius = calculate_effective_radius(dab.radius, dab.hardness);
-    let dist = distance(pixel, dab_center);
-    if (dist > effective_radius) {
+    let quick_dist = distance(pixel, dab_center);
+    if (quick_dist > effective_radius) {
       continue;
     }
 
-    // Compute mask
+    // Compute ellipse distance (with rotation and roundness)
+    let dist = compute_ellipse_distance(pixel, dab);
+
+    // Compute mask using ellipse distance
     let mask = compute_mask(dist, dab.radius, dab.hardness);
     if (mask < 0.001) {
       continue;

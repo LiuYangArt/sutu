@@ -68,6 +68,9 @@ export class InstanceBuffer {
     this.cpuData[offset + 6] = dab.b;
     this.cpuData[offset + 7] = dab.dabOpacity;
     this.cpuData[offset + 8] = dab.flow;
+    this.cpuData[offset + 9] = dab.roundness;
+    this.cpuData[offset + 10] = dab.angleCos;
+    this.cpuData[offset + 11] = dab.angleSin;
 
     const effectiveRadius = calculateEffectiveRadius(dab.size, dab.hardness);
     this.minX = Math.min(this.minX, dab.x - effectiveRadius);
@@ -152,6 +155,9 @@ export class InstanceBuffer {
         b: this.cpuData[offset + 6]!,
         dabOpacity: this.cpuData[offset + 7]!,
         flow: this.cpuData[offset + 8]!,
+        roundness: this.cpuData[offset + 9]!,
+        angleCos: this.cpuData[offset + 10]!,
+        angleSin: this.cpuData[offset + 11]!,
       });
     }
 

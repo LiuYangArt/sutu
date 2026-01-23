@@ -51,18 +51,30 @@ multiplier = center - (center - center) * alpha = center
 ```typescript
 // 伪代码
 function getEdgeBoost(hardness: number): number {
-  const MAX_BOOST = 2.2;
-  const CENTER_OPACITY = 0.45;
+  const MAX_BOOST = 1.8;       // Soft brushes
+  const CENTER_OPACITY = 0.65; // Center keeps 65% of original opacity
+  const MIN_BOOST = 1.4;       // Hard brushes
 
   // 阈值控制：hardness 0.7 以上开始迅速衰减效果
   if (hardness > 0.7) {
     const t = (hardness - 0.7) / 0.3; // 0.0 -> 1.0
-    // 线性插值：从 MAX_BOOST 降到 CENTER_OPACITY
-    return MAX_BOOST * (1 - t) + CENTER_OPACITY * t;
+    // 线性插值：从 MAX_BOOST 降到 MIN_BOOST
+    return MAX_BOOST * (1 - t) + MIN_BOOST * t;
   }
   return MAX_BOOST;
 }
+  return MAX_BOOST;
+}
 ```
+
+### 3.3 特殊边界情况：纹理笔刷 (Texture Brushes)
+
+**问题**：纹理笔刷通常使用位图印章，其内部 Alpha 变化丰富。如果在此类笔刷上开启 wet edge，我们通常希望获得完整的边缘增强效果。然而，系统可能会根据 UI 设置传递 `hardness = 1.0` (默认值)，导致 wet edge 效果被错误地关闭（因触发硬边优化）。
+
+**解决方案**：
+
+- 对于 **Texture Brushes**，强制设定传入 Wet Edge Shader 的 `hardness` 为 `0.0`。
+- 这确保了纹理笔刷始终应用最大强度的边缘增强 (`maxBoost`) 和 Gamma 修正，保留丰富的纹理细节。
 
 ## 4. 性能与画质优化：预计算 LUT
 

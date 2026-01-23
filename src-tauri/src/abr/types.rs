@@ -117,7 +117,10 @@ pub struct AbrDynamics {
     pub opacity_jitter: f32,
 }
 
-/// Brush preset for frontend consumption
+/// Brush preset for frontend consumption (lightweight metadata only)
+///
+/// Note: Texture data is NOT included here. Instead, textures are cached
+/// in BrushCache and served via the `project://brush/{id}` protocol.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrushPreset {
@@ -137,9 +140,7 @@ pub struct BrushPreset {
     pub roundness: f32,
     /// Whether brush has custom tip texture
     pub has_texture: bool,
-    /// Tip texture data (base64 encoded PNG, if any)
-    pub texture_data: Option<String>,
-    /// Texture dimensions
+    /// Texture dimensions (for pre-allocation, texture data via protocol)
     pub texture_width: Option<u32>,
     pub texture_height: Option<u32>,
     /// Pressure affects size
@@ -189,7 +190,7 @@ impl From<AbrBrush> for BrushPreset {
             angle: brush.angle,
             roundness: brush.roundness * 100.0,
             has_texture: brush.tip_image.is_some(),
-            texture_data: brush.tip_image.as_ref().map(encode_texture),
+            // Note: texture_data removed - textures served via project://brush/{id}
             texture_width: brush.tip_image.as_ref().map(|img| img.width),
             texture_height: brush.tip_image.as_ref().map(|img| img.height),
             size_pressure: dynamics.map(|d| d.size_control == 2).unwrap_or(false),
@@ -200,24 +201,8 @@ impl From<AbrBrush> for BrushPreset {
     }
 }
 
-/// Encode grayscale image to base64 PNG
-fn encode_texture(img: &GrayscaleImage) -> String {
-    use image::{GrayImage, ImageBuffer};
-
-    let gray_img: GrayImage = ImageBuffer::from_raw(img.width, img.height, img.data.clone())
-        .unwrap_or_else(|| ImageBuffer::new(img.width.max(1), img.height.max(1)));
-
-    let mut png_data = Vec::new();
-    let mut cursor = std::io::Cursor::new(&mut png_data);
-
-    if let Err(e) = gray_img.write_to(&mut cursor, image::ImageFormat::Png) {
-        tracing::warn!("Failed to encode texture: {}", e);
-        return String::new();
-    }
-
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(&png_data)
-}
+// Note: encode_texture function removed - no longer needed
+// Textures are now cached as raw Gray8 data and served via LZ4 compression
 
 /// Generate a simple UUID v4
 mod uuid {

@@ -139,32 +139,99 @@ PSD 使用的 RLE 变体（PackBits）是必须实现的：
 
 ---
 
-## 4. 任务清单 (Task List)
+## 4. 当前实现状态 (Current Implementation Status)
 
-### Phase 1: 基础架构与压缩
+### 4.1 模块结构
 
-- [ ] Rust: 实现 `PackBits` (RLE) 压缩与解压算法。
-- [ ] Rust: 定义 `PsdHeader` 和 `ChannelInfo` 等基础结构体 (参考 Krita `libs/psd/psd_header.h`)。
-- [ ] Rust: 实现二进制流写入器 `BigEndianWriter`。
+实际代码位于 `src-tauri/src/file/psd/`：
 
-### Phase 2: 简单导出 (Flattened)
+```
+src-tauri/src/file/psd/
+├── mod.rs          # 模块导出
+├── writer.rs       # PSD 写入器 ✅ 生产使用
+├── reader.rs       # PSD 读取器 ✅ 生产使用（基于 psd crate）
+├── compression.rs  # PackBits 压缩/解压
+└── types.rs        # PSD 数据结构定义
+```
 
-- [ ] Rust: 实现只写 Header + Image Data 的导出器。
-- [ ] 验证: 生成的文件能在 Photoshop/Krita 中打开（显示为单层背景）。
+### 4.2 代码使用情况
 
-### Phase 3: 图层导出 (Layered)
+| 文件             | 组件                      | 状态    | 说明                          |
+| ---------------- | ------------------------- | ------- | ----------------------------- |
+| `writer.rs`      | 整体                      | ✅ 生产 | 完整的 PSD 写入功能           |
+| `reader.rs`      | 整体                      | ✅ 生产 | 使用外部 `psd` crate 实现读取 |
+| `compression.rs` | `packbits_encode()`       | ✅ 生产 | 写入时压缩通道数据            |
+| `compression.rs` | `packbits_decode()`       | 🔒 保留 | 供测试验证 + 未来自研读取     |
+| `compression.rs` | `CompressionError`        | 🔒 保留 | 解压错误类型                  |
+| `types.rs`       | `ColorMode::Rgb`          | ✅ 生产 | 写入 PSD header               |
+| `types.rs`       | `ColorMode` 其他变体      | 🔒 保留 | 完整规范定义，供未来扩展      |
+| `types.rs`       | `PsdHeader::write()`      | ✅ 生产 | 写入文件头                    |
+| `types.rs`       | `PsdHeader::SIZE`         | 🔒 保留 | 测试验证用                    |
+| `types.rs`       | `ChannelInfo::write()`    | ✅ 生产 | 写入通道信息                  |
+| `types.rs`       | `ChannelInfo::SIZE`       | 🔒 保留 | 未来读取用                    |
+| `types.rs`       | `LayerFlags::to_byte()`   | ✅ 生产 | 写入图层标志                  |
+| `types.rs`       | `LayerFlags::from_byte()` | 🔒 保留 | 未来自研读取用                |
+| `types.rs`       | `ResolutionInfo::write()` | ✅ 生产 | 写入分辨率信息                |
+| `types.rs`       | `ResolutionInfo::SIZE`    | 🔒 保留 | 测试验证用                    |
 
-- [ ] Rust: 实现 `LayerRecord` 的序列化。
-- [ ] Rust: 实现多图层通道数据的组织与写入。
-- [ ] Rust: 支持基本混合模式映射 (Normal, Multiply, Screen, Overlay)。
-- [ ] 验证: 导出多图层文件，检查层级和混合模式是否正确。
+> **🔒 保留代码说明**: 标记为 `#[allow(dead_code)]` 的代码虽未在生产中直接调用，但有明确用途：
+>
+> 1. 测试覆盖（如 roundtrip 验证压缩算法）
+> 2. 规范完整性（如 `ColorMode` 枚举）
+> 3. 未来自研 PSD 读取功能预留
 
-### Phase 4: 导入 (Parsing)
+### 4.3 设计决策
 
-- [ ] Rust: 实现/集成 PSD Parser。
-- [ ] 前端: 对接导入接口，恢复图层状态。
+**PSD 读取策略**: 当前使用外部 `psd` crate 而非自研实现，原因：
 
-## 5. 参考资料
+- `psd` crate 已处理大量边缘情况和兼容性问题
+- 自研读取器的 ROI 不高，写入功能更重要
+- 保留 `packbits_decode()` 和 `from_byte()` 等代码，以便未来需要时可快速切换到自研实现
+
+## 5. 任务清单 (Task List)
+
+### Phase 1: 基础架构与压缩 ✅
+
+- [x] Rust: 实现 `PackBits` (RLE) 压缩与解压算法。
+- [x] Rust: 定义 `PsdHeader` 和 `ChannelInfo` 等基础结构体 (参考 Krita `libs/psd/psd_header.h`)。
+- [x] Rust: 实现二进制流写入器 `BigEndianWriter`。
+
+### Phase 2: 简单导出 (Flattened) ✅
+
+- [x] Rust: 实现只写 Header + Image Data 的导出器。
+- [x] 验证: 生成的文件能在 Photoshop/Krita 中打开（显示为单层背景）。
+
+### Phase 3: 图层导出 (Layered) ✅
+
+- [x] Rust: 实现 `LayerRecord` 的序列化。
+- [x] Rust: 实现多图层通道数据的组织与写入。
+- [x] Rust: 支持基本混合模式映射 (Normal, Multiply, Screen, Overlay)。
+- [x] 验证: 导出多图层文件，检查层级和混合模式是否正确。
+
+### Phase 4: 导入 (Parsing) ✅
+
+- [x] Rust: 集成 `psd` crate 实现 PSD 解析。
+- [x] 前端: 对接导入接口，恢复图层状态。
+
+## 5. 后续规划 (Future Roadmap)
+
+### Phase 5: 高级特性与优化
+
+- [ ] **DPI/Resolution 读取**:
+  - 当前导入时 DPI默认为 72。需要解析 `Image Resources` (ID `0x03ED`) 以获取正确的文档分辨率并同步到 PaintBoard 项目设置。
+- [ ] **图层组 (Layer Groups)**:
+  - 实现 `lsct` (Section Divider Setting) 的解析与写入，以支持嵌套的图层组结构。
+  - 目前 PaintBoard 将图层处理为线性结构，完善图层组需要配合前端 `useDocumentStore` 的树状结构改造。
+- [ ] **性能优化 (Performance Optimization)**:
+  - **Custom Protocol 传输 (参考 `docs/design/file-io-optimization.md`)**:
+    - 目前 `commands.rs` 将图层数据转为 Base64 字符串传递给前端，导致内存和解析瓶颈。
+    - **新方案**: 采用自定义协议 (`project://`) + 无损 WebP 格式。
+    - 后端解析 PSD 获取 RGBA -> 编码为 WebP -> 浏览器通过网络线程直接请求 `project://layer/{id}` 加载，实现零 JS 主线程阻塞。
+  - **图层边界裁剪 (Trim Bounds)**: 导出时计算每个图层的实际有效像素范围 (Bounding Box)，而非总是保存全画布尺寸。这将显著减小文件体积并提升保存速度。
+- [ ] **色彩管理**:
+  - 支持 ICC Profile 的读写 (Image Resource ID `0x040F`)，确保跨软件的色彩一致性。
+
+## 6. 参考资料
 
 - **Adobe Photoshop File Format Specification**: [Link](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/)
 - **Krita Source**: `plugins/impex/psd/`

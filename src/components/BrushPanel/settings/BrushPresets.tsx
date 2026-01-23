@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useToolStore, BrushTexture } from '@/stores/tool';
-import { BrushPreset, DEFAULT_ROUND_BRUSH } from '../types';
+import { BrushPreset, DEFAULT_ROUND_BRUSH, ImportAbrResult } from '../types';
+import { BrushThumbnail } from '../BrushThumbnail';
 
 interface BrushPresetsProps {
   importedPresets: BrushPreset[];
@@ -27,10 +28,12 @@ export function BrushPresets({
     clearBrushTexture,
   } = useToolStore();
 
-  /** Import ABR file */
+  /** Import ABR file (optimized: zero-encoding, LZ4 compression) */
   const handleImportABR = async () => {
     setIsImporting(true);
     setImportError(null);
+
+    const frontendStart = performance.now();
 
     try {
       const selected = await open({
@@ -39,15 +42,24 @@ export function BrushPresets({
       });
 
       if (selected) {
-        const presets = await invoke<BrushPreset[]>('import_abr_file', {
+        const result = await invoke<ImportAbrResult>('import_abr_file', {
           path: selected,
         });
-        setImportedPresets(presets);
+
+        const frontendTime = performance.now() - frontendStart;
+
+        // Frontend benchmark log
+        console.log(
+          `[ABR Import] Frontend received ${result.presets.length} brushes in ${frontendTime.toFixed(2)}ms`
+        );
+        console.log(`[ABR Import] Backend benchmark:`, result.benchmark);
+
+        setImportedPresets(result.presets);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setImportError(message);
-      console.error('ABR import failed:', err);
+      console.error('[ABR Import] Failed:', err);
     } finally {
       setIsImporting(false);
     }
@@ -64,11 +76,13 @@ export function BrushPresets({
     setBrushRoundness(Math.round(preset.roundness));
     setBrushAngle(Math.round(preset.angle));
 
-    // Apply texture if preset has one
-    if (preset.hasTexture && preset.textureData && preset.textureWidth && preset.textureHeight) {
+    // Apply texture reference if preset has one
+    // Note: Texture data is fetched via protocol when needed for rendering
+    if (preset.hasTexture && preset.textureWidth && preset.textureHeight) {
       const texture: BrushTexture = {
         id: preset.id,
-        data: preset.textureData,
+        // Data will be fetched via project://brush/{id} when rendering
+        data: '', // Empty - not used for rendering anymore
         width: preset.textureWidth,
         height: preset.textureHeight,
         cursorPath: preset.cursorPath ?? undefined,
@@ -100,7 +114,7 @@ export function BrushPresets({
           <div className="abr-preset-round-icon" />
         </button>
 
-        {/* Imported presets */}
+        {/* Imported presets - using BrushThumbnail for texture display */}
         {importedPresets.map((preset) => (
           <button
             key={preset.id}
@@ -108,9 +122,10 @@ export function BrushPresets({
             onClick={() => applyPreset(preset)}
             title={`${preset.name}\n${preset.diameter}px, ${preset.hardness}% hardness`}
           >
-            {preset.hasTexture && preset.textureData ? (
-              <img
-                src={`data:image/png;base64,${preset.textureData}`}
+            {preset.hasTexture ? (
+              <BrushThumbnail
+                brushId={preset.id}
+                size={48}
                 alt={preset.name}
                 className="abr-preset-texture"
               />

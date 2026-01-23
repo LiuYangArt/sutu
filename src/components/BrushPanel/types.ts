@@ -7,7 +7,7 @@ export interface BrushPreset {
   angle: number;
   roundness: number;
   hasTexture: boolean;
-  textureData: string | null;
+  // Note: textureData removed - textures served via project://brush/{id}
   textureWidth: number | null;
   textureHeight: number | null;
   sizePressure: boolean;
@@ -16,6 +16,23 @@ export interface BrushPreset {
   cursorPath?: string | null;
   /** Cursor bounds for proper scaling */
   cursorBounds?: { width: number; height: number } | null;
+}
+
+/** ABR import benchmark timing */
+export interface AbrBenchmark {
+  totalMs: number;
+  readMs: number;
+  parseMs: number;
+  cacheMs: number;
+  brushCount: number;
+  rawBytes: number;
+  compressedBytes: number;
+}
+
+/** ABR import result with benchmark info */
+export interface ImportAbrResult {
+  presets: BrushPreset[];
+  benchmark: AbrBenchmark;
 }
 
 /** Default procedural brush preset (always first in the list) */
@@ -28,7 +45,6 @@ export const DEFAULT_ROUND_BRUSH: BrushPreset = {
   angle: 0,
   roundness: 100,
   hasTexture: false,
-  textureData: null,
   textureWidth: null,
   textureHeight: null,
   sizePressure: true,
