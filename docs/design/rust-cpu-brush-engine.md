@@ -1,9 +1,10 @@
 # Rust CPU 笔刷引擎设计方案
 
-> **状态**: 📝 规划中 (v1.3 - 已整合深度技术评审)
+> **状态**: 📝 规划中 (v1.5 - 修复关键 P0 问题)
 > **前置条件**: Tauri v2 Channel IPC 测试通过 (Avg Jitter < 0.4ms)
 > **目标**: 替代 TypeScript CPU 笔刷，提供高性能 CPU 渲染路径
-> **置信度评估**: 70% (技术可行 85%, 性能目标 65%, 内存目标 65%)
+> **目标平台**: Windows (WebView2/Chromium)
+> **置信度评估**: 80% (技术可行 90%, 性能目标 70%, 内存目标 80%)
 
 ## 1. 背景与动机
 
@@ -38,8 +39,6 @@
 | 内存占用       | < 80MB 上限 | Stroke Buffer  |
 | 提升倍数       | ≥ 2x        | 保守估计       |
 
-> **注意**: 性能目标已根据深度技术评审调整，提升倍数目标从 3x 降为 2x。
-
 ## 3. 架构设计
 
 ### 3.1 核心思路
@@ -48,11 +47,31 @@
 
 **关键语义澄清**：
 
-- `buffer` = **Stroke Layer**（单笔画临时层），不是最终图层
-- `begin_stroke()` 清空 buffer 是正确的——清空的是临时 stroke buffer
-- `end_stroke()` 时，前端负责将 stroke layer 合成到目标图层
+- `buffer` = **Stroke Layer**（单笔画临时层）
+- `begin_stroke()` **仅清理上次 stroke 的 accumulated 区域**
+- `end_stroke()` **移除 session**（释放内存）
 
-### 3.2 数据流
+### 3.2 双矩形语义（v1.5 关键修正）
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ sync_dirty_rect                                          │
+│   ├── 自上次 sync 以来的增量脏区域                       │
+│   ├── stamp_dab() 时累加                                 │
+│   └── get_sync_data() 后清空                             │
+│                                                          │
+│ accumulated_dirty_rect                                   │
+│   ├── 当前 stroke 总脏区域                               │
+│   ├── stamp_dab() 时累加                                 │
+│   ├── get_sync_data() 后保持不变                         │
+│   └── end_stroke() 后赋给 last_stroke_dirty 并清空       │
+│                                                          │
+│ last_stroke_dirty                                        │
+│   └── 上一次 stroke 的总脏区域，begin_stroke() 用于清理  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 3.3 数据流
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -60,7 +79,7 @@
 │                                                                   │
 │  ┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐  │
 │  │ Input Event │───►│ BrushStamper     │───►│ StreamingEngine │  │
-│  │ (x,y,p)     │    │ (existing code)  │    │ (Stroke Layer)  │  │
+│  │ (x,y,p)     │    │ (existing code)  │    │ (per-session)   │  │
 │  │             │    │ - Spacing        │    │                 │  │
 │  │             │    │ - Interpolation  │    │  ┌───────────┐  │  │
 │  └─────────────┘    └──────────────────┘    │  │ SIMD Mask │  │  │
@@ -74,142 +93,65 @@
 │                                                       │           │
 │  ┌────────────────────────────────────────────────────▼────────┐  │
 │  │ SyncTrigger: N dabs OR T_ms OR MAX_BYTES                    │  │
-│  │ Output: scratch buffer + clone (Tauri 需要所有权)            │  │
+│  │ Output: sync_dirty_rect (增量) + clone                       │  │
+│  │ 锁策略: 单一 ManagerState Mutex + Arc<Mutex<Engine>>         │  │
 │  └─────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-└───────────────────────────────────────┬───────────────────────────┘
-                                        │ Tauri v2 Channel (Binary)
-                                        │ Avg Latency: ~0.4ms
-                                        ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                        Frontend                                    │
-│                                                                   │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌───────────────┐  │
-│  │ Channel.onMessage│───►│ Message Queue  │───►│ RAF Batch      │  │
-│  │ (Uint8Array)    │    │ (背压检测)      │    │ putImageData  │  │
-│  └─────────────────┘    └─────────────────┘    └───────────────┘  │
-│                                                                   │
-│  onStrokeEnd: Composite stroke layer → target layer → history     │
 │                                                                   │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.3 与 GPU 引擎的关系
+## 4. Review 反馈与修正 (v1.5)
 
-```
-用户选择渲染引擎
-        │
-        ├──► GPU Compute Shader (默认，高性能)
-        │         │
-        │         ▼ 遇到问题时
-        │
-        └──► Rust CPU Engine (Fallback，稳定可靠)
-                  │
-                  ▼ Rust 引擎失败时 (自动降级)
-              TypeScript CPU (最后手段)
-```
+### 4.1 P0 关键修正
 
-## 4. 特性差距分析
+| 问题                        | v1.4             | v1.5 修正                       | 理由                    |
+| --------------------------- | ---------------- | ------------------------------- | ----------------------- |
+| **dirty_rect 未清空**       | sync 后不清      | **双矩形机制**                  | 避免重复发送 + 阈值失效 |
+| **锁顺序不一致**            | 分离锁死锁风险   | **统一 ManagerState + Arc**     | 避免死锁                |
+| **全局锁持有期间锁 engine** | per-session 阻塞 | **Arc clone 后立即释放 Map 锁** | 真正实现互不阻塞        |
 
-### 4.1 TypeScript 实现已有特性 vs Rust 支持
+### 4.2 P1 优化
 
-| 特性                            | TS 实现                  | Rust 现有代码           | 优先级 | 说明          |
-| ------------------------------- | ------------------------ | ----------------------- | ------ | ------------- |
-| **Gaussian Mask (erf-based)**   | ✅                       | ✅ `soft_dab.rs`        | -      | 已有          |
-| **Ellipse (roundness + angle)** | ✅                       | ✅ `GaussParams::ycoef` | -      | 已有          |
-| **Flow/Opacity 分离**           | ✅                       | ✅ `render_soft_dab`    | -      | 已有          |
-| **Mask Cache (参数容差)**       | ✅ 2% size容差           | ❌                      | 🔴 P0  | 性能关键      |
-| **Hard Brush 快速路径**         | ✅ `stampHardBrush()`    | ❌                      | 🔴 P0  | 跳过 Gaussian |
-| **Alpha Darken 混合**           | ✅ Krita-style           | ⚠️ Normal only          | 🟡 P1  | 需调整        |
-| **Wet Edge (LUT-based)**        | ✅ `wetEdgeLut`          | ❌                      | 🟡 P1  | LUT 实现      |
-| **Texture Brush (ABR)**         | ✅ `textureMaskCache.ts` | ❌                      | 🟡 P1  | 从缓存加载    |
-| **Flip X/Y (Shape Dynamics)**   | ✅ 纹理笔刷用            | ❌                      | 🟢 P2  | 低优先级      |
+| 问题                     | 修正                    |
+| ------------------------ | ----------------------- |
+| `createImageBitmap` 乱序 | 串行链 `bitmapChain`    |
+| cleanup 可能卡住         | 两阶段清理 + `try_lock` |
 
-## 5. Review 反馈与修正 (v1.3)
+### 4.3 平台说明
 
-### 5.1 关键修正
+- **目标平台**: Windows (Edge WebView2)
+- **不考虑**: Safari、移动端浏览器
+- `putImageData` 在 Chrome/Edge 上表现稳定，无需过度担心
 
-| 问题                | v1.2 设计                     | v1.3 修正                    | 理由                                        |
-| ------------------- | ----------------------------- | ---------------------------- | ------------------------------------------- |
-| **输出缓冲策略**    | 双缓冲 + `mem::take` 无 clone | **Scratch buffer + clone**   | Tauri Channel 消耗 Vec 所有权，无法回收复用 |
-| **会话淘汰策略**    | 声称 LRU                      | **FIFO**（按创建顺序）       | VecDeque 只 push/pop，实际是 FIFO           |
-| **锁设计**          | 两把独立 Mutex                | **单一 Mutex<ManagerState>** | 避免死锁风险                                |
-| **前端背压检测**    | pendingMessages 计数器        | **消息队列 + RAF 批处理**    | 计数器无法测量真正的队列积压                |
-| **dirty_rect 安全** | `as u32` 可能溢出             | **先 max(0) 再转 u32**       | 统一安全写法                                |
-| **内存限制**        | 64MB                          | **80MB**                     | 支持 4K 画布 (64MB) 留余量                  |
-| **性能预估**        | 2.2-3.5x 提升                 | **2x 提升**                  | 更保守估计                                  |
+## 5. 核心实现（v1.5 修正版）
 
-### 5.2 设计决策澄清
-
-#### 关于 "无 clone" 的澄清
-
-v1.2 中提出的 "双缓冲无 clone" 方案**在 Tauri Channel 语义下不可行**：
-
-1. `Channel::send(Vec<u8>)` 消耗 Vec 的所有权
-2. 发送后 Vec 被序列化并 drop，无法回收
-3. `mem::take` 会将 buffer 置为 capacity=0，下次需重新分配
-
-**v1.3 采用的方案**：
-
-- 使用 **scratch buffer 复用构建过程**，减少填充时的分配
-- 发送时仍然 **clone**：`on_sync.send(output_buffer.clone())`
-- 真正的优化点在于：**减少构建过程的分配**，而非 IPC 发送
-
-**如需真正的零拷贝（Phase 3+）**：
-
-- 探索 Tauri 的 SharedArrayBuffer 支持
-- 或使用内存映射文件 (mmap)
-
-#### 关于 FIFO vs LRU 的澄清
-
-当前设计实际是 **FIFO**（先进先出），不是 LRU：
-
-```rust
-// start 时
-session_order.push_back(session_id);
-
-// 淘汰时
-session_order.pop_front(); // 淘汰最先创建的，不是最久未使用的
-```
-
-对于我们的场景，**FIFO 足够**：
-
-- 每个笔画都是独立会话，使用后立即结束
-- 不存在"多个会话长期共存，需要淘汰最久未使用"的场景
-
-如需严格 LRU，需要：
-
-- 在 `rust_brush_input` 时 touch 该 session
-- 使用 `lru` crate 或手动实现 LinkedHashMap
-
-## 6. 核心实现（v1.3 修正版）
-
-### 6.1 Rust 端：统一锁 + Scratch Buffer
+### 5.1 Rust 端：统一锁 + Arc + 双矩形
 
 ```rust
 // src-tauri/src/brush/streaming.rs
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::{soft_dab::{render_soft_dab, GaussParams}, stroke_buffer::Rect};
+use super::stroke_buffer::Rect;
 
 /// 内存限制常量
-const MAX_BUFFER_SIZE: usize = 80 * 1024 * 1024; // 80MB (支持 4K + 余量)
+const MAX_BUFFER_SIZE: usize = 80 * 1024 * 1024; // 80MB
+const SESSION_TIMEOUT_SECS: u64 = 60;
 
-/// 引擎管理器状态 (Tauri State 托管)
-/// 使用单一 Mutex 避免死锁
+/// 引擎管理器（统一锁，避免锁顺序问题）
 pub struct BrushEngineManager {
     pub state: Mutex<ManagerState>,
 }
 
 /// 管理器内部状态（单一锁保护）
 pub struct ManagerState {
-    engines: HashMap<String, StreamingBrushEngine>,
-    /// 会话创建顺序，用于 FIFO 淘汰
+    /// Session -> Engine (Arc 实现真正的 per-session 锁分离)
+    engines: HashMap<String, Arc<Mutex<StreamingBrushEngine>>>,
+    /// FIFO 会话顺序
     session_order: VecDeque<String>,
-    /// 全局 Session ID 计数器
+    /// Session ID 计数器
     session_counter: u64,
 }
 
@@ -233,13 +175,23 @@ impl ManagerState {
     }
 
     /// FIFO 淘汰最旧会话
-    pub fn evict_oldest(&mut self) -> Option<String> {
+    pub fn evict_oldest(&mut self) {
         if let Some(oldest_id) = self.session_order.pop_front() {
             self.engines.remove(&oldest_id);
-            Some(oldest_id)
-        } else {
-            None
+            tracing::info!("[RustBrush] Evicted oldest session: {}", oldest_id);
         }
+    }
+
+    /// 移除指定会话
+    pub fn remove_session(&mut self, session_id: &str) {
+        self.engines.remove(session_id);
+        self.session_order.retain(|id| id != session_id);
+        tracing::info!("[RustBrush] Removed session: {}", session_id);
+    }
+
+    /// 获取 engine Arc（用于在锁外操作）
+    pub fn get_engine(&self, session_id: &str) -> Option<Arc<Mutex<StreamingBrushEngine>>> {
+        self.engines.get(session_id).cloned()
     }
 }
 
@@ -249,26 +201,35 @@ pub struct StreamingBrushEngine {
     buffer: Vec<u8>,
     width: u32,
     height: u32,
-    /// 累积脏区域
-    dirty_rect: Rect,
+
+    // === 双矩形语义 (v1.5 关键) ===
+    /// 自上次 sync 以来的增量脏区域（sync 后清空）
+    sync_dirty_rect: Rect,
+    /// 当前 stroke 总脏区域（用于 begin_stroke 清理）
+    accumulated_dirty_rect: Rect,
+    /// 上一次 stroke 的总脏区域
+    last_stroke_dirty: Rect,
+
     /// 同步计数器
     dab_counter: u32,
     /// 上次同步时间
     last_sync: Instant,
+    /// 最后活动时间
+    last_activity: Instant,
     /// 同步阈值
     sync_config: SyncConfig,
-    /// Gaussian 参数缓存
+    /// Gaussian 参数缓存（量化桶策略）
     cached_params: Option<GaussParams>,
     cached_params_key: (u32, u32, u32),
-    /// Scratch buffer（复用构建过程，发送时仍需 clone）
+    /// Scratch buffer
     output_buffer: Vec<u8>,
 }
 
-/// 同步配置 (多阈值)
+/// 同步配置
 pub struct SyncConfig {
-    pub max_dabs: u32,       // 默认 4
-    pub max_ms: u32,         // 默认 16ms (约 60fps)
-    pub max_bytes: usize,    // 默认 256KB
+    pub max_dabs: u32,
+    pub max_ms: u32,
+    pub max_bytes: usize,
 }
 
 impl Default for SyncConfig {
@@ -285,37 +246,73 @@ impl StreamingBrushEngine {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         let buffer_size = (width * height * 4) as usize;
 
-        // 内存保护检查
         if buffer_size > MAX_BUFFER_SIZE {
             return Err(format!(
-                "Canvas too large: {}x{} requires {}MB, max is {}MB. Use Tile mode.",
+                "Canvas too large: {}x{} requires {}MB, max is {}MB.",
                 width, height,
                 buffer_size / (1024 * 1024),
                 MAX_BUFFER_SIZE / (1024 * 1024)
             ));
         }
 
+        let now = Instant::now();
         Ok(Self {
             buffer: vec![0u8; buffer_size],
             width,
             height,
-            dirty_rect: Rect::empty(),
+            sync_dirty_rect: Rect::empty(),
+            accumulated_dirty_rect: Rect::empty(),
+            last_stroke_dirty: Rect::empty(),
             dab_counter: 0,
-            last_sync: Instant::now(),
+            last_sync: now,
+            last_activity: now,
             sync_config: SyncConfig::default(),
             cached_params: None,
             cached_params_key: (0, 0, 0),
-            // Scratch buffer：预分配合理大小
             output_buffer: Vec::with_capacity(512 * 1024),
         })
     }
 
-    /// 开始新笔画 (清空 Stroke Layer)
+    /// 开始新笔画（仅清理上次 stroke 的区域）
     pub fn begin_stroke(&mut self) {
-        self.buffer.fill(0);
-        self.dirty_rect = Rect::empty();
+        self.last_activity = Instant::now();
+
+        // 仅清理上次 stroke 画过的区域（智能清空）
+        if !self.last_stroke_dirty.is_empty() {
+            self.clear_rect(&self.last_stroke_dirty.clone());
+        }
+
+        // 重置所有脏区域
+        self.sync_dirty_rect = Rect::empty();
+        self.accumulated_dirty_rect = Rect::empty();
         self.dab_counter = 0;
         self.last_sync = Instant::now();
+    }
+
+    /// 清理指定矩形区域
+    fn clear_rect(&mut self, rect: &Rect) {
+        let left = rect.left.max(0) as u32;
+        let top = rect.top.max(0) as u32;
+        let right = (rect.right.max(0) as u32).min(self.width);
+        let bottom = (rect.bottom.max(0) as u32).min(self.height);
+
+        if right <= left || bottom <= top {
+            return;
+        }
+
+        let row_bytes = ((right - left) * 4) as usize;
+        for y in top..bottom {
+            let start = (y * self.width + left) as usize * 4;
+            self.buffer[start..start + row_bytes].fill(0);
+        }
+    }
+
+    /// 结束笔画
+    pub fn end_stroke(&mut self) {
+        // 保存总脏区域供下次 begin_stroke 清理
+        self.last_stroke_dirty = self.accumulated_dirty_rect.clone();
+        self.accumulated_dirty_rect = Rect::empty();
+        self.sync_dirty_rect = Rect::empty();
     }
 
     /// 打一个 dab，返回是否需要同步
@@ -329,9 +326,11 @@ impl StreamingBrushEngine {
         flow: f32,
         dab_opacity: f32,
     ) -> bool {
-        // 参数缓存检查 (整数像素精度)
+        self.last_activity = Instant::now();
+
+        // 量化桶策略：2% 容差
         let key = (
-            radius.round() as u32,
+            (radius * 50.0).round() as u32,
             (hardness * 100.0) as u32,
             (roundness * 100.0) as u32,
         );
@@ -356,7 +355,7 @@ impl StreamingBrushEngine {
             dab_opacity,
         );
 
-        // 扩展脏区域 (直接 union)
+        // 扩展脏区域（双矩形都要累加）
         if w > 0 && h > 0 {
             let dab_rect = Rect::new(
                 left as i32,
@@ -364,31 +363,31 @@ impl StreamingBrushEngine {
                 (left + w) as i32,
                 (top + h) as i32,
             );
-            self.dirty_rect.union(&dab_rect);
+            self.sync_dirty_rect.union(&dab_rect);
+            self.accumulated_dirty_rect.union(&dab_rect);
         }
 
         self.dab_counter += 1;
 
-        // 多阈值同步检查
+        // 多阈值同步检查（使用 sync_dirty_rect）
         let elapsed_ms = self.last_sync.elapsed().as_millis() as u32;
-        let dirty_bytes = self.dirty_rect_bytes_safe();
+        let dirty_bytes = self.sync_dirty_rect_bytes();
 
         self.dab_counter >= self.sync_config.max_dabs
             || elapsed_ms >= self.sync_config.max_ms
             || dirty_bytes >= self.sync_config.max_bytes
     }
 
-    /// 安全计算脏区域字节数（统一用 max(0) 再转 u32）
-    fn dirty_rect_bytes_safe(&self) -> usize {
-        if self.dirty_rect.is_empty() {
+    /// 计算 sync_dirty_rect 字节数
+    fn sync_dirty_rect_bytes(&self) -> usize {
+        if self.sync_dirty_rect.is_empty() {
             return 0;
         }
 
-        // 安全转换：先 max(0) 再转 u32
-        let left = self.dirty_rect.left.max(0) as u32;
-        let top = self.dirty_rect.top.max(0) as u32;
-        let right = (self.dirty_rect.right.max(0) as u32).min(self.width);
-        let bottom = (self.dirty_rect.bottom.max(0) as u32).min(self.height);
+        let left = self.sync_dirty_rect.left.max(0) as u32;
+        let top = self.sync_dirty_rect.top.max(0) as u32;
+        let right = (self.sync_dirty_rect.right.max(0) as u32).min(self.width);
+        let bottom = (self.sync_dirty_rect.bottom.max(0) as u32).min(self.height);
 
         if right <= left || bottom <= top {
             return 0;
@@ -397,18 +396,16 @@ impl StreamingBrushEngine {
         ((right - left) * (bottom - top) * 4) as usize
     }
 
-    /// 获取脏区域数据
-    /// 使用 scratch buffer 复用构建过程，但发送时仍需 clone
+    /// 获取脏区域数据（使用 sync_dirty_rect，发送后清空）
     pub fn get_sync_data(&mut self) -> Option<Vec<u8>> {
-        if self.dirty_rect.is_empty() {
+        if self.sync_dirty_rect.is_empty() {
             return None;
         }
 
-        // 安全 clamp
-        let left = self.dirty_rect.left.max(0) as u32;
-        let top = self.dirty_rect.top.max(0) as u32;
-        let right = (self.dirty_rect.right.max(0) as u32).min(self.width);
-        let bottom = (self.dirty_rect.bottom.max(0) as u32).min(self.height);
+        let left = self.sync_dirty_rect.left.max(0) as u32;
+        let top = self.sync_dirty_rect.top.max(0) as u32;
+        let right = (self.sync_dirty_rect.right.max(0) as u32).min(self.width);
+        let bottom = (self.sync_dirty_rect.bottom.max(0) as u32).min(self.height);
 
         let w = right.saturating_sub(left);
         let h = bottom.saturating_sub(top);
@@ -417,14 +414,12 @@ impl StreamingBrushEngine {
             return None;
         }
 
-        // 复用 scratch buffer（减少构建过程的分配）
         self.output_buffer.clear();
 
         let header_size = 16;
         let data_size = (w * h * 4) as usize;
         let total_size = header_size + data_size;
 
-        // 只在容量不足时扩容
         if self.output_buffer.capacity() < total_size {
             self.output_buffer.reserve(total_size - self.output_buffer.capacity());
         }
@@ -442,32 +437,25 @@ impl StreamingBrushEngine {
             self.output_buffer.extend_from_slice(&self.buffer[start..end]);
         }
 
-        // Reset
-        self.dirty_rect = Rect::empty();
+        // 清空 sync_dirty_rect（accumulated 保持不变）
+        self.sync_dirty_rect = Rect::empty();
         self.dab_counter = 0;
         self.last_sync = Instant::now();
 
-        // Clone 发送（Tauri Channel 需要所有权）
-        // Scratch buffer 保留 capacity，下次复用
         Some(self.output_buffer.clone())
     }
-
-    /// end_stroke 时释放过大的 buffer
-    pub fn shrink_buffers_if_needed(&mut self) {
-        const MAX_RETAINED_SIZE: usize = 10 * 1024 * 1024; // 10MB
-
-        if self.output_buffer.capacity() > MAX_RETAINED_SIZE {
-            self.output_buffer = Vec::with_capacity(512 * 1024);
-        }
-    }
 }
+
+// 占位符，实际从现有代码导入
+use super::soft_dab::{render_soft_dab, GaussParams};
 ```
 
-### 6.2 Rust 端：Tauri Command（统一锁版本）
+### 5.2 Rust 端：Tauri Command（Arc 分离锁版本）
 
 ```rust
 // src-tauri/src/commands.rs
 
+use std::sync::Arc;
 use tauri::{State, ipc::Channel};
 use crate::brush::streaming::{BrushEngineManager, StreamingBrushEngine};
 
@@ -480,26 +468,42 @@ pub fn rust_brush_start(
 ) -> Result<String, String> {
     let mut manager = state.state.lock().map_err(|e| e.to_string())?;
 
-    // 限制最大会话数，FIFO 淘汰
+    // 限制最大会话数
     if manager.engines.len() >= 8 {
-        if let Some(oldest_id) = manager.evict_oldest() {
-            tracing::info!("[RustBrush] Evicted oldest session: {}", oldest_id);
-        }
+        manager.evict_oldest();
     }
 
-    // 生成唯一 Session ID
+    // 生成 Session ID
     let session_id = manager.next_session_id();
 
-    // 创建引擎（带内存保护）
-    let mut engine = StreamingBrushEngine::new(width, height)?;
-    engine.begin_stroke();
+    // 创建引擎
+    let engine = StreamingBrushEngine::new(width, height)?;
 
-    // 记录会话
+    // 插入 Arc<Mutex<Engine>>
+    manager.engines.insert(session_id.clone(), Arc::new(Mutex::new(engine)));
     manager.session_order.push_back(session_id.clone());
-    manager.engines.insert(session_id.clone(), engine);
 
     tracing::info!("[RustBrush] Started session: {} ({}x{})", session_id, width, height);
     Ok(session_id)
+}
+
+/// 开始新笔画
+#[tauri::command]
+pub fn rust_brush_begin_stroke(
+    state: State<BrushEngineManager>,
+    session_id: String,
+) -> Result<(), String> {
+    // 获取 Arc 后立即释放 manager 锁
+    let engine_arc = {
+        let manager = state.state.lock().map_err(|e| e.to_string())?;
+        manager.get_engine(&session_id)
+            .ok_or_else(|| format!("Session not found: {}", session_id))?
+    }; // manager 锁在这里释放
+
+    // 在 manager 锁外操作 engine
+    let mut engine = engine_arc.lock().map_err(|e| e.to_string())?;
+    engine.begin_stroke();
+    Ok(())
 }
 
 /// 流式笔刷输入点
@@ -516,11 +520,16 @@ pub async fn rust_brush_input(
     flow: f32,
     opacity: f32,
 ) -> Result<(), String> {
-    // 批量处理，只锁一次
+    // 获取 Arc 后立即释放 manager 锁（关键：真正实现 per-session 不互锁）
+    let engine_arc = {
+        let manager = state.state.lock().map_err(|e| e.to_string())?;
+        manager.get_engine(&session_id)
+            .ok_or_else(|| format!("Session not found: {}", session_id))?
+    }; // manager 锁在这里释放
+
+    // 在 manager 锁外进行耗时计算
     let sync_data_list: Vec<Vec<u8>> = {
-        let mut manager = state.state.lock().map_err(|e| e.to_string())?;
-        let engine = manager.engines.get_mut(&session_id)
-            .ok_or_else(|| format!("Session not found: {}", session_id))?;
+        let mut engine = engine_arc.lock().map_err(|e| e.to_string())?;
 
         let mut pending = Vec::new();
 
@@ -542,9 +551,9 @@ pub async fn rust_brush_input(
             }
         }
         pending
-    }; // 锁释放
+    };
 
-    // 发送在锁外，带错误处理
+    // 发送在锁外
     for data in sync_data_list {
         if let Err(e) = on_sync.send(data) {
             tracing::error!("[RustBrush] Failed to send sync data: {:?}", e);
@@ -561,9 +570,15 @@ pub fn rust_brush_end(
     on_sync: Channel<Vec<u8>>,
     session_id: String,
 ) -> Result<(), String> {
-    let mut manager = state.state.lock().map_err(|e| e.to_string())?;
+    // 先获取 Arc 并发送最后的数据
+    let engine_arc = {
+        let manager = state.state.lock().map_err(|e| e.to_string())?;
+        manager.get_engine(&session_id)
+    };
 
-    if let Some(engine) = manager.engines.get_mut(&session_id) {
+    if let Some(arc) = engine_arc {
+        let mut engine = arc.lock().map_err(|e| e.to_string())?;
+
         // 发送剩余脏区域
         if let Some(data) = engine.get_sync_data() {
             if let Err(e) = on_sync.send(data) {
@@ -571,12 +586,53 @@ pub fn rust_brush_end(
             }
         }
 
-        // 释放过大的 buffer
-        engine.shrink_buffers_if_needed();
+        engine.end_stroke();
     }
 
-    tracing::info!("[RustBrush] Ended session: {}", session_id);
+    // 移除会话
+    {
+        let mut manager = state.state.lock().map_err(|e| e.to_string())?;
+        manager.remove_session(&session_id);
+    }
+
     Ok(())
+}
+
+/// 清理超时会话（两阶段清理，避免长时间持锁）
+#[tauri::command]
+pub fn rust_brush_cleanup(state: State<BrushEngineManager>) -> Result<u32, String> {
+    let now = std::time::Instant::now();
+
+    // 阶段 1：收集所有 Arc，快速释放 manager 锁
+    let engine_arcs: Vec<(String, Arc<Mutex<StreamingBrushEngine>>)> = {
+        let manager = state.state.lock().map_err(|e| e.to_string())?;
+        manager.engines.iter()
+            .map(|(id, arc)| (id.clone(), arc.clone()))
+            .collect()
+    };
+
+    // 阶段 2：检查超时（使用 try_lock 避免阻塞）
+    let mut stale_ids = Vec::new();
+    for (id, arc) in engine_arcs {
+        if let Ok(engine) = arc.try_lock() {
+            if now.duration_since(engine.last_activity).as_secs() > 60 {
+                stale_ids.push(id);
+            }
+        }
+        // 如果 try_lock 失败，说明正在使用，跳过
+    }
+
+    // 阶段 3：移除超时会话
+    let count = stale_ids.len() as u32;
+    if !stale_ids.is_empty() {
+        let mut manager = state.state.lock().map_err(|e| e.to_string())?;
+        for id in stale_ids {
+            manager.remove_session(&id);
+            tracing::warn!("[RustBrush] Cleaned up stale session: {}", id);
+        }
+    }
+
+    Ok(count)
 }
 
 #[derive(serde::Deserialize)]
@@ -587,12 +643,14 @@ pub struct BrushInputPoint {
 }
 ```
 
-### 6.3 前端：消息队列 + RAF 批处理
+### 5.3 前端：串行化 Bitmap 渲染
 
 ```typescript
 // src/utils/rustBrushReceiver.ts
 
 import { Channel, invoke } from '@tauri-apps/api/core';
+
+type RenderStrategy = 'putImageData' | 'createImageBitmap';
 
 interface SyncMessage {
   data: Uint8Array;
@@ -605,21 +663,31 @@ export class RustBrushReceiver {
   private reusableImageData: ImageData | null = null;
   private sessionId: string = '';
 
-  // 消息队列（用于背压检测）
+  // 消息队列
   private messageQueue: SyncMessage[] = [];
   private rafId: number | null = null;
-  private isProcessing: boolean = false;
 
-  // 回调函数
+  // 配置
+  private renderStrategy: RenderStrategy = 'putImageData';
+  private maxQueueLength: number = 8;
+
+  // Bitmap 串行链（避免乱序）
+  private bitmapChain: Promise<void> = Promise.resolve();
+
+  // 回调
   private compositeCallback: ((strokeCanvas: HTMLCanvasElement) => void) | null = null;
   private fallbackHandler: (() => void) | null = null;
 
   constructor(options?: {
     onComposite?: (strokeCanvas: HTMLCanvasElement) => void;
     onFallback?: () => void;
+    renderStrategy?: RenderStrategy;
+    maxQueueLength?: number;
   }) {
     this.compositeCallback = options?.onComposite || null;
     this.fallbackHandler = options?.onFallback || null;
+    this.renderStrategy = options?.renderStrategy || 'putImageData';
+    this.maxQueueLength = options?.maxQueueLength || 8;
   }
 
   async startStroke(
@@ -629,27 +697,16 @@ export class RustBrushReceiver {
   ): Promise<boolean> {
     this.ctx = ctx;
     this.messageQueue = [];
-    this.isProcessing = false;
+    this.bitmapChain = Promise.resolve();
 
     try {
-      // 初始化 Rust 端引擎（返回 session_id）
       this.sessionId = await invoke<string>('rust_brush_start', { width, height });
+      await invoke('rust_brush_begin_stroke', { sessionId: this.sessionId });
 
-      // 创建 Channel
       this.channel = new Channel<Uint8Array>();
       this.channel.onmessage = (data) => this.enqueueMessage(data);
 
-      // 错误处理
-      if ('onerror' in this.channel) {
-        (this.channel as any).onerror = (error: Error) => {
-          console.error('[RustBrush] Channel error:', error);
-          this.fallbackToTypescript();
-        };
-      }
-
-      // 启动 RAF 处理循环
       this.startProcessing();
-
       return true;
     } catch (error) {
       console.error('[RustBrush] Failed to start:', error);
@@ -658,23 +715,19 @@ export class RustBrushReceiver {
     }
   }
 
-  /** 消息入队 + 背压检测 */
+  /** 消息入队 + 丢帧 */
   private enqueueMessage(data: Uint8Array): void {
-    this.messageQueue.push({
-      data,
-      timestamp: performance.now(),
-    });
+    const msg: SyncMessage = { data, timestamp: performance.now() };
 
-    // 背压检测：队列过长时警告
-    if (this.messageQueue.length > 10) {
-      console.warn(
-        `[RustBrush] Message queue backlog: ${this.messageQueue.length}`,
-        'Consider throttling input'
-      );
+    if (this.messageQueue.length >= this.maxQueueLength) {
+      const first = this.messageQueue[0];
+      this.messageQueue = [first, msg];
+      console.warn('[RustBrush] Queue overflow, dropped intermediate frames');
+    } else {
+      this.messageQueue.push(msg);
     }
   }
 
-  /** 启动 RAF 处理循环 */
   private startProcessing(): void {
     if (this.rafId !== null) return;
 
@@ -686,7 +739,6 @@ export class RustBrushReceiver {
     this.rafId = requestAnimationFrame(processFrame);
   }
 
-  /** 停止 RAF 处理循环 */
   private stopProcessing(): void {
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
@@ -694,35 +746,53 @@ export class RustBrushReceiver {
     }
   }
 
-  /** 处理消息队列（每帧批量处理） */
+  /** 处理消息队列 */
   private processQueue(): void {
     if (!this.ctx || this.messageQueue.length === 0) return;
 
-    this.isProcessing = true;
-
-    // 每帧最多处理 4 条消息，避免阻塞
     const maxPerFrame = 4;
     const toProcess = this.messageQueue.splice(0, maxPerFrame);
 
     for (const msg of toProcess) {
       this.handleSync(msg.data);
     }
-
-    this.isProcessing = false;
   }
 
   /** 处理单条同步消息 */
   private handleSync(data: Uint8Array): void {
     if (!this.ctx) return;
 
-    // 解析 header (16 bytes)
     const view = new DataView(data.buffer, data.byteOffset);
     const left = view.getUint32(0, true);
     const top = view.getUint32(4, true);
     const width = view.getUint32(8, true);
     const height = view.getUint32(12, true);
 
-    // 复用 ImageData
+    if (this.renderStrategy === 'createImageBitmap') {
+      // 串行化：链式调用，保证顺序
+      this.bitmapChain = this.bitmapChain
+        .then(() => this.renderWithBitmap(data, left, top, width, height))
+        .catch((err) => {
+          console.error('[RustBrush] Bitmap render error:', err);
+          // 降级到 putImageData
+          this.renderStrategy = 'putImageData';
+          this.renderWithPutImageData(data, left, top, width, height);
+        });
+    } else {
+      this.renderWithPutImageData(data, left, top, width, height);
+    }
+  }
+
+  /** 方案 A: putImageData (默认，同步) */
+  private renderWithPutImageData(
+    data: Uint8Array,
+    left: number,
+    top: number,
+    width: number,
+    height: number
+  ): void {
+    if (!this.ctx) return;
+
     if (
       !this.reusableImageData ||
       this.reusableImageData.width !== width ||
@@ -731,12 +801,35 @@ export class RustBrushReceiver {
       this.reusableImageData = new ImageData(width, height);
     }
 
-    // 拷贝像素数据
     const pixels = new Uint8ClampedArray(data.buffer, data.byteOffset + 16, width * height * 4);
     this.reusableImageData.data.set(pixels);
-
-    // 绘制
     this.ctx.putImageData(this.reusableImageData, left, top);
+  }
+
+  /** 方案 B: createImageBitmap (备选，异步但串行化) */
+  private async renderWithBitmap(
+    data: Uint8Array,
+    left: number,
+    top: number,
+    width: number,
+    height: number
+  ): Promise<void> {
+    if (!this.ctx) return;
+
+    const imageData = new ImageData(
+      new Uint8ClampedArray(data.buffer, data.byteOffset + 16, width * height * 4),
+      width,
+      height
+    );
+
+    // Windows Edge WebView2 支持这些选项
+    const bitmap = await createImageBitmap(imageData, {
+      premultiplyAlpha: 'none',
+      colorSpaceConversion: 'none',
+    });
+
+    this.ctx.drawImage(bitmap, left, top);
+    bitmap.close();
   }
 
   async processPoints(
@@ -769,21 +862,20 @@ export class RustBrushReceiver {
     if (!this.channel || !this.sessionId) return;
 
     try {
-      // 发送最后的数据
       await invoke('rust_brush_end', {
         onSync: this.channel,
         sessionId: this.sessionId,
       });
 
-      // 等待队列清空
-      await this.waitForQueueEmpty();
+      // 等待 bitmap 链完成
+      await this.bitmapChain;
 
-      // 处理剩余消息
+      // 处理剩余队列
       while (this.messageQueue.length > 0) {
         this.processQueue();
+        await new Promise((r) => requestAnimationFrame(r));
       }
 
-      // 触发合成回调
       if (this.compositeCallback && this.ctx?.canvas) {
         this.compositeCallback(this.ctx.canvas);
       }
@@ -794,18 +886,9 @@ export class RustBrushReceiver {
     }
   }
 
-  /** 等待队列清空（事件驱动，非轮询） */
-  private async waitForQueueEmpty(timeoutMs: number = 100): Promise<void> {
-    const start = Date.now();
-    while (this.messageQueue.length > 0 && Date.now() - start < timeoutMs) {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-  }
-
   private fallbackToTypescript(): void {
     console.error('[RustBrush] Fatal error, falling back to TypeScript');
     this.cleanup();
-
     if (this.fallbackHandler) {
       this.fallbackHandler();
     }
@@ -817,262 +900,109 @@ export class RustBrushReceiver {
     this.ctx = null;
     this.sessionId = '';
     this.messageQueue = [];
+    this.bitmapChain = Promise.resolve();
   }
 
-  /** 检查是否正在活跃绘画 */
   get isActive(): boolean {
     return this.channel !== null && this.sessionId !== '';
   }
 
-  /** 获取当前队列长度（用于调试） */
   get queueLength(): number {
     return this.messageQueue.length;
+  }
+
+  setRenderStrategy(strategy: RenderStrategy): void {
+    this.renderStrategy = strategy;
   }
 }
 ```
 
-## 7. 性能预估（v1.3 保守版）
+## 6. 性能预估（v1.5 版）
 
-### 7.1 计算对比
+### 6.1 端到端延迟预估（Windows + Edge WebView2）
 
-| 操作                | TypeScript | Rust SIMD | 提升倍数 |
-| ------------------- | ---------- | --------- | -------- |
-| Mask 生成 (100px)   | ~2ms       | ~0.1ms    | **20x**  |
-| Alpha Blend (100px) | ~3ms       | ~0.2ms    | **15x**  |
-| **Dab 总计**        | ~5ms       | ~0.3ms    | **17x**  |
+| 阶段                  | 预估值    | 说明                  |
+| --------------------- | --------- | --------------------- |
+| Rust 计算 (500px dab) | 1.5-2.5ms | SIMD 优化             |
+| 构建 + Clone          | 0.5-0.8ms | scratch buffer 复用   |
+| Channel 传输          | 0.4-0.6ms | 已验证                |
+| putImageData          | 1.0-2.0ms | Edge 表现稳定         |
+| **总计**              | 3.4-5.9ms | **目标 < 5ms 可达成** |
 
-### 7.2 端到端延迟预估（v1.3 保守版）
+### 6.2 置信度评估
 
-| 阶段             | TypeScript | Rust v1.3 | 说明         |
-| ---------------- | ---------- | --------- | ------------ |
-| 计算 (500px dab) | 10ms       | 2.0ms     | SIMD 优势    |
-| 构建 + Clone     | -          | 0.8ms     | 含 memcpy    |
-| Channel 传输     | -          | 0.5ms     | 已验证       |
-| putImageData     | -          | 1.5ms     | 浏览器差异大 |
-| **总计**         | 10ms       | **4.8ms** |              |
-| **提升倍数**     | -          | **2.1x**  | 保守估计     |
+| 维度     | v1.4 | v1.5    | 说明              |
+| -------- | ---- | ------- | ----------------- |
+| 技术可行 | 85%  | **90%** | 修复死锁/双矩形   |
+| 性能目标 | 60%  | **70%** | 锁分离 + 增量同步 |
+| 内存目标 | 75%  | **80%** | 智能清空更完善    |
+| **总体** | 72%  | **80%** |                   |
 
-### 7.3 内存占用预估
+## 7. 实施路线图（v1.5 版）
 
-| 画布尺寸   | Stroke Buffer | 输出 Buffer | 总计 | 是否达标     |
-| ---------- | ------------- | ----------- | ---- | ------------ |
-| 2K (2048²) | 16MB          | 1MB         | 17MB | ✅ 可接受    |
-| 4K (4096²) | 64MB          | 4MB         | 68MB | ✅ 80MB 内   |
-| 8K (8192²) | -             | -           | -    | ❌ 必须 Tile |
+### Phase 0.1: 架构基础 (1 天)
 
-## 8. 实施路线图（v1.3 版）
-
-### Phase 0.1: 架构修正 (1 天)
-
-- [ ] 创建 `brush/streaming.rs` 基础结构
-- [ ] 实现 `Rect::union()` 和单元测试
-- [ ] 统一锁 `ManagerState` 设计
-- [ ] 多阈值同步策略
+- [ ] 创建 `Rect` 结构体 + `union()/is_empty()`
+- [ ] 实现 `ManagerState` + `Arc<Mutex<Engine>>`
+- [ ] 双矩形语义 (`sync_dirty_rect` + `accumulated_dirty_rect`)
 
 ### Phase 0.2: 核心实现 (1 天)
 
-- [ ] Scratch buffer + clone 模式
-- [ ] 批量处理 + 锁外 send
-- [ ] 内存限制检查 (80MB)
-- [ ] `dirty_rect_bytes_safe()` 安全计算
+- [ ] 智能清空 (`clear_rect`)
+- [ ] 量化桶 mask cache
+- [ ] 多阈值同步
 
 ### Phase 0.3: 前端集成 (0.5 天)
 
-- [ ] 消息队列 + RAF 批处理
-- [ ] 背压检测 + 告警
-- [ ] 降级逻辑完善
-- [ ] FIFO 会话管理
+- [ ] 消息队列 + RAF
+- [ ] 丢帧机制
+- [ ] Bitmap 串行链
 
-### Phase 0.5: 测试基础设施 (1 天)
+### Phase 0.5: 测试 (1 天)
 
 - [ ] Rust 单元测试
-  - `render_soft_dab` 输出验证
-  - `Rect::union()` 边界测试
-  - clone 耗时基准
-- [ ] 性能基准测试
-  - `begin_stroke` 清空耗时
-  - `get_sync_data` 构建 + clone 耗时
-  - `putImageData` 耗时分布 (P50/P90/P95)
+  - `Rect::union()` 边界
+  - 双矩形语义验证
+  - 锁不死锁压力测试
+- [ ] 性能基准
+  - clone 耗时
+  - putImageData P50/P90
 
-### Phase 1: MVP + 性能验证 (3 天)
+### Phase 1: MVP (3 天)
 
-- [ ] 完成 Tauri commands 接入
-- [ ] 前端 `RustBrushReceiver` 集成
-- [ ] **关键里程碑**：实测性能
-  - 目标：500px dab P90 < 5ms
-  - 分解：Rust < 2.5ms, Clone < 1ms, putImageData < 1.5ms
-  - 如果总延迟 > 6ms，需要分析瓶颈
+- [ ] Tauri commands 完整接入
+- [ ] 端到端集成
+- [ ] 性能验证
 
-### Phase 2: 功能拉齐 (3-4 天)
+## 8. 验收规则
 
-- [ ] **Mask Cache** (整数像素精度)
-- [ ] **Hard Brush 快速路径**
-- [ ] **Alpha Darken 混合** 调整
-- [ ] 与 TS 渲染结果一致性验证
+### 8.1 锁/并发验收
 
-### Phase 3: 高级特性 (按需)
+- 统一锁顺序（无死锁风险）
+- 多 session 并发 start/input/end 不阻塞
 
-- [ ] **Wet Edge** (LUT-based)
-- [ ] **Texture Brush**
-- [ ] **Tile 机制** (8K+ 支持)
-- [ ] 探索 SharedArrayBuffer (真正零拷贝)
+### 8.2 dirty_rect 语义验收
 
-## 9. 风险与缓解
+- stamp → sync → stamp → sync 不重复发送
+- begin_stroke 后 stroke layer 全透明
 
-| 风险              | 影响       | 缓解策略                             |
-| ----------------- | ---------- | ------------------------------------ |
-| Clone 开销过高    | 性能不达标 | Phase 0.5 基准测试，确认是否真是瓶颈 |
-| putImageData 抖动 | 预览卡顿   | RAF 批处理 + createImageBitmap 备选  |
-| 内存占用过高      | OOM        | 80MB 上限 + Phase 3 Tile 机制        |
-| 渲染结果不一致    | 视觉差异   | Phase 2 验证 + sRGB + Straight Alpha |
-| 性能提升 < 1.8x   | 不值得     | Phase 1 决策点：暂停或继续           |
+### 8.3 前端渲染验收
 
-## 10. 决策点
+- bitmap 策略保证顺序（最后一帧最后绘制）
+- 丢帧保留首尾帧
 
-### Phase 1 结束时
+## 附录 A: v1.4 → v1.5 关键修正
 
-- **继续条件**：500px dab P90 < 5ms，提升 ≥ 2x
-- **暂停条件**：P90 > 6ms，或提升 < 1.8x
-- **备选**：保留 TypeScript 实现作为 fallback
+| 问题                    | 修正                                              |
+| ----------------------- | ------------------------------------------------- |
+| `dirty_rect` 未清空     | 引入 `sync_dirty_rect` + `accumulated_dirty_rect` |
+| 锁顺序不一致            | 统一 `Mutex<ManagerState>`                        |
+| 全局锁持有期间锁 engine | `Arc<Mutex<Engine>>` + 查完立即释放               |
+| bitmap 乱序             | 串行链 `bitmapChain`                              |
+| cleanup 阻塞            | 两阶段清理 + `try_lock`                           |
 
-### 如果 Clone 是瓶颈
+## 附录 B: 待确认事项
 
-优先级排序：
-
-1. 优化构建过程（减少 extend_from_slice 次数）
-2. 尝试 `createImageBitmap` 替代 putImageData
-3. Phase 3 探索 SharedArrayBuffer
-
-## 11. 技术细节说明
-
-### 11.1 颜色空间
-
-- Rust 端使用 **sRGB** 颜色空间，与 Canvas2D 一致
-- Alpha 混合使用 **Straight Alpha**（非预乘）
-- 输出数据格式：RGBA8 (每通道 0-255)
-
-### 11.2 抗锯齿
-
-- `render_soft_dab` 已通过 Gaussian 函数实现亚像素精度
-- 边缘自然过渡，无需额外 AA 处理
-- Hard Brush 使用 1px AA 边缘
-
-### 11.3 与其他模块集成
-
-- **Cursor Preview**: 前端独立实现，不依赖 Rust
-- **Undo/Redo**: `endStroke()` 后，前端将合成结果推入历史栈
-- **Layer System**: Stroke Layer 是临时的，不参与图层管理
-
-### 11.4 性能测试方法
-
-- **Cold Start**: 第一次 500px dab（无 Mask 缓存）
-- **Warm**: 后续 dabs（有 Mask 缓存）
-- **指标**: P50, P90, P95 延迟
-- **工具**: `performance.now()` 前后端埋点
-
-## 12. 与其他文档关系
-
-- **废弃**: `rust-brush-engine-revival.md` (该方案面向 GPU，本方案面向 CPU)
-- **参考**: `soft-brush-performance-optimization.md` (优化经验)
-- **参考**: `review.md` (外部评审反馈 v1.0-v1.3)
-- **更新**: `architecture.md` (添加 Rust CPU 引擎描述)
-
-## 附录 A: 历史决策记录
-
-### IPC 问题回顾
-
-早期 Rust CPU 方案被废弃的原因：
-
-1. 使用 JSON 序列化传输整个 buffer
-2. 每次调用都有 IPC 往返开销
-3. 主线程阻塞等待结果
-
-当前方案解决：
-
-1. 使用二进制 Channel (零序列化)
-2. 只传输脏区域
-3. 异步非阻塞
-4. 批量处理减少锁竞争
-
-## 附录 B: Review 反馈整合记录
-
-### v1.0 → v1.1 修正
-
-- 全局单例 → HashMap 多实例管理
-- dirty_rect 计算修正
-- 锁粒度优化
-- Buffer Pool 复用
-- 多阈值同步策略
-- buffer 语义明确化 (Stroke Layer)
-
-### v1.1 → v1.2 修正
-
-- 尝试双缓冲无 clone
-- 随机淘汰 → VecDeque FIFO
-- Session ID 递增计数器
-- dirty_rect_bytes 安全计算
-- 内存保护 64MB 上限
-- 前端降级逻辑完善
-
-### v1.2 → v1.3 修正（关键）
-
-- **双缓冲无 clone 不可行** → 改回 scratch buffer + clone
-- **LRU 误称** → 明确是 FIFO
-- **两把锁** → 合并为单一 `ManagerState` 锁
-- **pendingMessages 计数** → 消息队列 + RAF 批处理
-- **dirty_rect 溢出** → 统一先 max(0) 再 as u32
-- **内存限制** → 64MB → 80MB (支持 4K)
-- **性能预估** → 从 3x 降为 2x
-
-## 附录 C: 为什么不能真正 "无 Clone"
-
-### Tauri Channel 的所有权语义
-
-```rust
-// Tauri Channel::send 签名
-fn send(&self, data: T) -> Result<(), Error>
-```
-
-`send` 消耗 `data` 的所有权，发送后 Vec 被：
-
-1. 序列化为二进制
-2. 通过 IPC 发送给 WebView
-3. **Drop**（内存释放）
-
-### 为什么双缓冲不起作用
-
-```rust
-// v1.2 的错误设计
-let output = &mut self.output_buffers[buffer_idx];
-Some(std::mem::take(output))  // output 变成 Vec::new()，capacity 丢失
-
-// 或者
-Some(std::mem::swap(...))  // 新 Vec 被 send 后 drop，也无法回收
-```
-
-无论用 `take` 还是 `swap`，Vec 发送后都会被 drop，无法"归还"给 Rust 端。
-
-### 真正的解决方案（Phase 3）
-
-如需真正的零拷贝，需要：
-
-1. **SharedArrayBuffer**: JS 和 Rust 共享同一块内存
-2. **Memory-mapped file**: 通过文件系统共享
-3. **WebAssembly Memory**: 直接操作 WASM 线性内存
-
-这些都需要额外的复杂度，不适合 MVP 阶段。
-
-### v1.3 的折中方案
-
-```rust
-// 复用 scratch buffer 构建过程
-self.output_buffer.clear();
-// ... 填充数据（复用 capacity，无需 realloc）
-
-// 发送时仍需 clone
-Some(self.output_buffer.clone())
-```
-
-优化点：**构建过程不分配**，clone 时一次性分配 + memcpy。
-
-实测中，clone 1MB 数据约 0.3-0.5ms，相比 putImageData 的 1.5ms，**可能不是主要瓶颈**。
+1. **`render_soft_dab` 返回值**: 确认返回 `(left, top, w, h)`
+2. **`GaussParams::new`**: 确认参数顺序
+3. **SIMD 对齐**: 确认使用 unaligned 指令
