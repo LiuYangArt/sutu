@@ -458,8 +458,8 @@ fn create_composite(project: &ProjectData) -> Result<RgbaImage, FileError> {
 /// Decode base64 PNG to RGBA image
 fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
     // Handle data URL prefix
-    let base64_data = if data.starts_with("data:image/png;base64,") {
-        &data[22..]
+    let base64_data = if let Some(stripped) = data.strip_prefix("data:image/png;base64,") {
+        stripped
     } else if data.starts_with("data:") {
         data.split(',').nth(1).unwrap_or(data)
     } else {

@@ -44,8 +44,8 @@ struct TiffProjectMeta {
 
 /// Decode base64 PNG data to RGBA image
 fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
-    let base64_data = if data.starts_with("data:image/png;base64,") {
-        &data[22..]
+    let base64_data = if let Some(stripped) = data.strip_prefix("data:image/png;base64,") {
+        stripped
     } else if data.starts_with("data:") {
         data.split(',').nth(1).unwrap_or(data)
     } else {
@@ -187,8 +187,7 @@ pub fn load_tiff(path: &Path) -> Result<ProjectData, FileError> {
 
     // Check if this is a PaintBoard project file
     let project_meta: Option<TiffProjectMeta> = image_description.and_then(|desc| {
-        if desc.starts_with(PAINTBOARD_TIFF_MARKER) {
-            let json_str = &desc[PAINTBOARD_TIFF_MARKER.len()..];
+        if let Some(json_str) = desc.strip_prefix(PAINTBOARD_TIFF_MARKER) {
             serde_json::from_str(json_str).ok()
         } else {
             None

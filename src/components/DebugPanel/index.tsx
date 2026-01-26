@@ -29,8 +29,14 @@ import {
   downloadBenchmarkReport,
   type BenchmarkReport,
 } from '@/benchmark';
-import { runLatencyBenchmark } from '@/utils/LatencyTest';
+import {
+  runLatencyBenchmark,
+  runWebSocketBenchmark,
+  runStreamBenchmark,
+} from '@/utils/LatencyTest';
 import './DebugPanel.css';
+
+// --- Types ---
 
 interface DebugPanelProps {
   canvas: HTMLCanvasElement | null;
@@ -46,31 +52,195 @@ interface TestResult {
   timestamp: Date;
 }
 
+interface BenchmarkStatsData {
+  latency: LatencyProfilerStats;
+  fps: FrameStats;
+  lagometer: LagometerStats;
+  queueDepth: number;
+}
+
+// --- Hooks ---
+
+function useDraggable(initialPosition: { x: number; y: number } | null = null) {
+  const [position, setPosition] = useState(initialPosition);
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(
+    null
+  );
+
+  const handleDragStart = (e: React.PointerEvent, element: HTMLElement | null) => {
+    if (!element) return;
+    e.preventDefault();
+    isDraggingRef.current = true;
+    const rect = element.getBoundingClientRect();
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panelX: rect.left,
+      panelY: rect.top,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handleDragMove = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current || !dragStartRef.current) return;
+    const deltaX = e.clientX - dragStartRef.current.x;
+    const deltaY = e.clientY - dragStartRef.current.y;
+    setPosition({
+      x: dragStartRef.current.panelX + deltaX,
+      y: dragStartRef.current.panelY + deltaY,
+    });
+  };
+
+  const handleDragEnd = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  return { position, handleDragStart, handleDragMove, handleDragEnd };
+}
+
+// --- Sub-components ---
+
+function BenchmarkStatsView({
+  stats,
+  envInfo,
+}: {
+  stats: BenchmarkStatsData;
+  envInfo: { runtime: string; engine: string };
+}) {
+  const { latency, fps, lagometer, queueDepth } = stats;
+
+  return (
+    <div className="benchmark-stats">
+      <StatRow
+        label="FPS"
+        value={fps.fps.toFixed(1)}
+        sub={`(σ: ${fps.frameTimeStdDev.toFixed(2)}ms)`}
+      />
+      <StatRow
+        label="Dropped"
+        value={fps.droppedFrames}
+        sub={`(max consec: ${fps.consecutiveDrops})`}
+      />
+      <StatRow label="P99 Frame" value={`${fps.p99FrameTime.toFixed(2)}ms`} />
+      <StatRow
+        label="Render Latency (Avg)"
+        value={`${latency.avgTotalRenderLatency.toFixed(2)}ms`}
+      />
+      <StatRow label="Render Latency (P99)" value={`${latency.p99RenderLatency.toFixed(2)}ms`} />
+      <StatRow label="Input Latency" value={`${latency.avgInputLatency.toFixed(2)}ms`} />
+
+      <div className="stat-row segment-breakdown">
+        <span className="stat-label">├ Event→Queue:</span>
+        <span className="stat-value">{latency.segments.inputToQueue.toFixed(2)}ms</span>
+      </div>
+      <div className="stat-row segment-breakdown">
+        <span className="stat-label">├ Queue Wait:</span>
+        <span className="stat-value">{latency.segments.queueWait.toFixed(2)}ms</span>
+        <span className="stat-sub">{latency.segments.queueWait > 5 ? '⚠️' : ''}</span>
+      </div>
+      <div className="stat-row segment-breakdown">
+        <span className="stat-label">├ CPU Encode:</span>
+        <span className="stat-value">{latency.segments.cpuEncode.toFixed(2)}ms</span>
+      </div>
+      <div className="stat-row segment-breakdown">
+        <span className="stat-label">└ GPU Execute:</span>
+        <span className="stat-value">{latency.segments.gpuExecute.toFixed(2)}ms</span>
+      </div>
+
+      <StatRow
+        label="Visual Lag (Max)"
+        value={`${lagometer.maxLagDistance.toFixed(1)}px`}
+        sub={`(${lagometer.lagAsScreenPercent.toFixed(1)}%, ${lagometer.lagAsBrushRadii.toFixed(1)}x)`}
+      />
+      <div className="stat-row">
+        <span className="stat-label">Queue Depth:</span>
+        <span className="stat-value">{queueDepth}</span>
+        <span className="stat-sub">{queueDepth > 10 ? '⚠️ Backlog' : '✅ OK'}</span>
+      </div>
+
+      <div
+        className="stat-row"
+        style={{ marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}
+      >
+        <span className="stat-label">Environment:</span>
+        <span className="stat-value">{envInfo.runtime}</span>
+        <span className="stat-sub">({envInfo.engine})</span>
+      </div>
+    </div>
+  );
+}
+
+function StatRow({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string | number;
+  sub?: React.ReactNode;
+}) {
+  return (
+    <div className="stat-row">
+      <span className="stat-label">{label}:</span>
+      <span className="stat-value">{value}</span>
+      {sub && <span className="stat-sub">{sub}</span>}
+    </div>
+  );
+}
+
+function ActionGrid({
+  onRunTest,
+  isRunning,
+}: {
+  onRunTest: (id: string) => void;
+  isRunning: boolean;
+}) {
+  const actions = [
+    { id: 'grid', label: 'Grid 10x10', icon: Grid3X3, title: 'Draw 10x10 grid of taps' },
+    { id: 'rapid', label: 'Rapid 100x', icon: Zap, title: '100 rapid random taps' },
+    { id: 'chaos', label: 'Chaos 5s', icon: Play, title: '5 seconds of random input' },
+    { id: 'latency', label: 'Channel Jitter', icon: Zap, title: 'Rust->Frontend Channel Jitter' },
+    { id: 'ws-latency', label: 'WS Jitter', icon: Zap, title: 'WebSocket Jitter' },
+    { id: 'stream-latency', label: 'Stream Jitter', icon: Zap, title: 'HTTP Stream Jitter' },
+  ];
+
+  return (
+    <div className="debug-button-grid">
+      {actions.map((action) => (
+        <button
+          key={action.id}
+          className="debug-btn"
+          onClick={() => onRunTest(action.id)}
+          disabled={isRunning}
+          title={action.title}
+        >
+          <action.icon size={16} />
+          <span>{action.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// --- Main Component ---
+
 export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [results, setResults] = useState<TestResult[]>([]);
   const [runningTest, setRunningTest] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [expandedResult, setExpandedResult] = useState<number | null>(null);
+  const [benchmarkStats, setBenchmarkStats] = useState<BenchmarkStatsData | null>(null);
+  const [lastReport, setLastReport] = useState<BenchmarkReport | null>(null);
 
   const diagnosticsRef = useRef<DiagnosticHooks | null>(null);
-
-  // Drag state for movable panel
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const isDraggingRef = useRef(false);
-  const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(
-    null
-  );
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Benchmark Stats
-  const [benchmarkStats, setBenchmarkStats] = useState<{
-    latency: LatencyProfilerStats;
-    fps: FrameStats;
-    lagometer: LagometerStats;
-    queueDepth: number;
-  } | null>(null);
+  const { position, handleDragStart, handleDragMove, handleDragEnd } = useDraggable();
 
-  // Environment detection for perf debugging
+  // Environment detection
   const envInfo = useMemo(() => {
     const isTauri = '__TAURI_INTERNALS__' in window;
     const ua = navigator.userAgent;
@@ -84,16 +254,9 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     };
   }, []);
 
-  // Calculate panel style
-  const panelStyle: React.CSSProperties = position
-    ? { left: position.x, top: position.y, right: 'auto' }
-    : {};
-
-  const getBenchmarkApi = () => window.__benchmark;
-
   useEffect(() => {
     const timer = setInterval(() => {
-      const bench = getBenchmarkApi();
+      const bench = window.__benchmark;
       if (bench) {
         setBenchmarkStats({
           latency: bench.latencyProfiler.getStats(),
@@ -115,10 +278,9 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     setResults((prev) => [{ name, status, report, timestamp: new Date() }, ...prev.slice(0, 9)]);
   }, []);
 
-  /**
-   * Run a test with common setup/teardown logic
-   */
-  const runTest = useCallback(
+  // --- Test Runners ---
+
+  const runTestWrapper = useCallback(
     async (
       testId: string,
       testName: string,
@@ -146,87 +308,84 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     [canvas, runningTest, addResult]
   );
 
-  const runGridTest = useCallback(() => {
-    return runTest('grid', 'Grid Test (10x10)', async () => {
-      const simulator = new InputSimulator(canvas!);
-      const points = await simulator.drawGrid(10, 10, 30, {
-        startX: 50,
-        startY: 50,
-        intervalMs: 20,
-      });
-      await new Promise((r) => setTimeout(r, 500));
+  const handleRunTest = useCallback(
+    (id: string) => {
+      switch (id) {
+        case 'grid':
+          runTestWrapper('grid', 'Grid Test (10x10)', async () => {
+            const simulator = new InputSimulator(canvas!);
+            const points = await simulator.drawGrid(10, 10, 30, {
+              startX: 50,
+              startY: 50,
+              intervalMs: 20,
+            });
+            await new Promise((r) => setTimeout(r, 500));
+            const result = await verifyGrid(canvas!, points);
+            return { passed: result.passed, report: formatVerificationReport(result) };
+          });
+          break;
+        case 'rapid':
+          runTestWrapper('rapid', 'Rapid Taps (100x)', async () => {
+            const simulator = new InputSimulator(canvas!);
+            const points = await simulator.rapidTaps(
+              100,
+              { x: 50, y: 50, width: canvas!.width - 100, height: canvas!.height - 100 },
+              5
+            );
+            await new Promise((r) => setTimeout(r, 500));
+            const result = await verifyGrid(canvas!, points, { sampleRadius: 5 });
+            return {
+              passed: result.passed,
+              report: `Taps: ${points.length}\n${formatVerificationReport(result)}`,
+            };
+          });
+          break;
+        case 'chaos':
+          runTestWrapper('chaos', 'Chaos Test (5s)', async () => {
+            const result: ChaosTestResult = await chaosMixed(canvas!, {
+              duration: 5000,
+              strokeProbability: 0.3,
+              onProgress: setProgress,
+            });
+            return { passed: result.errors === 0, report: formatChaosReport(result) };
+          });
+          break;
+        case 'latency':
+        case 'ws-latency':
+        case 'stream-latency': {
+          const title = {
+            latency: 'Rust Channel Latency (2s)',
+            'ws-latency': 'WebSocket Latency (2s)',
+            'stream-latency': 'HTTP Stream Latency (2s)',
+          }[id]!;
+          const fn = {
+            latency: runLatencyBenchmark,
+            'ws-latency': runWebSocketBenchmark,
+            'stream-latency': runStreamBenchmark,
+          }[id]!;
 
-      const result = await verifyGrid(canvas!, points);
-      return { passed: result.passed, report: formatVerificationReport(result) };
-    });
-  }, [canvas, runTest]);
+          runTestWrapper(id, title, async () => {
+            const result = await fn(240, 2000);
+            return {
+              passed: result.avgJitter < 1.0,
+              report: `Freq: 240Hz, Duration: ${result.duration}ms\nMsgs Recv: ${result.msgCount}\nAvg Jitter: ${result.avgJitter.toFixed(3)}ms\nMax Jitter: ${result.maxJitter.toFixed(3)}ms\nStatus: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
+            };
+          });
+          break;
+        }
+      }
+    },
+    [canvas, runTestWrapper]
+  );
 
-  const runRapidTapsTest = useCallback(() => {
-    return runTest('rapid', 'Rapid Taps (100x)', async () => {
-      const simulator = new InputSimulator(canvas!);
-      const points = await simulator.rapidTaps(
-        100,
-        { x: 50, y: 50, width: canvas!.width - 100, height: canvas!.height - 100 },
-        5
-      );
-      await new Promise((r) => setTimeout(r, 500));
-
-      const result = await verifyGrid(canvas!, points, { sampleRadius: 5 });
-      return {
-        passed: result.passed,
-        report: `Taps: ${points.length}\n${formatVerificationReport(result)}`,
-      };
-    });
-  }, [canvas, runTest]);
-
-  const runChaosTest = useCallback(() => {
-    return runTest('chaos', 'Chaos Test (5s)', async () => {
-      const result: ChaosTestResult = await chaosMixed(canvas!, {
-        duration: 5000,
-        strokeProbability: 0.3,
-        onProgress: setProgress,
-      });
-      return { passed: result.errors === 0, report: formatChaosReport(result) };
-    });
-  }, [canvas, runTest]);
-
-  const runLatencyTest = useCallback(() => {
-    return runTest('latency', 'Rust Channel Latency (2s)', async () => {
-      const result = await runLatencyBenchmark(240, 2000);
-      return {
-        passed: result.avgJitter < 1.0,
-        report: `Freq: 240Hz, Duration: ${result.duration}ms
-Msgs Recv: ${result.msgCount}
-Avg Jitter: ${result.avgJitter.toFixed(3)}ms
-Max Jitter: ${result.maxJitter.toFixed(3)}ms
-Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
-      };
-    });
-  }, [runTest]);
-
-  const clearCanvas = useCallback(() => {
-    if (!canvas) return;
-    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
-    diagnosticsRef.current?.reset();
-
-    // Also reset benchmark stats
-    const bench = getBenchmarkApi();
-    bench?.latencyProfiler.reset();
-    bench?.lagometer.reset();
-  }, [canvas]);
-
-  // Benchmark report state
-  const [lastReport, setLastReport] = useState<BenchmarkReport | null>(null);
-
-  const runBenchmark = useCallback(async () => {
+  const runFullBenchmark = useCallback(async () => {
     if (!canvas || runningTest) return;
 
     setRunningTest('benchmark');
     setProgress(0);
     addResult('Benchmark Suite', 'running');
 
-    const bench = getBenchmarkApi();
-
+    const bench = window.__benchmark;
     if (!bench) {
       addResult('Benchmark Suite', 'failed', 'Benchmark not initialized');
       setRunningTest(null);
@@ -237,20 +396,16 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
       const runner = new BenchmarkRunner(canvas);
       runner.setProgressCallback((p, name) => {
         setProgress(p);
-        if (name !== 'Complete') {
-          setRunningTest(`benchmark: ${name}`);
-        }
+        if (name !== 'Complete') setRunningTest(`benchmark: ${name}`);
       });
 
       const report = await runner.runScenarios(DEFAULT_SCENARIOS, {
         latencyProfiler: bench.latencyProfiler,
         fpsCounter: bench.fpsCounter,
         lagometer: bench.lagometer,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any);
 
       setLastReport(report);
-
       const summary = `Avg FPS: ${report.summary.avgFps.toFixed(1)}\nAvg Latency: ${report.summary.avgRenderLatency.toFixed(2)}ms\nMax Lag: ${report.summary.maxVisualLag.toFixed(1)}px`;
       addResult('Benchmark Suite', 'passed', summary);
     } catch (e) {
@@ -261,11 +416,18 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
     }
   }, [canvas, runningTest, addResult]);
 
+  const clearCanvas = useCallback(() => {
+    if (!canvas) return;
+    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    diagnosticsRef.current?.reset();
+    window.__benchmark?.latencyProfiler.reset();
+    window.__benchmark?.lagometer.reset();
+  }, [canvas]);
+
   const exportReport = useCallback(() => {
     if (lastReport) {
       downloadBenchmarkReport(lastReport);
     } else if (results.length > 0) {
-      // Fallback to test results export
       const content = results
         .map((r) => `[${r.timestamp.toISOString()}] ${r.name}: ${r.status}\n${r.report || ''}`)
         .join('\n\n---\n\n');
@@ -279,57 +441,15 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
     }
   }, [lastReport, results]);
 
-  function getStatusIcon(status: TestStatus) {
-    switch (status) {
-      case 'running':
-        return <span className="status-icon running">⏳</span>;
-      case 'passed':
-        return <span className="status-icon passed">✅</span>;
-      case 'failed':
-        return <span className="status-icon failed">❌</span>;
-      default:
-        return null;
-    }
-  }
-
-  // Drag handlers
-  const handleDragStart = (e: React.PointerEvent) => {
-    e.preventDefault();
-    isDraggingRef.current = true;
-    const panel = panelRef.current;
-    if (!panel) return;
-
-    const rect = panel.getBoundingClientRect();
-    dragStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      panelX: rect.left,
-      panelY: rect.top,
-    };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  };
-
-  const handleDragMove = (e: React.PointerEvent) => {
-    if (!isDraggingRef.current || !dragStartRef.current) return;
-    const deltaX = e.clientX - dragStartRef.current.x;
-    const deltaY = e.clientY - dragStartRef.current.y;
-    setPosition({
-      x: dragStartRef.current.panelX + deltaX,
-      y: dragStartRef.current.panelY + deltaY,
-    });
-  };
-
-  const handleDragEnd = (e: React.PointerEvent) => {
-    if (!isDraggingRef.current) return;
-    isDraggingRef.current = false;
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-  };
-
   return (
-    <div className="debug-panel" ref={panelRef} style={panelStyle}>
+    <div
+      className="debug-panel"
+      ref={panelRef}
+      style={position ? { left: position.x, top: position.y, right: 'auto' } : {}}
+    >
       <div
         className="debug-panel-header"
-        onPointerDown={handleDragStart}
+        onPointerDown={(e) => handleDragStart(e, panelRef.current)}
         onPointerMove={handleDragMove}
         onPointerUp={handleDragEnd}
         onPointerCancel={handleDragEnd}
@@ -346,47 +466,7 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
       <div className="debug-panel-content">
         <div className="debug-section">
           <h3>Stroke Tests</h3>
-          <div className="debug-button-grid">
-            <button
-              className="debug-btn"
-              onClick={runGridTest}
-              disabled={!!runningTest}
-              title="Draw 10x10 grid of taps and verify all points are rendered"
-            >
-              <Grid3X3 size={16} />
-              <span>Grid 10x10</span>
-            </button>
-
-            <button
-              className="debug-btn"
-              onClick={runRapidTapsTest}
-              disabled={!!runningTest}
-              title="100 rapid random taps"
-            >
-              <Zap size={16} />
-              <span>Rapid 100x</span>
-            </button>
-
-            <button
-              className="debug-btn"
-              onClick={runChaosTest}
-              disabled={!!runningTest}
-              title="5 seconds of random input (taps + strokes)"
-            >
-              <Play size={16} />
-              <span>Chaos 5s</span>
-            </button>
-
-            <button
-              className="debug-btn"
-              onClick={runLatencyTest}
-              disabled={!!runningTest}
-              title="Test Rust->Frontend Channel Jitter"
-            >
-              <Zap size={16} />
-              <span>Channel Jitter</span>
-            </button>
-          </div>
+          <ActionGrid onRunTest={handleRunTest} isRunning={!!runningTest} />
         </div>
 
         {runningTest && (
@@ -404,101 +484,7 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
         <div className="debug-section">
           <h3>Performance Benchmark</h3>
           {benchmarkStats ? (
-            <div className="benchmark-stats">
-              <div className="stat-row">
-                <span className="stat-label">FPS:</span>
-                <span className="stat-value">{benchmarkStats.fps.fps.toFixed(1)}</span>
-                <span className="stat-sub">
-                  (σ: {benchmarkStats.fps.frameTimeStdDev.toFixed(2)}ms)
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">Dropped:</span>
-                <span className="stat-value">{benchmarkStats.fps.droppedFrames}</span>
-                <span className="stat-sub">
-                  (max consec: {benchmarkStats.fps.consecutiveDrops})
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">P99 Frame:</span>
-                <span className="stat-value">{benchmarkStats.fps.p99FrameTime.toFixed(2)}ms</span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">Render Latency (Avg):</span>
-                <span className="stat-value">
-                  {benchmarkStats.latency.avgTotalRenderLatency.toFixed(2)}ms
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">Render Latency (P99):</span>
-                <span className="stat-value">
-                  {benchmarkStats.latency.p99RenderLatency.toFixed(2)}ms
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">Input Latency:</span>
-                <span className="stat-value">
-                  {benchmarkStats.latency.avgInputLatency.toFixed(2)}ms
-                </span>
-              </div>
-              {/* Q3: Latency Segment Breakdown */}
-              <div className="stat-row segment-breakdown">
-                <span className="stat-label">├ Event→Queue:</span>
-                <span className="stat-value">
-                  {benchmarkStats.latency.segments.inputToQueue.toFixed(2)}ms
-                </span>
-              </div>
-              <div className="stat-row segment-breakdown">
-                <span className="stat-label">├ Queue Wait:</span>
-                <span className="stat-value">
-                  {benchmarkStats.latency.segments.queueWait.toFixed(2)}ms
-                </span>
-                <span className="stat-sub">
-                  {benchmarkStats.latency.segments.queueWait > 5 ? '⚠️' : ''}
-                </span>
-              </div>
-              <div className="stat-row segment-breakdown">
-                <span className="stat-label">├ CPU Encode:</span>
-                <span className="stat-value">
-                  {benchmarkStats.latency.segments.cpuEncode.toFixed(2)}ms
-                </span>
-              </div>
-              <div className="stat-row segment-breakdown">
-                <span className="stat-label">└ GPU Execute:</span>
-                <span className="stat-value">
-                  {benchmarkStats.latency.segments.gpuExecute.toFixed(2)}ms
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">Visual Lag (Max):</span>
-                <span className="stat-value">
-                  {benchmarkStats.lagometer.maxLagDistance.toFixed(1)}px
-                </span>
-                <span className="stat-sub">
-                  ({benchmarkStats.lagometer.lagAsScreenPercent.toFixed(1)}%,{' '}
-                  {benchmarkStats.lagometer.lagAsBrushRadii.toFixed(1)}x)
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">Queue Depth:</span>
-                <span className="stat-value">{benchmarkStats.queueDepth}</span>
-                <span className="stat-sub">
-                  {benchmarkStats.queueDepth > 10 ? '⚠️ Backlog' : '✅ OK'}
-                </span>
-              </div>
-              <div
-                className="stat-row"
-                style={{
-                  marginTop: '8px',
-                  borderTop: '1px solid var(--border-color)',
-                  paddingTop: '8px',
-                }}
-              >
-                <span className="stat-label">Environment:</span>
-                <span className="stat-value">{envInfo.runtime}</span>
-                <span className="stat-sub">({envInfo.engine})</span>
-              </div>
-            </div>
+            <BenchmarkStatsView stats={benchmarkStats} envInfo={envInfo} />
           ) : (
             <div className="stat-placeholder">Benchmarks initializing...</div>
           )}
@@ -509,30 +495,23 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
           <div className="debug-button-row">
             <button
               className="debug-btn"
-              onClick={runBenchmark}
+              onClick={runFullBenchmark}
               disabled={!!runningTest}
-              title="Run automated benchmark with different brush sizes"
+              title="Run automated benchmark"
             >
               <Timer size={16} />
               <span>Run Benchmark</span>
             </button>
           </div>
           <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button
-              className="debug-btn secondary"
-              onClick={clearCanvas}
-              disabled={!!runningTest}
-              title="Clear canvas and reset stats"
-            >
+            <button className="debug-btn secondary" onClick={clearCanvas} disabled={!!runningTest}>
               <RotateCcw size={16} />
               <span>Clear</span>
             </button>
-
             <button
               className="debug-btn secondary"
               onClick={exportReport}
               disabled={!lastReport && results.length === 0}
-              title="Export benchmark report"
             >
               <Download size={16} />
               <span>Export</span>
@@ -551,7 +530,7 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
                   onClick={() => setExpandedResult(expandedResult === index ? null : index)}
                 >
                   <div className="debug-result-header">
-                    {getStatusIcon(result.status)}
+                    <StatusIcon status={result.status} />
                     <span className="debug-result-name">{result.name}</span>
                     <span className="debug-result-time">
                       {result.timestamp.toLocaleTimeString()}
@@ -578,6 +557,19 @@ Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
       </div>
     </div>
   );
+}
+
+function StatusIcon({ status }: { status: TestStatus }) {
+  switch (status) {
+    case 'running':
+      return <span className="status-icon running">⏳</span>;
+    case 'passed':
+      return <span className="status-icon passed">✅</span>;
+    case 'failed':
+      return <span className="status-icon failed">❌</span>;
+    default:
+      return null;
+  }
 }
 
 export default DebugPanel;

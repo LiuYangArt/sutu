@@ -1,10 +1,7 @@
+/* src/components/DebugPanel/DebugPanel.css */
 .debug-panel {
   position: fixed;
-  top: 100px;
-  right: 20px;
-  /* transform removed - will use left/top for dragging */
-  width: 400px;
-  max-height: 600px;
+  /* top/left/width/height set via inline style for interactivity */
   background: #1e1e2e;
   border: 1px solid #45475a;
   border-radius: 12px;
@@ -14,6 +11,8 @@
   flex-direction: column;
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   color: #cdd6f4;
+  min-width: 320px;
+  min-height: 300px;
 }
 
 .debug-panel-header {
@@ -26,6 +25,7 @@
   border-radius: 12px 12px 0 0;
   cursor: grab;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .debug-panel-header:active {
@@ -63,10 +63,15 @@
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .debug-section {
-  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .debug-section h3 {
@@ -75,12 +80,23 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: #6c7086;
-  margin: 0 0 8px 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-section h3::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #45475a;
+  opacity: 0.5;
 }
 
 .debug-button-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
   gap: 8px;
 }
 
@@ -104,6 +120,7 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+  min-height: 60px;
 }
 
 .debug-btn:hover:not(:disabled) {
@@ -120,11 +137,12 @@
   flex-direction: row;
   padding: 8px 12px;
   flex: 1;
+  min-height: auto;
 }
 
 /* Progress */
 .debug-progress {
-  margin-bottom: 16px;
+  margin: 4px 0 12px 0;
 }
 
 .debug-progress-label {
@@ -149,127 +167,121 @@
   transition: width 0.1s ease;
 }
 
-/* Results */
-.debug-results {
+/* Context Results (In-Group) */
+.debug-context-result {
+  background: #181825;
+  border: 1px solid #45475a;
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.debug-context-result.passed { border-left-color: #a6e3a1; }
+.debug-context-result.failed { border-left-color: #f38ba8; }
+.debug-context-result.running { border-left-color: #f9e2af; }
+
+.context-result-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.context-result-report {
+  font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: #a6adc8;
+  white-space: pre-wrap;
+  background: #11111b;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+/* History List */
+.debug-history-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 200px;
+  gap: 4px;
+  max-height: 150px;
   overflow-y: auto;
 }
 
-.debug-result {
-  background: #313244;
-  border: 1px solid #45475a;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.debug-result:hover {
-  background: #3b3d52;
-}
-
-.debug-result.passed {
-  border-left: 3px solid #a6e3a1;
-}
-
-.debug-result.failed {
-  border-left: 3px solid #f38ba8;
-}
-
-.debug-result.running {
-  border-left: 3px solid #f9e2af;
-}
-
-.debug-result-header {
+.history-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 6px 8px;
+  background: #313244;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.7;
 }
 
-.status-icon {
-  font-size: 12px;
+.history-item:hover {
+  opacity: 1;
+  background: #45475a;
 }
 
-.debug-result-name {
-  flex: 1;
-  font-size: 12px;
-  font-weight: 500;
+.history-item.active {
+  opacity: 1;
+  background: #45475a;
+  border: 1px solid #585b70;
 }
 
-.debug-result-time {
-  font-size: 10px;
-  color: #6c7086;
+/* Resize Handle */
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  cursor: nwse-resize;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 4px;
+  touch-action: none;
 }
 
-.debug-result-report {
-  font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
-  font-size: 10px;
-  line-height: 1.5;
+.resize-handle::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #6c7086;
+  border-bottom: 2px solid #6c7086;
+  border-radius: 0 0 2px 0;
+}
+
+.resize-handle:hover::after {
+  border-color: #f5c2e7;
+}
+
+/* Stats */
+.benchmark-stats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  background: #181825;
   padding: 12px;
-  margin: 0;
-  background: #1e1e2e;
-  border-top: 1px solid #45475a;
-  border-radius: 0 0 8px 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: #a6adc8;
-  max-height: 200px;
-  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid #313244;
 }
 
-/* Footer */
-.debug-panel-footer {
-  padding: 8px 16px;
-  border-top: 1px solid #45475a;
-  text-align: center;
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
 }
 
-.debug-hint {
-  font-size: 10px;
-  color: #6c7086;
-}
+.stat-label { color: #9399b2; }
+.stat-value { color: #cdd6f4; font-weight: 500; font-family: monospace; }
+.stat-sub { font-size: 10px; color: #6c7086; margin-left: 6px; }
 
 /* Scrollbar */
-.debug-panel-content::-webkit-scrollbar,
-.debug-results::-webkit-scrollbar,
-.debug-result-report::-webkit-scrollbar {
-  width: 6px;
-}
-
-.debug-panel-content::-webkit-scrollbar-track,
-.debug-results::-webkit-scrollbar-track,
-.debug-result-report::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.debug-panel-content::-webkit-scrollbar-thumb,
-.debug-results::-webkit-scrollbar-thumb,
-.debug-result-report::-webkit-scrollbar-thumb {
-  background: #45475a;
-  border-radius: 3px;
-}
-
-.debug-panel-content::-webkit-scrollbar-thumb:hover,
-.debug-results::-webkit-scrollbar-thumb:hover,
-.debug-result-report::-webkit-scrollbar-thumb:hover {
-  background: #585b70;
-}
-
-/* Q3: Latency Segment Breakdown Styles */
-.stat-row.segment-breakdown {
-  padding-left: 12px;
-  opacity: 0.85;
-  font-size: 11px;
-}
-
-.stat-row.segment-breakdown .stat-label {
-  font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
-  color: #7f849c;
-}
-
-.stat-row.segment-breakdown .stat-value {
-  color: #a6adc8;
-}
+.debug-panel-content::-webkit-scrollbar { width: 6px; }
+.debug-panel-content::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+.debug-panel-content::-webkit-scrollbar-thumb:hover { background: #585b70; }

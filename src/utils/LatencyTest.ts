@@ -7,46 +7,57 @@ export interface LatencyResult {
   duration: number;
 }
 
+/**
+ * Tracks message arrival times and calculates jitter
+ */
+class JitterTracker {
+  private jitters: number[] = [];
+  private lastTime: number | null = null;
+  private readonly expectedInterval: number;
+
+  constructor(freqHz: number) {
+    this.expectedInterval = 1000 / freqHz;
+  }
+
+  record() {
+    const now = performance.now();
+    if (this.lastTime !== null) {
+      const delta = now - this.lastTime;
+      const jitter = Math.abs(delta - this.expectedInterval);
+      this.jitters.push(jitter);
+    }
+    this.lastTime = now;
+  }
+
+  getStats(durationMs: number, msgCount: number): LatencyResult {
+    if (this.jitters.length === 0) {
+      return { avgJitter: 0, maxJitter: 0, msgCount, duration: durationMs };
+    }
+
+    const sum = this.jitters.reduce((a, b) => a + b, 0);
+    const avg = sum / this.jitters.length;
+    const max = Math.max(...this.jitters);
+
+    return {
+      avgJitter: avg,
+      maxJitter: max,
+      msgCount,
+      duration: durationMs,
+    };
+  }
+}
+
 export async function runLatencyBenchmark(
   freqHz: number = 240,
   durationMs: number = 2000
 ): Promise<LatencyResult> {
   const channel = new Channel<Uint8Array>();
-  let lastTime: number | null = null;
-  const jitters: number[] = [];
+  const tracker = new JitterTracker(freqHz);
   let msgCount = 0;
 
-  // Expected interval in ms
-  const expectedInterval = 1000 / freqHz;
-
-  channel.onmessage = (_msg) => {
-    const now = performance.now();
+  channel.onmessage = () => {
     msgCount++;
-
-    if (lastTime !== null) {
-      const delta = now - lastTime;
-      // Calculate jitter: difference between actual interval and expected interval
-      // We take absolute value to measure stability
-      // Since we are batching (e.g. 10 at a time), the time between batches should be
-      // batch_size * expected_interval approximately?
-      // Wait, the Rust side simulates a loop with sleep.
-      // If batch_size is 10, then Rust sends a packet every (10 * 1/freqHz) seconds?
-      // No, looking at Rust code:
-      // while start.elapsed() < duration {
-      //    make batch (size 10)
-      //    send batch
-      //    sleep remainder of (1/freqHz)
-      // }
-      // This means Rust attempts to send a BATCH every 1/freqHz?
-      // "let interval = Duration::from_micros(1_000_000 / freq_hz);"
-      // "thread::sleep(interval - work_time);"
-      // So yes, it sends a message (containing 10 mock points) every `interval`.
-      // So the frontend should receive 1 message every `interval`.
-
-      const jitter = Math.abs(delta - expectedInterval);
-      jitters.push(jitter);
-    }
-    lastTime = now;
+    tracker.record();
   };
 
   await invoke('start_benchmark', {
@@ -55,21 +66,77 @@ export async function runLatencyBenchmark(
     durationMs,
   });
 
-  // Give a small buffer for last messages to arrive locally
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  // Small buffer for pending messages
+  await new Promise((r) => setTimeout(r, 100));
 
-  if (jitters.length === 0) {
-    return { avgJitter: 0, maxJitter: 0, msgCount, duration: durationMs };
+  return tracker.getStats(durationMs, msgCount);
+}
+
+export async function runWebSocketBenchmark(
+  freqHz: number = 240,
+  durationMs: number = 2000
+): Promise<LatencyResult> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket('ws://127.0.0.1:12345/ws');
+    const tracker = new JitterTracker(freqHz);
+    let msgCount = 0;
+    let hasStarted = false;
+
+    ws.onopen = () => {
+      ws.send('start');
+      hasStarted = true;
+      setTimeout(() => ws.close(), durationMs + 200);
+    };
+
+    ws.onmessage = (event) => {
+      if (typeof event.data === 'string') return; // Ignore handshake
+      msgCount++;
+      tracker.record();
+    };
+
+    ws.onclose = () => {
+      if (!hasStarted) {
+        reject(new Error('WebSocket closed before starting'));
+        return;
+      }
+      resolve(tracker.getStats(durationMs, msgCount));
+    };
+
+    ws.onerror = reject;
+  });
+}
+
+export async function runStreamBenchmark(
+  freqHz: number = 240,
+  durationMs: number = 2000
+): Promise<LatencyResult> {
+  const response = await fetch('http://127.0.0.1:12345/stream');
+  if (!response.body) {
+    throw new Error('No response body');
   }
 
-  const sum = jitters.reduce((a, b) => a + b, 0);
-  const avg = sum / jitters.length;
-  const max = Math.max(...jitters);
+  const reader = response.body.getReader();
+  const tracker = new JitterTracker(freqHz);
+  let msgCount = 0;
+  const startTime = performance.now();
 
-  return {
-    avgJitter: avg,
-    maxJitter: max,
-    msgCount,
-    duration: durationMs,
-  };
+  try {
+    let keepReading = true;
+    while (keepReading) {
+      const { done } = await reader.read();
+      if (done) break;
+
+      if (performance.now() - startTime > durationMs) {
+        keepReading = false;
+        break;
+      }
+
+      msgCount++;
+      tracker.record();
+    }
+  } finally {
+    reader.cancel();
+  }
+
+  return tracker.getStats(durationMs, msgCount);
 }

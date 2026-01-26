@@ -108,7 +108,7 @@ pub struct LayerFlags {
 }
 
 impl LayerFlags {
-    pub fn to_byte(&self) -> u8 {
+    pub fn to_byte(self) -> u8 {
         let mut flags = 0u8;
         if self.transparency_protected {
             flags |= 0x01;

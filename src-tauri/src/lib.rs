@@ -4,6 +4,7 @@
 
 pub mod abr;
 pub mod bench;
+pub mod bench_server;
 pub mod benchmark;
 pub mod brush;
 pub mod commands;
@@ -37,7 +38,7 @@ fn build_response(data: Vec<u8>, mime_type: &str) -> Response<Vec<u8>> {
         .header("Content-Type", mime_type)
         .header("Access-Control-Allow-Origin", "*")
         .body(data)
-        .unwrap()
+        .expect("failed to build response")
 }
 
 /// Build HTTP response for raw RGBA data with dimension headers
@@ -53,7 +54,7 @@ fn build_rgba_response(data: Vec<u8>, width: u32, height: u32) -> Response<Vec<u
         .header("X-Image-Width", width.to_string())
         .header("X-Image-Height", height.to_string())
         .body(data)
-        .unwrap()
+        .expect("failed to build response")
 }
 
 /// Build HTTP response for LZ4-compressed RGBA data with dimension headers
@@ -69,7 +70,7 @@ fn build_rgba_lz4_response(data: Vec<u8>, width: u32, height: u32) -> Response<V
         .header("X-Image-Width", width.to_string())
         .header("X-Image-Height", height.to_string())
         .body(data)
-        .unwrap()
+        .expect("failed to build response")
 }
 
 /// Build HTTP response for LZ4-compressed Gray8 data with dimension headers
@@ -85,7 +86,7 @@ fn build_gray_lz4_response(data: Vec<u8>, width: u32, height: u32) -> Response<V
         .header("X-Image-Width", width.to_string())
         .header("X-Image-Height", height.to_string())
         .body(data)
-        .unwrap()
+        .expect("failed to build response")
 }
 
 /// Build 404 response
@@ -94,7 +95,7 @@ fn build_not_found() -> Response<Vec<u8>> {
         .status(StatusCode::NOT_FOUND)
         .header("Content-Type", "text/plain")
         .body(b"Not Found".to_vec())
-        .unwrap()
+        .expect("failed to build response")
 }
 
 /// Run the Tauri application
@@ -116,8 +117,7 @@ pub fn run() {
             tracing::info!("project:// request: {}", path);
 
             // Parse path: /layer/{id} or /thumbnail or /brush/{id}
-            if path.starts_with("/layer/") {
-                let layer_id = &path[7..]; // Skip "/layer/"
+            if let Some(layer_id) = path.strip_prefix("/layer/") {
                 tracing::info!("Looking up layer in cache: {}", layer_id);
                 if let Some(cached) = file::get_cached_layer(layer_id) {
                     tracing::info!(
@@ -141,9 +141,8 @@ pub fn run() {
                 } else {
                     tracing::warn!("Cache MISS: {}", layer_id);
                 }
-            } else if path.starts_with("/brush/") {
+            } else if let Some(brush_id) = path.strip_prefix("/brush/") {
                 // Brush texture endpoint: /brush/{id}
-                let brush_id = &path[7..]; // Skip "/brush/"
                 tracing::debug!("Looking up brush in cache: {}", brush_id);
                 if let Some(cached) = brush::get_cached_brush(brush_id) {
                     tracing::debug!(
@@ -186,11 +185,14 @@ pub fn run() {
             commands::report_benchmark,
             bench::start_benchmark,
         ])
-        .setup(|_app| {
+        .setup(|app| {
+            // Start WebSocket benchmark server
+            tauri::async_runtime::spawn(bench_server::start(12345));
+
             #[cfg(debug_assertions)]
             {
                 use tauri::Manager;
-                if let Some(window) = _app.get_webview_window("main") {
+                if let Some(window) = app.get_webview_window("main") {
                     window.open_devtools();
                 }
             }

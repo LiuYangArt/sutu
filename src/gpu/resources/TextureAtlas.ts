@@ -68,7 +68,7 @@ export class TextureAtlas {
     }
 
     // Need to upload - first ensure ImageData is available
-    let imageData = texture.imageData;
+    let imageData: ImageData | null | undefined = texture.imageData;
     if (!imageData) {
       // Try to load via protocol first (new optimized path)
       imageData = await loadBrushTexture(textureId, texture.width, texture.height);

@@ -124,8 +124,8 @@ fn generate_stack_xml(project: &ProjectData) -> Result<Vec<u8>, FileError> {
 /// Decode base64 PNG data to raw RGBA bytes
 fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
     // Handle data URL prefix if present
-    let base64_data = if data.starts_with("data:image/png;base64,") {
-        &data[22..]
+    let base64_data = if let Some(stripped) = data.strip_prefix("data:image/png;base64,") {
+        stripped
     } else if data.starts_with("data:") {
         // Skip any data URL prefix
         data.split(',').nth(1).unwrap_or(data)

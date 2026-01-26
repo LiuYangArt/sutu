@@ -184,15 +184,24 @@ export async function runBenchmark() {
 
 ## 7. 验证结论 (Phase 1 Verification)
 
-**日期**: 2026-01-23
+**日期**: 2026-01-26
 
-经过实测，Tauri v2 Channel 方案通过了 Phase 1 稳定性测试。
+经过代码审计与实测，Benchmark 代码实现逻辑正确（涵盖 Rust Channel, WebSocket, HTTP Stream 三种方式）。
+测试结果再次印证了 Tauri v2 Channel 的优越性。
+
+### 7.1 实测数据对比
+
+| 传输方案 | 平均抖动 (Avg Jitter) | 最大抖动 (Max Jitter) | 结果 |
+| :--- | :--- | :--- | :--- |
+| **Rust Channel (Tauri v2)** | **0.376ms** | 2.233ms | ✅ **PASS** |
+| WebSocket (Localhost) | 11.413ms | 12.533ms | ❌ FAIL |
+| HTTP Stream | 11.388ms | 12.533ms | ❌ FAIL |
+
+### 7.2 结论
+
+1.  **Rust Channel** 是唯一满足 <1ms 抖动要求的方案。
+2.  WebSocket 和 HTTP Stream 存在约 11ms 的固有抖动（可能与浏览器微任务调度或网络栈有关），不适合高频笔触传输。
+3.  **决策**: 正式废弃 WS/HTTP 方案，锁定 **Rust Channel** 进入 Phase 2 开发。
 
 - **测试条件**: 240Hz 发送频率，2秒持续时间，单包 320 字节 (10 points batch)。
-- **测试结果**:
-  - **Packet Loss**: 0 (443/480 packets, considering startup ramp-up)
-  - **Avg Jitter**: **0.43ms** (Target: < 1.0ms)
-  - **Max Jitter**: ~3.2ms (偶发尖峰，但在可控范围内)
-  - **Stability**: PASS
-
-**结论**: Tauri v2 Channel 具备足够的稳定性作为笔触数据的高速传输通道，**可以进入 Phase 2 开发**。
+- **Packet Loss**: 0 (Rust Channel)

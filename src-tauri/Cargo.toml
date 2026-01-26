@@ -24,6 +24,12 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Network benchmark
+axum = { version = "0.7", features = ["ws"] }
+tokio-stream = "0.1"
+tower-http = { version = "0.5", features = ["cors"] }
+
+
 # Tablet input
 octotablet = "0.1"
 wintab_lite = { version = "1.0.1", features = ["libloading"] }

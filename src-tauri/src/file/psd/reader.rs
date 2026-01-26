@@ -206,6 +206,7 @@ fn process_layer_parallel(
 ///
 /// This is the key optimization: instead of expanding to full canvas and encoding
 /// a huge image with mostly transparent pixels, we only encode the actual layer content.
+#[allow(clippy::too_many_arguments)]
 fn build_layer_image(
     rgba_data: &[u8],
     name: &str,
@@ -259,6 +260,7 @@ fn build_layer_image(
 }
 
 /// Encode RGBA image to WebP lossless, with PNG fallback
+#[allow(dead_code)]
 fn encode_layer_image(img: &RgbaImage, layer_id: &str) -> (Vec<u8>, &'static str) {
     // Try WebP first (faster encoding)
     match encode_rgba_to_webp_lossless(img) {
@@ -283,6 +285,7 @@ fn encode_layer_image(img: &RgbaImage, layer_id: &str) -> (Vec<u8>, &'static str
 }
 
 /// Encode RGBA image to WebP lossless format
+#[allow(dead_code)]
 fn encode_rgba_to_webp_lossless(img: &RgbaImage) -> Result<Vec<u8>, FileError> {
     use webp::Encoder;
 
@@ -292,6 +295,7 @@ fn encode_rgba_to_webp_lossless(img: &RgbaImage) -> Result<Vec<u8>, FileError> {
 }
 
 /// Encode RGBA image to PNG format (fallback)
+#[allow(dead_code)]
 fn encode_rgba_to_png(img: &RgbaImage) -> Result<Vec<u8>, FileError> {
     use image::ImageFormat;
     use std::io::Cursor;
