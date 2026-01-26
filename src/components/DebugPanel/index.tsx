@@ -29,6 +29,7 @@ import {
   downloadBenchmarkReport,
   type BenchmarkReport,
 } from '@/benchmark';
+import { runLatencyBenchmark } from '@/utils/LatencyTest';
 import './DebugPanel.css';
 
 interface DebugPanelProps {
@@ -188,6 +189,20 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       return { passed: result.errors === 0, report: formatChaosReport(result) };
     });
   }, [canvas, runTest]);
+
+  const runLatencyTest = useCallback(() => {
+    return runTest('latency', 'Rust Channel Latency (2s)', async () => {
+      const result = await runLatencyBenchmark(240, 2000);
+      return {
+        passed: result.avgJitter < 1.0,
+        report: `Freq: 240Hz, Duration: ${result.duration}ms
+Msgs Recv: ${result.msgCount}
+Avg Jitter: ${result.avgJitter.toFixed(3)}ms
+Max Jitter: ${result.maxJitter.toFixed(3)}ms
+Status: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,
+      };
+    });
+  }, [runTest]);
 
   const clearCanvas = useCallback(() => {
     if (!canvas) return;
@@ -360,6 +375,16 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
             >
               <Play size={16} />
               <span>Chaos 5s</span>
+            </button>
+
+            <button
+              className="debug-btn"
+              onClick={runLatencyTest}
+              disabled={!!runningTest}
+              title="Test Rust->Frontend Channel Jitter"
+            >
+              <Zap size={16} />
+              <span>Channel Jitter</span>
             </button>
           </div>
         </div>

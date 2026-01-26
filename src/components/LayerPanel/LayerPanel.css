@@ -29,7 +29,9 @@
   border-radius: var(--radius-lg);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .layer-item:hover {
@@ -83,7 +85,9 @@
   justify-content: center;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .visibility-toggle:hover {
@@ -210,7 +214,7 @@
   color: var(--text-muted);
 }
 
-.opacity-control input[type="range"] {
+.opacity-control input[type='range'] {
   flex: 1;
   height: 4px;
   -webkit-appearance: none;
@@ -219,7 +223,7 @@
   border-radius: var(--radius-full);
 }
 
-.opacity-control input[type="range"]::-webkit-slider-thumb {
+.opacity-control input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 10px;
@@ -259,7 +263,9 @@
   justify-content: center;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .toolbar-btn:hover {

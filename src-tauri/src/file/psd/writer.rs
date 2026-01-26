@@ -502,6 +502,7 @@ mod tests {
             layers: vec![],
             flattened_image: None,
             thumbnail: None,
+            benchmark: None,
         };
 
         let result = create_composite(&project);
