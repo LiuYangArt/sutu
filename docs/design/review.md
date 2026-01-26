@@ -1,194 +1,482 @@
-这是一个非常成熟、具备工程落地性的方案（v2.1）。你已经成功将之前关于“传输层不确定性”的风险转化为了一个**“基于数据决策（Data-Driven Decision）”**的行动计划。
+# 最终验收评审 (v1.2)
 
-作为开发人员，我完全认可这个 v2.1 方案。它已经具备了进入代码开发阶段的所有条件。
+**置信度评分：9.2/10** ⬆️ (从 9.5 微调至 9.2)
 
-为了进一步提高置信度并加速你的 **Phase 1 (Benchmark)**，我将针对方案中稍微模糊的“测试方法”部分进行一次**代码级优化**，并提供核心的**基准测试脚手架代码**。
-
----
-
-### 💡 架构微调建议 (Review Remarks)
-
-在开始写代码前，有两点具体的优化建议：
-
-1.  **关于时间同步的陷阱 (The Clock Trap)**:
-    方案中提到 _“Rust 发送 Instant -> 前端 performance.now()”_。
-    - **问题**: Rust 的 `Instant` 和 JS 的 `performance.now()` 是两个完全不同的时钟源，无法直接相减得出“单向延迟”。
-    - **修正**: 我们关注的是 **Round-Trip Time (RTT)** 和 **Jitter (抖动)**。
-      - _RTT_: 前端收到后立即回传 ACK，Rust 算差值。
-      - _Jitter_: 前端记录 `Time_Receive_N - Time_Receive_N-1`，看这个差值是否稳定在 `1000ms / 120Hz = 8.33ms` 附近。
-
-2.  **WebGPU 内存对齐 (Memory Alignment)**:
-    你的 `DabPacket` 是 24 字节。虽然省内存，但在 WebGPU (WGSL) 中，Struct 的对齐通常是 16 字节（`vec4<f32>`）。
-    - 24 字节会导致 Padding 问题，或者需要手动拆包。
-    - **建议**: 凑齐 **32 字节**。这不仅对齐完美（2个 `vec4`），多出来的 8 字节还可以留作未来扩展（例如：`tilt_x`, `tilt_y`，或者 `feature_flags`）。
+这份文档已经达到了**生产级设计文档**的标准，可以直接进入编码阶段。但在实施前，有几个**关键的实现细节**需要修正，以及一些**性能预估**需要调整为更保守的数值。
 
 ---
 
-### 💻 核心代码落地：Benchmark Suite
+## ✅ 亮点与肯定
 
-为了让你本周就能完成 Phase 1，我为你设计了 **Tauri v2 Channel** 的基准测试原型代码。这是目前理论上最优秀的候选方案（原生、无需额外端口、零拷贝潜力）。
+1. **双缓冲设计思路正确**：通过轮转两个 buffer 避免 clone，这是图形引擎的经典优化手法。
+2. **LRU 淘汰机制完善**：从随机淘汰改为 VecDeque，逻辑清晰。
+3. **内存保护到位**：64MB 上限 + `shrink_buffers_if_needed` 防止内存泄漏。
+4. **错误处理完整**：前端的 `fallbackToTypescript` 和 Rust 的 `Result<>` 覆盖了主要失败路径。
+5. **测试基础设施明确**：Phase 0.5 的 benchmark 列表非常实用。
 
-#### 1. Rust 端: `src-tauri/src/benchmark.rs`
+---
 
-利用 Tauri v2 的 `Channel` 特性，我们可以建立一个无需反复建立连接的高速通道。
+## ⚠️ 关键问题与修正建议
+
+### 1. 双缓冲实现的逻辑漏洞 🔴 **Critical**
+
+**问题**：
 
 ```rust
-use serde::{Deserialize, Serialize};
-use tauri::ipc::Channel;
-use tauri::{AppHandle, Command, Runtime};
-use std::time::{Duration, Instant};
-use std::thread;
+// 当前代码
+Some(std::mem::take(output))
+```
 
-// 模拟真实的 Dab 数据结构 (32 bytes 对齐)
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-// 使用 bytemuck 库来实现安全的字节转换 (强烈推荐引入 bytemuck crate)
-// #[derive(bytemuck::Pod, bytemuck::Zeroable)]
-pub struct BenchPacket {
-    pub seq_id: u32,       // 4 bytes: 序列号，用于检测丢包
-    pub timestamp: u64,    // 8 bytes: Rust 端纳秒级时间戳 (用于 RTT 计算)
-    pub x: f32,            // 4 bytes
-    pub y: f32,            // 4 bytes
-    pub pressure: f32,     // 4 bytes
-    pub _padding: [u8; 8], // 8 bytes: 填充至 32 bytes，模拟真实负载
-}
+`std::mem::take` 会将 `output` 替换为 `Vec::default()`（即空 Vec，capacity=0）。下次调用 `get_sync_data` 时，这个 buffer 需要重新分配内存，**并没有真正复用**。
 
-#[tauri::command]
-pub fn start_benchmark_channel(
-    on_event: Channel<Vec<u8>>, // Tauri v2 的 Channel，支持直接发送二进制
-    frequency: u64,             // e.g., 120 or 240 Hz
-    duration_ms: u64,
-) {
-    thread::spawn(move || {
-        let interval = Duration::from_micros(1_000_000 / frequency);
-        let start_time = Instant::now();
-        let run_duration = Duration::from_millis(duration_ms);
-        let mut seq = 0;
+**修正方案**：
+有两种方式实现真正的双缓冲：
 
-        while start_time.elapsed() < run_duration {
-            let loop_start = Instant::now();
+#### 方案 A：使用 `std::mem::swap`（推荐）
 
-            // 1. 构造数据 (模拟 Batch，比如一次发 10 个点)
-            // 在实际引擎中，这里是从 RingBuffer 取出的数据
-            let mut batch_buffer = Vec::with_capacity(32 * 10);
+```rust
+pub fn get_sync_data(&mut self) -> Option<Vec<u8>> {
+    // ... 前面的逻辑不变 ...
 
-            for _ in 0..10 {
-                let packet = BenchPacket {
-                    seq_id: seq,
-                    timestamp: loop_start.elapsed().as_nanos() as u64, // 相对时间
-                    x: 100.0, y: 200.0, pressure: 0.5,
-                    _padding: [0; 8],
-                };
+    let buffer_idx = self.current_buffer_idx;
+    self.current_buffer_idx = 1 - self.current_buffer_idx;
 
-                // 简单序列化：直接 push 字节 (unsafe block 或者 bytemuck)
-                // 这里为了演示用伪代码，实际建议用 bytemuck::bytes_of(&packet)
-                let bytes: &[u8] = unsafe {
-                    std::slice::from_raw_parts(
-                        (&packet as *const BenchPacket) as *const u8,
-                        std::mem::size_of::<BenchPacket>()
-                    )
-                };
-                batch_buffer.extend_from_slice(bytes);
-                seq += 1;
-            }
+    let output = &mut self.output_buffers[buffer_idx];
+    output.clear();
 
-            // 2. 发送二进制数据
-            // Tauri v2 channel send 可能会报错如果前端断开，需处理 Result
-            if let Err(_) = on_event.send(batch_buffer) {
-                break; // 前端已断开
-            }
+    // ... 填充数据 ...
 
-            // 3. 极其精确的 Sleep (Spin loop or hybrid sleep)
-            // 为了测试极限性能，这里用简单 sleep，实际引擎中可能需要 spin lock
-            let elapsed = loop_start.elapsed();
-            if elapsed < interval {
-                thread::sleep(interval - elapsed);
-            }
-        }
-    });
+    // 创建一个新的 Vec 用于返回，与 output 交换
+    let mut result = Vec::with_capacity(output.capacity());
+    std::mem::swap(output, &mut result);
+
+    Some(result)
 }
 ```
 
-#### 2. 前端端: `src/bench/LatencyTest.ts`
+#### 方案 B：使用 `Arc<Mutex<Vec<u8>>>` + 回收机制（更复杂）
 
-前端主要负责接收、计算抖动（Jitter）和吞吐量。
+```rust
+// 在 StreamingBrushEngine 中
+output_buffers: [Arc<Mutex<Vec<u8>>>; 2],
+
+// 在 get_sync_data 中
+let buffer = self.output_buffers[buffer_idx].clone();
+// ... 填充数据到 buffer ...
+Some(buffer) // 返回 Arc，前端用完后自动释放
+```
+
+**推荐方案 A**，因为：
+
+- 简单直接，无需引入 Arc/Mutex
+- 性能开销最小
+- 但需要注意：返回的 `result` 在前端用完后会被丢弃，无法"归还"给 Rust
+
+**如果要实现真正的 Buffer Pool（可归还）**，需要：
+
+```rust
+// 在 BrushEngineManager 中添加全局 Buffer Pool
+pub struct BrushEngineManager {
+    // ...
+    pub buffer_pool: Mutex<Vec<Vec<u8>>>, // 空闲 buffer 池
+}
+
+// 在 get_sync_data 中
+pub fn get_sync_data(&mut self, pool: &Mutex<Vec<Vec<u8>>>) -> Option<Vec<u8>> {
+    // ... 前面逻辑 ...
+
+    // 从 pool 中取一个 buffer，如果没有则新建
+    let mut result = pool.lock().unwrap().pop()
+        .unwrap_or_else(|| Vec::with_capacity(512 * 1024));
+
+    result.clear();
+    // ... 填充数据 ...
+
+    Some(result)
+}
+
+// 前端用完后调用
+#[tauri::command]
+pub fn rust_brush_return_buffer(
+    state: State<BrushEngineManager>,
+    buffer: Vec<u8>,
+) {
+    let mut pool = state.buffer_pool.lock().unwrap();
+    if pool.len() < 4 { // 限制池大小
+        pool.push(buffer);
+    }
+}
+```
+
+**建议**：
+
+- **Phase 1 MVP**：使用方案 A（swap），不实现归还机制。
+- **Phase 2 优化**：如果性能测试发现内存分配是瓶颈，再引入 Buffer Pool。
+
+---
+
+### 2. LRU 的并发安全问题 🟡 **Important**
+
+**问题**：
+
+```rust
+pub engines: Mutex<HashMap<String, StreamingBrushEngine>>,
+pub session_order: Mutex<VecDeque<String>>,
+```
+
+两个独立的锁可能导致不一致：
+
+- 线程 A 在 `engines` 中插入 session_1
+- 线程 B 在 `session_order` 中插入 session_2
+- 如果 A 崩溃，`engines` 有 session_1 但 `session_order` 没有
+
+**修正方案**：
+将两者合并到一个锁内：
+
+```rust
+pub struct BrushEngineManager {
+    pub state: Mutex<ManagerState>,
+}
+
+pub struct ManagerState {
+    engines: HashMap<String, StreamingBrushEngine>,
+    session_order: VecDeque<String>,
+}
+
+impl BrushEngineManager {
+    pub fn evict_oldest(&self) -> Option<String> {
+        let mut state = self.state.lock().ok()?;
+        if let Some(oldest_id) = state.session_order.pop_front() {
+            state.engines.remove(&oldest_id);
+            Some(oldest_id)
+        } else {
+            None
+        }
+    }
+}
+```
+
+---
+
+### 3. 前端 `waitForPendingMessages` 的死锁风险 🟡 **Important**
+
+**问题**：
 
 ```typescript
-import { invoke, Channel } from '@tauri-apps/api/core';
-
-// 对应 Rust 的结构 (32 bytes)
-const PACKET_SIZE = 32;
-
-interface BenchResult {
-  avgJitter: number; // ms
-  maxJitter: number; // ms
-  throughput: number; // packets/sec
-  totalPackets: number;
-}
-
-export async function runBenchmark(): Promise<BenchResult> {
-  const channel = new Channel<Uint8Array>();
-
-  let lastTime = performance.now();
-  let packetCount = 0;
-  const jitters: number[] = [];
-
-  channel.onmessage = (message: Uint8Array) => {
-    const now = performance.now();
-    // message 是一个 Batch (例如 10 个包，320 bytes)
-
-    // 1. 计算接收间隔抖动 (Inter-arrival Jitter)
-    // 理想情况下，如果 Batch 是 120Hz，这里应该总是间隔 8.33ms
-    const delta = now - lastTime;
-    lastTime = now;
-
-    if (packetCount > 0) {
-      // 记录抖动 (实际间隔 - 理想间隔) 的绝对值?
-      // 或者仅仅记录两次接收的间隔用于画直方图
-      jitters.push(delta);
-    }
-
-    // 2. 解析二进制 (Zero-copy view)
-    // 验证数据完整性
-    const view = new DataView(message.buffer);
-    const numPackets = message.byteLength / PACKET_SIZE;
-    packetCount += numPackets;
-
-    // 可以在这里抽样检查 seq_id 是否连续，判断是否有丢包
-  };
-
-  // 启动 Rust 发送端
-  console.log('Starting Benchmark...');
-  await invoke('start_benchmark_channel', {
-    onEvent: channel,
-    frequency: 240, // 挑战 240Hz
-    durationMs: 5000, // 跑 5 秒
-  });
-
-  // 分析结果
-  const avgInterval = jitters.reduce((a, b) => a + b, 0) / jitters.length;
-  const jitterVariance = jitters.map((j) => Math.abs(j - avgInterval));
-  const avgJitter = jitterVariance.reduce((a, b) => a + b, 0) / jitterVariance.length;
-
-  console.log(`Benchmark Done. Rx ${packetCount} packets.`);
-  console.log(`Avg Interval: ${avgInterval.toFixed(2)}ms (Target: 4.16ms for 240Hz)`);
-  console.log(`Avg Jitter: ${avgJitter.toFixed(3)}ms`);
-
-  return {
-    avgJitter,
-    maxJitter: Math.max(...jitters),
-    throughput: packetCount / 5,
-    totalPackets: packetCount,
-  };
+while (this.pendingMessages > 0 && Date.now() - start < timeoutMs) {
+  await new Promise((resolve) => setTimeout(resolve, 5));
 }
 ```
 
-### 3. 下一步行动建议
+如果 Rust 端已经发送完所有消息，但 JS 的 `Channel.onmessage` 还没触发（例如事件循环阻塞），这个循环会一直等到超时。
 
-1.  **运行上述代码**: 重点观察 `Avg Jitter`。
-    - 如果 Jitter < 1ms，说明 **Tauri v2 Channel** 极其稳定，直接采用方案 A。
-    - 如果 Jitter 很大（> 5ms），说明 Tauri 的 IPC 线程调度存在瓶颈，立刻转去测试 **WebSocket**。
-2.  **可视化**: 不要只看 Log。将 `jitters` 数组导出，用 Chart.js 画一个分布图。如果出现“尖峰”，说明发生了 GC 或者线程阻塞。
-3.  **内存泄漏检查**: 在跑 60秒 的长测试时，观察 Rust 进程和 WebView 进程的内存。如果内存单调上涨，说明 `Uint8Array` 没有被正确释放。
+**修正方案**：
+使用 Promise + 事件驱动：
 
-这个 v2.1 方案非常稳健。通过先行的基准测试，你实际上是在为整个应用挑选“心脏起搏器”，这是极其负责任的工程态度。祝代码一次跑通！
+```typescript
+private pendingPromises: Set<Promise<void>> = new Set();
+
+private handleSync(data: Uint8Array): void {
+    const promise = (async () => {
+        // ... 原有的 putImageData 逻辑 ...
+    })();
+
+    this.pendingPromises.add(promise);
+    promise.finally(() => this.pendingPromises.delete(promise));
+}
+
+async endStroke(): Promise<void> {
+    // ...
+    await invoke('rust_brush_end', { ... });
+
+    // 等待所有 putImageData 完成
+    await Promise.all(Array.from(this.pendingPromises));
+
+    // ...
+}
+```
+
+---
+
+### 4. 性能预估需要调整 🟡 **Important**
+
+**问题**：
+文档中声称双缓冲能将 "Sync 准备" 从 0.8ms 降到 0.3ms（节省 0.5ms）。
+
+**分析**：
+
+- `std::mem::take` 本身是 O(1) 操作（只是指针交换）
+- 但 `clone()` 的开销主要在**内存分配**和**数据拷贝**
+- 如果使用方案 A（swap），仍然需要一次 `Vec::with_capacity` 和数据拷贝到新 Vec
+- 真正节省的只是**避免了 realloc**（如果 capacity 足够）
+
+**修正后的预估**：
+| 阶段 | v1.1 (clone) | v1.2 (swap) | 节省 |
+| ---------------------- | ------------ | ----------- | ------ |
+| Sync 准备 (提取脏区域) | 0.8ms | **0.6ms** | ~0.2ms |
+
+**总延迟**：4.3ms → **4.5ms**（仍然优于 TS 的 10ms）
+
+---
+
+### 5. 64MB 限制的合理性验证 🟢 **Nice to have**
+
+**当前逻辑**：
+
+```rust
+const MAX_BUFFER_SIZE: usize = 64 * 1024 * 1024; // 64MB
+```
+
+**验证**：
+
+- 4K 画布 (4096x4096x4) = 64MB **刚好达到上限**
+- 如果用户创建 4097x4097 的画布，会被拒绝
+
+**建议**：
+
+- 将限制放宽到 **80MB**，以支持 4K 画布（留 20% 余量）
+- 或者在文档中明确说明：**4K 画布需要 Tile 模式**
+
+---
+
+## 📊 修正后的性能预估表
+
+| 阶段                   | TypeScript | v1.2 (修正后) | 提升倍数 |
+| ---------------------- | ---------- | ------------- | -------- |
+| Rust 计算 (500px dab)  | 10ms       | 2.0ms         | **5x**   |
+| Sync 准备 (提取脏区域) | -          | 0.6ms         | -        |
+| Channel 传输           | -          | 0.5ms         | -        |
+| putImageData           | -          | 1.5ms         | -        |
+| **总计**               | 10ms       | **4.6ms**     | **2.2x** |
+
+**结论**：仍然值得实施，但不要期望 3x 提升。
+
+---
+
+## 🛠️ 实施建议（最终版）
+
+### Phase 0.2 需要补充的任务
+
+- [ ] **修正双缓冲实现**：使用 `std::mem::swap` 而非 `std::mem::take`
+- [ ] **合并 LRU 锁**：`ManagerState` 统一管理
+- [ ] **前端 Promise 等待**：替换 `waitForPendingMessages`
+- [ ] **调整内存限制**：64MB → 80MB（或明确 4K 需要 Tile）
+
+### Phase 1 的性能验证标准（修正）
+
+- **目标**：500px dab P90 < 5ms（总延迟）
+- **分解指标**：
+  - Rust 计算：< 2.5ms
+  - Sync 准备：< 0.8ms
+  - Channel 传输：< 0.6ms
+  - putImageData：< 1.5ms
+- **如果不达标**：
+  - 如果 Rust 计算 > 3ms：检查 SIMD 是否生效
+  - 如果 Sync 准备 > 1ms：考虑 Buffer Pool
+  - 如果 putImageData > 2ms：尝试 `createImageBitmap`
+
+---
+
+## ✅ 最终批准意见
+
+**批准进入 Phase 0 编码**，但需要：
+
+1. **立即修正**（Phase 0.2 前）：
+   - 双缓冲实现（使用 swap）
+   - LRU 锁合并
+   - 前端 Promise 等待
+
+2. **性能预期调整**：
+   - 总提升倍数：2.2x（而非 3x）
+   - 仍然显著优于 TypeScript
+
+3. **文档更新**：
+   - 在 7.2 节更新性能预估表
+   - 在附录 C 添加"双缓冲实现细节"章节
+
+4. **Phase 1 决策点**：
+   - 如果实测提升 < 1.8x，考虑暂停
+   - 如果实测提升 ≥ 2x，继续 Phase 2
+
+---
+
+## 📝 建议添加的文档章节
+
+### 附录 C: 双缓冲实现细节
+
+```rust
+// 正确的双缓冲实现（使用 swap）
+pub fn get_sync_data(&mut self) -> Option<Vec<u8>> {
+    // ... 前面逻辑 ...
+
+    let buffer_idx = self.current_buffer_idx;
+    self.current_buffer_idx = 1 - self.current_buffer_idx;
+
+    let output = &mut self.output_buffers[buffer_idx];
+    output.clear();
+
+    // ... 填充数据 ...
+
+    // 创建新 Vec 并交换（避免 clone）
+    let mut result = Vec::with_capacity(output.capacity());
+    std::mem::swap(output, &mut result);
+
+    Some(result)
+}
+```
+
+**为什么不用 `std::mem::take`**：
+
+- `take` 会将 `output` 替换为空 Vec（capacity=0）
+- 下次调用需要重新分配内存
+- `swap` 保留了 `output` 的 capacity，真正实现复用
+
+**性能对比**：
+
+- `clone`: 每次 malloc + memcpy
+- `take`: 每次 malloc（但无 memcpy）
+- `swap`: 只在第一次 malloc，后续复用
+
+---
+
+## 总结
+
+这份文档已经非常优秀，只需要修正上述 4 个关键问题即可进入编码。预祝实施顺利！🚀
+
+---
+
+整体 v1.2 比 v1.1 更“工程化”：把 LRU、内存上限、错误处理、测试指标都落到了文档里，方向是对的。但 v1.2 里最关键的“**双缓冲无 clone**”在当前 Tauri Channel 的所有权语义下**实现上站不住**，另外“LRU”实际是 FIFO。建议在进入实现前把这两点改实，否则会出现**性能预估乐观/实现复杂但无收益**的风险。
+
+我会把本次 review 分成：做得好的、需要修正文档/代码设计的、建议补充的验证项。
+
+---
+
+## 做得好的点（v1.2 明显提升）
+
+1. **把 4K/8K 的策略说清楚了**：64MB 硬上限+明确提示 Tile mode，是很好的产品级保护。
+2. **dirty_rect 安全计算**：`dirty_rect_bytes_safe()` 做 clamp 避免负值/溢出，这个是必须的。
+3. **Phase 0 拆分**：0.1/0.2/0.3/0.5 非常利于执行和止损。
+4. **性能指标从平均变成分位数**：P90/P95/P99 这套更贴近用户体感。
+
+---
+
+## 需要立刻修正文档/设计的点（会影响落地）
+
+### 1) “双缓冲，无 clone”当前方案不可行（或收益不成立）
+
+你现在的关键代码是：
+
+```rust
+let output = &mut self.output_buffers[buffer_idx];
+// ...
+Some(std::mem::take(output))
+```
+
+**问题 1：mem::take 会把 Vec 的 capacity 也带走**
+`mem::take(output)` 会把 slot 里的 Vec 直接换成 `Vec::new()`（capacity=0）。结果是：
+
+- 你“预分配 512KB”的意义丢失；
+- 下一次 `get_sync_data()` 又会重新 `reserve`，反而更抖动、更慢。
+
+**问题 2：Channel send 消耗所有权后，你拿不回 buffer**
+即便不用 `mem::take`，只要你为了“无 clone”把 Vec move 给 `on_sync.send(vec)`，这个 Vec 后续就会被 drop（IPC 序列化后也不会回收给你）。
+所以**双缓冲轮转**只有在“发送后 buffer 能回池复用”的系统里才成立，但目前你的 `return_buffer()` 并没有被任何路径调用、也无法从前端把 Vec 还回来。
+
+**结论**：在 Tauri Channel 需要 `Vec<u8>` 所有权的前提下，“无 clone”通常意味着“每次发送都丢掉一个 Vec（重新分配）”，不是你文档里预期的“轮转复用”。
+
+**建议改法（两条路线二选一）**：
+
+- **路线 A（推荐，简单且真实）**：承认必须 copy/clone，继续用“scratch buffer 复用 + clone 发送”
+  - `output_buffer` 作为复用的构建缓冲；
+  - `on_sync.send(output_buffer.clone())`；
+  - 你真正优化的是：减少构建过程的分配（这个能做到、且确定有效）。
+  - 然后用基准数据决定 clone 是否真的是 0.5~1ms 的瓶颈（很多时候 putImageData 才是）。
+
+- **路线 B（高级，需确认 Tauri 能力）**：改成发送 `SharedArrayBuffer` / shared memory / mmap（如果 Tauri v2 有可用机制）
+  - 这是唯一能“真正不 clone 且复用内存”的方向；
+  - 但复杂度明显更高，应作为 Phase 2+/Phase 3 方案。
+
+> 你现在的 v1.2 “双缓冲”写法，建议在文档里降级为“探索项/待验证”，不要作为已采纳的关键修正写入性能表（否则预估会失真）。
+
+---
+
+### 2) 目前的“LRU”其实是 FIFO，不是 LRU
+
+你用 `VecDeque` 只在 `start` 时 `push_back`，淘汰时 `pop_front`，这叫**按创建顺序淘汰（FIFO）**，不是 LRU（Least Recently Used）。
+
+如果你真要 LRU，需要在每次 `rust_brush_input` / `rust_brush_end` 触达 session 时，把该 session 在队列里移动到队尾（或用 `lru` crate / HashMap+链表结构）。
+
+**建议**：
+
+- 如果你的目标只是“限制 session 数防泄露”，FIFO 够用，文档别叫 LRU；
+- 如果确实要 LRU，补上 access touch 逻辑，并说明锁顺序。
+
+---
+
+### 3) 两把 Mutex（engines / session_order）存在潜在死锁风险：需要规定锁顺序
+
+`rust_brush_start` 里拿了 `engines` 锁后，再去锁 `session_order`（并且 `evict_oldest()` 内也锁 `session_order`）。只要未来某个路径反过来（先锁 order 再锁 engines），就会死锁。
+
+**建议**：
+
+- 文档加一条“锁顺序规范：永远先锁 session_order，再锁 engines”（或相反，但要统一）；
+- 或更简单：把 `session_order` 合并到同一把 Mutex 里（一个 struct 一把锁），降低风险。
+
+---
+
+## 中等优先级建议（不改也能做 MVP，但会影响体验/正确性）
+
+### 4) 前端 pendingMessages 目前测不到“积压”，只能测“重入”
+
+你这里：
+
+```ts
+this.channel.onmessage = (data) => {
+  this.pendingMessages++;
+  this.handleSync(data);
+  this.pendingMessages--;
+};
+```
+
+由于 `handleSync` 同步执行，`pendingMessages` 绝大多数时间只会在 0/1 之间波动，**无法反映消息队列积压**。真正积压发生在：消息到达速度 > 主线程处理速度，但 JS 回调仍是串行执行。
+
+**建议**（最小改动）：
+
+- 用一个 `receivedCount++`，在 `requestAnimationFrame` 里统一 drain 一个队列并 `putImageData`，用队列长度判断背压；
+- 或在 `handleSync` 内测 `performance.now()` 耗时+滑动窗口，超过阈值触发节流。
+
+---
+
+### 5) `dirty_rect_bytes_safe()` 里 `(self.dirty_rect.right as u32)` 有溢出风险
+
+当 `right` 为负数时，`as u32` 会变成巨大值，再 `min(self.width)` 会得到 `self.width`，可能掩盖 bug。
+
+你在 `get_sync_data` 里用的写法更安全（先 max(0) 再转 u32）。建议两处统一成同一种安全写法：
+
+```rust
+let right = self.dirty_rect.right.max(0) as u32;
+let right = right.min(self.width);
+```
+
+---
+
+## 置信度更新
+
+- 文档整体方向：依然是对的。
+- 但 v1.2 的“无 clone 双缓冲”属于关键结论错误/至少未验证，会影响性能预估与实现复杂度。
+
+**建议把置信度从 75% 调整为 70%**（直到你用基准测试证明：1）clone 真是瓶颈；2）在 Tauri 语义下确实能做到复用内存而不重新分配）。
+
+---
+
+## 你可以直接改文档的两条具体措辞（建议）
+
+1. 把 “双缓冲，无 clone” 改成：
+
+> 输出缓冲采用复用 scratch buffer 构建；是否能做到无 clone 取决于 Tauri Channel 的所有权与底层拷贝机制，Phase 0.5 用基准测试验证后决定最终方案。
+
+2. 把 “LRU 淘汰” 改成：
+
+> FIFO（按创建顺序）淘汰最旧会话；如需严格 LRU，在 Phase 0.3 增加 touch 更新机制或引入 lru crate。
+
+如果你希望我给出一版“在不引入 shared memory 的前提下，最合理的 Rust 输出缓冲实现代码”（兼顾少分配、可解释的性能），我可以直接按你的 `get_sync_data`/command 结构给出可替换的实现。
