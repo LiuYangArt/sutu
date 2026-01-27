@@ -18,20 +18,26 @@ After implementing performance optimizations (P0 Mask Caching, P2 Parallel Blend
 | **P2 Parallel Blending** | Use Rayon for multi-threaded blending | ✅ Implemented | Large brush calc speedup |
 | **P3 Dynamic Sync** | Adjust IPC frequency (30fps) for large brushes | ✅ Implemented | Reduced IPC call count |
 | **P4 Wet Edge** | LUT-based alpha mapping | ✅ Implemented | Functional |
+| **Latency Breakdown** | Added `process_time` (Rust) and `queue_latency` (JS) metrics | ✅ Implemented | Enabled root cause isolation |
 
 ## 3. Root Cause Analysis
 
 ### 3.1 High Latency (Bottleneck Shifted)
-The optimizations successfully reduced **Rust CPU Calculation** time to negligible levels. However, the bottleneck has shifted to **Data Transfer (IPC) and Frontend Rendering**.
+The optimizations successfully reduced **Rust CPU Calculation** time to negligible levels. However, the bottleneck has shifted to **Data Transfer (IPC)**.
 
-*   **Data Volume**: A 500px diameter brush creates ~200,000 pixels per dirty rect. With 4 bytes/pixel (RGBA), that's **800KB per stamp**.
-*   **P3 Strategy**: We limit sync to 30fps and allow up to 4MB accumulation.
-*   **The Reality**: Sending 4MB of data via Tauri IPC and calling `ctx.putImageData()` on the main thread is blocking.
-    *   **Deserialization**: JS must parse the binary array.
-    *   **Canvas API**: `putImageData` with large buffers is a synchronous, heavy operation on the main thread.
-    *   **Result**: Even at 30fps, processing 4MB chunks stalls the UI thread, causing perceived latency. The browser cannot keep up with the paint cycle.
+**Concrete Evidence (Benchmark Results):**
+*   **Rust Process Time**: 0.42ms (Extremely fast, < 1ms)
+*   **Queue Latency**: 11.2ms (Frontend processes messages quickly once received)
+*   **Total Latency**: 950.2ms
+*   **IPC Overhead**: ~938ms (The gap between Process End and Frontend Receive)
 
-**Conclusion**: Pure CPU + IPC approach hits a bandwidth ceiling for large brushes (>300px). No amount of Rust optimization can fix the JS/IPC pipe width.
+**Analysis:**
+The system spends **99% of the time** just moving data from Rust to the Frontend.
+*   **Data Volume**: A 600px diameter brush creates ~280,000 pixels per dirty rect. With 4 bytes/pixel (RGBA), that's **1.1MB per stamp**.
+*   **IPC Congestion**: Tauri's Channel IPC likely uses base64 encoding or inefficient serialization for large binary payloads, causing massive blocking during transmission.
+*   **P3 Strategy Backfire**: Accumulating data to reduce call count resulted in massive packets (>4MB) that clog the IPC pipe for nearly a second.
+
+**Conclusion**: Pure CPU + Channel IPC approach hits a hard bandwidth ceiling for large brushes (>300px). No amount of Rust optimization can fix the IPC pipe width.
 
 ### 3.2 Disappearing Strokes
 The stroke vanishing upon completion suggests a race condition or logic error in the lifecycle management (`endStroke`).
