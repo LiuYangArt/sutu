@@ -29,11 +29,7 @@ import {
   downloadBenchmarkReport,
   type BenchmarkReport,
 } from '@/benchmark';
-import {
-  runLatencyBenchmark,
-  runWebSocketBenchmark,
-  runStreamBenchmark,
-} from '@/utils/LatencyTest';
+import { runLatencyBenchmark } from '@/utils/LatencyTest';
 import './DebugPanel.css';
 
 // --- Types ---
@@ -203,8 +199,6 @@ function ActionGrid({
     { id: 'rapid', label: 'Rapid 100x', icon: Zap, title: '100 rapid random taps' },
     { id: 'chaos', label: 'Chaos 5s', icon: Play, title: '5 seconds of random input' },
     { id: 'latency', label: 'Channel Jitter', icon: Zap, title: 'Rust->Frontend Channel Jitter' },
-    { id: 'ws-latency', label: 'WS Jitter', icon: Zap, title: 'WebSocket Jitter' },
-    { id: 'stream-latency', label: 'Stream Jitter', icon: Zap, title: 'HTTP Stream Jitter' },
   ];
 
   return (
@@ -350,22 +344,11 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
             return { passed: result.errors === 0, report: formatChaosReport(result) };
           });
           break;
-        case 'latency':
-        case 'ws-latency':
-        case 'stream-latency': {
-          const title = {
-            latency: 'Rust Channel Latency (2s)',
-            'ws-latency': 'WebSocket Latency (2s)',
-            'stream-latency': 'HTTP Stream Latency (2s)',
-          }[id]!;
-          const fn = {
-            latency: runLatencyBenchmark,
-            'ws-latency': runWebSocketBenchmark,
-            'stream-latency': runStreamBenchmark,
-          }[id]!;
+        case 'latency': {
+          const title = 'Rust Channel Latency (2s)';
 
           runTestWrapper(id, title, async () => {
-            const result = await fn(240, 2000);
+            const result = await runLatencyBenchmark(240, 2000);
             return {
               passed: result.avgJitter < 1.0,
               report: `Freq: 240Hz, Duration: ${result.duration}ms\nMsgs Recv: ${result.msgCount}\nAvg Jitter: ${result.avgJitter.toFixed(3)}ms\nMax Jitter: ${result.maxJitter.toFixed(3)}ms\nStatus: ${result.avgJitter < 1.0 ? 'PASS' : 'FAIL(<1.0ms)'}`,

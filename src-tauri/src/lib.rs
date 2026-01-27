@@ -4,7 +4,6 @@
 
 pub mod abr;
 pub mod bench;
-pub mod bench_server;
 pub mod benchmark;
 pub mod brush;
 pub mod commands;
@@ -186,9 +185,6 @@ pub fn run() {
             bench::start_benchmark,
         ])
         .setup(|app| {
-            // Start WebSocket benchmark server
-            tauri::async_runtime::spawn(bench_server::start(12345));
-
             #[cfg(debug_assertions)]
             {
                 use tauri::Manager;
