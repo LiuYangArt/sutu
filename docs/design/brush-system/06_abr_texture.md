@@ -14,6 +14,9 @@ ABR 文件格式存在两种情况：
 **设计准则**:
 系统必须具备**容错性**。当 ABR 仅包含引用时，不能让功能失效，而应提供“缺失资源占位符”并允许用户通过导入 `.pat` 文件来补充资源。
 
+**关键修正 (Based on Review)**:
+纹理必须是**Canvas Space (画布空间)**的，意味着纹理是“铺在纸上”的，而不是贴在笔刷也就是Dab上的，也不是贴在屏幕上的。笔刷Dab移动时，是作为一个“窗口”去透视底下的纹理。
+
 ## 2. 架构设计：Pattern Library
 
 不再是简单的 ABR 解析器扩展，而是建立一个独立的**图案资源库 (Pattern Library)**。
@@ -82,52 +85,140 @@ pub struct PatternLibrary {
 - **Compression**: 解码 PackBits (RLE) 压缩的数据。
 - **Color Conversion**: 将 CMYK / Grayscale / Indexed 转换为标准 RGBA8。
 
-## 4. 渲染管线 (Shader)
+## 4. 渲染管线 (Shader & CPU)
 
-复刻 Photoshop 的 Texturize 逻辑。
+复刻 Photoshop 的 Texturize 逻辑。核心在于 **Alpha 合成**：Texture 修改 Shape 的 Alpha，而不是直接叠加颜色。
 
 ### 4.1 数据准备
 
-- CPU 端将 Pattern 图片上传至 TextureArray 或利用 Bindless Texture。
-- 传入 Uniforms: `u_texture_scale`, `u_texture_depth`, `u_texture_mode`, `u_pattern_size`.
+- **Texture Data**: CPU 端将 Pattern 图片上传至 GPU TextureArray 或利用 Bindless Texture。
+- **Uniforms**:
+  - `u_texture_scale`: 缩放比例
+  - `u_texture_depth`: 深度（对比度/强度）
+  - `u_texture_mode`: 混合模式 (Multiply, Subtract等)
+  - `u_pattern_size`: 纹理原始尺寸
+  - `u_canvas_offset`: 画布偏移量 (用于对齐 Canvas Space)
+  - `u_invert`: 是否反相
 
-### 4.2 Fragment Shader 逻辑
+### 4.2 Fragment Shader 逻辑 (GPU)
 
 ```glsl
-// Screen Space UV Calculation
-// 纹理通常是相对于"纸张"固定的，不随笔画路径旋转
-vec2 screen_uv = gl_FragCoord.xy / u_viewport_size;
+// Coordinates Logic: Canvas Space
+// 纹理必须相对于"纸张"固定。
+// gl_FragCoord 是屏幕坐标，必须加上画布偏移量才能得到绝对画布坐标。
+vec2 canvas_pos = gl_FragCoord.xy + u_canvas_offset;
 
-// 调整 Tiling
-// Ps Scale 是相对于 Pattern 原始尺寸，不是相对于 Brush Size
-vec2 pattern_uv = (gl_FragCoord.xy) / (u_pattern_size * u_scale / 100.0);
+// 调整 Tiling & Scale
+// Ps Scale 是相对于 Pattern 原始尺寸
+// 使用 modulus 运算实现平铺 (Tiling)
+vec2 pattern_uv = canvas_pos / (u_pattern_size * u_scale / 100.0);
 
 // Sample Texture
-float tex_value = socket_sample_pattern(pattern_uv).r; // 假设使用灰度处理
+// 既然是 Pattern，通常需要 Wrap/Repeat 模式
+float tex_value = socket_sample_pattern(pattern_uv).r; // 假设单通道或取亮度
 if (u_invert) tex_value = 1.0 - tex_value;
 
-// Depth Calculation (Contrast/Visibility)
+// Depth Calculation
 // Depth 越低，纹理越不可见（100% Depth = Full Texture Effect）
 // Depth 同时也受压感控制 (Depth Jitter)
 float dynamic_depth = u_depth * u_pressure_depth_control;
 
 // Blending (Texture as a Mask/Modifier)
-// 这里的 Mode 是 Texture 与 Tip 的混合，常见是 Multiply 或 Subtract
 float influence = 1.0;
 
 if (u_mode == TEXTURE_MODE_MULTIPLY) {
-    // 模拟正片叠底：纹理越黑(0)，输出越黑。Depth 控制混合程度。
+    // 模拟正片叠底：mix(1.0, tex_value, depth)
+    // depth=0 -> 1.0 (无变化); depth=1 -> tex_value (完全应用纹理)
     influence = mix(1.0, tex_value, dynamic_depth);
+
 } else if (u_mode == TEXTURE_MODE_SUBTRACT) {
-    // 模拟减去：纹理越亮，扣除越多
+    // 模拟减去：mix(1.0, 1.0 - tex_value, depth)
+    // 纹理越亮，influence 越小(扣除越多)
     influence = mix(1.0, 1.0 - tex_value, dynamic_depth);
+
 } else if (u_mode == TEXTURE_MODE_HEIGHT) {
-    // 模拟高度图（类似 impasto 的感觉，比较复杂，v2 实现）
+    // 模拟高度图 (v2)
     influence = mix(0.5, tex_value, dynamic_depth) * 2.0;
 }
 
 // Final Alpha Modulation
+// 纹理只影响 Alpha，不直接影响颜色
 final_alpha *= influence;
+```
+
+### 4.3 CPU 渲染实现 (Rust)
+
+在 Rust CPU 引擎中，必须手动计算坐标映射和混合。
+
+```rust
+struct BrushState {
+    texture_data: Vec<u8>, // Grayscale Data
+    tex_w: usize,
+    tex_h: usize,
+    scale: f32,
+    depth: f32, // 0.0 - 1.0
+    invert: bool,
+    mode: TextureMode,
+}
+
+fn rasterize_dab_cpu(
+    dab_buffer: &mut [u8],
+    brush_tip: &[u8],
+    width: usize,
+    height: usize,
+    canvas_pos_x: i32,     // Dab 在画布上的绝对坐标 X
+    canvas_pos_y: i32,     // Dab 在画布上的绝对坐标 Y
+    state: &BrushState
+) {
+    for y in 0..height {
+        let global_y = canvas_pos_y + y as i32;
+
+        for x in 0..width {
+            let i = y * width + x;
+            let tip_alpha = brush_tip[i] as f32 / 255.0;
+
+            // 1. Skip invisible pixels
+            if tip_alpha <= 0.001 {
+                dab_buffer[i * 4 + 3] = 0;
+                continue;
+            }
+
+            // 2. Calculate Pattern Coordinates (Canvas Space)
+            // Tiling: Use rem_euclid to handle negative coordinates correctly
+            let u = ((canvas_pos_x + x as i32) as f32 / state.scale) as i32;
+            let v = (global_y as f32 / state.scale) as i32;
+
+            let tex_u = u.rem_euclid(state.tex_w as i32) as usize;
+            let tex_v = v.rem_euclid(state.tex_h as i32) as usize;
+
+            // 3. Sample Texture (Nearest Neighbor for performance)
+            let mut tex_val = state.texture_data[tex_v * state.tex_w + tex_u] as f32 / 255.0;
+            if state.invert { tex_val = 1.0 - tex_val; }
+
+            // 4. Blending
+            // Influence = 1.0 (No Effect) -> Target (Full Effect) based on Depth
+            let mut influence = 1.0;
+
+            match state.mode {
+                TextureMode::Multiply => {
+                     // mix(1.0, tex_val, depth)
+                     influence = 1.0 * (1.0 - state.depth) + tex_val * state.depth;
+                },
+                TextureMode::Subtract => {
+                     // mix(1.0, 1.0 - tex_val, depth)
+                     influence = 1.0 * (1.0 - state.depth) + (1.0 - tex_val) * state.depth;
+                },
+                 _ => {}
+            }
+
+            // 5. Apply to Alpha
+            let final_alpha = tip_alpha * influence;
+            dab_buffer[i * 4 + 3] = (final_alpha * 255.0) as u8;
+
+            // Note: RGB channels usually set by composition step or initialized before
+        }
+    }
+}
 ```
 
 ## 5. 任务清单 (Revised Task List)
@@ -145,8 +236,9 @@ final_alpha *= influence;
 
 ### Phase 3.3: 渲染实现
 
-- [ ] **Impl**: `BrushShader` 增加 Pattern Uniforms。
-- [ ] **Impl**: 实现 `Texturize` 核心算法 (Screen Space UV + Depth Mix)。
+- [ ] **Impl**: `BrushShader` 增加 Pattern Uniforms (包含 `u_canvas_offset`).
+- [ ] **Impl**: 实现 `Texturize` 核心算法 (Canvas Space UV + Depth Mix).
+- [ ] **Impl**: 实现 Rust CPU 端 `rasterize_dab_cpu` 中的纹理采样逻辑.
 - [ ] **UI**: 笔刷设置面板增加 "Texture" 选项卡 (预览图 + 参数滑块)。
 
 ## 6. 验证计划
