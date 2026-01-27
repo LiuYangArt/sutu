@@ -59,22 +59,62 @@ pub struct PatternLibrary {
   - 例如: `App_Data/patterns/a1/b2c3d4...png`
 - **去重逻辑**: 导入新图案时，先计算 Raw RGBA 数据的 SHA-256。如果 Hash 已存在，仅更新 `id_map` 增加新的引用 ID，不写入文件。
 
-## 3. 解析器实现方案
+## 3. 解析器实现方案 (Refactored)
 
-### 3.1 扩展 ABR 解析器
+鉴于 ABR 文件可能采用"分离式存储"结构（即笔刷头、纹理、描述符分别存储在不同的顶级 Section 中），解析器必须采用**分块状态机 (Section-Based State Machine)** 策略，而非线性的流式解析。
 
-主要目标是提取参数，并**尝试**提取数据。
+### 3.1 解析流程 (Multi-Pass Strategy)
 
-**在 `src-tauri/src/abr/parser.rs`**:
+**Phase 1: Top-Level Scan (全文件扫描)**
+遍历 ABR 文件的顶级 Section，不依赖顺序假设。
 
-1.  扫描 `8BIM` 块。
-2.  **Check A**: 如果发现 `patt` 块 (ID `0x0408` 或 `PHUT`), 尝试解码 Pattern 数据并存入 Library。
-3.  **Check B**: 解析 `desc` 时，读取 `Txtr` 节点：
-    - 记录 `pattern_uuid` 和 `pattern_name`。
-    - 提取 `Scale`, `Depth`, `BlendMode`, `Invert` 等参数。
-    - **Link**: 查询 Library 是否已有该 UUID。如果没有，标记为 `Missing`。
+1.  **`samp` (Samples) Section**:
+    - 提取所有笔刷头图片 (Tip Images)。
+    - 生成基础的 `AbrBrush` 对象列表 (只有形状，无参数)。
+    - 记录 `BrushIndex`。
+2.  **`patt` (Patterns) Section**:
+    - 提取所有内置纹理图案。
+    - 计算 ContentHash，存入 `PatternLibrary`。
+    - 记录 `PatternName` / `PatternUUID` 以便后续链接。
+3.  **`desc` (Descriptor) Section**:
+    - 这是至关重要的**全局映射表**。
+    - 解析 Photoshop Action Descriptor 结构。
+    - 提取 `BrushIndex` -> `TextureSettings` (UUID, Scale, Depth, Mode) 的映射关系。
 
-### 3.2 新增 PAT 解析器
+**Phase 2: Reconstruction (链接重组)**
+在内存中将分散的数据组装为完整的笔刷。
+
+1.  遍历 `raw_brushes`。
+2.  根据索引在 `desc` 映射表中查找对应的 `TextureSettings`。
+3.  如果存在设置：
+    - 注入参数 (Scale, Depth等)。
+    - 解析 `PatternUUID`。
+    - **Link**: 在 `PatternLibrary` (包含刚刚加载的 `patt` 数据) 中查找资源。如果找到，直接关联；如果未找到，标记为 `Missing` (引用式)。
+
+### 3.2 数据结构设计
+
+```rust
+pub struct AbrParseContext {
+    // 阶段 1：解析出的裸笔刷
+    pub raw_brushes: Vec<AbrBrush>,
+
+    // 阶段 1：解析出的内部纹理资源 (ID -> Data)
+    pub internal_patterns: HashMap<String, PatternResource>,
+
+    // 阶段 1：全局配置映射 (Brush Index -> Settings)
+    pub texture_mappings: HashMap<usize, BrushTextureSettings>,
+}
+```
+
+### 3.3 Global Descriptor 解析细节
+
+ABR 的 `desc` 块通常是一个巨大的 Action Descriptor (150KB+)。
+
+- **目标**: 找到 Key 为 `'Txtr'` 的节点。
+- **回溯**: 确定该节点属于哪个 `brushHandle` 或数组索引。
+- **容错**: 如果没有 `desc` 块 (老版本 ABR)，则退回至“尝试在 Brush Block 内部查找 Txtr”的兼容模式。
+
+### 3.4 PAT 解析器 (外部资源支持)
 
 为了弥补 ABR 数据的缺失，必须支持标准 `.pat` 文件导入。
 
@@ -150,7 +190,7 @@ final_alpha *= influence;
 
 在 Rust CPU 引擎中，必须手动计算坐标映射和混合。
 
-```rust
+````rust
 struct BrushState {
     texture_data: Vec<u8>, // Grayscale Data
     tex_w: usize,
@@ -161,6 +201,7 @@ struct BrushState {
     mode: TextureMode,
 }
 
+```rust
 fn rasterize_dab_cpu(
     dab_buffer: &mut [u8],
     brush_tip: &[u8],
@@ -170,6 +211,20 @@ fn rasterize_dab_cpu(
     canvas_pos_y: i32,     // Dab 在画布上的绝对坐标 Y
     state: &BrushState
 ) {
+    // 0. Safety Check: If no texture data (e.g. missing resource), fallback to normal rendering
+    if state.texture_data.is_empty() {
+        for y in 0..height {
+            for x in 0..width {
+                 let i = y * width + x;
+                 let tip_alpha = brush_tip[i];
+                 if tip_alpha > 0 {
+                    dab_buffer[i * 4 + 3] = tip_alpha;
+                 }
+            }
+        }
+        return;
+    }
+
     for y in 0..height {
         let global_y = canvas_pos_y + y as i32;
 
@@ -219,7 +274,7 @@ fn rasterize_dab_cpu(
         }
     }
 }
-```
+````
 
 ## 5. 任务清单 (Revised Task List)
 
@@ -228,11 +283,12 @@ fn rasterize_dab_cpu(
 - [ ] **Impl**: 实现 `PatternLibrary` 结构与 `CAS` 存储逻辑 (Hash计算, 文件读写)。
 - [ ] **Impl**: 实现基础 `.pat` 文件解析器 (支持 RLE, Mode 转换)。
 
-### Phase 3.2: ABR 集成
+### Phase 3.2: ABR 集成 (High Complexity)
 
-- [ ] **Impl**: 修改 `AbrParser`，增加对 `Txtr` 参数块的解析。
-- [ ] **Impl**: 在 ABR 导入流程中，增加 Pattern Link 步骤（自动匹配库中已有的 Pattern）。
-- [ ] **Impl**: 尝试探测 ABR 中的 `patt` 块（低优先级，视样本验证结果而定）。
+- [ ] **Impl**: 升级 `AbrParser` 为 Multi-Pass 架构 (Top-level Scanner)。
+- [ ] **Impl**: 实现 `desc` 块解析器，提取 Brush-Texture 映射关系 (Key: `Txtr`).
+- [ ] **Impl**: 实现 `AbrParseContext` 并完成 `samp` (Brush) 与 `patt`/`desc` (Texture) 的重组。
+- [ ] **Impl**: 兼容性处理：保留对旧版“嵌入式 Txtr”结构的支持。
 
 ### Phase 3.3: 渲染实现
 
