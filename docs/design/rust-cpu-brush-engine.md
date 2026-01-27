@@ -1,10 +1,10 @@
 # Rust CPU 笔刷引擎设计方案
 
-> **状态**: 📝 规划中 (v1.6 - 明确 session 生命周期)
+> **状态**: 📝 规划中 (v1.7 - 修正 Channel 生命周期与并发模型)
 > **前置条件**: Tauri v2 Channel IPC 测试通过 (Avg Jitter < 0.4ms)
 > **目标**: 替代 TypeScript CPU 笔刷，提供高性能 CPU 渲染路径
 > **目标平台**: Windows (WebView2/Chromium)
-> **置信度评估**: 88% (技术可行 95%, 性能目标 80%, 内存目标 85%)
+> **置信度评估**: 90% (技术可行 95%, 性能目标 85%, 内存目标 85%)
 
 ## 1. 背景与动机
 
@@ -110,9 +110,9 @@ rust_brush_cleanup()                  → 清理超时 session
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-## 4. Review 反馈与修正 (v1.6)
+## 4. Review 反馈与修正
 
-### 4.1 关键决策
+### 4.1 v1.6 关键决策
 
 | 决策点               | v1.5             | v1.6              | 理由             |
 | -------------------- | ---------------- | ----------------- | ---------------- |
@@ -120,10 +120,55 @@ rust_brush_cleanup()                  → 清理超时 session
 | **mask cache 策略**  | 原始 radius      | **桶中心 radius** | 缓存语义自洽     |
 | **字段可见性**       | 私有             | **提供 getter**   | 编译通过         |
 
-### 4.2 P1 优化（Phase 0.5 实施）
+### 4.2 v1.7 关键修正：Channel 生命周期与并发模型
+
+#### 4.2.1 问题根因
+
+实测中遇到大量 `[TAURI] Couldn't find callback id` 错误。根因分析：
+
+**风险点 A：前端把 Channel 置空/丢弃时，Rust 仍在 send**
+
+```
+序列：
+1. 前端连续 processPoints() -> 多个并发 invoke('rust_brush_input')
+2. 用户抬笔 -> endStroke() -> this.channel = null
+3. 先前未返回的 invoke 在 Rust 侧继续 on_sync.send(data)
+4. JS 侧 callback id 已失效 -> 刷 warning
+```
+
+**风险点 B：dev HMR/reload 导致所有 callback 失效**
+
+- 旧页面的 Channel 回调 id 全部失效
+- Rust 端 async command 继续执行并 send -> 疯狂刷 warning
+
+#### 4.2.2 解决方案
+
+| 优先级 | 问题                 | 解决方案                                         |
+| ------ | -------------------- | ------------------------------------------------ |
+| P0     | 并发 invoke 时序混乱 | **前端 invoke 串行化 + endStroke 等待队列清空**  |
+| P0     | Rust 阻塞 async 线程 | **重 CPU 计算使用 spawn_blocking**               |
+| P0     | invoke 频率过高      | **按 rAF 批处理 points（60 invoke/s 而非 200）** |
+| P1     | HMR 时残留 send      | **beforeunload 调用 rust_brush_close**           |
+
+#### 4.2.3 输入批处理策略（200Hz 数位板）
+
+| 方案                 | invoke 频率 | 延迟    | 推荐度     |
+| -------------------- | ----------- | ------- | ---------- |
+| 每点 invoke          | 200/s       | 0ms     | ❌ 不推荐  |
+| **按 rAF 批处理** ✅ | ~60/s       | ≤16.7ms | ⭐⭐⭐⭐⭐ |
+| 按时间片 8ms         | ~125/s      | ≤8ms    | ⭐⭐⭐     |
+
+参数建议：
+
+- `maxPointsPerBatch`: 16（防极端卡顿积压）
+- `flushIntervalMs`: 不需要（rAF 驱动）
+- `inFlight`: 串行 promise chain
+
+### 4.3 P1 优化（Phase 0.5 实施）
 
 - bitmap 路径 ImageData 复用
 - bitmapChain 定期截断
+- `get_sync_data()` 避免 clone（使用 buffer 池）
 
 ## 5. 核心实现（v1.6 版）
 
@@ -493,7 +538,7 @@ pub fn rust_brush_begin_stroke(
     Ok(())
 }
 
-/// 流式笔刷输入
+/// 流式笔刷输入（v1.7: 使用 spawn_blocking 避免阻塞 async runtime）
 #[tauri::command]
 pub async fn rust_brush_input(
     state: State<'_, BrushEngineManager>,
@@ -513,9 +558,10 @@ pub async fn rust_brush_input(
             .ok_or_else(|| format!("Session not found: {}", session_id))?
     };
 
-    let sync_data_list: Vec<Vec<u8>> = {
+    // v1.7: 重 CPU 计算放入 spawn_blocking，避免阻塞 Tauri async runtime
+    // 这解决了 IPC/窗口事件卡顿和并发时序问题
+    let sync_data_list = tokio::task::spawn_blocking(move || {
         let mut engine = engine_arc.lock().map_err(|e| e.to_string())?;
-
         let mut pending = Vec::new();
 
         for point in points {
@@ -535,9 +581,12 @@ pub async fn rust_brush_input(
                 }
             }
         }
-        pending
-    };
+        Ok::<_, String>(pending)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {:?}", e))??;
 
+    // Channel send 在 async 上下文中执行（非阻塞）
     for data in sync_data_list {
         if let Err(e) = on_sync.send(data) {
             tracing::error!("[RustBrush] Failed to send sync data: {:?}", e);
@@ -546,6 +595,7 @@ pub async fn rust_brush_input(
 
     Ok(())
 }
+
 
 /// 结束笔画（不移除 session）
 #[tauri::command]
@@ -631,7 +681,7 @@ pub struct BrushInputPoint {
 }
 ```
 
-### 5.3 前端：长期 Session 适配
+### 5.3 前端：长期 Session 适配（v1.7 修正版）
 
 ```typescript
 // src/utils/rustBrushReceiver.ts
@@ -645,12 +695,107 @@ interface SyncMessage {
   timestamp: number;
 }
 
+/**
+ * v1.7 新增：输入调度器
+ *
+ * 解决的问题：
+ * 1. 200Hz 数位板导致 200 invoke/s，过于频繁
+ * 2. 并发 invoke 导致 endStroke 时 channel 已清理但 Rust 还在 send
+ *
+ * 策略：
+ * - 按 rAF 批处理 points（~60 invoke/s）
+ * - 串行 promise chain 保证同一时刻只有一个 in-flight invoke
+ * - endStroke 前先 drain 所有 pending points
+ */
+class RustInputScheduler {
+  private pending: Array<{ x: number; y: number; pressure: number }> = [];
+  private rafId: number | null = null;
+  private inputChain: Promise<void> = Promise.resolve();
+  private strokeToken = 0;
+  private maxPointsPerBatch = 16;
+
+  constructor(private invokeInput: (points: any[]) => Promise<void>) {}
+
+  beginStroke(): void {
+    this.strokeToken++;
+    this.pending = [];
+    this.inputChain = Promise.resolve();
+    this.startRaf();
+  }
+
+  pushPoint(p: { x: number; y: number; pressure: number }): void {
+    this.pending.push(p);
+    // 防爆队列：极端卡顿时丢中间点，只保留首尾
+    if (this.pending.length > 128) {
+      const first = this.pending[0];
+      const last = this.pending[this.pending.length - 1];
+      this.pending = [first, last];
+    }
+  }
+
+  private startRaf(): void {
+    if (this.rafId != null) return;
+    const tick = () => {
+      this.flushFrame();
+      this.rafId = requestAnimationFrame(tick);
+    };
+    this.rafId = requestAnimationFrame(tick);
+  }
+
+  private stopRaf(): void {
+    if (this.rafId != null) cancelAnimationFrame(this.rafId);
+    this.rafId = null;
+  }
+
+  private flushFrame(): void {
+    if (this.pending.length === 0) return;
+
+    // 一帧最多发 16 点，剩下留到下一帧
+    const batch = this.pending.splice(0, this.maxPointsPerBatch);
+    const token = this.strokeToken;
+
+    this.inputChain = this.inputChain.then(async () => {
+      if (token !== this.strokeToken) return; // stroke 已切换/结束
+      await this.invokeInput(batch);
+    });
+  }
+
+  async endStrokeAndDrain(): Promise<void> {
+    // 停止继续按帧 flush
+    this.stopRaf();
+
+    // 把剩余点也发掉
+    while (this.pending.length) {
+      const batch = this.pending.splice(0, this.maxPointsPerBatch);
+      const token = this.strokeToken;
+      this.inputChain = this.inputChain.then(async () => {
+        if (token !== this.strokeToken) return;
+        await this.invokeInput(batch);
+      });
+    }
+
+    // 等待所有 invoke 完成
+    await this.inputChain;
+  }
+}
+
 export class RustBrushReceiver {
   private channel: Channel<Uint8Array> | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private reusableImageData: ImageData | null = null;
   private sessionId: string = '';
   private isStrokeActive: boolean = false;
+
+  // v1.7: 输入调度器（批处理 + 串行化）
+  private scheduler: RustInputScheduler | null = null;
+  private currentBrushParams: {
+    color: [number, number, number];
+    size: number;
+    hardness: number;
+    roundness: number;
+    flow: number;
+    opacity: number;
+  } | null = null;
 
   // 消息队列
   private messageQueue: SyncMessage[] = [];
@@ -689,8 +834,18 @@ export class RustBrushReceiver {
     }
   }
 
-  /** 开始笔画 */
-  async startStroke(ctx: CanvasRenderingContext2D): Promise<boolean> {
+  /** 开始笔画（v1.7: 使用调度器实现批处理+串行化） */
+  async startStroke(
+    ctx: CanvasRenderingContext2D,
+    brushParams: {
+      color: [number, number, number];
+      size: number;
+      hardness: number;
+      roundness: number;
+      flow: number;
+      opacity: number;
+    }
+  ): Promise<boolean> {
     if (!this.sessionId) {
       console.error('[RustBrush] No session, call initSession first');
       return false;
@@ -700,12 +855,25 @@ export class RustBrushReceiver {
     this.messageQueue = [];
     this.resetBitmapChain();
     this.isStrokeActive = true;
+    this.currentBrushParams = brushParams;
 
     try {
       await invoke('rust_brush_begin_stroke', { sessionId: this.sessionId });
 
       this.channel = new Channel<Uint8Array>();
       this.channel.onmessage = (data) => this.enqueueMessage(data);
+
+      // v1.7: 初始化输入调度器
+      this.scheduler = new RustInputScheduler(async (points) => {
+        if (!this.channel || !this.sessionId || !this.currentBrushParams) return;
+        await invoke('rust_brush_input', {
+          onSync: this.channel,
+          sessionId: this.sessionId,
+          points,
+          ...this.currentBrushParams,
+        });
+      });
+      this.scheduler.beginStroke();
 
       this.startProcessing();
       return true;
@@ -836,9 +1004,21 @@ export class RustBrushReceiver {
     bitmap.close();
   }
 
+  /**
+   * v1.7: 推送点到调度器（由 rAF 批处理，不直接 invoke）
+   *
+   * 旧 API processPoints() 被替换，现在只需调用 pushPoint()
+   * 调度器会自动按帧批处理并串行化 invoke
+   */
+  pushPoint(point: { x: number; y: number; pressure: number }): void {
+    if (!this.scheduler || !this.isStrokeActive) return;
+    this.scheduler.pushPoint(point);
+  }
+
+  /** @deprecated 使用 pushPoint() 替代，调度器会自动批处理 */
   async processPoints(
     points: Array<{ x: number; y: number; pressure: number }>,
-    brushParams: {
+    _brushParams: {
       color: [number, number, number];
       size: number;
       hardness: number;
@@ -847,25 +1027,29 @@ export class RustBrushReceiver {
       opacity: number;
     }
   ): Promise<void> {
-    if (!this.channel || !this.sessionId || !this.isStrokeActive) return;
-
-    try {
-      await invoke('rust_brush_input', {
-        onSync: this.channel,
-        sessionId: this.sessionId,
-        points,
-        ...brushParams,
-      });
-    } catch (error) {
-      console.error('[RustBrush] Input failed:', error);
-      this.fallbackToTypescript();
+    // v1.7: 兼容旧调用，直接推送到调度器
+    if (!this.scheduler || !this.isStrokeActive) return;
+    for (const point of points) {
+      this.scheduler.pushPoint(point);
     }
   }
 
+  /**
+   * v1.7: 结束笔画（先 drain 调度器，确保所有 invoke 完成）
+   *
+   * 关键修正：在清理 channel 之前先等待所有 pending points 发送完毕
+   * 这避免了 "Couldn't find callback id" 错误
+   */
   async endStroke(): Promise<void> {
     if (!this.channel || !this.sessionId || !this.isStrokeActive) return;
 
     try {
+      // v1.7 关键：先 drain 调度器，等待所有 invoke 完成
+      if (this.scheduler) {
+        await this.scheduler.endStrokeAndDrain();
+      }
+
+      // 现在安全调用 end_stroke（所有 input invoke 已完成）
       await invoke('rust_brush_end_stroke', {
         onSync: this.channel,
         sessionId: this.sessionId,
@@ -886,6 +1070,8 @@ export class RustBrushReceiver {
     } finally {
       this.isStrokeActive = false;
       this.stopProcessing();
+      this.scheduler = null;
+      this.currentBrushParams = null;
       this.channel = null;
     }
   }
@@ -957,14 +1143,14 @@ export class RustBrushReceiver {
 
 ### 6.3 置信度评估
 
-| 维度     | v1.5 | v1.6    | 说明         |
-| -------- | ---- | ------- | ------------ |
-| 技术可行 | 90%  | **95%** | 语义一致     |
-| 性能目标 | 70%  | **80%** | 智能清空有效 |
-| 内存目标 | 80%  | **85%** | buffer 复用  |
-| **总体** | 80%  | **88%** |              |
+| 维度     | v1.5 | v1.6 | v1.7    | 说明                     |
+| -------- | ---- | ---- | ------- | ------------------------ |
+| 技术可行 | 90%  | 95%  | **95%** | Channel 生命周期修正     |
+| 性能目标 | 70%  | 80%  | **85%** | 批处理 + spawn_blocking  |
+| 内存目标 | 80%  | 85%  | **85%** | buffer 复用              |
+| **总体** | 80%  | 88%  | **90%** | 并发问题解决后置信度提升 |
 
-## 7. 实施路线图（v1.6 版）
+## 7. 实施路线图（v1.7 版）
 
 ### Phase 0.1: 架构基础 (1 天)
 
@@ -984,6 +1170,13 @@ export class RustBrushReceiver {
 - [ ] 消息队列 + RAF + 丢帧
 - [ ] Bitmap 串行链 + 截断
 - [ ] 长期 session 生命周期适配
+
+### Phase 0.4: v1.7 并发修正 (0.5 天)
+
+- [ ] `RustInputScheduler` 输入批处理 + 串行化
+- [ ] Rust `spawn_blocking` 避免阻塞 async runtime
+- [ ] `endStroke` 先 drain 调度器再清理 channel
+- [ ] `beforeunload` 事件处理（HMR 场景）
 
 ### Phase 0.5: 测试 (1 天)
 
@@ -1021,10 +1214,21 @@ export class RustBrushReceiver {
 | mask cache 不一致    | 使用桶中心 radius        |
 | bitmapChain 无限增长 | 定期截断                 |
 
-## 附录 B: API 对比
+## 附录 B: v1.6 → v1.7 关键修正
 
-| v1.5                            | v1.6                                            |
-| ------------------------------- | ----------------------------------------------- |
-| `rust_brush_end` (移除 session) | `rust_brush_end_stroke` (不移除)                |
-| -                               | `rust_brush_close` (移除 session)               |
-| 前端 `startStroke` 创建 session | 前端 `initSession` 创建，`startStroke` 开始笔画 |
+| 问题                              | 修正                                      |
+| --------------------------------- | ----------------------------------------- |
+| 并发 invoke 导致 callback id 失效 | `RustInputScheduler` 串行化 + 批处理      |
+| Rust 阻塞 async runtime           | `tokio::task::spawn_blocking`             |
+| endStroke 时 channel 已清理       | 先 `scheduler.endStrokeAndDrain()` 再清理 |
+| 200Hz 输入频率过高                | 按 rAF 批处理（~60 invoke/s）             |
+| HMR/reload 时疯狂刷 warning       | `beforeunload` 调用 `rust_brush_close`    |
+
+## 附录 C: API 对比
+
+| v1.5                            | v1.6                              | v1.7                                 |
+| ------------------------------- | --------------------------------- | ------------------------------------ |
+| `rust_brush_end` (移除 session) | `rust_brush_end_stroke` (不移除)  | 同 v1.6                              |
+| -                               | `rust_brush_close` (移除 session) | 同 v1.6                              |
+| 前端 `processPoints()` 直接调用 | 同 v1.5                           | **`pushPoint()` + 调度器批处理**     |
+| -                               | -                                 | **`startStroke()` 接受 brushParams** |
