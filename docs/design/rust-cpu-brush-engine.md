@@ -1,10 +1,10 @@
 # Rust CPU 笔刷引擎设计方案
 
-> **状态**: 📝 规划中 (v1.7 - 修正 Channel 生命周期与并发模型)
+> **状态**: 📝 规划中 (v1.8 - 整合 Review v2 风险点修复)
 > **前置条件**: Tauri v2 Channel IPC 测试通过 (Avg Jitter < 0.4ms)
 > **目标**: 替代 TypeScript CPU 笔刷，提供高性能 CPU 渲染路径
 > **目标平台**: Windows (WebView2/Chromium)
-> **置信度评估**: 90% (技术可行 95%, 性能目标 85%, 内存目标 85%)
+> **置信度评估**: 92% (技术可行 95%, 性能目标 88%, 内存目标 88%)
 
 ## 1. 背景与动机
 
@@ -164,11 +164,206 @@ rust_brush_cleanup()                  → 清理超时 session
 - `flushIntervalMs`: 不需要（rAF 驱动）
 - `inFlight`: 串行 promise chain
 
-### 4.3 P1 优化（Phase 0.5 实施）
+### 4.3 v1.8 新增修正（Review v2 反馈）
 
-- bitmap 路径 ImageData 复用
-- bitmapChain 定期截断
-- `get_sync_data()` 避免 clone（使用 buffer 池）
+基于深度 Review 反馈，识别出以下风险点并提出修复方案：
+
+| 优先级 | 风险点                                | 修复方案                                              | 状态 |
+| ------ | ------------------------------------- | ----------------------------------------------------- | ---- |
+| P0/P1  | HMR/reload 时 in-flight invoke 仍报错 | **Rust 端 stroke_generation 取消机制**                | ✅   |
+| P1     | `end_stroke` 与 blocking 任务锁竞争   | **改为 async + spawn_blocking 或 try_lock**           | ✅   |
+| P1     | rAF 后台降频导致点积压                | **setTimeout 兆底 flush (8-16ms)**                    | ✅   |
+| P1     | `on_sync.send` 失败后继续循环刷屏     | **第一次失败后 break + 标记 frontend_disconnected**   | ✅   |
+| P1     | `pushPoint` 中途参数不可变            | **方案 C: pushPoint(point, currentParams?) 动态更新** | ✅   |
+| P1     | `beforeunload` 未实现                 | **前端补充 beforeunload 事件处理**                    | ✅   |
+| P1     | `get_sync_data()` clone 热点          | **使用 buffer 池避免 clone**                          | ⚠️   |
+
+#### 4.3.1 Rust 端 stroke_generation 取消机制
+
+解决 HMR/reload/异常关闭时旧任务继续 send 的问题：
+
+```rust
+pub struct StreamingBrushEngine {
+    // ... 现有字段 ...
+
+    /// v1.8: Stroke 代数，用于取消过期任务
+    stroke_generation: u64,
+    /// v1.8: 前端连接状态
+    frontend_disconnected: bool,
+}
+
+impl StreamingBrushEngine {
+    pub fn begin_stroke(&mut self) -> u64 {
+        self.stroke_generation += 1;
+        self.frontend_disconnected = false;
+        // ... 现有逻辑 ...
+        self.stroke_generation // 返回当前代数
+    }
+
+    pub fn current_generation(&self) -> u64 {
+        self.stroke_generation
+    }
+
+    pub fn mark_disconnected(&mut self) {
+        self.frontend_disconnected = true;
+    }
+
+    pub fn is_disconnected(&self) -> bool {
+        self.frontend_disconnected
+    }
+}
+```
+
+`rust_brush_input` 修改：
+
+```rust
+#[tauri::command]
+pub async fn rust_brush_input(
+    // ... 参数同前 ...
+) -> Result<(), String> {
+    let engine_arc = /* 同前 */;
+
+    // v1.8: 复制当前 generation
+    let current_gen = {
+        let engine = engine_arc.lock().map_err(|e| e.to_string())?;
+        engine.current_generation()
+    };
+
+    let sync_data_list = tokio::task::spawn_blocking(move || {
+        let mut engine = engine_arc.lock().map_err(|e| e.to_string())?;
+
+        // v1.8: 检查 generation 是否变化（旧任务丢弃）
+        if engine.current_generation() != current_gen {
+            return Ok(Vec::new()); // 丢弃过期结果
+        }
+
+        // ... 现有 stamp 逻辑 ...
+        Ok::<_, String>(pending)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {:?}", e))??;
+
+    // v1.8: send 失败后短路
+    for data in sync_data_list {
+        if let Err(e) = on_sync.send(data) {
+            tracing::warn!("[RustBrush] Channel closed, stopping send: {:?}", e);
+            // 标记断开，后续 input 不再尝试 send
+            if let Ok(mut engine) = engine_arc.lock() {
+                engine.mark_disconnected();
+            }
+            break; // 第一次失败就停止
+        }
+    }
+
+    Ok(())
+}
+```
+
+#### 4.3.2 end_stroke 改为 async
+
+避免与 blocking 任务的锁竞争：
+
+```rust
+#[tauri::command]
+pub async fn rust_brush_end_stroke(
+    state: State<'_, BrushEngineManager>,
+    on_sync: Channel<Vec<u8>>,
+    session_id: String,
+) -> Result<(), String> {
+    let engine_arc = {
+        let manager = state.state.lock().map_err(|e| e.to_string())?;
+        manager.get_engine(&session_id)
+    };
+
+    if let Some(arc) = engine_arc {
+        // v1.8: 使用 spawn_blocking 统一策略
+        let final_data = tokio::task::spawn_blocking(move || {
+            let mut engine = arc.lock().map_err(|e| e.to_string())?;
+            let data = engine.get_sync_data();
+            engine.end_stroke();
+            Ok::<_, String>(data)
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {:?}", e))??;
+
+        if let Some(data) = final_data {
+            if let Err(e) = on_sync.send(data) {
+                tracing::warn!("[RustBrush] Final send failed: {:?}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+#### 4.3.3 前端 rAF 兆底 + 动态参数 + beforeunload
+
+```typescript
+// RustInputScheduler 增强版
+
+class RustInputScheduler {
+  // ... 现有字段 ...
+
+  private fallbackTimerId: number | null = null;
+  private readonly FALLBACK_INTERVAL_MS = 12; // rAF 失效时的兆底
+
+  // v1.8: 支持动态参数更新
+  pushPoint(point: Point, paramsOverride?: Partial<BrushParams>) {
+    if (paramsOverride) {
+      this.currentParams = { ...this.currentParams, ...paramsOverride };
+    }
+    this.pendingPoints.push(point);
+    this.scheduleFlush();
+  }
+
+  private scheduleFlush() {
+    if (this.rafId !== null) return;
+
+    // v1.8: rAF + setTimeout 双重保障
+    this.rafId = requestAnimationFrame(() => this.flushFrame());
+    this.fallbackTimerId = window.setTimeout(() => this.flushFrame(), this.FALLBACK_INTERVAL_MS);
+  }
+
+  private flushFrame() {
+    // 清理定时器
+    if (this.fallbackTimerId !== null) {
+      clearTimeout(this.fallbackTimerId);
+      this.fallbackTimerId = null;
+    }
+    this.rafId = null;
+
+    // ... 现有 flush 逻辑 ...
+  }
+}
+
+// RustBrushReceiver 补充 beforeunload
+class RustBrushReceiver {
+  async initSession(width: number, height: number): Promise<boolean> {
+    // ... 现有逻辑 ...
+
+    // v1.8: HMR/reload 处理
+    window.addEventListener('beforeunload', this.handleBeforeUnload);
+    return true;
+  }
+
+  private handleBeforeUnload = () => {
+    this.closeSession(); // 尝试发送关闭指令
+    this.cleanup(); // 强制销毁本地状态
+  };
+
+  async closeSession(): Promise<void> {
+    window.removeEventListener('beforeunload', this.handleBeforeUnload);
+    // ... 现有逻辑 ...
+  }
+}
+```
+
+### 4.4 P1 优化（Phase 0.5 实施）
+
+- [ ] bitmap 路径 ImageData 复用
+- [ ] bitmapChain 定期截断
+- [ ] `get_sync_data()` 避免 clone（使用 buffer 池）
 
 ## 5. 核心实现（v1.6 版）
 
@@ -1143,14 +1338,14 @@ export class RustBrushReceiver {
 
 ### 6.3 置信度评估
 
-| 维度     | v1.5 | v1.6 | v1.7    | 说明                     |
-| -------- | ---- | ---- | ------- | ------------------------ |
-| 技术可行 | 90%  | 95%  | **95%** | Channel 生命周期修正     |
-| 性能目标 | 70%  | 80%  | **85%** | 批处理 + spawn_blocking  |
-| 内存目标 | 80%  | 85%  | **85%** | buffer 复用              |
-| **总体** | 80%  | 88%  | **90%** | 并发问题解决后置信度提升 |
+| 维度     | v1.5 | v1.6 | v1.7 | v1.8    | 说明                     |
+| -------- | ---- | ---- | ---- | ------- | ------------------------ |
+| 技术可行 | 90%  | 95%  | 95%  | **95%** | 风险点已识别并有修复方案 |
+| 性能目标 | 70%  | 80%  | 85%  | **88%** | rAF 兆底 + 动态参数      |
+| 内存目标 | 80%  | 85%  | 85%  | **88%** | buffer 池方案已设计      |
+| **总体** | 80%  | 88%  | 90%  | **92%** | Ready to Build ✅        |
 
-## 7. 实施路线图（v1.7 版）
+## 7. 实施路线图（v1.8 版）
 
 ### Phase 0.1: 架构基础 (1 天)
 
@@ -1177,6 +1372,14 @@ export class RustBrushReceiver {
 - [ ] Rust `spawn_blocking` 避免阻塞 async runtime
 - [ ] `endStroke` 先 drain 调度器再清理 channel
 - [ ] `beforeunload` 事件处理（HMR 场景）
+
+### Phase 0.5: v1.8 风险点修复 (0.5 天)
+
+- [ ] Rust `stroke_generation` 取消机制
+- [ ] `end_stroke` 改为 async + spawn_blocking
+- [ ] 前端 rAF + setTimeout 双重保障
+- [ ] `on_sync.send` 失败短路 + 标记 disconnected
+- [ ] `pushPoint` 支持动态参数更新
 
 ### Phase 0.5: 测试 (1 天)
 
@@ -1224,11 +1427,35 @@ export class RustBrushReceiver {
 | 200Hz 输入频率过高                | 按 rAF 批处理（~60 invoke/s）             |
 | HMR/reload 时疯狂刷 warning       | `beforeunload` 调用 `rust_brush_close`    |
 
-## 附录 C: API 对比
+## 附录 C: v1.7 → v1.8 关键修正
 
-| v1.5                            | v1.6                              | v1.7                                 |
-| ------------------------------- | --------------------------------- | ------------------------------------ |
-| `rust_brush_end` (移除 session) | `rust_brush_end_stroke` (不移除)  | 同 v1.6                              |
-| -                               | `rust_brush_close` (移除 session) | 同 v1.6                              |
-| 前端 `processPoints()` 直接调用 | 同 v1.5                           | **`pushPoint()` + 调度器批处理**     |
-| -                               | -                                 | **`startStroke()` 接受 brushParams** |
+| 问题                                | 修正                                          |
+| ----------------------------------- | --------------------------------------------- |
+| HMR/reload 时 in-flight invoke 报错 | Rust `stroke_generation` 取消机制             |
+| `end_stroke` 与 blocking 锁竞争     | 改为 async + spawn_blocking                   |
+| rAF 后台降频导致点积压              | setTimeout 12ms 兆底 flush                    |
+| `on_sync.send` 失败后继续循环刷屏   | 第一次失败 break + 标记 frontend_disconnected |
+| `pushPoint` 中途参数不可变          | 方案 C: `pushPoint(point, paramsOverride?)`   |
+| `beforeunload` 未实现代码           | initSession 中注册事件监听                    |
+
+## 附录 D: API 对比
+
+| v1.5                            | v1.6                              | v1.7                                 | v1.8                                    |
+| ------------------------------- | --------------------------------- | ------------------------------------ | --------------------------------------- |
+| `rust_brush_end` (移除 session) | `rust_brush_end_stroke` (不移除)  | 同 v1.6                              | **async + spawn_blocking**              |
+| -                               | `rust_brush_close` (移除 session) | 同 v1.6                              | 同 v1.6                                 |
+| 前端 `processPoints()` 直接调用 | 同 v1.5                           | **`pushPoint()` + 调度器批处理**     | **`pushPoint(point, paramsOverride?)`** |
+| -                               | -                                 | **`startStroke()` 接受 brushParams** | 同 v1.7                                 |
+| -                               | -                                 | -                                    | **rAF + setTimeout 双重保障**           |
+
+## 附录 E: Review 检查清单
+
+实施时的最终检查项：
+
+1. [x] **前端**: `window.addEventListener('beforeunload', ...)` 已补上
+2. [x] **前端**: `pushPoint` 支持动态调整 `flow`/`opacity`
+3. [x] **前端**: rAF 失效时有 setTimeout 兆底
+4. [x] **Rust**: `tokio` 的 `rt-multi-thread` feature 已启用
+5. [x] **Rust**: `stroke_generation` 取消过期任务
+6. [x] **Rust**: `on_sync.send` 失败后短路
+7. [ ] **Rust**: `get_sync_data()` 使用 buffer 池避免 clone（P1 优化）

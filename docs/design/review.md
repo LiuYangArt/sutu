@@ -1,274 +1,206 @@
-从你截图里反复出现的这句：
-
-> `[TAURI] Couldn't find callback id ... This might happen when the app is reloaded while Rust is running an asynchronous operation.`
-
-可以非常明确地判断：**Rust 端还在往前端发送 Channel 消息，但前端对应的回调（callback id）已经不存在了**。这在 Tauri v2 的官方文档里也点过名：**只要发生了前端 reload / HMR / WebView 重建 / 页面跳转**，之前注册在 WebView 里的 callback id 就会失效；此时 Rust 再 `channel.send(...)` 就会触发这类 warning。
-
-下面按“是否方案有问题 / 哪里会踩坑 / 怎么改”给结论。
-
----
-
-## 1) 你的 CPU 笔刷总体方案没大问题，但 Channel 生命周期与并发模型需要补齐
-
-你这套“长期 session + 增量 dirty rect + Channel 推送像素块”的大方向是合理的，问题主要不在渲染算法，而在 **Channel 的有效期、并发 invoke 的顺序、以及前端 reload 场景**。
-
-### 关键风险点 A：前端把 Channel 置空/丢弃时，Rust 仍在 send
-
-你前端 `endStroke()` 里会 `this.channel = null`，但**并不能保证此时没有正在进行中的 `rust_brush_input` invoke**。
-
-常见触发序列（很容易发生）：
-
-1. 前端连续 `processPoints()`（每次都会 `invoke('rust_brush_input')`）
-2. 用户抬笔触发 `endStroke()`，前端清理 channel
-3. 先前某个还没返回的 `rust_brush_input` 在 Rust 侧继续 `on_sync.send(data)`
-4. JS 侧 callback id 已不在（或 channel 已被 GC/清理），于是控制台刷 warning
-
-### 关键风险点 B：dev 模式 HMR 会把 callback 全灭，但 Rust 还在发
-
-截图看起来更像是 **dev 热更新/页面重载**导致的（warning 里也写了 “app is reloaded”）。这时：
-
-- 旧页面的 Channel 回调 id 全部失效
-- Rust 端还在异步执行（你的 `rust_brush_input` 是 async command），继续 send 就会疯狂刷
-
-这在开发期属于“正常但烦人”的现象；但如果线上也可能发生 WebView 重载/导航，那就必须做防护。
+> ✅ **状态**: 本 Review 反馈已整合到 `rust-cpu-brush-engine.md` v1.8 版本
+> **整合内容**:
+>
+> - P0/P1: stroke_generation 取消机制、end_stroke 改 async
+> - P1: rAF 后台降频兆底、send 失败短路、pushPoint 动态参数、beforeunload 实现
+> - P1 待办: get_sync_data() buffer 池优化
 
 ---
 
-## 2) 你当前实现里最需要立刻改的点（按优先级）
+这份 **v1.7 设计方案** 非常扎实。你已经精准地识别并修复了之前遇到的核心痛点（并发时序导致的 Callback ID 丢失、高频 Invoke 导致的 IPC 拥堵、以及 Async Runtime 阻塞）。
 
-### P0：保证“每个 stroke 同一时刻只有一个 in-flight 的 invoke('rust_brush_input')”
+现在的方案在**稳定性**和**性能**之间取得了很好的平衡。
 
-最直接的修法：前端为 `processPoints` 加一个串行队列（promise chain），避免并发 invoke。
+以下是针对 v1.7 的详细 Review 和几个实施层面的“最后确认”：
 
-示例（核心思想：所有 input invoke 串行执行，endStroke 前先等待队列清空）：
+### ✅ 亮点与正确性确认
 
-```ts
-private inputChain: Promise<void> = Promise.resolve();
-private strokeToken = 0;
+1.  **并发模型修正 (RustInputScheduler)**：
+    - 这是解决 `[TAURI] Couldn't find callback id` 的终极方案。
+    - **批处理 (Batching)**：将 200Hz 的离散输入转为 ~60Hz 的帧同步调用，大幅减少了 IPC 通信的头部开销（Overhead），让 Tauri 的 Channel 更从容。
+    - **串行化 (Serialization)**：`inputChain` 保证了前一个请求处理完（Rust 端 `send` 完）才发下一个，彻底消除了“Channel 已销毁但 Rust 还在发”的竞态条件。
+    - **Drain 机制**：`endStroke` 等待队列清空的设计非常关键，保证了笔画的完整性。
 
-async startStroke(...) {
-  this.strokeToken++;
-  const token = this.strokeToken;
-  ...
-  this.inputChain = Promise.resolve(); // 重置链
-}
+2.  **Rust 异步模型修正 (`spawn_blocking`)**：
+    - 你正确地识别了 `render_soft_dab` 是 CPU 密集型任务。
+    - 直接在 `async fn` 里跑 CPU 循环会“饿死” Tokio 的 Reactor（负责 I/O 和事件循环的线程），导致窗口无响应或 IPC 积压。
+    - 改为 `spawn_blocking` 是标准且正确的解法，它会把计算扔到专用线程池，让主 Async 线程继续响应前端请求。
 
-processPoints(points, brushParams) {
-  const token = this.strokeToken;
-  this.inputChain = this.inputChain.then(async () => {
-    if (token !== this.strokeToken) return; // stroke 已结束/已切换
-    if (!this.channel) return;
-    await invoke('rust_brush_input', { onSync: this.channel, sessionId: this.sessionId, points, ...brushParams });
-  }).catch((e) => {
-    console.error(e);
-    this.fallbackToTypescript();
-  });
+3.  **生命周期管理**：
+    - 长期 Session + 智能清空的设计在 v1.6 已经验证，保留下来是正确的。
 
-  return this.inputChain;
-}
+---
 
-async endStroke() {
-  const token = this.strokeToken;
-  await this.inputChain; // 等待所有 input 发送结束
-  if (token !== this.strokeToken) return;
+### 🔍 代码审查 (Code Review) 与 细微修正建议
 
-  await invoke('rust_brush_end_stroke', { onSync: this.channel, sessionId: this.sessionId });
-  ...
-  this.channel = null;
-}
+尽管架构图完美，但代码实现细节上还有 3 个地方需要注意，以免实施时踩坑：
+
+#### 1. Rust 端 `spawn_blocking` 的错误处理
+
+在 `src-tauri/src/commands.rs` 的 `rust_brush_input` 中：
+
+```rust
+// 你写的：
+.await
+.map_err(|e| format!("spawn_blocking failed: {:?}", e))??;
+// 注意这里有两个问号
 ```
 
-这能显著降低“channel 已销毁但 Rust 还在 send”的概率，也能减少 callback id 丢失 warning（除了 HMR 强制 reload 的情况）。
+**解析**：
 
----
+- `spawn_blocking` 返回 `Result<Result<Vec<Vec<u8>>, String>, JoinError>`。
+- 第一个 `?` (或 map_err) 处理 `JoinError` (线程池挂了)。
+- 第二个 `?` 处理内部业务逻辑的 `Result<..., String>`。
+- **建议**：你当前的代码写法是正确的，但要确保内部闭包返回的是 `Ok(...)`。
 
-### P0：Rust 端把重 CPU 的 stamp 循环放进 `spawn_blocking`
+**隐患**：你在 `spawn_blocking` 内部使用了 `engine_arc.lock()`。如果这个锁被某些死循环持有了，blocking 线程会挂起，这没问题；但如果发生了 PoisonError（之前某个线程 panic 了），这里需要处理 `.lock()` 的 `unwrap/expect` 或 `map_err`。你代码里用了 `.map_err`，这是安全的。
 
-你现在的 `rust_brush_input` 是 `async fn`，但内部把大量 stamp 运算放在 async 任务里直接跑，会阻塞 Tauri 的 async runtime 线程，造成：
+#### 2. 前端 `brushParams` 的动态性限制
 
-- IPC/窗口事件卡顿
-- 多次 invoke 之间积压，进一步放大并发与结束时序问题
+在 `RustBrushReceiver` 中，你引入了 `currentBrushParams` 并在 `startStroke` 时赋值：
 
-建议改成：
+```typescript
+// startStroke
+this.currentBrushParams = brushParams;
 
-- 取到 `Arc<Mutex<Engine>>` 后，把计算部分 `spawn_blocking`。
-- `Channel::send` 可以放在 blocking 结束后回到 async 发送（或在 blocking 内收集数据，出来再 send，你现在已经在收集）。
-
----
-
-### P1：开发期（HMR/reload）要“主动停发”
-
-如果你在 dev 环境经常 reload，建议在前端加：
-
-- `window.addEventListener('beforeunload', ...)` 调用 `rust_brush_close`（至少移除 session，减少后台继续算）
-- 或者在前端 reload 时设置一个全局 `isShuttingDown`，让 `processPoints` 不再发 invoke
-
-但要注意：**beforeunload 未必能保证 invoke 完成**，所以这只能“减少概率”，不能 100% 消除。
-
----
-
-## 3) 关于你“长期 session + 智能清空”的设计本身，有两个边界点要确认
-
-1. **智能清空只清上一次 stroke dirty**：语义成立的前提是你的 stroke buffer 只承载“当前临时笔画层”
-   如果你把所有历史都画进这个 buffer，然后每次 begin_stroke 又清 last_stroke，会把历史擦掉。你文档里写的是 “Stroke Layer”，那就 OK（临时层合成到主图层后再清）。
-
-2. **get_sync_data() 里 `self.output_buffer.clone()` 会产生拷贝**
-   你现在为了返回 `Vec<u8>` 只能 clone（因为 output_buffer 是复用 scratch）。这会带来额外内存带宽开销。性能极致时可以考虑：
-
-- 直接 `let mut out = Vec::with_capacity(...);` 然后返回 out（不复用）
-- 或者维护一个 `VecDeque<Vec<u8>>` 做 buffer 池（复用多个块，避免 clone）
-
-这不是导致 callback warning 的原因，但会影响大笔刷高频同步时的 CPU/内存占用。
-
----
-
-## 4) 结论：方案方向 OK，问题主要是 Channel/并发/重载时序
-
-- 你现在看到的 warning **不是“CPU 笔刷方案不可行”**，而是 **“前端生命周期变化（尤其 dev reload） + Rust 仍在异步 send”** 的典型现象。
-- 最优先改：**前端 input invoke 串行化 + endStroke 等待队列清空**，以及 **Rust stamp 计算 spawn_blocking**。
-- dev 模式下，reload 仍可能触发一次性 warning，但不会“刷屏”；线上则基本可控。
-
----
-
-Wacom 200 点/秒 ≈ **5ms/点**。这对 Tauri v2 Channel 来说不算高，但如果你“每来一个点就 invoke 一次”，就会变成 **200 次 invoke/秒**（容易堆积、并发、然后 endStroke/热重载时刷 “Couldn't find callback id”）。
-
-更稳的做法是：**前端聚合 points，再按帧或按时间批量 invoke**；并且保证 **同一时刻只有一个 in-flight 的 rust_brush_input**。
-
-## 推荐输入批处理参数（200Hz 场景）
-
-### 方案 A（最推荐）：按 rAF 批处理（≈60fps）
-
-- 每帧收集 points：200/60 ≈ **3~4 点/帧**
-- 每帧最多 1 次 invoke ⇒ **~60 invoke/秒**
-- 延迟：最多 1 帧（16.7ms），体感一般可接受（绘画通常被渲染/合成本身也在帧节奏里）
-
-参数建议：
-
-- `maxPointsPerBatch`: 16（防极端卡顿积压）
-- `flushIntervalMs`: 不需要（rAF 驱动）
-- `inFlight`: 串行 promise chain
-
-### 方案 B：按时间片（更低延迟）
-
-- 每 **8ms** flush 一次：200Hz ⇒ **~1-2 点/批**
-- invoke ≈ 125 次/秒（仍可接受，但比方案 A 更吃 IPC/调度）
-- 延迟 ≤ 8ms
-
-我建议先上 **方案 A**，稳定性最好，也最容易彻底压住 callback id 警告。
-
----
-
-## 前端实现要点（关键：串行 + 批处理）
-
-1. 点来了先 push 到 `pendingPoints`
-2. rAF 里把 pendingPoints “取走”组成 batch，`enqueueInvoke(batch)`
-3. `enqueueInvoke` 用 `inputChain = inputChain.then(...)` 串行化
-4. `endStroke` 先 `await inputChain` 再 invoke end（避免 channel 被清理但 Rust 还在 send）
-
-下面给一个精简可用的骨架（把它融进你现有 `RustBrushReceiver` 就行）：
-
-```ts
-class RustInputScheduler {
-  private pending: Array<{ x: number; y: number; pressure: number }> = [];
-  private rafId: number | null = null;
-
-  private inputChain: Promise<void> = Promise.resolve();
-  private strokeToken = 0;
-
-  constructor(private invokeInput: (points: any[]) => Promise<void>) {}
-
-  beginStroke() {
-    this.strokeToken++;
-    this.pending = [];
-    this.inputChain = Promise.resolve();
-    this.startRaf();
-  }
-
-  pushPoint(p: { x: number; y: number; pressure: number }) {
-    this.pending.push(p);
-    // 可选：防爆队列（极端情况下丢中间点，只保留首尾）
-    if (this.pending.length > 128) {
-      const first = this.pending[0];
-      const last = this.pending[this.pending.length - 1];
-      this.pending = [first, last];
-    }
-  }
-
-  private startRaf() {
-    if (this.rafId != null) return;
-    const tick = () => {
-      this.flushFrame();
-      this.rafId = requestAnimationFrame(tick);
-    };
-    this.rafId = requestAnimationFrame(tick);
-  }
-
-  private stopRaf() {
-    if (this.rafId != null) cancelAnimationFrame(this.rafId);
-    this.rafId = null;
-  }
-
-  private flushFrame() {
-    if (this.pending.length === 0) return;
-
-    // 一帧最多发 16 点，剩下留到下一帧（防止单帧 invoke 太大）
-    const batch = this.pending.splice(0, 16);
-    const token = this.strokeToken;
-
-    this.inputChain = this.inputChain.then(async () => {
-      if (token !== this.strokeToken) return; // stroke 已切换/结束
-      await this.invokeInput(batch);
-    });
-  }
-
-  async endStrokeAndDrain() {
-    // 停止继续按帧 flush
-    this.stopRaf();
-
-    // 先把剩余点也发掉
-    while (this.pending.length) {
-      const batch = this.pending.splice(0, 16);
-      const token = this.strokeToken;
-      this.inputChain = this.inputChain.then(async () => {
-        if (token !== this.strokeToken) return;
-        await this.invokeInput(batch);
-      });
-    }
-
-    await this.inputChain;
-  }
-}
+// pushPoint -> flushFrame -> invoke
+await invoke('rust_brush_input', {
+  ...,
+  ...this.currentBrushParams, // <--- 这里
+});
 ```
 
-你在 `RustBrushReceiver` 里，把 `processPoints()` 改成只是 `scheduler.pushPoint(...)`，真正的 invoke 放到 `invokeInput(batch)` 里即可。
+**问题**：如果用户使用的是支持 **倾斜 (Tilt)** 的笔，或者他在画的过程中（笔没抬起）按键盘快捷键调整了 **不透明度 (Opacity)** 或 **流量 (Flow)**，当前的实现**无法反映这些变化**，因为参数被“锁死”在 `startStroke` 那一刻了。
+
+**修正建议 (P1)**：
+`pushPoint` 应该允许（可选地）携带 override 参数，或者在 flush 时去获取最新的全局笔刷状态。
+
+_方案 A (简单)_：如果你的应用不支持 stroke 中途改参数（除了压感），那现状 OK。
+_方案 B (更强)_：`pushPoint` 仅传坐标，`flushFrame` 时从外部获取最新 params。但因为 `RustBrushReceiver` 是个工具类，它不持有 UI 状态。
+_方案 C (推荐)_：让 `pushPoint` 签名变为 `pushPoint(point, currentParams?)`，如果传了就更新 `currentBrushParams`。
+
+#### 3. HMR/Reload 的 `beforeunload` 缺失
+
+你在 v1.7 文档的“附录 B”提到了 `beforeunload`，但在 TS 代码里没写。开发环境下这非常重要，否则热更一次就报错一次。
+
+**建议补充代码**：
+
+```typescript
+// 在 initSession 或 constructor 里
+window.addEventListener('beforeunload', () => {
+  this.closeSession(); // 尝试发送关闭指令
+  // 关键：强制销毁 Scheduler 和 Channel，防止回调触发
+  this.cleanup();
+});
+```
 
 ---
 
-## Rust 侧同步阈值（配合 200Hz）
+### ⚡ 性能优化的下一步 (P2)
 
-你现在 `SyncConfig`：
+你提到了 "v1.7 P1 优化: ImageData 复用"。这非常关键。
 
-- `max_dabs: 4`
-- `max_ms: 16`
-- `max_bytes: 256KB`
+在 `renderWithPutImageData` 中：
 
-配合 200Hz + 每帧 3~4 点，这组阈值是合理的：**大概率每帧都会触发一次同步**（max_ms=16 接近一帧），渲染也比较跟手。若你发现 Channel 消息太密（前端 putImageData 压力大），可以把：
+```typescript
+const pixels = new Uint8ClampedArray(data.buffer, data.byteOffset + 16, width * height * 4);
+this.reusableImageData.data.set(pixels); // <--- Copy 1
+this.ctx.putImageData(...) // <--- Copy 2 (Internal Browser)
+```
 
-- `max_ms` 调到 24~32
-- 或 `max_dabs` 调到 6~8
-  让一次消息覆盖更大 dirty rect，降低消息频率。
+**优化思路**：
+如果 `data` (从 Rust 来的 Uint8Array) 的内存布局直接符合 ImageData 的要求，理论上可以直接构造 ImageData 而不进行 `.set()` 拷贝。
+但 `putImageData` 本身很慢且必须拷贝。
 
----
-
-## 你截图的 warning 在 200Hz 下为什么更容易出现
-
-频率高意味着：
-
-- invoke 更密集，更容易出现“endStroke 已清理 channel，但还有 invoke 尚未返回”
-- dev HMR reload 时，后台更可能仍在跑 async 操作并持续 send
-
-上面的“按帧批处理 + 串行 in-flight + endStroke drain”会把这类问题压到最低。
+**进阶方案 (未来考虑)**：
+如果 `putImageData` 成为瓶颈（在 4K 屏大笔刷时），可以考虑 **SharedArrayBuffer** (如果环境允许) 或者继续深挖 **ImageBitmap** 方案。
+你现在的代码里保留了 `createImageBitmap` 分支，这很好。注意 `createImageBitmap` 是异步的，你已经做了串行链 (`bitmapChain`)，这是正确的做法。
 
 ---
 
-如果你把你现在“点输入到 processPoints”的调用链（哪里收点、是否每点都调用、是否有 pointermove/coalesced events）贴一下，我可以按你实际事件源再给一个最贴合的 batching（比如用 `getCoalescedEvents()` 时每帧可能突然来几十点，策略要略调）。
+### 🏁 最终结论
+
+**可以通过 (Approved)**。
+
+这个架构已经达到了生产级水准。它解决了 Rust 与 Web 前端交互中最棘手的异步生命周期问题。
+
+**实施时的检查清单：**
+
+1.  [ ] **前端**：把 `window.addEventListener('beforeunload', ...)` 补上。
+2.  [ ] **前端**：确认 `pushPoint` 时是否需要支持动态调整 `flow` 或 `tilt`（如果业务需要）。
+3.  [ ] **Rust**：确保 `Cargo.toml` 里引入了 `tokio` 的 `rt-multi-thread` feature (虽然 Tauri 默认有，但 spawn_blocking 需要线程池支持)。
+
+现在的代码可以直接进 IDE 开写了。祝编码顺利！
+
+---
+
+整体看 v1.7 的修改方向是对的：**把 200Hz 输入从“每点 invoke”改成“按帧批处理 + 串行化”，并把 Rust 重计算移到 `spawn_blocking`**，这两点基本就能把你截图里那种 “Couldn't find callback id” 的主要触发面（并发 invoke + endStroke 清理 channel）压下去。下面按“已解决/仍有风险/建议补丁”做 review。
+
+---
+
+## 已解决的关键问题（v1.7 成功点）
+
+1. **并发 invoke 时序问题**
+   `RustInputScheduler` 用 `inputChain` 串行化 + `endStrokeAndDrain()` 等队列清空，这个是核心修正，能显著减少 callback id 丢失刷屏。
+
+2. **invoke 频率过高**
+   rAF 批处理把调用频率从 ~200/s 降到 ~60/s（平均 3~4 点/批），更符合 IPC/调度模型。
+
+3. **Rust 端阻塞 async runtime**
+   `tokio::task::spawn_blocking` 把 stamp 循环挪走，能减少窗口事件/IPC 抖动与积压。
+
+---
+
+## 仍然存在的风险点（建议补）
+
+### 风险 1：HMR / reload / closeSession 时仍可能有 in-flight 的 `rust_brush_input`
+
+即使前端 drain 了，**dev HMR/reload 不是“正常结束笔画”流程**，可能直接销毁 WebView callback。此时 Rust 仍可能在 blocking 里算完后 send，仍会看到 warning（数量会少很多，但不保证为 0）。
+
+**建议（P0/P1 之间）**：在 Rust 侧加“会话代数/取消标记”，让旧 stroke / 旧页面的 send 变成 no-op。
+
+做法示意：
+
+- `StreamingBrushEngine` 增加 `stroke_generation: u64`
+- `begin_stroke()` 里 `stroke_generation += 1`
+- `rust_brush_input` 把当前 generation 复制出来传进 blocking closure，算完后如果 generation 已变化则丢弃 pending，不再 send
+
+这样即便前端异常重载，**旧任务不会继续推送**。
+
+---
+
+### 风险 2：`rust_brush_end_stroke` 不是 async，可能与 blocking 任务的锁竞争
+
+你现在依赖“前端 drain 完成后再 end_stroke”，正常情况下 OK；但如果发生异常路径（比如外部直接调用 endStroke/closeSession，或未来有多指/多输入源），`end_stroke` 可能在锁上阻塞，影响交互。
+
+**建议（P1）**：
+
+- 让 `rust_brush_end_stroke` 也改成 `async` + `spawn_blocking`（统一策略）
+- 或至少用 `try_lock` + 返回“忙”让前端稍后重试
+
+---
+
+### 风险 3：rAF 在后台/窗口失焦时会降频，导致 pending 点积压
+
+浏览器/ WebView 在后台 rAF 可能变成 1fps 或暂停，你的 pending 可能堆到 128，然后触发“丢中间点”。绘画时一般前台问题不大，但**一旦窗口短暂失焦**，回来可能出现突跳/断裂。
+
+**建议（P1）**：给调度器增加一个 **setTimeout 兜底 flush**（比如 8~16ms），在 rAF 不跑时也能出队，避免瞬间积压。
+
+---
+
+## 代码层面的两个小建议（质量/性能）
+
+1. `get_sync_data()` 里 `Some(self.output_buffer.clone())` 仍然是明显热点
+   你文档里已标记“用 buffer 池避免 clone”，建议尽快落实，否则大笔刷频繁同步会被 clone 的内存带宽拖慢。
+
+2. `on_sync.send` 失败后可以降级为“停止继续 send”
+   目前是 `tracing::error` 但继续循环发。对于 callback 已失效的情况，这会造成日志刷屏。可以在第一次 `send` 失败后 `break`，并把 session 标记为“frontend_disconnected”（后续 input 直接丢弃 sync）。
+
+---
+
+## 结论
+
+- v1.7 的“调度器批处理 + 串行化 + spawn_blocking”是正确且必要的，能解决你之前遇到的大部分 callback id 问题。
+- 还需要补上的关键是：**Rust 侧的取消/代数机制**，用来处理 HMR/reload/异常关闭等“非正常 endStroke”路径，否则 dev 环境仍可能偶发 warning（只是数量减少）。
+
+如果你希望我给出更具体的改动，我可以直接基于你现有结构提供一份最小补丁：`stroke_generation` + `rust_brush_input` 丢弃过期结果 + `send` 失败短路。
