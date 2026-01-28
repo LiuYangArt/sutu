@@ -181,7 +181,6 @@ export function useSelectionHandler({
 
       // Track mouse down state for Alt release handling
       isMouseDownRef.current = true;
-
       const point: SelectionPoint = { x: canvasX, y: canvasY };
       const isAltPressed = e.altKey;
 
@@ -189,63 +188,55 @@ export function useSelectionHandler({
       hasDraggedRef.current = false;
       startedOnSelectionRef.current = false;
 
-      // For lasso tool in polygonal mode (Alt held) while already creating
-      // Don't add point here - will be added in pointerUp to avoid duplicates
+      // Case 1: Continue existing polygonal lasso creation
       if (currentTool === 'lasso' && isAltPressed && isCreating) {
         lastPointRef.current = point;
-        polygonalDragStartRef.current = point; // Start tracking potential drag
+        polygonalDragStartRef.current = point;
         return true;
       }
 
-      // Use tracked refs for robustness
       const isShift = shiftPressedRef.current || e.shiftKey;
       const isCtrl = ctrlPressedRef.current || e.ctrlKey;
       const isBooleanOp = isShift || isCtrl;
 
-      // Check if clicking on existing selection (for move or click-to-deselect)
-      // If performing boolean op, skip move/deselect logic entirely
+      // Case 2: Handle interaction with existing selection (Move or Deselect)
+      // Only applies if NOT performing a boolean operation (add/subtract)
       if (hasSelection && !isBooleanOp) {
-        // Requirement 2: Alt+Click on existing selection should start new polygonal selection
-        // Only if NOT a boolean op (Shift+Alt = Add Polygonal)
-        if (currentTool === 'lasso' && isAltPressed) {
-          deselectAll();
-          startedOnSelectionRef.current = false;
-          // Fall through to start new selection below
-        } else {
+        // Special case: Alt+Click with Lasso on existing selection starts new polygonal selection
+        // instead of subtracting (unless explicitly in subtract mode via boolean op, which is handled above)
+        const isLassoPolygonalStart = currentTool === 'lasso' && isAltPressed;
+
+        if (!isLassoPolygonalStart) {
           startedOnSelectionRef.current = true;
+
           if (isPointInSelection(canvasX, canvasY)) {
-            // Start potential move (will be confirmed if drag happens)
+            // Clicked inside selection -> Start Move
             beginMove(point);
             return true;
           }
-          // Clicking outside bounds - deselect and start new selection
+
+          // Clicked outside selection -> Deselect and Continue to Start New Selection
           deselectAll();
           startedOnSelectionRef.current = false;
-          // Fall through to start new selection
+        } else {
+          // Lasso Polygonal Start -> Deselect and Continue
+          deselectAll();
+          startedOnSelectionRef.current = false;
         }
       }
 
-      // Start new selection
+      // Case 3: Start New Selection (or Boolean Operation)
       startPointRef.current = point;
       lastPointRef.current = point;
       isSelectingRef.current = true;
-      // Determine mode based on modifiers
-      // User Req: Shift = Add, Ctrl = Subtract
 
+      // Determine selection mode
       let mode: 'new' | 'add' | 'subtract' | 'intersect' = 'new';
-      if (isShift && isCtrl) {
-        mode = 'intersect';
-      } else if (isShift) {
-        mode = 'add';
-      } else if (isCtrl) {
-        mode = 'subtract';
-      }
+      if (isShift && isCtrl) mode = 'intersect';
+      else if (isShift) mode = 'add';
+      else if (isCtrl) mode = 'subtract';
 
       setSelectionMode(mode);
-
-      startPointRef.current = point;
-      lastPointRef.current = point;
-      isSelectingRef.current = true;
       beginSelection(point);
 
       return true;
