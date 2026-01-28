@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { combineMasks, traceMaskToPaths } from '@/utils/selectionAlgorithms';
+import { simplifyPath, drawSmoothMaskPath } from '@/utils/pathSmoothing';
 
 /**
  * Selection mode for boolean operations
@@ -100,41 +101,40 @@ function pathToMask(path: SelectionPoint[], width: number, height: number): Imag
   ctx.fillStyle = 'white';
   ctx.beginPath();
   if (path.length > 0) {
-    const first = path[0];
-    if (first) {
-      ctx.moveTo(first.x, first.y);
+    // If we have enough points (heuristic for freehand), use smoothing
+    // Rectangle has 5 points (start, 3 corners, start repeated), so > 6 is safe
+    if (path.length > 6) {
+      // 1. Simplify path to remove noise (RDP algorithm)
+      // Tolerance 1.5 removes more intermediate points to prevent overshoot
+      const simplified = simplifyPath(path, 1.5);
 
-      // If we have enough points (heuristic for freehand), use smoothing
-      // Rectangle has 5 points (start, 3 corners, start repeated), so > 6 is safe
-      if (path.length > 6) {
-        // Quadratic Bezier smoothing
-        for (let i = 1; i < path.length - 2; i++) {
-          const pt = path[i];
-          const next = path[i + 1];
-          if (pt && next) {
-            const xc = (pt.x + next.x) / 2;
-            const yc = (pt.y + next.y) / 2;
-            ctx.quadraticCurveTo(pt.x, pt.y, xc, yc);
-          }
-        }
-        // Connect last few points
-        const secondLast = path[path.length - 2];
-        const last = path[path.length - 1];
-        if (secondLast && last) {
-          ctx.quadraticCurveTo(secondLast.x, secondLast.y, last.x, last.y);
-        }
-      } else {
-        // Standard straight lines for Rect / simple polygons
+      // 2. Use Catmull-Rom Spline for smooth curve through points
+      // This function handles beginPath internally, but we need to fill afterwards
+      // Note: drawSmoothMaskPath calls beginPath, so we don't need to call it before if we use it exclusively
+      // modify drawSmoothMaskPath to NOT call beginPath?
+      // Actually, let's just let it handle the path definition.
+
+      // But wait, the original code called ctx.beginPath outside.
+      // If drawSmoothMaskPath calls beginPath, it resets the context path.
+      // It's fine here because we are starting a new mask fill.
+      drawSmoothMaskPath(ctx, simplified);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Standard straight lines for Rect / simple polygons
+      ctx.beginPath();
+      const first = path[0];
+      if (first) {
+        ctx.moveTo(first.x, first.y);
         for (let i = 1; i < path.length; i++) {
           const pt = path[i];
           if (pt) {
             ctx.lineTo(pt.x, pt.y);
           }
         }
+        ctx.closePath();
+        ctx.fill();
       }
-
-      ctx.closePath();
-      ctx.fill();
     }
   }
 
