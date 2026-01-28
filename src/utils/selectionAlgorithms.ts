@@ -8,42 +8,37 @@ export function combineMasks(base: ImageData, added: ImageData, mode: SelectionM
   const height = base.height;
   const result = new ImageData(width, height);
 
-  // Helper to check if a pixel is selected (alpha > 0)
-  // We assume the mask uses alpha channel for selection
-
   for (let i = 0; i < base.data.length; i += 4) {
     const baseAlpha = base.data[i + 3] ?? 0;
     const addedAlpha = added.data[i + 3] ?? 0;
 
-    // Normalize to boolean (0 or 1) for logic, but we keep alpha 255 for selected
-    const isBase = baseAlpha > 0;
-    const isAdded = addedAlpha > 0;
-
-    let isSelected = false;
+    let finalAlpha = 0;
 
     switch (mode) {
       case 'new':
-        isSelected = isAdded;
+        finalAlpha = addedAlpha;
         break;
       case 'add':
-        isSelected = isBase || isAdded;
+        // Union: Max alpha
+        finalAlpha = Math.max(baseAlpha, addedAlpha);
         break;
       case 'subtract':
-        isSelected = isBase && !isAdded;
+        // Subtract: Base - Added (clamped)
+        finalAlpha = Math.max(0, baseAlpha - addedAlpha);
         break;
       case 'intersect':
-        isSelected = isBase && isAdded;
+        // Intersect: Min alpha
+        finalAlpha = Math.min(baseAlpha, addedAlpha);
         break;
     }
 
-    if (isSelected) {
-      // White with full alpha
+    // Set white color with calculated alpha
+    if (finalAlpha > 0) {
       result.data[i] = 255; // R
       result.data[i + 1] = 255; // G
       result.data[i + 2] = 255; // B
-      result.data[i + 3] = 255; // A
+      result.data[i + 3] = finalAlpha; // A
     } else {
-      // Transparent
       result.data[i] = 0;
       result.data[i + 1] = 0;
       result.data[i + 2] = 0;

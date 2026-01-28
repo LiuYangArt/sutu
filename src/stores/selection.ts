@@ -103,12 +103,36 @@ function pathToMask(path: SelectionPoint[], width: number, height: number): Imag
     const first = path[0];
     if (first) {
       ctx.moveTo(first.x, first.y);
-      for (let i = 1; i < path.length; i++) {
-        const pt = path[i];
-        if (pt) {
-          ctx.lineTo(pt.x, pt.y);
+
+      // If we have enough points (heuristic for freehand), use smoothing
+      // Rectangle has 5 points (start, 3 corners, start repeated), so > 6 is safe
+      if (path.length > 6) {
+        // Quadratic Bezier smoothing
+        for (let i = 1; i < path.length - 2; i++) {
+          const pt = path[i];
+          const next = path[i + 1];
+          if (pt && next) {
+            const xc = (pt.x + next.x) / 2;
+            const yc = (pt.y + next.y) / 2;
+            ctx.quadraticCurveTo(pt.x, pt.y, xc, yc);
+          }
+        }
+        // Connect last few points
+        const secondLast = path[path.length - 2];
+        const last = path[path.length - 1];
+        if (secondLast && last) {
+          ctx.quadraticCurveTo(secondLast.x, secondLast.y, last.x, last.y);
+        }
+      } else {
+        // Standard straight lines for Rect / simple polygons
+        for (let i = 1; i < path.length; i++) {
+          const pt = path[i];
+          if (pt) {
+            ctx.lineTo(pt.x, pt.y);
+          }
         }
       }
+
       ctx.closePath();
       ctx.fill();
     }

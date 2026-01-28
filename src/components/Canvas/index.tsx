@@ -48,6 +48,36 @@ declare global {
   }
 }
 
+/**
+ * Helper to fill a layer using a selection mask (anti-aliased)
+ */
+function fillWithMask(
+  ctx: CanvasRenderingContext2D,
+  mask: ImageData,
+  color: string,
+  width: number,
+  height: number
+) {
+  // Create temp canvas for the mask
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = width;
+  maskCanvas.height = height;
+  const maskCtx = maskCanvas.getContext('2d');
+  if (!maskCtx) return;
+
+  // Put the mask data
+  maskCtx.putImageData(mask, 0, 0);
+
+  // Composite fill color IN the mask
+  // Source (color) IN Destination (mask) -> Result keeps color where mask is opaque
+  maskCtx.globalCompositeOperation = 'source-in';
+  maskCtx.fillStyle = color;
+  maskCtx.fillRect(0, 0, width, height);
+
+  // Draw the result onto the active layer
+  ctx.drawImage(maskCanvas, 0, 0);
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -282,32 +312,12 @@ export function Canvas() {
       if (!beforeImage) return;
 
       // Check for active selection
-      const { hasSelection, selectionPath } = useSelectionStore.getState();
+      const { hasSelection, selectionMask } = useSelectionStore.getState();
 
-      if (hasSelection && selectionPath.length > 0) {
-        // Fill only within selection
-        layer.ctx.save();
-        layer.ctx.beginPath();
-
-        for (const contour of selectionPath) {
-          const startPoint = contour[0];
-          if (startPoint) {
-            layer.ctx.moveTo(startPoint.x, startPoint.y);
-            for (let i = 1; i < contour.length; i++) {
-              const pt = contour[i];
-              if (pt) {
-                layer.ctx.lineTo(pt.x, pt.y);
-              }
-            }
-            layer.ctx.closePath();
-          }
-        }
-
-        layer.ctx.clip('evenodd');
-        layer.ctx.fillStyle = color;
-        layer.ctx.fillRect(0, 0, width, height);
-        layer.ctx.restore();
-      } else {
+      if (hasSelection && selectionMask) {
+        fillWithMask(layer.ctx, selectionMask, color, width, height);
+      } else if (!hasSelection) {
+        // Only fill if NO selection. If hasSelection is true but no mask (shouldn't happen), do nothing safely
         // Fill the entire layer
         layer.ctx.fillStyle = color;
         layer.ctx.fillRect(0, 0, width, height);
