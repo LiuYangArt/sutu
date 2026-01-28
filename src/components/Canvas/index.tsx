@@ -22,6 +22,32 @@ import './Canvas.css';
 // Types
 const MAX_POINTS_PER_FRAME = 80;
 
+interface QueuedPoint {
+  x: number;
+  y: number;
+  pressure: number;
+  pointIndex: number;
+}
+
+declare global {
+  interface Window {
+    __canvasFillLayer?: (color: string) => void;
+    __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
+    __getFlattenedImage?: () => Promise<string | undefined>;
+    __getThumbnail?: () => Promise<string | undefined>;
+    __loadLayerImages?: (
+      layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>,
+      benchmarkSessionId?: string
+    ) => Promise<void>;
+    __strokeDiagnostics?: {
+      onPointBuffered: () => void;
+      onStrokeStart: () => void;
+      onStrokeEnd: () => void;
+      onStateChange: (state: string) => void;
+    };
+  }
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,8 +69,8 @@ export function Canvas() {
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
-  const pendingPointsRef = useRef<any[]>([]);
-  const inputQueueRef = useRef<any[]>([]);
+  const pendingPointsRef = useRef<QueuedPoint[]>([]);
+  const inputQueueRef = useRef<QueuedPoint[]>([]);
   const pointIndexRef = useRef(0);
 
   // Profiling
@@ -450,7 +476,7 @@ export function Canvas() {
         });
         // Output benchmark report to browser console
         if (report) {
-          console.log(report);
+          // console.log(report);
         }
       }
 
@@ -1538,11 +1564,6 @@ export function Canvas() {
 
         case 'AltLeft':
         case 'AltRight':
-          // console.log('[Canvas Debug] Alt KeyDown', {
-          //   currentTool,
-          //   altPressed,
-          //   previousToolRef: previousToolRef.current,
-          // });
           // Alt 键切换吸色工具仅对画笔和橡皮擦工具生效
           if (!altPressed && (currentTool === 'brush' || currentTool === 'eraser')) {
             // 如果正在绘制，先强制结束当前笔触
@@ -1552,7 +1573,6 @@ export function Canvas() {
             setAltPressed(true);
             previousToolRef.current = currentTool;
             setTool('eyedropper');
-            // console.log('[Canvas Debug] Switched to eyedropper');
           }
           break;
 

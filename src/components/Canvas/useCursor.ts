@@ -82,6 +82,69 @@ function generateEllipseOutlineSvg(
   `;
 }
 
+/**
+ * Creates the SVG string for the hardware cursor
+ */
+function createCursorSvg(
+  size: number,
+  roundness: number,
+  angle: number,
+  texture: BrushCursorTexture | null | undefined,
+  showCrosshair: boolean
+): string {
+  const r = size / 2;
+  // Roundness affects Y-axis scale (100 = circle, 1 = flat line)
+  const scaleY = Math.max(roundness, 1) / 100;
+
+  // Calculate bounding box after rotation to ensure cursor fits
+  const angleRad = (angle * Math.PI) / 180;
+  const cosA = Math.abs(Math.cos(angleRad));
+  const sinA = Math.abs(Math.sin(angleRad));
+  const ry = r * scaleY;
+
+  // Rotated ellipse bounding box
+  const boundWidth = 2 * (r * cosA + ry * sinA);
+  const boundHeight = 2 * (r * sinA + ry * cosA);
+  const maxBound = Math.max(boundWidth, boundHeight);
+
+  // Add padding to avoid clipping
+  const canvasSize = Math.ceil(maxBound + 4);
+  const center = canvasSize / 2;
+
+  let shapeContent: string;
+
+  if (texture?.cursorPath) {
+    // Texture brush
+    shapeContent = `<g transform="translate(${center}, ${center})">${generateTextureOutlineSvg(
+      texture.cursorPath,
+      size,
+      scaleY,
+      angle
+    )}</g>`;
+  } else {
+    // Round brush
+    shapeContent = `<g transform="translate(${center}, ${center})">${generateEllipseOutlineSvg(
+      r,
+      ry,
+      angle
+    )}</g>`;
+  }
+
+  // Generate crosshair if enabled
+  const crosshairContent = showCrosshair ? generateCrosshairSvg(center, center, 8) : '';
+
+  const svg = `
+      <svg width="${canvasSize}" height="${canvasSize}" viewBox="0 0 ${canvasSize} ${canvasSize}" xmlns="http://www.w3.org/2000/svg">
+        ${shapeContent}
+        ${crosshairContent}
+      </svg>
+    `;
+
+  const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
+  // Use 'none' as fallback to prevent crosshair flash during cursor image loading
+  return `url("${cursorUrl}") ${center} ${center}, none`;
+}
+
 interface UseCursorProps {
   currentTool: ToolType;
   currentSize: number;
@@ -160,45 +223,13 @@ export function useCursor({
       return '';
     }
 
-    const r = screenBrushSize / 2;
-    // Roundness affects Y-axis scale (100 = circle, 1 = flat line)
-    const scaleY = Math.max(brushRoundness, 1) / 100;
-    // Calculate bounding box after rotation to ensure cursor fits
-    const angleRad = (brushAngle * Math.PI) / 180;
-    const cosA = Math.abs(Math.cos(angleRad));
-    const sinA = Math.abs(Math.sin(angleRad));
-    const ry = r * scaleY;
-    // Rotated ellipse bounding box
-    const boundWidth = 2 * (r * cosA + ry * sinA);
-    const boundHeight = 2 * (r * sinA + ry * cosA);
-    const maxBound = Math.max(boundWidth, boundHeight);
-    // Add padding to avoid clipping
-    const canvasSize = Math.ceil(maxBound + 4);
-    const center = canvasSize / 2;
-
-    let shapeContent: string;
-
-    if (brushTexture?.cursorPath) {
-      // Texture brush: use shared generator
-      shapeContent = `<g transform="translate(${center}, ${center})">${generateTextureOutlineSvg(brushTexture.cursorPath, screenBrushSize, scaleY, brushAngle)}</g>`;
-    } else {
-      // Round brush: use shared generator
-      shapeContent = `<g transform="translate(${center}, ${center})">${generateEllipseOutlineSvg(r, ry, brushAngle)}</g>`;
-    }
-
-    // Generate crosshair if enabled
-    const crosshairContent = showCrosshair ? generateCrosshairSvg(center, center, 8) : '';
-
-    const svg = `
-      <svg width="${canvasSize}" height="${canvasSize}" viewBox="0 0 ${canvasSize} ${canvasSize}" xmlns="http://www.w3.org/2000/svg">
-        ${shapeContent}
-        ${crosshairContent}
-      </svg>
-    `;
-
-    const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
-    // Use 'none' as fallback to prevent crosshair flash during cursor image loading
-    return `url("${cursorUrl}") ${center} ${center}, none`;
+    return createCursorSvg(
+      screenBrushSize,
+      brushRoundness,
+      brushAngle,
+      brushTexture,
+      showCrosshair
+    );
   }, [
     shouldUseHardwareCursor,
     screenBrushSize,
@@ -212,17 +243,13 @@ export function useCursor({
   const { selectionMode } = useSelectionStore();
   const selectionCursorRef = useRef<HTMLDivElement>(null);
 
-  // Helper to determine active selection modifier
-  const getSelectionModifier = () => {
+  const selectionModifier = useMemo(() => {
     if (!isSelectionTool || isCreatingSelection) return null;
-    // Only show modifier if we are in a boolean mode
     if (selectionMode === 'add') return 'plus';
     if (selectionMode === 'subtract') return 'minus';
-    // intersect? User didn't ask for symbol, maybe 'x'? For now just +/- as requested.
     return null;
-  };
+  }, [isSelectionTool, isCreatingSelection, selectionMode]);
 
-  const selectionModifier = getSelectionModifier();
   const showSelectionModifier = !!selectionModifier;
 
   // Handle native pointer events for DOM cursors (zero-lag update)
@@ -333,16 +360,6 @@ export function useCursor({
   if (isInteracting) {
     cursorStyle = 'grab';
   } else if (isSelectionTool && isOverSelection && !isCreatingSelection) {
-    // Show move cursor when hovering over existing selection
-    // Override standard cursor if NOT performing boolean op (Shift/Ctrl)?
-    // Actually, boolean ops often override move.
-    // Let's check selectionMode. If new/none, allow move. If add/subtract, show modifier?
-    // User wants explicit modifier.
-    // If hovering selection BUT modifying, we should probably show modifier + crosshair.
-    // Logic:
-    // If Selection + Modifier -> Crosshair + Modifier
-    // If Selection + No Modifier + Hover -> Move
-
     // Priority: Modifier > Hover Move
     if (showSelectionModifier) {
       cursorStyle = 'crosshair';

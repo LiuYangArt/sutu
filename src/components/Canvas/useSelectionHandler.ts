@@ -105,13 +105,6 @@ export function useSelectionHandler({
   // Listen for Alt key changes globally
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Debug logs
-      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt') {
-        console.log(
-          `[Key Debug] Down: ${e.key}, Shift:${e.shiftKey}, Ctrl:${e.ctrlKey}, Alt:${e.altKey}`
-        );
-      }
-
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
         const tool = currentToolRef.current;
         // When Alt is pressed during lasso selection, anchor current position
@@ -130,20 +123,14 @@ export function useSelectionHandler({
 
       if (e.key === 'Shift') {
         shiftPressedRef.current = true;
-        console.log('[Key Debug] Shift Ref set to TRUE');
       }
 
       if (e.key === 'Control') {
         ctrlPressedRef.current = true;
-        console.log('[Key Debug] Ctrl Ref set to TRUE');
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt') {
-        console.log(`[Key Debug] Up: ${e.key}`);
-      }
-
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
         const tool = currentToolRef.current;
         // When releasing Alt during lasso selection:
@@ -167,12 +154,10 @@ export function useSelectionHandler({
 
       if (e.key === 'Shift') {
         shiftPressedRef.current = false;
-        console.log('[Key Debug] Shift Ref set to FALSE');
       }
 
       if (e.key === 'Control') {
         ctrlPressedRef.current = false;
-        console.log('[Key Debug] Ctrl Ref set to FALSE');
       }
     };
 
@@ -204,15 +189,6 @@ export function useSelectionHandler({
       hasDraggedRef.current = false;
       startedOnSelectionRef.current = false;
 
-      console.log('[Lasso Debug] PointerDown', {
-        tool: currentTool,
-        shiftKey: e.shiftKey,
-        ctrlKey: e.ctrlKey,
-        altKey: e.altKey,
-        shiftRef: shiftPressedRef.current,
-        ctrlRef: ctrlPressedRef.current,
-      });
-
       // For lasso tool in polygonal mode (Alt held) while already creating
       // Don't add point here - will be added in pointerUp to avoid duplicates
       if (currentTool === 'lasso' && isAltPressed && isCreating) {
@@ -227,28 +203,25 @@ export function useSelectionHandler({
       const isBooleanOp = isShift || isCtrl;
 
       // Check if clicking on existing selection (for move or click-to-deselect)
-      if (hasSelection) {
-        // If performing boolean op, skip move/deselect logic entirely
-        if (!isBooleanOp) {
-          // Requirement 2: Alt+Click on existing selection should start new polygonal selection
-          // Only if NOT a boolean op (Shift+Alt = Add Polygonal)
-          if (currentTool === 'lasso' && isAltPressed) {
-            deselectAll();
-            startedOnSelectionRef.current = false;
-            // Fall through to start new selection below
-          } else {
-            startedOnSelectionRef.current = true;
-            if (isPointInBounds(canvasX, canvasY)) {
-              // Start potential move (will be confirmed if drag happens)
-              beginMove(point);
-              return true;
-            }
-            // Clicking outside bounds - deselect and start new selection
-            deselectAll();
-            startedOnSelectionRef.current = false;
-            // Fall through to start new selection
-            console.log('[Lasso Debug] Deselected due to click outside');
+      // If performing boolean op, skip move/deselect logic entirely
+      if (hasSelection && !isBooleanOp) {
+        // Requirement 2: Alt+Click on existing selection should start new polygonal selection
+        // Only if NOT a boolean op (Shift+Alt = Add Polygonal)
+        if (currentTool === 'lasso' && isAltPressed) {
+          deselectAll();
+          startedOnSelectionRef.current = false;
+          // Fall through to start new selection below
+        } else {
+          startedOnSelectionRef.current = true;
+          if (isPointInBounds(canvasX, canvasY)) {
+            // Start potential move (will be confirmed if drag happens)
+            beginMove(point);
+            return true;
           }
+          // Clicking outside bounds - deselect and start new selection
+          deselectAll();
+          startedOnSelectionRef.current = false;
+          // Fall through to start new selection
         }
       }
 
@@ -259,13 +232,6 @@ export function useSelectionHandler({
       // Determine mode based on modifiers
       // User Req: Shift = Add, Ctrl = Subtract
 
-      // Use tracked refs for robustness against browser/OS interception
-      // Validated by user observation that "Alt works" (which uses similar global tracking)
-      // Already defined above:
-      // const isShift = shiftPressedRef.current || e.shiftKey;
-      // const isCtrl = ctrlPressedRef.current || e.ctrlKey;
-      // Note: We check both global ref and event property for maximum reliability.
-
       let mode: 'new' | 'add' | 'subtract' | 'intersect' = 'new';
       if (isShift && isCtrl) {
         mode = 'intersect';
@@ -275,18 +241,12 @@ export function useSelectionHandler({
         mode = 'subtract';
       }
 
-      console.log(`[Lasso Debug] Setting selection mode to: ${mode}`);
-      console.log(`[Lasso Debug] Point: ${point.x}, ${point.y}`);
       setSelectionMode(mode);
 
       startPointRef.current = point;
       lastPointRef.current = point;
       isSelectingRef.current = true;
       beginSelection(point);
-
-      // Double check store state (async so might not reflect immediately, but good proxy)
-      const currentMode = useSelectionStore.getState().selectionMode;
-      console.log('[Lasso Debug] Store mode after set:', currentMode);
 
       return true;
     },
@@ -304,7 +264,7 @@ export function useSelectionHandler({
   );
 
   const handleSelectionPointerMove = useCallback(
-    (canvasX: number, canvasY: number, _e: PointerEvent | React.PointerEvent) => {
+    (canvasX: number, canvasY: number, _e: PointerEvent | React.PointerEvent): void => {
       const point: SelectionPoint = { x: canvasX, y: canvasY };
 
       // Handle move mode
@@ -368,7 +328,7 @@ export function useSelectionHandler({
   );
 
   const handleSelectionPointerUp = useCallback(
-    (canvasX: number, canvasY: number) => {
+    (canvasX: number, canvasY: number): void => {
       // Always reset mouse down state
       isMouseDownRef.current = false;
 
@@ -424,7 +384,7 @@ export function useSelectionHandler({
   );
 
   const handleSelectionDoubleClick = useCallback(
-    (_canvasX: number, _canvasY: number) => {
+    (_canvasX: number, _canvasY: number): void => {
       // Double-click completes lasso selection (works in both modes)
       if (currentTool === 'lasso' && isCreating) {
         const { width, height } = useDocumentStore.getState();
