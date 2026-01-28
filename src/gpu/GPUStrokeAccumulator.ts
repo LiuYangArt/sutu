@@ -935,7 +935,8 @@ export class GPUStrokeAccumulator {
               const globalX = rect.left + px;
               const globalY = rect.top + py;
 
-              // Selection mask clipping: skip pixels outside selection
+              // Get selection mask alpha for anti-aliased blending
+              let maskBlend = 1.0;
               if (selectionMask) {
                 if (
                   globalX >= 0 &&
@@ -945,7 +946,8 @@ export class GPUStrokeAccumulator {
                 ) {
                   const maskIdx = (globalY * selectionMask.width + globalX) * 4 + 3;
                   const maskAlpha = selectionMask.data[maskIdx] ?? 0;
-                  if (maskAlpha === 0) continue; // Skip pixels outside selection
+                  if (maskAlpha === 0) continue; // Skip fully outside pixels
+                  maskBlend = maskAlpha / 255; // Use as blend factor for AA
                 } else {
                   continue; // Skip pixels outside mask bounds
                 }
@@ -957,11 +959,11 @@ export class GPUStrokeAccumulator {
               const srcIdx = texY * floatsPerRow + texX * 4;
               const dstIdx = (py * rectWidth + px) * 4;
 
-              // Convert float (0-1) to uint8 (0-255)
+              // Convert float (0-1) to uint8 (0-255), applying mask blend for AA
               imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
               imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
               imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
-              imageData.data[dstIdx + 3] = Math.round((gpuData[srcIdx + 3] ?? 0) * 255);
+              imageData.data[dstIdx + 3] = Math.round((gpuData[srcIdx + 3] ?? 0) * 255 * maskBlend);
             }
           }
 
@@ -1095,7 +1097,8 @@ export class GPUStrokeAccumulator {
 
       if (strokeA < 0.001) continue;
 
-      // Selection mask clipping: skip pixels outside selection
+      // Selection mask clipping: get mask blend factor for anti-aliased edges
+      let maskBlend = 1.0;
       if (selectionMask) {
         const pixelIndex = i / 4;
         const localX = pixelIndex % rectWidth;
@@ -1112,14 +1115,15 @@ export class GPUStrokeAccumulator {
         ) {
           const maskIdx = (globalY * selectionMask.width + globalX) * 4 + 3;
           const maskAlpha = selectionMask.data[maskIdx] ?? 0;
-          if (maskAlpha === 0) continue; // Skip pixels outside selection
+          if (maskAlpha === 0) continue; // Skip fully outside pixels
+          maskBlend = maskAlpha / 255; // Use as blend factor for AA
         } else {
           continue; // Skip pixels outside mask bounds
         }
       }
 
-      // Apply opacity scaling
-      const srcAlpha = strokeA * opacity;
+      // Apply opacity scaling with mask blend for anti-aliased edges
+      const srcAlpha = strokeA * opacity * maskBlend;
 
       const dstR = layerData.data[i]!;
       const dstG = layerData.data[i + 1]!;

@@ -43,23 +43,23 @@ export function simplifyPath(points: Point[], tolerance: number): Point[] {
     return points;
   }
 
-  let dmax = 0;
+  let maxDistance = 0;
   let index = 0;
   const end = points.length - 1;
 
   for (let i = 1; i < end; i++) {
     const d = perpendicularDistance(points[i]!, points[0]!, points[end]!);
-    if (d > dmax) {
+    if (d > maxDistance) {
       index = i;
-      dmax = d;
+      maxDistance = d;
     }
   }
 
-  if (dmax > tolerance) {
-    const recResults1 = simplifyPath(points.slice(0, index + 1), tolerance);
-    const recResults2 = simplifyPath(points.slice(index, end + 1), tolerance);
+  if (maxDistance > tolerance) {
+    const leftSimplified = simplifyPath(points.slice(0, index + 1), tolerance);
+    const rightSimplified = simplifyPath(points.slice(index, end + 1), tolerance);
 
-    return recResults1.slice(0, recResults1.length - 1).concat(recResults2);
+    return [...leftSimplified.slice(0, -1), ...rightSimplified];
   } else {
     return [points[0]!, points[end]!];
   }

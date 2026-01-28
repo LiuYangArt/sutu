@@ -59,6 +59,7 @@ interface SelectionState {
 
   // Actions
   setSelectionMode: (mode: SelectionMode) => void;
+  setLassoMode: (mode: LassoMode) => void;
 
   // Selection creation
   beginSelection: (startPoint?: SelectionPoint) => void;
@@ -91,7 +92,12 @@ interface SelectionState {
 /**
  * Convert a closed path to a bitmap mask using Canvas 2D fill
  */
-function pathToMask(path: SelectionPoint[], width: number, height: number): ImageData {
+function pathToMask(
+  path: SelectionPoint[],
+  width: number,
+  height: number,
+  lassoMode: LassoMode = 'freehand'
+): ImageData {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -101,9 +107,11 @@ function pathToMask(path: SelectionPoint[], width: number, height: number): Imag
   ctx.fillStyle = 'white';
   ctx.beginPath();
   if (path.length > 0) {
-    // If we have enough points (heuristic for freehand), use smoothing
-    // Rectangle has 5 points (start, 3 corners, start repeated), so > 6 is safe
-    if (path.length > 6) {
+    // Only apply smoothing for freehand lasso with enough points
+    // Polygonal lasso and rect selection should preserve sharp corners
+    // Freehand typically has many dense points (>20), polygonal has fewer deliberate clicks
+    const shouldSmooth = lassoMode === 'freehand' && path.length > 20;
+    if (shouldSmooth) {
       // 1. Simplify path to remove noise (RDP algorithm)
       // Tolerance 1.5 removes more intermediate points to prevent overshoot
       const simplified = simplifyPath(path, 1.5);
@@ -216,6 +224,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
 
   // Actions
   setSelectionMode: (mode) => set({ selectionMode: mode }),
+  setLassoMode: (mode) => set({ lassoMode: mode }),
 
   beginSelection: (startPoint) =>
     set({
@@ -257,7 +266,8 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }
 
     // Generate bitmap mask from path
-    const newMask = pathToMask(path, documentWidth, documentHeight);
+    // Pass lassoMode to determine if smoothing should be applied
+    const newMask = pathToMask(path, documentWidth, documentHeight, state.lassoMode);
 
     let finalMask: ImageData;
     let finalPath: SelectionPoint[][];

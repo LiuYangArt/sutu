@@ -70,6 +70,7 @@ export function useSelectionHandler({
     commitMove,
     deselectAll,
     setSelectionMode,
+    setLassoMode,
   } = useSelectionStore();
 
   const startPointRef = useRef<SelectionPoint | null>(null);
@@ -97,6 +98,9 @@ export function useSelectionHandler({
   const altPressedRef = useRef(false);
   const shiftPressedRef = useRef(false);
   const ctrlPressedRef = useRef(false);
+
+  // Track if the current selection is purely polygonal (no freehand dragging)
+  const isPurePolygonalRef = useRef(true);
 
   // Use ref to avoid stale closure in event handlers
   const currentToolRef = useRef(currentTool);
@@ -136,6 +140,9 @@ export function useSelectionHandler({
         // When releasing Alt during lasso selection:
         if (tool === 'lasso' && isSelectingRef.current && prevAltRef.current) {
           const { width, height } = useDocumentStore.getState();
+
+          // Determine final lasso mode based on interaction history
+          setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
           commitSelection(width, height);
 
           // Reset all selection state
@@ -168,7 +175,7 @@ export function useSelectionHandler({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [addCreationPoint, commitSelection]);
+  }, [addCreationPoint, commitSelection, setLassoMode]);
 
   const isSelectionToolActive = currentTool === 'select' || currentTool === 'lasso';
 
@@ -195,6 +202,11 @@ export function useSelectionHandler({
         return true;
       }
 
+      // Case 3: Start New Selection (or Boolean Operation)
+      // Check if starting new selection vs interacting with existing one (Move/Deselect)
+      // ... logic simplified via guard clause below ...
+
+      // Check shift/ctrl/boolean op
       const isShift = shiftPressedRef.current || e.shiftKey;
       const isCtrl = ctrlPressedRef.current || e.ctrlKey;
       const isBooleanOp = isShift || isCtrl;
@@ -203,7 +215,6 @@ export function useSelectionHandler({
       // Only applies if NOT performing a boolean operation (add/subtract)
       if (hasSelection && !isBooleanOp) {
         // Special case: Alt+Click with Lasso on existing selection starts new polygonal selection
-        // instead of subtracting (unless explicitly in subtract mode via boolean op, which is handled above)
         const isLassoPolygonalStart = currentTool === 'lasso' && isAltPressed;
 
         if (!isLassoPolygonalStart) {
@@ -225,10 +236,15 @@ export function useSelectionHandler({
         }
       }
 
-      // Case 3: Start New Selection (or Boolean Operation)
+      // Case 3: Start New Selection
       startPointRef.current = point;
       lastPointRef.current = point;
       isSelectingRef.current = true;
+
+      // Initialize pure polygonal tracking for new selection
+      // If valid start with Alt (polygonal mode), it's purely polygonal so far
+      // If freehand start, it's NOT purely polygonal (unless just one point, but user will drag)
+      isPurePolygonalRef.current = isAltPressed;
 
       // Determine selection mode
       let mode: 'new' | 'add' | 'subtract' | 'intersect' = 'new';
@@ -251,6 +267,7 @@ export function useSelectionHandler({
       beginMove,
       deselectAll,
       setSelectionMode,
+      setLassoMode,
     ]
   );
 
@@ -279,16 +296,12 @@ export function useSelectionHandler({
         // Use ref for immediate access (React state updates are async)
         const isAltMode = altPressedRef.current;
         if (isAltMode) {
-          // Polygonal mode behavior:
-          // 1. If mouse is DOWN (dragging), check if we should switch back to freehand
-          // 2. If mouse is UP (just moving), update preview line to follow cursor
+          // Polygonal mode behavior
           if (isMouseDownRef.current) {
             // Mouse is pressed - detect drag to switch back to freehand
             if (!polygonalDragStartRef.current) {
-              // Record drag start position
               polygonalDragStartRef.current = point;
             } else {
-              // Check if drag exceeds threshold
               const dx = point.x - polygonalDragStartRef.current.x;
               const dy = point.y - polygonalDragStartRef.current.y;
               const distance = Math.sqrt(dx * dx + dy * dy);
@@ -298,8 +311,9 @@ export function useSelectionHandler({
                 addCreationPoint(polygonalDragStartRef.current);
                 addCreationPoint(point);
                 polygonalDragStartRef.current = null;
-                // Note: altPressedRef is still true, but we're now in "freehand within polygonal" mode
-                // This allows mixed freehand+polygonal paths
+
+                // User dragged, so it's no longer purely polygonal
+                isPurePolygonalRef.current = false;
               }
             }
           } else {
@@ -312,6 +326,9 @@ export function useSelectionHandler({
           polygonalDragStartRef.current = null; // Reset drag tracking
           updatePreviewPoint(null); // Clear preview point
           addCreationPoint(point);
+
+          // User is freehand drawing, so it's not purely polygonal
+          isPurePolygonalRef.current = false;
         }
       }
     },
@@ -362,6 +379,9 @@ export function useSelectionHandler({
 
       // Commit selection for rect select and freehand lasso
       const { width, height } = useDocumentStore.getState();
+
+      // Update lasso mode based on usage history
+      setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
       commitSelection(width, height);
 
       isSelectingRef.current = false;
@@ -371,7 +391,16 @@ export function useSelectionHandler({
       hasDraggedRef.current = false;
       startedOnSelectionRef.current = false;
     },
-    [currentTool, altPressed, isMoving, addCreationPoint, commitSelection, commitMove, deselectAll]
+    [
+      currentTool,
+      altPressed,
+      isMoving,
+      addCreationPoint,
+      commitSelection,
+      commitMove,
+      deselectAll,
+      setLassoMode,
+    ]
   );
 
   const handleSelectionDoubleClick = useCallback(
@@ -379,13 +408,14 @@ export function useSelectionHandler({
       // Double-click completes lasso selection (works in both modes)
       if (currentTool === 'lasso' && isCreating) {
         const { width, height } = useDocumentStore.getState();
+        setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
         commitSelection(width, height);
         isSelectingRef.current = false;
         startPointRef.current = null;
         lastPointRef.current = null;
       }
     },
-    [currentTool, isCreating, commitSelection]
+    [currentTool, isCreating, commitSelection, setLassoMode]
   );
 
   return {
