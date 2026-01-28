@@ -1,70 +1,96 @@
-# 选区平滑实现复盘 (Postmortem)
+# 研究报告：选区平滑问题与 Krita 实现分析
 
-日期: 2026-01-28
-状态: 已解决
+> 日期: 2026-01-28
+> 状态: 研究完成
 
-## 1. 背景 (Context)
+## 1. 为了解决什么问题？
 
-为了对标专业绘画软件（如 Photoshop），我们需要优化选区填充的平滑度。原有的实现中，自由套索（Freehand Lasso）产生的选区边缘存在明显的锯齿和像素化。
+用户反馈“选区填充”时平滑处理不当，具体表现为：本应是尖锐棱角的“多边形选区”出现了圆角，或者边缘存在伪影。
+本研究的目标是分析 Krita 的选区渲染实现，并与 PaintBoard 的当前方案进行对比，以找出根本原因并确定最佳实践。
 
-## 2. 实施的变更 (Changes Implemented)
+## 2. Krita 实现分析
 
-### 第一阶段：自由选区平滑 (Freehand Smoothing)
+我深入分析了 Krita 的源代码，重点关注以下文件：
 
-- **算法**：使用 **Chaikin 细分算法**（加权控制点的二次贝塞尔曲线）替代原始的直线连接。
-- **降噪**：应用 **Ramer-Douglas-Peucker (RDP)** 简化算法（容差: 1.5px）以去除输入噪点。
-- **约束**：放弃了 Catmull-Rom（会导致更严重的溢出），改用 Chaikin 以保证曲线严格位于多边形的凸包内。
+- `plugins/tools/selectiontools/kis_tool_select_polygonal.cc` (多边形套索)
+- `plugins/tools/selectiontools/kis_tool_select_outline.cc` (手绘/自由套索)
+- `libs/ui/tool/KisToolOutlineBase.cpp` & `kis_tool_polyline_base.cpp` (输入处理)
 
-### 第二阶段：笔刷抗锯齿 (Brush Anti-aliasing)
+### 核心发现
 
-- **问题**：即使选区遮罩本身是平滑的，在选区内使用笔刷绘图时，边缘依然有锯齿。
-- **修复**：更新 `GPUStrokeAccumulator`，使用选区遮罩的 Alpha 通道作为混合因子 (`maskAlpha / 255`)，而不仅仅是二值检查 (`maskAlpha === 0`)。
+1.  **统一的路径构建方式**:
+    - Krita 的多边形（Polygonal）和手绘（Freehand）工具都使用 `addPolygon(points)` 来构建 `QPainterPath`。
+    - `addPolygon` 本质上是用直线段（`lineTo`）连接各个点。
+    - **不做曲线拟合**: Krita 在选区工具中**没有**对输入点应用贝塞尔曲线拟合（如 Catmull-Rom 或样条平滑）。
 
-### 第三阶段：多边形与自由选区区分 (Polygonal vs. Freehand)
+2.  **通过“密度”实现平滑**:
+    - **多边形工具**: 点是用户点击的顶点，线是直的（保留尖角）。
+    - **手绘工具**: 点来自于高频率的鼠标/数位板事件。曲线的“平滑”感来自于大量细小的直线段的密集连接，而非数学上的曲线拟合。
 
-- **逻辑**：修改 `pathToMask` 函数以接收 `lassoMode` 参数。
-- **区分策略**：
-  - `freehand` (且点数 > 20)：应用平滑算法。
-  - `polygonal`：使用标准的 `lineTo` 绘制，保留锐利尖角。
+3.  **光栅化 (Rasterization) 与 抗锯齿**:
+    - Krita 使用 `KisPainter::paintPainterPath` 渲染选区遮罩。
+    - **关键点**: 两个工具都显式开启了抗锯齿 (`painter.setAntiAliasPolygonFill(true)`)（除非开启了羽化）。
+    - **结论**: 这保证了边缘是柔和的（抗锯齿的），但几何形状忠实于输入点（多边形保持尖角）。
 
-## 3. 遇到的问题：多边形失配 ("Polygonal Mismatch")
+## 3. PaintBoard 当前实现
 
-### 观察到的现象
+PaintBoard 的实现 (`src/stores/selection.ts`) 与 Krita 有显著差异：
 
-尽管添加了禁用多边形选区平滑的逻辑，用户反馈显示 **多边形选区填充依然被圆润化/收缩**，与视觉轮廓（蚂蚁线）不符。
+```typescript
+function pathToMask(path, ..., lassoMode) {
+  // ...
+  // 大于20个点且模式为 freehand 时尝试平滑
+  const shouldSmooth = lassoMode === 'freehand' && path.length > 20;
+  if (shouldSmooth) {
+    const simplified = simplifyPath(path, 1.5);
+    drawSmoothMaskPath(ctx, simplified); // 使用 Catmull-Rom 样条曲线
+  } else {
+    // 普通的直线连接
+  }
+}
+```
 
-### 症状
+### 发现的问题
 
-- 填充区域没有完全覆盖选区点定义的区域。
-- 尖角被变圆，填充范围比虚线轮廓“缩进”了一圈。
+1.  **曲线拟合 vs 输入保真度**: PaintBoard 试图通过 `simplifyPath` + `Catmull-Rom` 对手绘选区进行平滑。虽然这能消除手抖，但如果误用（例如 `lassoMode` 状态错误，或阈值过于激进），就会导致意料之外的圆角。
+2.  **多边形圆角 Bug**: 用户提供的截图中，多边形选区出现了圆角。这强烈暗示 `pathToMask` 错误地执行了 `shouldSmooth` 分支。
+    - **原因**: 在使用多边形工具时，`lassoMode` 可能被错误地设置为了 `'freehand'`，或者在创建/填充时的状态传递逻辑有误。
 
-### 根因分析 (Root Cause Analysis)
+## 4. 建议与方案
 
-经过调查，发现**状态持久化缺失**是根本原因：
+### 针对“顺滑无锯齿”的回答
 
-1. **Lasso Mode 状态丢失**：虽然 `SelectionStore` 定义了 `lassoMode` 字段，但在实际操作中，**从未调用过更新状态的 Action**。因此，`lassoMode` 始终保持默认值 `'freehand'`。
-2. **错误的平滑决策**：由于状态总是 `freehand`，`pathToMask` 只要检测到点数足够多（多边形选区点数也可能超过 20），就会错误地应用平滑算法。
-3. **混合模式检测不足**：原始代码仅基于当前的 Alt 键状态判断模式，没有记录“整个选区创建过程是否包含拖拽”。
+**这个方案完全可以实现顺滑且无锯齿的边缘。**
 
-## 4. 最终解决方案 (Final Solution)
+我们需要区分两个概念：
 
-###Store 更新
-在 `selection.ts` 中添加并实现了 `setLassoMode` action。
+1.  **几何平滑 (Geometric Smoothing)**: 改变路径形状（把尖角变圆）。当前的问题是多边形被错误地做了一次几何平滑。
+2.  **边缘抗锯齿 (Anti-aliasing)**: 在像素层面让边缘过渡柔和，消除锯齿感。
 
-### 逻辑优化 (`useSelectionHandler.ts`)
+**推荐方案**:
+我们在修复几何形状（让多边形变回尖角）的同时，依然会保留 Canvas 的抗锯齿渲染。
+Canvas 的 `ctx.fill()` 默认就支持抗锯齿。只要我们不错误地改变几何路径，就能得到**形状准确（尖角）且边缘柔和（无像素锯齿）**的效果。
 
-引入了对 **"纯多边形意图" (Pure Polygonal Intent)** 的追踪：
+### 具体实施步骤
 
-1. **追踪**：引入 `isPurePolygonalRef`。如果在创建过程中发生任何**拖拽**行为（超过阈值），将其标记为 `false`。
-2. **提交**：在选区提交（Commit）时，根据追踪结果设置最终的 `lassoMode`：
-   - **纯点击 (Alt+Click)** → `setLassoMode('polygonal')` → `pathToMask` 保留尖角。
-   - **包含拖拽 (Freehand)** → `setLassoMode('freehand')` → `pathToMask` 应用平滑。
-3. **代码清理**：重构了路径平滑工具函数，提升了代码可读性。
+#### 第一步：修复 Bug (Immediate Fix)
 
-## 5. 结论
+确保 `lassoMode` 被正确传递和持久化。
 
-通过正确管理选区模式状态，并智能区分用户的操作意图（点击 vs 拖拽），我们成功实现了：
+- 验证 `useToolStore` 在切换工具时是否正确设置了 `lassoMode`。
+- 确保 `useSelectionStore.commitSelection` 读取的是正确的 `lassoMode`。
+- **效果**: 多边形工具将不再产生错误的圆角。
 
-- 自由手绘选区的平滑抗锯齿。
-- 多边形选区的精确锐利尖角。
-- 笔刷绘图与选区边缘的完美融合。
+#### 第二步：策略改进 (向 Krita 看齐)
+
+考虑移除或限制手绘模式的 `Catmull-Rom` 曲线平滑。
+
+- **原因**: 强制曲线拟合会改变用户的绘制意图，导致“过冲”或形状变形。
+- **建议**:
+  - **多边形**: 永远使用 `lineTo` (确保尖角)。
+  - **手绘**: 优先使用 `lineTo` (依赖输入点的密度)。如果输入事件太稀疏，可以使用非常保守的平滑算法（如 Chaikin 算法），或者仅在点距非常大时才平滑。
+
+## 5. 下一步行动
+
+1.  **Fixing**: 调试 `SelectionOverlay.tsx` 和 `selection.ts`，修复 `lassoMode` 状态问题。
+2.  **Verification**: 确认修复后，多边形选区是否恢复尖角，且边缘依然有抗锯齿效果。
