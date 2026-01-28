@@ -239,16 +239,48 @@ export function useCursor({
     brushTexture,
   ]);
 
-  // Selection modifiers
-  const { selectionMode } = useSelectionStore();
+  // Selection modifiers - track Ctrl/Shift keys directly for immediate feedback
   const selectionCursorRef = useRef<HTMLDivElement>(null);
+  const [shiftPressed, setShiftPressed] = useState(false);
+  const [ctrlPressed, setCtrlPressed] = useState(false);
+
+  // Listen for Ctrl/Shift key changes globally
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftPressed(true);
+      if (e.key === 'Control') setCtrlPressed(true);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftPressed(false);
+      if (e.key === 'Control') setCtrlPressed(false);
+    };
+
+    // Also handle window blur to reset state
+    const handleBlur = () => {
+      setShiftPressed(false);
+      setCtrlPressed(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
 
   const selectionModifier = useMemo(() => {
-    if (!isSelectionTool || isCreatingSelection) return null;
-    if (selectionMode === 'add') return 'plus';
-    if (selectionMode === 'subtract') return 'minus';
+    if (!isSelectionTool) return null;
+    // Shift = Add, Ctrl = Subtract (show icon even during selection creation)
+    if (shiftPressed && !ctrlPressed) return 'plus';
+    if (ctrlPressed && !shiftPressed) return 'minus';
+    // Shift+Ctrl = Intersect (no special icon for now)
     return null;
-  }, [isSelectionTool, isCreatingSelection, selectionMode]);
+  }, [isSelectionTool, shiftPressed, ctrlPressed]);
 
   const showSelectionModifier = !!selectionModifier;
 

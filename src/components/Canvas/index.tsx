@@ -1837,8 +1837,8 @@ export function Canvas() {
             filter: 'drop-shadow(0px 1px 2px rgba(0,0,0,0.5))',
           }}
         >
-          {selectionModifier === 'add' && <Plus size={16} strokeWidth={3} color="white" />}
-          {selectionModifier === 'subtract' && <Minus size={16} strokeWidth={3} color="white" />}
+          {selectionModifier === 'plus' && <Plus size={16} strokeWidth={3} color="white" />}
+          {selectionModifier === 'minus' && <Minus size={16} strokeWidth={3} color="white" />}
           {/* Use dual-stroke layering for visibility if simple color isnt enough, but drop-shadow usually works */}
         </div>
       )}
