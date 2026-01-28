@@ -64,7 +64,7 @@ export function useSelectionHandler({
     updatePreviewPoint,
     updateCreationRect,
     commitSelection,
-    isPointInBounds,
+    isPointInSelection,
     beginMove,
     updateMove,
     commitMove,
@@ -213,7 +213,7 @@ export function useSelectionHandler({
           // Fall through to start new selection below
         } else {
           startedOnSelectionRef.current = true;
-          if (isPointInBounds(canvasX, canvasY)) {
+          if (isPointInSelection(canvasX, canvasY)) {
             // Start potential move (will be confirmed if drag happens)
             beginMove(point);
             return true;
@@ -256,7 +256,7 @@ export function useSelectionHandler({
       isCreating,
       hasSelection,
       beginSelection,
-      isPointInBounds,
+      isPointInSelection,
       beginMove,
       deselectAll,
       setSelectionMode,
