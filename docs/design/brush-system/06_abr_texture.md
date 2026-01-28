@@ -231,95 +231,111 @@ if (u_mode == TEXTURE_MODE_MULTIPLY) {
 final_alpha *= influence;
 ```
 
-### 4.3 CPU 渲染实现 (Rust)
+### 4.3 CPU 渲染实现
 
-在 Rust CPU 引擎中，必须手动计算坐标映射和混合。
+在 TypeScript CPU 引擎中 (`src/utils/`)，必须手动计算坐标映射和混合。
 
-````rust
-struct BrushState {
-    texture_data: Vec<u8>, // Grayscale Data
-    tex_w: usize,
-    tex_h: usize,
-    scale: f32,
-    depth: f32, // 0.0 - 1.0
-    invert: bool,
-    mode: TextureMode,
+> [!NOTE]
+> PaintBoard 的 CPU 笔刷引擎完全在 TypeScript 前端实现，参见 `src/utils/strokeBuffer.ts` 和 `src/utils/maskCache.ts`.
+
+```typescript
+// src/utils/patternRenderConfig.ts
+
+interface PatternRenderConfig {
+  textureData: Uint8Array; // Grayscale Data
+  texW: number;
+  texH: number;
+  scale: number;
+  depth: number; // 0.0 - 1.0
+  invert: boolean;
+  mode: TextureMode;
 }
 
-```rust
-fn rasterize_dab_cpu(
-    dab_buffer: &mut [u8],
-    brush_tip: &[u8],
-    width: usize,
-    height: usize,
-    canvas_pos_x: i32,     // Dab 在画布上的绝对坐标 X
-    canvas_pos_y: i32,     // Dab 在画布上的绝对坐标 Y
-    state: &BrushState
-) {
-    // 0. Safety Check: If no texture data (e.g. missing resource), fallback to normal rendering
-    if state.texture_data.is_empty() {
-        for y in 0..height {
-            for x in 0..width {
-                 let i = y * width + x;
-                 let tip_alpha = brush_tip[i];
-                 if tip_alpha > 0 {
-                    dab_buffer[i * 4 + 3] = tip_alpha;
-                 }
-            }
-        }
-        return;
-    }
-
-    for y in 0..height {
-        let global_y = canvas_pos_y + y as i32;
-
-        for x in 0..width {
-            let i = y * width + x;
-            let tip_alpha = brush_tip[i] as f32 / 255.0;
-
-            // 1. Skip invisible pixels
-            if tip_alpha <= 0.001 {
-                dab_buffer[i * 4 + 3] = 0;
-                continue;
-            }
-
-            // 2. Calculate Pattern Coordinates (Canvas Space)
-            // Tiling: Use rem_euclid to handle negative coordinates correctly
-            let u = ((canvas_pos_x + x as i32) as f32 / state.scale) as i32;
-            let v = (global_y as f32 / state.scale) as i32;
-
-            let tex_u = u.rem_euclid(state.tex_w as i32) as usize;
-            let tex_v = v.rem_euclid(state.tex_h as i32) as usize;
-
-            // 3. Sample Texture (Nearest Neighbor for performance)
-            let mut tex_val = state.texture_data[tex_v * state.tex_w + tex_u] as f32 / 255.0;
-            if state.invert { tex_val = 1.0 - tex_val; }
-
-            // 4. Blending
-            // Influence = 1.0 (No Effect) -> Target (Full Effect) based on Depth
-            let mut influence = 1.0;
-
-            match state.mode {
-                TextureMode::Multiply => {
-                     // mix(1.0, tex_val, depth)
-                     influence = 1.0 * (1.0 - state.depth) + tex_val * state.depth;
-                },
-                TextureMode::Subtract => {
-                     // mix(1.0, 1.0 - tex_val, depth)
-                     influence = 1.0 * (1.0 - state.depth) + (1.0 - tex_val) * state.depth;
-                },
-                 _ => {}
-            }
-
-            // 5. Apply to Alpha
-            let final_alpha = tip_alpha * influence;
-            dab_buffer[i * 4 + 3] = (final_alpha * 255.0) as u8;
-
-            // Note: RGB channels usually set by composition step or initialized before
-        }
-    }
+enum TextureMode {
+  Multiply,
+  Subtract,
+  Height,
 }
-````
+```
+
+```typescript
+// src/utils/strokeBuffer.ts (Pattern Texture Logic)
+
+function applyPatternTexture(
+  dabBuffer: Uint8ClampedArray,
+  brushTip: Float32Array, // Mask values 0.0-1.0
+  width: number,
+  height: number,
+  canvasPosX: number, // Dab 在画布上的绝对坐标 X
+  canvasPosY: number, // Dab 在画布上的绝对坐标 Y
+  config: PatternRenderConfig
+): void {
+  // 0. Safety Check: If no texture data (e.g. missing resource), fallback to normal rendering
+  if (!config.textureData || config.textureData.length === 0) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const tipAlpha = brushTip[i] ?? 0;
+        if (tipAlpha > 0) {
+          dabBuffer[i * 4 + 3] = Math.round(tipAlpha * 255);
+        }
+      }
+    }
+    return;
+  }
+
+  for (let y = 0; y < height; y++) {
+    const globalY = canvasPosY + y;
+
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const tipAlpha = brushTip[i] ?? 0;
+
+      // 1. Skip invisible pixels
+      if (tipAlpha <= 0.001) {
+        dabBuffer[i * 4 + 3] = 0;
+        continue;
+      }
+
+      // 2. Calculate Pattern Coordinates (Canvas Space)
+      // Tiling: Use modulo to handle negative coordinates correctly
+      const u = Math.floor((canvasPosX + x) / config.scale);
+      const v = Math.floor(globalY / config.scale);
+
+      // rem_euclid equivalent for negative-safe modulo
+      const texU = ((u % config.texW) + config.texW) % config.texW;
+      const texV = ((v % config.texH) + config.texH) % config.texH;
+
+      // 3. Sample Texture (Nearest Neighbor for performance)
+      let texVal = (config.textureData[texV * config.texW + texU] ?? 0) / 255;
+      if (config.invert) texVal = 1.0 - texVal;
+
+      // 4. Blending
+      // Influence = 1.0 (No Effect) -> Target (Full Effect) based on Depth
+      let influence = 1.0;
+
+      switch (config.mode) {
+        case TextureMode.Multiply:
+          // mix(1.0, texVal, depth)
+          influence = 1.0 * (1.0 - config.depth) + texVal * config.depth;
+          break;
+        case TextureMode.Subtract:
+          // mix(1.0, 1.0 - texVal, depth)
+          influence = 1.0 * (1.0 - config.depth) + (1.0 - texVal) * config.depth;
+          break;
+        default:
+          break;
+      }
+
+      // 5. Apply to Alpha
+      const finalAlpha = tipAlpha * influence;
+      dabBuffer[i * 4 + 3] = Math.round(finalAlpha * 255);
+
+      // Note: RGB channels usually set by composition step or initialized before
+    }
+  }
+}
+```
 
 ## 5. 任务清单 (Revised Task List)
 
@@ -351,7 +367,7 @@ fn rasterize_dab_cpu(
 
 - [ ] **Shader**: `BrushShader` 增加 Pattern Uniforms (包含 `u_canvas_offset`)。
 - [ ] **Shader**: 实现 `Texturize` 核心算法 (Canvas Space UV + Depth Mix)。
-- [ ] **CPU**: 实现 Rust CPU 端 `rasterize_dab_cpu` 中的纹理采样逻辑。
+- [ ] **CPU**: 实现 TypeScript CPU 端 `strokeBuffer.ts` 中的纹理采样逻辑 (`applyPatternTexture`)。
 - [ ] **UI**: 笔刷设置面板增加 "Texture" 选项卡 (预览图 + 参数滑块)。
 
 ## 6. 验证计划
