@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
 
@@ -255,24 +255,35 @@ export function useCursor({
     isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
 
   // Check if mouse position is inside selection (for move cursor)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const checkSelectionHover = (clientX: number, clientY: number) => {
-    if (!isSelectionTool || !hasSelection || isCreatingSelection || !canvasRef?.current) {
-      if (isOverSelection) setIsOverSelection(false);
-      return;
-    }
+  // Check if mouse position is inside selection (for move cursor)
+  const checkSelectionHover = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!isSelectionTool || !hasSelection || isCreatingSelection || !canvasRef?.current) {
+        if (isOverSelection) setIsOverSelection(false);
+        return;
+      }
 
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const canvasX = (clientX - rect.left) / scale;
-    const canvasY = (clientY - rect.top) / scale;
+      const canvas = canvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const canvasX = (clientX - rect.left) / scale;
+      const canvasY = (clientY - rect.top) / scale;
 
-    // Use isPointInSelection to check actual mask, not just bounding box
-    const isOver = isPointInSelection(canvasX, canvasY);
-    if (isOver !== isOverSelection) {
-      setIsOverSelection(isOver);
-    }
-  };
+      // Use isPointInSelection to check actual mask, not just bounding box
+      const isOver = isPointInSelection(canvasX, canvasY);
+      if (isOver !== isOverSelection) {
+        setIsOverSelection(isOver);
+      }
+    },
+    [
+      isSelectionTool,
+      hasSelection,
+      isCreatingSelection,
+      canvasRef,
+      scale,
+      isPointInSelection,
+      isOverSelection,
+    ]
+  );
 
   // Generate SVG cursor URL synchronously using useMemo
   const hardwareCursorStyle = useMemo(() => {
@@ -421,14 +432,17 @@ export function useCursor({
   if (isInteracting) {
     cursorStyle = 'grab';
   } else if (isSelectionTool) {
-    // Check if over selection first
-    if (isOverSelection && hasSelection && !isCreatingSelection) {
-      cursorStyle = SELECTION_MOVE_CURSOR;
-    } else if (selectionCursorStyle) {
+    // 1. Modifiers (Ctrl/Shift) -> Hardware +/- cursor
+    if ((shiftPressed || ctrlPressed) && selectionCursorStyle) {
       cursorStyle = selectionCursorStyle;
-    } else {
-      // Fallback
-      cursorStyle = 'crosshair';
+    }
+    // 2. Hovering existing selection -> Move cursor
+    else if (isOverSelection && hasSelection && !isCreatingSelection) {
+      cursorStyle = SELECTION_MOVE_CURSOR;
+    }
+    // 3. Default selection tool -> Hardware cursor or crosshair fallback
+    else {
+      cursorStyle = selectionCursorStyle || 'crosshair';
     }
   } else if (showEyedropperDomCursor) {
     // Use DOM cursor for eyedropper, hide system cursor
