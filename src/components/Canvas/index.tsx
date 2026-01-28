@@ -16,7 +16,7 @@ import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer, Point as BufferPoint } from '@/utils/interpolation';
 import { getEffectiveInputData } from './inputUtils';
 import { decompressLz4PrependSize } from '@/utils/lz4';
-import { Plus, Minus } from 'lucide-react';
+
 import './Canvas.css';
 
 // Types
@@ -149,15 +149,7 @@ export function Canvas() {
     };
   }, []);
 
-  const {
-    cursorStyle,
-    showDomCursor,
-    showEyedropperDomCursor,
-    // New selection props
-    selectionCursorRef,
-    showSelectionModifier,
-    selectionModifier,
-  } = useCursor({
+  const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
     currentTool,
     currentSize,
     scale,
@@ -175,7 +167,6 @@ export function Canvas() {
           cursorBounds: brushTexture.cursorBounds,
         }
       : null,
-    canvasRef,
   });
 
   // Selection handler for rect select and lasso tools
@@ -1818,28 +1809,6 @@ export function Canvas() {
               strokeLinejoin="round"
             />
           </svg>
-        </div>
-      )}
-      {/* Selection Modifier Cursor (+/-) */}
-      {showSelectionModifier && (
-        <div
-          ref={selectionCursorRef}
-          className="selection-modifier-cursor"
-          style={{
-            position: 'fixed',
-            left: 0,
-            top: 0,
-            pointerEvents: 'none',
-            zIndex: 'var(--z-overlay)',
-            width: 16,
-            height: 16,
-            // Add drop shadow for better visibility against any background
-            filter: 'drop-shadow(0px 1px 2px rgba(0,0,0,0.5))',
-          }}
-        >
-          {selectionModifier === 'plus' && <Plus size={16} strokeWidth={3} color="white" />}
-          {selectionModifier === 'minus' && <Minus size={16} strokeWidth={3} color="white" />}
-          {/* Use dual-stroke layering for visibility if simple color isnt enough, but drop-shadow usually works */}
         </div>
       )}
     </div>

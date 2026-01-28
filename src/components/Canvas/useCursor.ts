@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ToolType } from '@/stores/tool';
-import { useSelectionStore } from '@/stores/selection';
 
 /** Cursor style for each tool type */
 const TOOL_CURSORS: Record<ToolType, string> = {
@@ -31,12 +30,6 @@ const DEFAULT_STROKE: StrokeStyle = {
   outer: { color: 'rgba(255,255,255,0.9)', width: 1.5 },
   inner: { color: 'rgba(0,0,0,0.8)', width: 1 },
 };
-
-/** Mouse-pointer-2 cursor for selection move (lucide-react icon) */
-const SELECTION_MOVE_CURSOR = (() => {
-  const svg = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" fill="white" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  return `url("data:image/svg+xml;base64,${btoa(svg)}") 4 4, default`;
-})();
 
 /** Set cursor position with center offset */
 const setCursorPosition = (cursor: HTMLDivElement, x: number, y: number) => {
@@ -145,6 +138,63 @@ function createCursorSvg(
   return `url("${cursorUrl}") ${center} ${center}, none`;
 }
 
+/**
+ * Creates the SVG string for the selection cursor (mouse-pointer-2 style)
+ */
+function createSelectionCursorSvg(modifier: 'plus' | 'minus' | null): string {
+  // mouse-pointer-2 path (24x24)
+  // Origin is roughly at 4,4
+  const cursorPath = `M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z`;
+
+  // Dual stroke style for visibility
+
+  // The original had fill="white" stroke="black". Let's stick to the dual-stroke outline style for consistency if desired,
+  // but standard mouse pointers usually have a solid fill.
+  // Let's use the provided mouse-pointer-2 style: fill="white" stroke="black"
+
+  const cursorContent = `
+    <path d="${cursorPath}" fill="black" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  `;
+
+  let modifierContent = '';
+  if (modifier) {
+    // Position modifier to the right of the cursor
+    // Cursor bounding box ends roughly at x=20
+    const modX = 24;
+    const modY = 16;
+    const size = 10;
+
+    // Dual stroke for modifier
+    const modStyle = `fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"`;
+    const modInnerStyle = `fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"`;
+
+    let pathData = '';
+    if (modifier === 'plus') {
+      pathData = `M${modX} ${modY - size / 2} V${modY + size / 2} M${modX - size / 2} ${modY} H${modX + size / 2}`;
+    } else {
+      pathData = `M${modX - size / 2} ${modY} H${modX + size / 2}`;
+    }
+
+    modifierContent = `
+      <path d="${pathData}" ${modStyle} />
+      <path d="${pathData}" ${modInnerStyle} />
+    `;
+  }
+
+  // Size 32x32 to accommodate cursor + modifier
+  const size = 32;
+  const svg = `
+    <svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      ${cursorContent}
+      ${modifierContent}
+    </svg>
+  `;
+
+  const cursorUrl = `data:image/svg+xml;base64,${btoa(svg)}`;
+  // hotspot at 4,4
+  return `url("${cursorUrl}") 4 4, default`;
+}
+
 interface UseCursorProps {
   currentTool: ToolType;
   currentSize: number;
@@ -161,8 +211,6 @@ interface UseCursorProps {
   brushAngle?: number;
   /** Texture cursor data (for ABR brushes) */
   brushTexture?: BrushCursorTexture | null;
-  /** Canvas ref for coordinate conversion (selection cursor) */
-  canvasRef?: React.RefObject<HTMLCanvasElement>;
 }
 
 export function useCursor({
@@ -178,15 +226,10 @@ export function useCursor({
   brushRoundness = 100,
   brushAngle = 0,
   brushTexture,
-  canvasRef,
 }: UseCursorProps) {
   const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Track if cursor is hovering over selection bounds
-  const [isOverSelection, setIsOverSelection] = useState(false);
-
   // Get selection state
-  const { hasSelection, isPointInSelection, isCreating: isCreatingSelection } = useSelectionStore();
 
   const isBrushTool = currentTool === 'brush' || currentTool === 'eraser';
   const isSelectionTool = currentTool === 'select' || currentTool === 'lasso';
@@ -197,25 +240,6 @@ export function useCursor({
   const HARDWARE_CURSOR_MAX_SIZE = 96;
   const shouldUseHardwareCursor =
     isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
-
-  // Check if mouse position is inside selection (for move cursor)
-  const checkSelectionHover = useCallback(
-    (clientX: number, clientY: number) => {
-      if (!isSelectionTool || !hasSelection || isCreatingSelection || !canvasRef?.current) {
-        setIsOverSelection(false);
-        return;
-      }
-
-      const canvas = canvasRef.current;
-      const rect = canvas.getBoundingClientRect();
-      const canvasX = (clientX - rect.left) / scale;
-      const canvasY = (clientY - rect.top) / scale;
-
-      // Use isPointInSelection to check actual mask, not just bounding box
-      setIsOverSelection(isPointInSelection(canvasX, canvasY));
-    },
-    [isSelectionTool, hasSelection, isCreatingSelection, canvasRef, scale, isPointInSelection]
-  );
 
   // Generate SVG cursor URL synchronously using useMemo
   const hardwareCursorStyle = useMemo(() => {
@@ -239,8 +263,7 @@ export function useCursor({
     brushTexture,
   ]);
 
-  // Selection modifiers - track Ctrl/Shift keys directly for immediate feedback
-  const selectionCursorRef = useRef<HTMLDivElement>(null);
+  // Track Ctrl/Shift keys for selection cursor modifier
   const [shiftPressed, setShiftPressed] = useState(false);
   const [ctrlPressed, setCtrlPressed] = useState(false);
 
@@ -273,16 +296,16 @@ export function useCursor({
     };
   }, []);
 
-  const selectionModifier = useMemo(() => {
+  // Calculate selection cursor style
+  const selectionCursorStyle = useMemo(() => {
     if (!isSelectionTool) return null;
-    // Shift = Add, Ctrl = Subtract (show icon even during selection creation)
-    if (shiftPressed && !ctrlPressed) return 'plus';
-    if (ctrlPressed && !shiftPressed) return 'minus';
-    // Shift+Ctrl = Intersect (no special icon for now)
-    return null;
-  }, [isSelectionTool, shiftPressed, ctrlPressed]);
 
-  const showSelectionModifier = !!selectionModifier;
+    let modifier: 'plus' | 'minus' | null = null;
+    if (shiftPressed && !ctrlPressed) modifier = 'plus';
+    if (ctrlPressed && !shiftPressed) modifier = 'minus';
+
+    return createSelectionCursorSvg(modifier);
+  }, [isSelectionTool, shiftPressed, ctrlPressed]);
 
   // Handle native pointer events for DOM cursors (zero-lag update)
   useEffect(() => {
@@ -292,9 +315,6 @@ export function useCursor({
     const handleNativePointerMove = (e: PointerEvent) => {
       // Always track mouse position, even when DOM cursor is not shown
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-
-      // Check if hovering over selection (for move cursor)
-      checkSelectionHover(e.clientX, e.clientY);
 
       // Update brush cursor position
       const brushCursor = brushCursorRef.current;
@@ -307,20 +327,11 @@ export function useCursor({
       if (eyedropperCursor) {
         setCursorPosition(eyedropperCursor, e.clientX, e.clientY);
       }
-
-      // Update selection modifier cursor position
-      const selectionCursor = selectionCursorRef.current;
-      if (selectionCursor) {
-        // Offset the modifier slightly to the bottom-right of the crosshair
-        const offset = 16;
-        setCursorPosition(selectionCursor, e.clientX + offset, e.clientY + offset);
-      }
     };
 
     const handleNativePointerLeave = () => {
       if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
       if (eyedropperCursorRef.current) eyedropperCursorRef.current.style.display = 'none';
-      if (selectionCursorRef.current) selectionCursorRef.current.style.display = 'none';
     };
 
     const handleNativePointerEnter = (e: PointerEvent) => {
@@ -337,13 +348,6 @@ export function useCursor({
         eyedropperCursor.style.display = 'block';
         setCursorPosition(eyedropperCursor, e.clientX, e.clientY);
       }
-
-      const selectionCursor = selectionCursorRef.current;
-      if (selectionCursor) {
-        selectionCursor.style.display = 'block';
-        const offset = 16;
-        setCursorPosition(selectionCursor, e.clientX + offset, e.clientY + offset);
-      }
     };
 
     container.addEventListener('pointermove', handleNativePointerMove, { passive: true });
@@ -355,7 +359,7 @@ export function useCursor({
       container.removeEventListener('pointerleave', handleNativePointerLeave);
       container.removeEventListener('pointerenter', handleNativePointerEnter);
     };
-  }, [containerRef, brushCursorRef, eyedropperCursorRef, checkSelectionHover]); // selectionCursorRef is ref, stable
+  }, [containerRef, brushCursorRef, eyedropperCursorRef]); // selectionCursorRef is ref, stable
 
   const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
 
@@ -375,28 +379,19 @@ export function useCursor({
     if (showEyedropperDomCursor && eyedropperCursorRef.current) {
       setCursorPosition(eyedropperCursorRef.current, lastPos.x, lastPos.y);
     }
-    // Update selection cursor visibility/position
-    if (showSelectionModifier && selectionCursorRef.current) {
-      const offset = 16;
-      setCursorPosition(selectionCursorRef.current, lastPos.x + offset, lastPos.y + offset);
-    }
-  }, [
-    showDomCursor,
-    showEyedropperDomCursor,
-    showSelectionModifier,
-    brushCursorRef,
-    eyedropperCursorRef,
-  ]);
+  }, [showDomCursor, showEyedropperDomCursor, brushCursorRef, eyedropperCursorRef]);
 
   let cursorStyle = TOOL_CURSORS[currentTool];
   if (isInteracting) {
     cursorStyle = 'grab';
-  } else if (isSelectionTool && isOverSelection && !isCreatingSelection) {
-    // Priority: Modifier > Hover Move
-    if (showSelectionModifier) {
-      cursorStyle = 'crosshair';
+  } else if (isSelectionTool) {
+    // Always use our custom hardware cursor for selection tools
+    if (selectionCursorStyle) {
+      cursorStyle = selectionCursorStyle;
     } else {
-      cursorStyle = SELECTION_MOVE_CURSOR;
+      // Fallback (shouldn't really happen as selectionCursorStyle handles null modifier)
+      // But createSelectionCursorSvg always returns a string, so we're good.
+      cursorStyle = 'crosshair';
     }
   } else if (showEyedropperDomCursor) {
     // Use DOM cursor for eyedropper, hide system cursor
@@ -413,9 +408,5 @@ export function useCursor({
     cursorStyle,
     showDomCursor,
     showEyedropperDomCursor,
-    // Selection specific
-    selectionCursorRef,
-    showSelectionModifier,
-    selectionModifier,
   };
 }
