@@ -1,298 +1,344 @@
-这是一个非常典型的问题。看图片中的红箭头，填充区域（深灰色）比蚂蚁线（虚线选区）要“缩进去”且圆润化了。
+这两个问题指向了同一个核心缺陷：**当前的平滑算法是“全有或全无”的，且错误地将闭合路径视为连续的平滑曲线。**
 
-**根本原因分析：**
-这是因为你在渲染选区遮罩（Mask）时，**无差别地应用了平滑算法（如 Chaikin 或 Bezier）**。
+要解决这个问题，我们需要在**数据结构层**区分“手绘点”和“锚点（多边形点）”，并在**渲染层**针对每一段线段单独决定是画曲线还是画直线。
 
-- 对于**自由手绘（Freehand）**，平滑是必要的，因为手抖会产生锯齿。
-- 对于**多边形（Polygonal）**，用户通过点击确定的每一个点都是**关键点**，必须精确连接，**不能应用平滑算法**，否则尖角就会被“切掉”（变圆）。
+以下是完整的解决方案：
 
-我们需要在架构上区分这两种模式。以下是修复方案：
+### 1. 修改数据结构 (Types)
 
-### 1. 修改 Store (状态管理)
-
-首先，我们需要在选区状态中记录当前的模式。
-
-**文件:** `src/store/selection.ts` (假设路径)
+首先，我们不能只存坐标 `{x, y}`。我们需要知道这个点是怎么产生的（是通过拖拽产生的平滑点，还是点击产生的硬角点）。
 
 ```typescript
-import { create } from 'zustand';
-
-// 定义选区模式
-export type LassoMode = 'freehand' | 'polygonal';
-
-interface SelectionState {
-  selectionPoints: { x: number; y: number }[];
-  // 新增：记录当前选区是手绘的还是多边形的
-  lassoMode: LassoMode;
-
-  setSelectionPoints: (points: { x: number; y: number }[]) => void;
-  setLassoMode: (mode: LassoMode) => void;
-  // ... 其他现有状态
+// types.ts
+export interface SelectionPoint {
+  x: number;
+  y: number;
+  // 'freehand': 拖拽产生的点，需要平滑连接
+  // 'corner': 点击产生的点，或者是拖拽的起止点，需要直线连接
+  type: 'freehand' | 'corner';
 }
-
-export const useSelectionStore = create<SelectionState>((set) => ({
-  selectionPoints: [],
-  lassoMode: 'freehand', // 默认为手绘
-
-  setSelectionPoints: (points) => set({ selectionPoints: points }),
-  setLassoMode: (mode) => set({ lassoMode: mode }),
-}));
 ```
 
-### 2. 修改交互逻辑 (Handler)
+### 2. 修改交互逻辑 (Selection Handler)
 
-我们需要智能判断用户的意图。如果用户主要是在**拖拽**，那就是 `freehand`；如果用户主要是在**点击**（没有发生长距离拖拽），那就是 `polygonal`。
+我们需要在生成点的时候打上标签。
+
+- `onPointerDown` (点击开始)：标记为 `corner`。
+- `onPointerMove` (拖拽中)：标记为 `freehand`。
+- `onPointerUp` (松手)：如果是拖拽结束，最后一个点通常视为 `corner`（作为一段笔触的终结）。
 
 **文件:** `src/hooks/useSelectionHandler.ts`
 
 ```typescript
-import { useRef } from 'react';
-import { useSelectionStore } from '../store/selection';
+// ... imports
 
-export const useSelectionHandler = () => {
-  const setLassoMode = useSelectionStore((state) => state.setLassoMode);
-  const setSelectionPoints = useSelectionStore((state) => state.setSelectionPoints);
+const onPointerDown = (e) => {
+  const newPoint = { x: e.clientX, y: e.clientY, type: 'corner' }; // 起点是硬角
+  setSelectionPoints([newPoint]);
+  // ...
+};
 
-  // 增加一个 Ref 来追踪本次选区操作是否发生过“拖拽”
-  const isPurePolygonalRef = useRef(true);
+const onPointerMove = (e) => {
+  if (isDragging) {
+    // 拖拽过程中产生的点是手绘点
+    const newPoint = { x: e.clientX, y: e.clientY, type: 'freehand' };
 
-  const onPointerDown = (e) => {
-    // 重置状态：默认假设你是想画多边形（点击）
-    isPurePolygonalRef.current = true;
-    // ... 现有的开始逻辑
-  };
+    // 这里可以加一个采样优化，比如每移动3px才加一个点，避免点过密
+    addSelectionPoint(newPoint);
+  }
+  // ...
+};
 
-  const onPointerMove = (e) => {
-    // 如果发生移动且距离超过一定阈值（比如 5px），说明用户在手绘拖拽
-    if (isDragging && distance > 5) {
-      isPurePolygonalRef.current = false;
-    }
-    // ... 现有的记录点逻辑
-  };
+const onPointerUp = (e) => {
+  // 如果刚才是在拖拽，松手的那一刻，把最后一个点更新为 'corner'
+  // 这样确保这段手绘线段有一个明确的“终点”
+  if (isDragging) {
+    markLastPointAsCorner();
+  }
 
-  const onPointerUp = () => {
-    // 提交选区时，根据刚才的追踪结果设置模式
-    // 如果全程没有拖拽（全是点击），强制设为 polygonal
-    // 如果有过拖拽，设为 freehand
-    const finalMode = isPurePolygonalRef.current ? 'polygonal' : 'freehand';
-    setLassoMode(finalMode);
-
-    // ... 现有的提交逻辑
-  };
-
-  return { onPointerDown, onPointerMove, onPointerUp };
+  // 提交选区...
 };
 ```
 
-### 3. 核心修复：修改渲染逻辑 (Utils)
+### 3. 核心修复：混合渲染算法 (Path Rendering)
 
-这是解决问题的关键。在生成遮罩路径时，根据 `lassoMode` 决定是否应用平滑。
+这是解决你两个 Bug 的关键代码。我们不再把整个数组丢进平滑函数，而是遍历点，根据相邻两个点的类型决定画法。
 
-**文件:** `src/utils/maskUtils.ts` (或者你生成 `Path2D` 的地方)
+**算法逻辑：**
+
+1.  **解决 Bug 1 (闭合变圆)**：我们只处理点 `0` 到 `N` 的路径，最后用标准的 `ctx.closePath()`。`closePath` 在 Canvas 中永远是画直线连接起点，这正好符合“未闭合时松手自动直线闭合”的需求。
+2.  **解决 Bug 2 (混合选区平滑)**：只有当 **当前点** 和 **下一个点** 都是 `freehand` 类型时，才使用贝塞尔曲线平滑。一旦遇到 `corner` 点，强制使用 `lineTo`。
+
+**文件:** `src/utils/selectionRender.ts`
 
 ```typescript
-import { getSmoothPath } from './smoothing'; // 假设你之前的平滑算法在这里
+import { SelectionPoint } from '../types';
 
-/**
- * 将点数组转换为 Path2D
- * @param points 选区点
- * @param mode 选区模式 (新增参数)
- */
-export const pointsToPath = (
-  points: { x: number; y: number }[],
-  mode: 'freehand' | 'polygonal'
-): Path2D => {
+export const pointsToPath = (points: SelectionPoint[]): Path2D => {
   const path = new Path2D();
 
   if (points.length < 2) return path;
 
-  // 关键分支逻辑
-  if (mode === 'polygonal') {
-    // === 多边形模式：不做任何平滑，直线连接 ===
-    path.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      path.lineTo(points[i].x, points[i].y);
-    }
-    path.closePath();
-  } else {
-    // === 手绘模式：应用之前的平滑算法 (Chaikin/Bezier) ===
-    // 只有手绘模式才需要去噪和平滑
-    const smoothedPoints = getSmoothPath(points);
+  // 1. 移动到起点
+  path.moveTo(points[0].x, points[0].y);
 
-    path.moveTo(smoothedPoints[0].x, smoothedPoints[0].y);
-    // ... 你的平滑绘制逻辑 ...
-    // 通常是 quadraticCurveTo 或 bezierCurveTo
-    for (let i = 0; i < smoothedPoints.length - 1; i++) {
-      const p0 = smoothedPoints[i];
-      const p1 = smoothedPoints[i + 1];
-      path.quadraticCurveTo(p0.x, p0.y, (p0.x + p1.x) / 2, (p0.y + p1.y) / 2);
+  // 2. 遍历所有点（注意：不包含最后回到起点的那个闭合动作）
+  for (let i = 0; i < points.length - 1; i++) {
+    const curr = points[i];
+    const next = points[i + 1];
+
+    // 核心逻辑：只有两个点都是 'freehand' 且距离适中时，才平滑
+    // 如果任意一个是 'corner'，说明这里是多边形转折，或者是手绘的起止，必须用直线
+    if (curr.type === 'freehand' && next.type === 'freehand') {
+      // === 平滑策略 ===
+      // 使用中点画法 (Midpoint approach) 获得圆润的笔触
+      // 我们画到当前点和下个点的“中点”，把当前点作为控制点（或者反之）
+      // 这里的简单做法是：取两点中点作为终点，next作为控制点其实不准确。
+      // 更稳健的平滑通常是：quadraticCurveTo(curr.x, curr.y, (curr.x + next.x)/2, (curr.y + next.y)/2)
+      // 但上面的写法是从上一段的中点过来的。
+
+      // 简单且效果好的平滑公式：
+      const midX = (curr.x + next.x) / 2;
+      const midY = (curr.y + next.y) / 2;
+
+      // 注意：这种画法通常需要从 mid 开始画。
+      // 为了不破坏结构，我们这里做一个简单的贝塞尔：
+      // 以 curr 为控制点（如果前一个是直线过来的，这里可能会稍微突变，
+      // 但对于密集的 freehand 点，直接 quadraticCurveTo 到 mid 是最顺滑的）
+      path.quadraticCurveTo(curr.x, curr.y, midX, midY);
+    } else {
+      // === 直线策略 (Polygonal) ===
+      // 遇到 polygonal 点，或者是 freehand 的终点 -> 直线连接
+      // 这保证了尖角被保留
+      path.lineTo(next.x, next.y);
     }
-    path.closePath();
   }
+
+  // 3. 处理最后一个点到终点的连接
+  // 如果上面的循环用的是中点平滑，最后还需要补齐到最后一个点
+  const lastIndex = points.length - 1;
+  const lastPoint = points[lastIndex];
+  // 确保路径走到了数组最后一个点（因为上面的平滑可能只到了中点）
+  path.lineTo(lastPoint.x, lastPoint.y);
+
+  // 4. 闭合路径 (解决 Bug 1)
+  // closePath 会自动创建一条从 lastPoint 到 points[0] 的【直线】
+  // 无论之前的点多么平滑，这条闭合线永远是直的，不会出现弧形。
+  path.closePath();
 
   return path;
 };
 ```
 
-### 4. 在填充组件中调用
+### 4. 进一步优化：解决平滑算法的滞后问题
 
-确保你在进行填充（Fill）或者绘制选区背景时，传入了正确的模式：
+上面的简单 `quadraticCurveTo` 在混合模式下可能会在直线接曲线时出现一个小缺口或错位。更完美的混合渲染逻辑如下：
 
 ```typescript
-// 在你的 Canvas 组件或 Effect 中
-const { selectionPoints, lassoMode } = useSelectionStore();
+export const pointsToPath = (points: SelectionPoint[]): Path2D => {
+  const path = new Path2D();
+  if (points.length < 2) return path;
 
-useEffect(() => {
-  if (selectionPoints.length > 0) {
-    // 传入 lassoMode
-    const path = pointsToPath(selectionPoints, lassoMode);
+  path.moveTo(points[0].x, points[0].y);
 
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fill(path); // 现在多边形将完美贴合尖角
+  let i = 1;
+  while (i < points.length) {
+    const prev = points[i - 1];
+    const curr = points[i];
 
-    // 绘制蚂蚁线
-    ctx.setLineDash([4, 4]);
-    ctx.stroke(path);
+    // 只有当这一段完全在“手绘流”中时，才应用平滑
+    // 也就是：起点是 freehand (或从 freehand 过来)，终点也是 freehand
+    if (prev.type === 'freehand' && curr.type === 'freehand') {
+      // 找到连续的一组 freehand 点
+      let j = i;
+      while (j < points.length && points[j].type === 'freehand') {
+        j++;
+      }
+
+      // 对这段 [i-1 ... j-1] 的点应用样条平滑 (Spline)
+      // 简化的做法：
+      for (let k = i; k < j; k++) {
+        const p0 = points[k - 1];
+        const p1 = points[k];
+        const midX = (p0.x + p1.x) / 2;
+        const midY = (p0.y + p1.y) / 2;
+        // 在两点之间画曲线
+        path.quadraticCurveTo(p0.x, p0.y, midX, midY);
+      }
+
+      // 更新索引
+      i = j;
+    } else {
+      // 只要两点中有一个是 corner，就是直线
+      // 这完美保留了多边形的尖角
+      path.lineTo(curr.x, curr.y);
+      i++;
+    }
   }
-}, [selectionPoints, lassoMode]);
-```
 
-### 总结
+  // 强制直线闭合
+  path.closePath();
 
-你遇到的问题是因为**把“平滑”当成了全局默认行为**。通过引入 `lassoMode` 并在渲染层做简单的 `if/else` 判断，多边形模式使用原生的 `lineTo`，就能让填充区域完美贴合你的虚线选区，保留锐利的尖角。
-
----
-
-你这个现象（**polygonal 尖角被“变圆/收缩”，填充比蚂蚁线更内缩**）基本可以锁定为：**生成 mask 的那条路径仍然被当成 freehand 做了平滑/简化**（Chaikin / RDP 任一都会把尖角“吃掉”），或者 **lassoMode 状态在提交时丢了**，导致 `pathToMask` 误判。
-
-下面按“最常见根因 → 对应修复”给你一套可落地的处理方式（我会给出关键代码结构）。
-
----
-
-## 1) 先验证根因：mask 生成时是否还在走 smoothing
-
-你可以在 `pathToMask(points, lassoMode)` 入口处直接 log：
-
-```ts
-console.debug('[pathToMask]', { lassoMode, n: points.length });
-```
-
-如果你画的是纯 polygon（Alt+Click 或点点点），但这里打印出来是 `freehand`，那就 100% 是 **模式状态没被正确设置/持久化**，mask 自然会被平滑成圆角。
-
----
-
-## 2) 正确修复：不要用“当前按键状态”决定模式，要用“整个创建过程的意图”决定
-
-很多实现会在 `pointerup` 时读一次 `altKey` 来判断模式，但用户创建过程中可能既点又拖（或中途松开键），**最终应以“是否发生过拖拽”来判断**。
-
-### 核心策略
-
-- 维护一个 `isPurePolygonalRef`：
-  - 只要过程中出现过一次“有效拖拽”（距离 > 阈值），就置为 `false`
-- commit 时：
-  - `isPurePolygonalRef.current === true` → `polygonal`
-  - 否则 → `freehand`
-
----
-
-## 3) 代码参考（React/TS 伪代码，按你现有结构可直接套）
-
-### 3.1 store 里一定要有并能更新 lassoMode
-
-```ts
-// selection.ts (store)
-export type LassoMode = 'freehand' | 'polygonal';
-
-type SelectionState = {
-  lassoMode: LassoMode;
-  setLassoMode: (m: LassoMode) => void;
-  // ...
+  return path;
 };
-
-export const useSelectionStore = create<SelectionState>((set) => ({
-  lassoMode: 'freehand',
-  setLassoMode: (m) => set({ lassoMode: m }),
-}));
 ```
 
-### 3.2 handler：追踪“纯多边形意图”
+### 总结修复点：
 
-```ts
-const DRAG_THRESHOLD = 2; // px
+1.  **Bug 1 (闭合变圆)**：
+    - **原因**：之前的算法可能把 `points[last]` 和 `points[0]` 也纳入了平滑计算。
+    - **修复**：平滑循环只处理点数组内部。最后使用 `path.closePath()`，Canvas 标准规定这是直线闭合。
 
-const isPurePolygonalRef = useRef(true);
-const lastPtRef = useRef<{ x: number; y: number } | null>(null);
+2.  **Bug 2 (混合选区无尖角)**：
+    - **原因**：全局应用平滑，没有区分线段类型。
+    - **修复**：引入 `type: 'corner' | 'freehand'`。渲染时，只有连续的 `freehand` 点之间才画曲线（`quadraticCurveTo`），一旦遇到 `corner` 点，立即切换回 `lineTo`。
 
-function onPointerDown(e: PointerEvent) {
-  isPurePolygonalRef.current = true;
-  lastPtRef.current = { x: e.clientX, y: e.clientY };
-  // begin path...
-}
-
-function onPointerMove(e: PointerEvent) {
-  const last = lastPtRef.current;
-  if (!last) return;
-
-  const dx = e.clientX - last.x;
-  const dy = e.clientY - last.y;
-  if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
-    isPurePolygonalRef.current = false; // 一旦拖拽过，就不是纯 polygon
-  }
-  // record point...
-}
-
-function onCommitSelection() {
-  const setLassoMode = useSelectionStore.getState().setLassoMode;
-
-  const mode = isPurePolygonalRef.current ? 'polygonal' : 'freehand';
-  setLassoMode(mode);
-
-  // 接下来生成 mask 时必须用这个 mode
-  // pathToMask(points, mode)
-}
-```
+这样，你的选区工具就能像 Photoshop 的磁性套索或混合套索一样，既能画出顺滑的曲线，又能随时 Alt+Click 画出锐利的多边形直线，且松手时自动直线闭合。
 
 ---
 
-## 4) `pathToMask`：对 polygonal 必须完全禁用 RDP/Chaikin
+你这两个现象本质上是同一个根因：**当前的平滑是按“整条闭合路径”一锅端处理**（把 `last -> first` 也当成要参与 Chaikin/Bezier 的一段），并且在 **freehand 与 polygonal 混合**时，平滑算法把 polygonal 的拐角也一起“圆掉”了。
 
-⚠️ 注意：**RDP 也会“削尖角”**（尤其容差 > 1px），所以 polygonal 模式下要“零处理”。
+要彻底修好，需要把“路径”从 `points[]` 升级为 **带语义的节点/段**，然后做到：
+
+1. **闭合边 (last -> first) 永远用直线**（尤其是未闭合就 mouseup commit 的情况）
+2. **平滑只能在 freehand 段内进行，不能跨越 polygonal 拐角**（拐角点要作为硬断点/锚点保留）
+
+下面给一个推荐实现（改动不大，但能一次性把这俩 bug 解决）。
+
+---
+
+## 1) 数据结构：点带类型（关键）
+
+把原来的 `Point[]` 改为：
 
 ```ts
-function pathToMask(points: Point[], lassoMode: LassoMode) {
+type NodeType = 'corner' | 'freehand'; // corner = polygonal click/拐角锚点
+type LassoNode = { x: number; y: number; t: NodeType };
+```
+
+规则：
+
+- Alt+Click（或 polygonal 点击落点） → push `{t:'corner'}`
+- freehand 拖拽采样点 → push `{t:'freehand'}`
+- 如果 freehand 开始点就是起点：建议起点也标成 `corner`（锚点），后续拖拽点是 `freehand`
+
+这样混合模式下，“哪些地方必须尖角”就有信息可用。
+
+---
+
+## 2) 生成渲染/Mask 的 Path：分段平滑 + 拐角硬断点
+
+核心思想：把节点按 `corner` 切成若干段，每段内部如果是 freehand 就平滑，但**段的两端（角点）保持原样**，且**不允许平滑跨段**。
+
+```ts
+function chaikinOpen(points: { x: number; y: number }[], iterations = 2) {
+  // 开口曲线版本：保留首尾点，不做闭环
   let pts = points;
+  for (let k = 0; k < iterations; k++) {
+    const out: typeof pts = [];
+    out.push(pts[0]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i],
+        p1 = pts[i + 1];
+      out.push({ x: 0.75 * p0.x + 0.25 * p1.x, y: 0.75 * p0.y + 0.25 * p1.y });
+      out.push({ x: 0.25 * p0.x + 0.75 * p1.x, y: 0.25 * p0.y + 0.75 * p1.y });
+    }
+    out.push(pts[pts.length - 1]);
+    pts = out;
+  }
+  return pts;
+}
 
-  if (lassoMode === 'freehand') {
-    pts = rdpSimplify(pts, 1.5);
-    pts = chaikinSmooth(pts, 2);
-  } else {
-    // polygonal：保持原始顶点，千万别做 rdp/chaikin
-    // pts = points;
+function buildPathFromNodes(nodes: LassoNode[], opts?: { closeWithLine?: boolean }) {
+  const closeWithLine = opts?.closeWithLine ?? true;
+
+  const path = new Path2D();
+  if (nodes.length < 2) return path;
+
+  // 1) 找到所有 corner 索引（没有 corner 就把首尾当 corner）
+  const cornerIdx: number[] = [];
+  for (let i = 0; i < nodes.length; i++) if (nodes[i].t === 'corner') cornerIdx.push(i);
+  if (cornerIdx.length === 0) cornerIdx.push(0, nodes.length - 1);
+  if (cornerIdx[0] !== 0) cornerIdx.unshift(0);
+  if (cornerIdx[cornerIdx.length - 1] !== nodes.length - 1) cornerIdx.push(nodes.length - 1);
+
+  // 2) 从第一个点 moveTo
+  path.moveTo(nodes[0].x, nodes[0].y);
+
+  // 3) 逐段处理：每段 [a..b]
+  for (let s = 0; s < cornerIdx.length - 1; s++) {
+    const a = cornerIdx[s];
+    const b = cornerIdx[s + 1];
+    const segment = nodes.slice(a, b + 1);
+
+    const hasFreehand = segment.some((n) => n.t === 'freehand');
+    if (!hasFreehand || segment.length <= 2) {
+      // 纯 polygonal 或只有一条边：直线连接，保持尖角
+      for (let i = 1; i < segment.length; i++) path.lineTo(segment[i].x, segment[i].y);
+      continue;
+    }
+
+    // 混合段：只对段内点做平滑，但首尾是 corner 要保留
+    const pts = segment.map(({ x, y }) => ({ x, y }));
+    const smooth = chaikinOpen(pts, 2);
+
+    // 用 lineTo 连接平滑后的折线（你也可改成 quad/bezier 画法）
+    for (let i = 1; i < smooth.length; i++) path.lineTo(smooth[i].x, smooth[i].y);
   }
 
-  // rasterize: moveTo/lineTo/closePath/fill
+  // 4) 关键：闭合策略 —— 永远用直线闭合（避免 last->first 被平滑成弧线）
+  if (closeWithLine) {
+    path.lineTo(nodes[0].x, nodes[0].y); // 显式直线回到起点
+    path.closePath();
+  }
+
+  return path;
 }
+```
+
+### 这段代码解决两类 bug
+
+- **bug A：未闭合 mouseup 后 last->first 变弧线**
+  因为我们不做“闭环平滑”，而是最后显式 `lineTo(start)`，闭合边必为直线。
+- **bug B：freehand + polygonal 混合时 polygonal 尖角被圆掉**
+  因为 `corner` 会把路径切段，平滑不会跨过角点，角点的折线连接天然保持尖角。
+
+---
+
+## 3) Commit 时如何决定 `closeWithLine`
+
+你描述的场景是“未闭合松开鼠标也应用选区”，那就应该 **强制 closeWithLine=true**，并且闭合边为直线。
+
+- 预览（还在画，未提交）：可以不 close（便于用户看到开放路径）
+- 提交（mouseup / enter / double click）：必须 close，且 close 边为直线
+
+```ts
+// 预览
+const previewPath = buildPathFromNodes(nodes, { closeWithLine: false });
+
+// 提交
+const commitPath = buildPathFromNodes(nodes, { closeWithLine: true });
 ```
 
 ---
 
-## 5) 你图里“填充更缩一圈”的补充排查点（如果模式已正确仍存在）
+## 4) 你现有代码里最可能的“坑位”
 
-如果你确认 `lassoMode === 'polygonal'` 但仍有“缩边”，再看这两个点：
+如果你现在是：
 
-1. **蚂蚁线和 mask 是否用同一套坐标/同一条 path？**
-   常见 bug：蚂蚁线画的是视图坐标（浮点），mask 栅格化时做了 `Math.round/floor`，会造成系统性内缩/偏移。
-   建议：mask 栅格化时尽量使用同源 float 坐标，或统一做同样的 transform。
+- 把点数组当闭合多边形做 Chaikin（把最后一点和第一点当相邻点）
+- 或者 `closePath()` 之前用 bezier 自动连接回起点
 
-2. **Canvas/WebGL 栅格化的 AA 规则差异**
-   如果蚂蚁线是 stroke（虚线）而 mask 是 fill，边缘视觉上就可能不一致。
-   解决方式：蚂蚁线也用同一个填充轮廓的“边界采样”渲染，或者至少确保 fillRule、scale、devicePixelRatio 一致。
+都会导致你看到的“closing edge 弧线”。
+
+修正要点就是：**平滑只对开口 polyline 做**，闭合边用显式直线补上。
 
 ---
 
-## 我需要你给我两段代码/信息，我可以帮你精准定位到是哪一个点
+## 需要你确认的两点（我才能把补丁更贴合你项目）
 
-1. 你当前 `pathToMask` 的实现（尤其是是否无条件走了 RDP/Chaikin、容差是多少）
-2. 你在 commit 时如何确定 lassoMode（是读 `altKey`？还是读 store？是否持久化？）
+1. 你现在生成 mask 的入口函数叫什么？（`pathToMask` / `pointsToPath` / 还是 GPU 管线里生成多边形？）
+2. 混合模式在交互上是怎么触发的：按住 Alt 临时 polygonal，还是点击=polygonal 拖拽=freehand？
 
-把这两段贴出来，我可以直接按你项目结构给出可合并的 patch。
+你把对应文件里“收集 points”与“生成 Path/Mask”的那两段代码贴出来（几十行即可），我可以按你现有结构给出最小 diff 版修改。

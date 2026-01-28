@@ -22,6 +22,7 @@ export type LassoMode = 'freehand' | 'polygonal';
 export interface SelectionPoint {
   x: number;
   y: number;
+  type?: 'freehand' | 'polygonal';
 }
 
 /** Selection bounding box */
@@ -96,7 +97,7 @@ function pathToMask(
   path: SelectionPoint[],
   width: number,
   height: number,
-  lassoMode: LassoMode = 'freehand'
+  _lassoMode: LassoMode = 'freehand'
 ): ImageData {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -106,44 +107,48 @@ function pathToMask(
   // Fill the path
   ctx.fillStyle = 'white';
   ctx.beginPath();
+
   if (path.length > 0) {
-    // Only apply smoothing for freehand lasso with enough points
-    // Polygonal lasso and rect selection should preserve sharp corners
-    // Freehand typically has many dense points (>20), polygonal has fewer deliberate clicks
-    const shouldSmooth = lassoMode === 'freehand' && path.length > 20;
-    if (shouldSmooth) {
-      // 1. Simplify path to remove noise (RDP algorithm)
-      // Tolerance 1.5 removes more intermediate points to prevent overshoot
-      const simplified = simplifyPath(path, 1.5);
+    ctx.moveTo(path[0]!.x, path[0]!.y);
 
-      // 2. Use Catmull-Rom Spline for smooth curve through points
-      // This function handles beginPath internally, but we need to fill afterwards
-      // Note: drawSmoothMaskPath calls beginPath, so we don't need to call it before if we use it exclusively
-      // modify drawSmoothMaskPath to NOT call beginPath?
-      // Actually, let's just let it handle the path definition.
+    // Buffer for accumulating freehand points
+    let buffer: SelectionPoint[] = [path[0]!];
 
-      // But wait, the original code called ctx.beginPath outside.
-      // If drawSmoothMaskPath calls beginPath, it resets the context path.
-      // It's fine here because we are starting a new mask fill.
-      drawSmoothMaskPath(ctx, simplified);
-      ctx.closePath();
-      ctx.fill();
-    } else {
-      // Standard straight lines for Rect / simple polygons
-      ctx.beginPath();
-      const first = path[0];
-      if (first) {
-        ctx.moveTo(first.x, first.y);
-        for (let i = 1; i < path.length; i++) {
-          const pt = path[i];
-          if (pt) {
-            ctx.lineTo(pt.x, pt.y);
-          }
+    for (let i = 1; i < path.length; i++) {
+      const p = path[i]!;
+
+      // Polygonal points act as corners/anchors - they break the smooth curve
+      if (p.type === 'polygonal') {
+        // Flush any pending freehand curve
+        if (buffer.length > 1) {
+          // Simplify freehand segments to reduce noise
+          const simplified = simplifyPath(buffer, 1.5);
+          drawSmoothMaskPath(ctx, simplified, false); // false = open path
         }
-        ctx.closePath();
-        ctx.fill();
+
+        // Draw straight line to the polygonal point
+        // Note: drawSmoothMaskPath ends at the last point of buffer (buffer[last])
+        // ctx.lineTo connects buffer[last] -> p
+        ctx.lineTo(p.x, p.y);
+
+        // Start new buffer from this point
+        buffer = [p];
+      } else {
+        // Freehand points accumulate in the buffer
+        buffer.push(p);
       }
     }
+
+    // Flush remaining buffer
+    if (buffer.length > 1) {
+      // If the entire path (or last chunk) is freehand, smooth it
+      const simplified = simplifyPath(buffer, 1.5);
+      drawSmoothMaskPath(ctx, simplified, false);
+    }
+
+    // Automatic loop closure with a straight line
+    ctx.closePath();
+    ctx.fill();
   }
 
   return ctx.getImageData(0, 0, width, height);
