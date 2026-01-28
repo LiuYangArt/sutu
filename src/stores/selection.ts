@@ -275,9 +275,9 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     // Handle boolean operations
     if (state.selectionMode === 'new' || !state.hasSelection || !state.selectionMask) {
       finalMask = newMask;
-      // For new selection, we can keep the original smooth path (wrapped in array of paths)
-      // or trace it to be consistent. Let's keep original for smoothness in 'new' mode.
-      finalPath = [path];
+      // Trace path from mask to ensure marching ants match the actual filled area
+      // This is especially important when smoothing is applied to freehand selections
+      finalPath = traceMaskToPaths(finalMask);
     } else {
       // Combine masks
       finalMask = combineMasks(state.selectionMask, newMask, state.selectionMode);

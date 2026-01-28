@@ -1,140 +1,298 @@
-这份 `06_abr_texture.md` 整体方向已经是正确的（特别是渲染管线部分采用了 Canvas Space），但是结合你提供的 `2026-01-27-abr-structure-discovery.md`（发现 ABR 存在分离式结构），**解析器（Parser）部分的架构设计存在重大漏洞**。
+这是一个非常典型的问题。看图片中的红箭头，填充区域（深灰色）比蚂蚁线（虚线选区）要“缩进去”且圆润化了。
 
-原来的设计假设纹理参数就在笔刷数据块内部，但新的发现表明 ABR 更像是一个“容器”，里面分别装着“所有笔刷图”、“所有纹理图”和“全局描述信息”。
+**根本原因分析：**
+这是因为你在渲染选区遮罩（Mask）时，**无差别地应用了平滑算法（如 Chaikin 或 Bezier）**。
 
-以下是具体的优化建议和修改方案：
+- 对于**自由手绘（Freehand）**，平滑是必要的，因为手抖会产生锯齿。
+- 对于**多边形（Polygonal）**，用户通过点击确定的每一个点都是**关键点**，必须精确连接，**不能应用平滑算法**，否则尖角就会被“切掉”（变圆）。
 
-### 1. 核心矛盾分析
+我们需要在架构上区分这两种模式。以下是修复方案：
 
-- **原设计 (`06`文档)**：假设是 **"Per-Brush Parsing"**。即读取一个 Brush Block，里面会有图像，顺便解析里面的 `Txtr` 参数和数据。
-- **新发现 (`Postmortem`文档)**：现实是 **"Section-Based Parsing"**。
-  - `samp` 区块：只存了一堆笔刷头图片，没有任何纹理设置。
-  - `patt` 区块：存了一堆纹理图（全局资源）。
-  - `desc` 区块：存了映射关系（笔刷 A 用 纹理 B，缩放 50%）。
+### 1. 修改 Store (状态管理)
 
-**结论**：如果按照原文档写代码，你会发现笔刷导入了，纹理图也可能导入了，但是**笔刷和纹理关联不上**（因为你没解析全局 `desc` 映射）。
+首先，我们需要在选区状态中记录当前的模式。
 
----
+**文件:** `src/store/selection.ts` (假设路径)
 
-### 2. 文档修改建议 (针对 `06_abr_texture.md`)
+```typescript
+import { create } from 'zustand';
 
-你需要重写 **3. 解析器实现方案** 这一章。
+// 定义选区模式
+export type LassoMode = 'freehand' | 'polygonal';
 
-#### 修改点 1：解析策略从“流式单体”改为“分块状态机”
+interface SelectionState {
+  selectionPoints: { x: number; y: number }[];
+  // 新增：记录当前选区是手绘的还是多边形的
+  lassoMode: LassoMode;
 
-**原 3.1 节内容**：
-
-> 1. 扫描 `8BIM`...
-> 2. Check A: 发现 `patt`...
-> 3. Check B: 解析 `desc` 时读取 `Txtr`...
-
-**建议修改为**：
-
-> ### 3.1 ABR 文件结构解析策略 (重构)
->
-> ABR 文件可能包含独立的顶层资源块。解析器需要能够处理分离式结构。
->
-> **解析流程 (Multi-Pass Strategy)**:
->
-> 1.  **Top-Level Scan**: 遍历文件顶层 Section。
->     - 遇到 `samp` (Samples): 提取所有笔刷 Tip 图像，生成基础 `BrushID` 列表。
->     - 遇到 `patt` (Patterns): 提取所有 Pattern 图像数据，存入 `PatternLibrary`，记录 `PatternID` (Name/UUID)。
->     - 遇到 `desc` (Descriptor): 解析 Action Descriptor，提取笔刷参数映射表。
-> 2.  **Reconstruction (Linkage)**:
->     - 在内存中建立映射：`BrushID -> Txtr Settings (Scale, Depth, PatternID)`。
->     - 将对应的参数注入到已加载的笔刷对象中。
->     - 如果 `PatternID` 指向的是内部 `patt` 块的数据，直接关联。
->     - 如果 `PatternID` 指向外部文件（引用式），标记为 `Missing Resource`。
-
-#### 修改点 2：明确 `desc` 解析的复杂性
-
-在 `Postmortem` 中提到了 `desc` 是一个 150KB 的全局描述符。在设计文档中需要增加对这个解析的重视。
-
-**建议新增 3.3 节**：
-
-> ### 3.3 全局描述符解析 (Global Linkage)
->
-> 针对分离式 ABR，必须解析顶层 `desc` 块。
->
-> - **目标**: 找到 `BrushHandle` 或 `Index` 与 `Pattern UUID` 的对应关系。
-> - **逻辑**: 解析 Photoshop Action Descriptor 二进制格式。寻找 `key: 'Txtr'` 的节点，并向上回溯找到它属于哪个笔刷索引。
-
----
-
-### 3. 代码/数据结构调整建议
-
-基于新的文件结构，你的 Rust 数据结构也需要调整，不能只依赖流式读取。
-
-在 `src-tauri/src/abr/context.rs` (或者类似文件) 中：
-
-```rust
-// 你需要一个上下文来暂存解析过程中的分离数据
-pub struct AbrParseContext {
-    // 阶段 1：解析出的裸笔刷 (只有形状，没有参数)
-    pub raw_brushes: Vec<AbrBrush>,
-
-    // 阶段 1：解析出的内部纹理资源
-    pub internal_patterns: HashMap<String, PatternResource>, // ID -> Data
-
-    // 阶段 1：解析出的全局配置映射
-    // Brush Index -> Texture Settings
-    pub texture_mappings: HashMap<usize, BrushTextureSettings>,
+  setSelectionPoints: (points: { x: number; y: number }[]) => void;
+  setLassoMode: (mode: LassoMode) => void;
+  // ... 其他现有状态
 }
 
-// 最终组装函数
-fn finalize_brushes(ctx: AbrParseContext) -> Vec<Brush> {
-    let mut final_brushes = Vec::new();
+export const useSelectionStore = create<SelectionState>((set) => ({
+  selectionPoints: [],
+  lassoMode: 'freehand', // 默认为手绘
 
-    for (index, mut raw_brush) in ctx.raw_brushes.into_iter().enumerate() {
-        // 尝试查找对应的纹理设置
-        if let Some(settings) = ctx.texture_mappings.get(&index) {
-            raw_brush.texture_settings = Some(settings.clone());
+  setSelectionPoints: (points) => set({ selectionPoints: points }),
+  setLassoMode: (mode) => set({ lassoMode: mode }),
+}));
+```
 
-            // 尝试在内部资源中查找纹理数据
-            if let Some(pattern_id) = &settings.pattern_id {
-                if ctx.internal_patterns.contains_key(pattern_id) {
-                     // 标记为已找到内部资源，自动关联
-                     // 或者将资源移动到全局 PatternLibrary
-                }
-            }
-        }
-        final_brushes.push(raw_brush);
+### 2. 修改交互逻辑 (Handler)
+
+我们需要智能判断用户的意图。如果用户主要是在**拖拽**，那就是 `freehand`；如果用户主要是在**点击**（没有发生长距离拖拽），那就是 `polygonal`。
+
+**文件:** `src/hooks/useSelectionHandler.ts`
+
+```typescript
+import { useRef } from 'react';
+import { useSelectionStore } from '../store/selection';
+
+export const useSelectionHandler = () => {
+  const setLassoMode = useSelectionStore((state) => state.setLassoMode);
+  const setSelectionPoints = useSelectionStore((state) => state.setSelectionPoints);
+
+  // 增加一个 Ref 来追踪本次选区操作是否发生过“拖拽”
+  const isPurePolygonalRef = useRef(true);
+
+  const onPointerDown = (e) => {
+    // 重置状态：默认假设你是想画多边形（点击）
+    isPurePolygonalRef.current = true;
+    // ... 现有的开始逻辑
+  };
+
+  const onPointerMove = (e) => {
+    // 如果发生移动且距离超过一定阈值（比如 5px），说明用户在手绘拖拽
+    if (isDragging && distance > 5) {
+      isPurePolygonalRef.current = false;
     }
-    final_brushes
+    // ... 现有的记录点逻辑
+  };
+
+  const onPointerUp = () => {
+    // 提交选区时，根据刚才的追踪结果设置模式
+    // 如果全程没有拖拽（全是点击），强制设为 polygonal
+    // 如果有过拖拽，设为 freehand
+    const finalMode = isPurePolygonalRef.current ? 'polygonal' : 'freehand';
+    setLassoMode(finalMode);
+
+    // ... 现有的提交逻辑
+  };
+
+  return { onPointerDown, onPointerMove, onPointerUp };
+};
+```
+
+### 3. 核心修复：修改渲染逻辑 (Utils)
+
+这是解决问题的关键。在生成遮罩路径时，根据 `lassoMode` 决定是否应用平滑。
+
+**文件:** `src/utils/maskUtils.ts` (或者你生成 `Path2D` 的地方)
+
+```typescript
+import { getSmoothPath } from './smoothing'; // 假设你之前的平滑算法在这里
+
+/**
+ * 将点数组转换为 Path2D
+ * @param points 选区点
+ * @param mode 选区模式 (新增参数)
+ */
+export const pointsToPath = (
+  points: { x: number; y: number }[],
+  mode: 'freehand' | 'polygonal'
+): Path2D => {
+  const path = new Path2D();
+
+  if (points.length < 2) return path;
+
+  // 关键分支逻辑
+  if (mode === 'polygonal') {
+    // === 多边形模式：不做任何平滑，直线连接 ===
+    path.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      path.lineTo(points[i].x, points[i].y);
+    }
+    path.closePath();
+  } else {
+    // === 手绘模式：应用之前的平滑算法 (Chaikin/Bezier) ===
+    // 只有手绘模式才需要去噪和平滑
+    const smoothedPoints = getSmoothPath(points);
+
+    path.moveTo(smoothedPoints[0].x, smoothedPoints[0].y);
+    // ... 你的平滑绘制逻辑 ...
+    // 通常是 quadraticCurveTo 或 bezierCurveTo
+    for (let i = 0; i < smoothedPoints.length - 1; i++) {
+      const p0 = smoothedPoints[i];
+      const p1 = smoothedPoints[i + 1];
+      path.quadraticCurveTo(p0.x, p0.y, (p0.x + p1.x) / 2, (p0.y + p1.y) / 2);
+    }
+    path.closePath();
+  }
+
+  return path;
+};
+```
+
+### 4. 在填充组件中调用
+
+确保你在进行填充（Fill）或者绘制选区背景时，传入了正确的模式：
+
+```typescript
+// 在你的 Canvas 组件或 Effect 中
+const { selectionPoints, lassoMode } = useSelectionStore();
+
+useEffect(() => {
+  if (selectionPoints.length > 0) {
+    // 传入 lassoMode
+    const path = pointsToPath(selectionPoints, lassoMode);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fill(path); // 现在多边形将完美贴合尖角
+
+    // 绘制蚂蚁线
+    ctx.setLineDash([4, 4]);
+    ctx.stroke(path);
+  }
+}, [selectionPoints, lassoMode]);
+```
+
+### 总结
+
+你遇到的问题是因为**把“平滑”当成了全局默认行为**。通过引入 `lassoMode` 并在渲染层做简单的 `if/else` 判断，多边形模式使用原生的 `lineTo`，就能让填充区域完美贴合你的虚线选区，保留锐利的尖角。
+
+---
+
+你这个现象（**polygonal 尖角被“变圆/收缩”，填充比蚂蚁线更内缩**）基本可以锁定为：**生成 mask 的那条路径仍然被当成 freehand 做了平滑/简化**（Chaikin / RDP 任一都会把尖角“吃掉”），或者 **lassoMode 状态在提交时丢了**，导致 `pathToMask` 误判。
+
+下面按“最常见根因 → 对应修复”给你一套可落地的处理方式（我会给出关键代码结构）。
+
+---
+
+## 1) 先验证根因：mask 生成时是否还在走 smoothing
+
+你可以在 `pathToMask(points, lassoMode)` 入口处直接 log：
+
+```ts
+console.debug('[pathToMask]', { lassoMode, n: points.length });
+```
+
+如果你画的是纯 polygon（Alt+Click 或点点点），但这里打印出来是 `freehand`，那就 100% 是 **模式状态没被正确设置/持久化**，mask 自然会被平滑成圆角。
+
+---
+
+## 2) 正确修复：不要用“当前按键状态”决定模式，要用“整个创建过程的意图”决定
+
+很多实现会在 `pointerup` 时读一次 `altKey` 来判断模式，但用户创建过程中可能既点又拖（或中途松开键），**最终应以“是否发生过拖拽”来判断**。
+
+### 核心策略
+
+- 维护一个 `isPurePolygonalRef`：
+  - 只要过程中出现过一次“有效拖拽”（距离 > 阈值），就置为 `false`
+- commit 时：
+  - `isPurePolygonalRef.current === true` → `polygonal`
+  - 否则 → `freehand`
+
+---
+
+## 3) 代码参考（React/TS 伪代码，按你现有结构可直接套）
+
+### 3.1 store 里一定要有并能更新 lassoMode
+
+```ts
+// selection.ts (store)
+export type LassoMode = 'freehand' | 'polygonal';
+
+type SelectionState = {
+  lassoMode: LassoMode;
+  setLassoMode: (m: LassoMode) => void;
+  // ...
+};
+
+export const useSelectionStore = create<SelectionState>((set) => ({
+  lassoMode: 'freehand',
+  setLassoMode: (m) => set({ lassoMode: m }),
+}));
+```
+
+### 3.2 handler：追踪“纯多边形意图”
+
+```ts
+const DRAG_THRESHOLD = 2; // px
+
+const isPurePolygonalRef = useRef(true);
+const lastPtRef = useRef<{ x: number; y: number } | null>(null);
+
+function onPointerDown(e: PointerEvent) {
+  isPurePolygonalRef.current = true;
+  lastPtRef.current = { x: e.clientX, y: e.clientY };
+  // begin path...
+}
+
+function onPointerMove(e: PointerEvent) {
+  const last = lastPtRef.current;
+  if (!last) return;
+
+  const dx = e.clientX - last.x;
+  const dy = e.clientY - last.y;
+  if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+    isPurePolygonalRef.current = false; // 一旦拖拽过，就不是纯 polygon
+  }
+  // record point...
+}
+
+function onCommitSelection() {
+  const setLassoMode = useSelectionStore.getState().setLassoMode;
+
+  const mode = isPurePolygonalRef.current ? 'polygonal' : 'freehand';
+  setLassoMode(mode);
+
+  // 接下来生成 mask 时必须用这个 mode
+  // pathToMask(points, mode)
 }
 ```
 
-### 4. 渲染管线部分的 Review (针对 `06` 文档的第 4 章)
+---
 
-我看你已经把 `gl_FragCoord + u_canvas_offset` 和 `rem_euclid` 加进去了，这部分 **写得非常好，不需要修改**。这完全符合 Substance/PS 的物理模型。
+## 4) `pathToMask`：对 polygonal 必须完全禁用 RDP/Chaikin
 
-**唯一的小提示**：
-在 Rust 代码 `rasterize_dab_cpu` 中：
+⚠️ 注意：**RDP 也会“削尖角”**（尤其容差 > 1px），所以 polygonal 模式下要“零处理”。
 
-```rust
-// 3. Sample Texture
-let mut tex_val = state.texture_data[tex_v * state.tex_w + tex_u] as f32 / 255.0;
-```
+```ts
+function pathToMask(points: Point[], lassoMode: LassoMode) {
+  let pts = points;
 
-如果 `state.texture_data` 是空的（比如 ABR 只有引用没数据，且用户还没导入 `.pat`），这里会 Panic。
-**修正建议**：增加空值检查或使用默认的“纯白/纯黑”纹理逻辑。
+  if (lassoMode === 'freehand') {
+    pts = rdpSimplify(pts, 1.5);
+    pts = chaikinSmooth(pts, 2);
+  } else {
+    // polygonal：保持原始顶点，千万别做 rdp/chaikin
+    // pts = points;
+  }
 
-```rust
-// 安全性修正
-if state.texture_data.is_empty() {
-    // 如果没有纹理数据，视作没有纹理效果 (influence = 1.0)
-    // 或者返回错误
-    return;
+  // rasterize: moveTo/lineTo/closePath/fill
 }
 ```
 
-### 5. 总结
+---
 
-`06_abr_texture.md` 的渲染部分（Shader/CPU）已经是 **Ready to Code** 的状态。
-主要修改点在于 **解析（Input）** 部分：
+## 5) 你图里“填充更缩一圈”的补充排查点（如果模式已正确仍存在）
 
-1.  **废弃** “在笔刷块里找纹理” 的单一假设。
-2.  **引入** “全文件扫描 + 后期组装” 的解析架构。
-3.  **强调** `patt` 全局块的提取和 `desc` 全局映射的解析。
+如果你确认 `lassoMode === 'polygonal'` 但仍有“缩边”，再看这两个点：
 
-你可以直接把上面的 **3.1 重构** 内容替换进文档中。
+1. **蚂蚁线和 mask 是否用同一套坐标/同一条 path？**
+   常见 bug：蚂蚁线画的是视图坐标（浮点），mask 栅格化时做了 `Math.round/floor`，会造成系统性内缩/偏移。
+   建议：mask 栅格化时尽量使用同源 float 坐标，或统一做同样的 transform。
+
+2. **Canvas/WebGL 栅格化的 AA 规则差异**
+   如果蚂蚁线是 stroke（虚线）而 mask 是 fill，边缘视觉上就可能不一致。
+   解决方式：蚂蚁线也用同一个填充轮廓的“边界采样”渲染，或者至少确保 fillRule、scale、devicePixelRatio 一致。
+
+---
+
+## 我需要你给我两段代码/信息，我可以帮你精准定位到是哪一个点
+
+1. 你当前 `pathToMask` 的实现（尤其是是否无条件走了 RDP/Chaikin、容差是多少）
+2. 你在 commit 时如何确定 lassoMode（是读 `altKey`？还是读 store？是否持久化？）
+
+把这两段贴出来，我可以直接按你项目结构给出可合并的 patch。
