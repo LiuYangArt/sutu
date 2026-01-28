@@ -93,12 +93,7 @@ interface SelectionState {
 /**
  * Convert a closed path to a bitmap mask using Canvas 2D fill
  */
-function pathToMask(
-  path: SelectionPoint[],
-  width: number,
-  height: number,
-  _lassoMode: LassoMode = 'freehand'
-): ImageData {
+function pathToMask(path: SelectionPoint[], width: number, height: number): ImageData {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -109,32 +104,35 @@ function pathToMask(
   ctx.beginPath();
 
   if (path.length > 0) {
-    ctx.moveTo(path[0]!.x, path[0]!.y);
+    const start = path[0];
+    if (start) {
+      ctx.moveTo(start.x, start.y);
+      let buffer: SelectionPoint[] = [start];
 
-    let buffer: SelectionPoint[] = [path[0]!];
-
-    for (let i = 1; i < path.length; i++) {
-      const p = path[i]!;
-
-      if (p.type === 'polygonal') {
-        if (buffer.length > 1) {
-          const simplified = simplifyPath(buffer, 1.5);
-          drawSmoothMaskPath(ctx, simplified, false);
+      for (let i = 1; i < path.length; i++) {
+        const p = path[i];
+        if (p) {
+          if (p.type === 'polygonal') {
+            if (buffer.length > 1) {
+              const simplified = simplifyPath(buffer, 1.5);
+              drawSmoothMaskPath(ctx, simplified, false);
+            }
+            ctx.lineTo(p.x, p.y);
+            buffer = [p];
+          } else {
+            buffer.push(p);
+          }
         }
-        ctx.lineTo(p.x, p.y);
-        buffer = [p];
-      } else {
-        buffer.push(p);
       }
-    }
 
-    if (buffer.length > 1) {
-      const simplified = simplifyPath(buffer, 1.5);
-      drawSmoothMaskPath(ctx, simplified, false);
-    }
+      if (buffer.length > 1) {
+        const simplified = simplifyPath(buffer, 1.5);
+        drawSmoothMaskPath(ctx, simplified, false);
+      }
 
-    ctx.closePath();
-    ctx.fill();
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   return ctx.getImageData(0, 0, width, height);
@@ -181,13 +179,15 @@ function createRectPath(start: SelectionPoint, end: SelectionPoint): SelectionPo
   const x2 = Math.max(start.x, end.x);
   const y2 = Math.max(start.y, end.y);
 
-  return [
+  const points = [
     { x: x1, y: y1 },
     { x: x2, y: y1 },
     { x: x2, y: y2 },
     { x: x1, y: y2 },
     { x: x1, y: y1 },
   ];
+
+  return points.map((p) => ({ ...p, type: 'polygonal' }));
 }
 
 export const useSelectionStore = create<SelectionState>()((set, get) => ({
@@ -257,8 +257,8 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }
 
     // Generate bitmap mask from path
-    // Pass lassoMode to determine if smoothing should be applied
-    const newMask = pathToMask(path, documentWidth, documentHeight, state.lassoMode);
+    // Generate bitmap mask from path
+    const newMask = pathToMask(path, documentWidth, documentHeight);
 
     // Determine if we should start a new selection or combine with existing
     const isNewSelection =
