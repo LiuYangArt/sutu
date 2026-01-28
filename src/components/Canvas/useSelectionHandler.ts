@@ -143,6 +143,7 @@ export function useSelectionHandler({
         // - This is the Photoshop behavior: release Alt = complete selection
         if (tool === 'lasso' && isSelectingRef.current && prevAltRef.current) {
           // console.log('[Lasso Debug] Committing selection on Alt release');
+
           const { width, height } = useDocumentStore.getState();
           commitSelection(width, height);
 
@@ -208,16 +209,23 @@ export function useSelectionHandler({
 
       // Check if clicking on existing selection (for move or click-to-deselect)
       if (hasSelection) {
-        startedOnSelectionRef.current = true;
-        if (isPointInBounds(canvasX, canvasY)) {
-          // Start potential move (will be confirmed if drag happens)
-          beginMove(point);
-          return true;
+        // Requirement 2: Alt+Click on existing selection should start new polygonal selection
+        if (currentTool === 'lasso' && isAltPressed) {
+          deselectAll();
+          startedOnSelectionRef.current = false;
+          // Fall through to start new selection below
+        } else {
+          startedOnSelectionRef.current = true;
+          if (isPointInBounds(canvasX, canvasY)) {
+            // Start potential move (will be confirmed if drag happens)
+            beginMove(point);
+            return true;
+          }
+          // Clicking outside bounds - deselect and start new selection
+          deselectAll();
+          startedOnSelectionRef.current = false;
+          // Fall through to start new selection
         }
-        // Clicking outside bounds - deselect and start new selection
-        deselectAll();
-        startedOnSelectionRef.current = false;
-        // Fall through to start new selection
       }
 
       // Start new selection
@@ -234,7 +242,6 @@ export function useSelectionHandler({
       isCreating,
       hasSelection,
       beginSelection,
-      addCreationPoint,
       isPointInBounds,
       beginMove,
       deselectAll,
