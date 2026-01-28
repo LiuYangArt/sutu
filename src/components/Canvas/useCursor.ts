@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ToolType } from '@/stores/tool';
+import { useSelectionStore } from '@/stores/selection';
 
 /** Cursor style for each tool type */
 const TOOL_CURSORS: Record<ToolType, string> = {
@@ -30,6 +31,12 @@ const DEFAULT_STROKE: StrokeStyle = {
   outer: { color: 'rgba(255,255,255,0.9)', width: 1.5 },
   inner: { color: 'rgba(0,0,0,0.8)', width: 1 },
 };
+
+/** Mouse-pointer-2 cursor for selection move (lucide-react icon) */
+const SELECTION_MOVE_CURSOR = (() => {
+  const svg = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" fill="white" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  return `url("data:image/svg+xml;base64,${btoa(svg)}") 4 4, default`;
+})();
 
 /** Set cursor position with center offset */
 const setCursorPosition = (cursor: HTMLDivElement, x: number, y: number) => {
@@ -211,6 +218,8 @@ interface UseCursorProps {
   brushAngle?: number;
   /** Texture cursor data (for ABR brushes) */
   brushTexture?: BrushCursorTexture | null;
+  /** Canvas ref for coordinate conversion (selection cursor) */
+  canvasRef?: React.RefObject<HTMLCanvasElement>;
 }
 
 export function useCursor({
@@ -226,20 +235,44 @@ export function useCursor({
   brushRoundness = 100,
   brushAngle = 0,
   brushTexture,
+  canvasRef,
 }: UseCursorProps) {
   const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Get selection state
+  // Track if cursor is hovering over selection bounds
+  const [isOverSelection, setIsOverSelection] = useState(false);
 
-  const isBrushTool = currentTool === 'brush' || currentTool === 'eraser';
+  // Get selection state
+  const { hasSelection, isPointInSelection, isCreating: isCreatingSelection } = useSelectionStore();
   const isSelectionTool = currentTool === 'select' || currentTool === 'lasso';
   const isInteracting = spacePressed || isPanning;
   const screenBrushSize = currentSize * scale;
+  const isBrushTool = currentTool === 'brush' || currentTool === 'eraser';
 
   // Windows cursor size limit varies (32-128px), 96px is safe threshold
   const HARDWARE_CURSOR_MAX_SIZE = 96;
   const shouldUseHardwareCursor =
     isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
+
+  // Check if mouse position is inside selection (for move cursor)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const checkSelectionHover = (clientX: number, clientY: number) => {
+    if (!isSelectionTool || !hasSelection || isCreatingSelection || !canvasRef?.current) {
+      if (isOverSelection) setIsOverSelection(false);
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = (clientX - rect.left) / scale;
+    const canvasY = (clientY - rect.top) / scale;
+
+    // Use isPointInSelection to check actual mask, not just bounding box
+    const isOver = isPointInSelection(canvasX, canvasY);
+    if (isOver !== isOverSelection) {
+      setIsOverSelection(isOver);
+    }
+  };
 
   // Generate SVG cursor URL synchronously using useMemo
   const hardwareCursorStyle = useMemo(() => {
@@ -316,6 +349,9 @@ export function useCursor({
       // Always track mouse position, even when DOM cursor is not shown
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
+      // Check if hovering over selection (for move cursor)
+      checkSelectionHover(e.clientX, e.clientY);
+
       // Update brush cursor position
       const brushCursor = brushCursorRef.current;
       if (brushCursor) {
@@ -359,7 +395,7 @@ export function useCursor({
       container.removeEventListener('pointerleave', handleNativePointerLeave);
       container.removeEventListener('pointerenter', handleNativePointerEnter);
     };
-  }, [containerRef, brushCursorRef, eyedropperCursorRef]); // selectionCursorRef is ref, stable
+  }, [containerRef, brushCursorRef, eyedropperCursorRef, checkSelectionHover]); // checkSelectionHover dependency included
 
   const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
 
@@ -385,12 +421,13 @@ export function useCursor({
   if (isInteracting) {
     cursorStyle = 'grab';
   } else if (isSelectionTool) {
-    // Always use our custom hardware cursor for selection tools
-    if (selectionCursorStyle) {
+    // Check if over selection first
+    if (isOverSelection && hasSelection && !isCreatingSelection) {
+      cursorStyle = SELECTION_MOVE_CURSOR;
+    } else if (selectionCursorStyle) {
       cursorStyle = selectionCursorStyle;
     } else {
-      // Fallback (shouldn't really happen as selectionCursorStyle handles null modifier)
-      // But createSelectionCursorSvg always returns a string, so we're good.
+      // Fallback
       cursorStyle = 'crosshair';
     }
   } else if (showEyedropperDomCursor) {

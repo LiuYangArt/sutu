@@ -167,6 +167,7 @@ export function Canvas() {
           cursorBounds: brushTexture.cursorBounds,
         }
       : null,
+    canvasRef,
   });
 
   // Selection handler for rect select and lasso tools
