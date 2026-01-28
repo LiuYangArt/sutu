@@ -269,21 +269,18 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     // Pass lassoMode to determine if smoothing should be applied
     const newMask = pathToMask(path, documentWidth, documentHeight, state.lassoMode);
 
-    let finalMask: ImageData;
-    let finalPath: SelectionPoint[][];
+    // Determine if we should start a new selection or combine with existing
+    const isNewSelection =
+      state.selectionMode === 'new' || !state.hasSelection || !state.selectionMask;
 
-    // Handle boolean operations
-    if (state.selectionMode === 'new' || !state.hasSelection || !state.selectionMask) {
-      finalMask = newMask;
-      // Trace path from mask to ensure marching ants match the actual filled area
-      // This is especially important when smoothing is applied to freehand selections
-      finalPath = traceMaskToPaths(finalMask);
-    } else {
-      // Combine masks
-      finalMask = combineMasks(state.selectionMask, newMask, state.selectionMode);
-      // Regenerate path from the combined mask
-      finalPath = traceMaskToPaths(finalMask);
-    }
+    // Calculate final mask based on operation mode
+    const finalMask = isNewSelection
+      ? newMask
+      : combineMasks(state.selectionMask!, newMask, state.selectionMode);
+
+    // Always trace path from the final mask to ensure Marching Ants (View) match the Mask (Model).
+    // This guarantees "What You See Is What You Get" for both smoothed freehand and sharp polygonal selections.
+    const finalPath = traceMaskToPaths(finalMask);
 
     const bounds = calculateBounds(finalPath);
     const hasSelection = finalPath.length > 0 && !!bounds;
