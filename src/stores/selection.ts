@@ -111,42 +111,28 @@ function pathToMask(
   if (path.length > 0) {
     ctx.moveTo(path[0]!.x, path[0]!.y);
 
-    // Buffer for accumulating freehand points
     let buffer: SelectionPoint[] = [path[0]!];
 
     for (let i = 1; i < path.length; i++) {
       const p = path[i]!;
 
-      // Polygonal points act as corners/anchors - they break the smooth curve
       if (p.type === 'polygonal') {
-        // Flush any pending freehand curve
         if (buffer.length > 1) {
-          // Simplify freehand segments to reduce noise
           const simplified = simplifyPath(buffer, 1.5);
-          drawSmoothMaskPath(ctx, simplified, false); // false = open path
+          drawSmoothMaskPath(ctx, simplified, false);
         }
-
-        // Draw straight line to the polygonal point
-        // Note: drawSmoothMaskPath ends at the last point of buffer (buffer[last])
-        // ctx.lineTo connects buffer[last] -> p
         ctx.lineTo(p.x, p.y);
-
-        // Start new buffer from this point
         buffer = [p];
       } else {
-        // Freehand points accumulate in the buffer
         buffer.push(p);
       }
     }
 
-    // Flush remaining buffer
     if (buffer.length > 1) {
-      // If the entire path (or last chunk) is freehand, smooth it
       const simplified = simplifyPath(buffer, 1.5);
       drawSmoothMaskPath(ctx, simplified, false);
     }
 
-    // Automatic loop closure with a straight line
     ctx.closePath();
     ctx.fill();
   }

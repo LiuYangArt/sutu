@@ -272,7 +272,6 @@ export function useSelectionHandler({
       beginMove,
       deselectAll,
       setSelectionMode,
-      setLassoMode,
     ]
   );
 
