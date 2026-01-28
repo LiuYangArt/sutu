@@ -1,5 +1,5 @@
-import { useRef, useEffect, useState } from 'react';
-import { useSelectionStore } from '@/stores/selection';
+import { useRef, useEffect, useState, useMemo } from 'react';
+import { useSelectionStore, SelectionPoint } from '@/stores/selection';
 
 interface SelectionOverlayProps {
   scale: number;
@@ -24,11 +24,24 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     updateMarchingAnts,
   } = useSelectionStore();
 
-  // Get the path to render (either committed selection or creation in progress)
-  // Include preview point for polygonal mode
-  const basePath = isCreating ? creationPoints : selectionPath;
-  const pathToRender = isCreating && previewPoint ? [...basePath, previewPoint] : basePath;
-  const shouldRender = hasSelection || (isCreating && pathToRender.length >= 2);
+  // Normalize to array of paths
+  const pathsToRender = useMemo(() => {
+    const paths: SelectionPoint[][] = [];
+
+    if (isCreating) {
+      // Currently creating: single path + preview point
+      const currentPath = previewPoint ? [...creationPoints, previewPoint] : [...creationPoints];
+      if (currentPath.length >= 2) {
+        paths.push(currentPath);
+      }
+    } else if (hasSelection) {
+      // Existing selection: multiple paths
+      paths.push(...selectionPath);
+    }
+    return paths;
+  }, [isCreating, hasSelection, creationPoints, previewPoint, selectionPath]);
+
+  const shouldRender = pathsToRender.length > 0;
 
   // Track container size with ResizeObserver to match canvas buffer to display size
   useEffect(() => {
@@ -78,7 +91,7 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (!shouldRender || pathToRender.length < 2) return;
+    if (!shouldRender || pathsToRender.length === 0) return;
 
     // Save context state
     ctx.save();
@@ -89,22 +102,23 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
 
-    // Draw path
+    // Draw paths
     ctx.beginPath();
-    const first = pathToRender[0];
-    if (first) {
-      ctx.moveTo(first.x, first.y);
-      for (let i = 1; i < pathToRender.length; i++) {
-        const pt = pathToRender[i];
-        if (pt) {
-          ctx.lineTo(pt.x, pt.y);
-        }
-      }
-    }
 
-    // Close path only for committed selection or freehand lasso
-    if (hasSelection || pathToRender.length > 2) {
-      ctx.closePath();
+    for (const path of pathsToRender) {
+      if (path.length < 2) continue;
+
+      const first = path[0];
+      if (first) {
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < path.length; i++) {
+          const pt = path[i];
+          if (pt) {
+            ctx.lineTo(pt.x, pt.y);
+          }
+        }
+        ctx.closePath();
+      }
     }
 
     // Draw marching ants (dual-layer dashed line)
@@ -123,7 +137,7 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
 
     // Restore context state
     ctx.restore();
-  }, [pathToRender, hasSelection, shouldRender, marchingAntsOffset, scale, offsetX, offsetY]);
+  }, [pathsToRender, hasSelection, shouldRender, marchingAntsOffset, scale, offsetX, offsetY]);
 
   return (
     <canvas

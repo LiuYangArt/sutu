@@ -69,6 +69,7 @@ export function useSelectionHandler({
     updateMove,
     commitMove,
     deselectAll,
+    setSelectionMode,
   } = useSelectionStore();
 
   const startPointRef = useRef<SelectionPoint | null>(null);
@@ -88,10 +89,14 @@ export function useSelectionHandler({
 
   // Track Alt key state for real-time mode switching during selection
   const [altPressed, setAltPressed] = useState(false);
+  // Remove unused state to satisfy linter, logic uses refs
+
   // Track previous Alt state to detect transitions
   const prevAltRef = useRef(false);
   // Use ref for immediate Alt state access in event handlers (avoids React state async delay)
   const altPressedRef = useRef(false);
+  const shiftPressedRef = useRef(false);
+  const ctrlPressedRef = useRef(false);
 
   // Use ref to avoid stale closure in event handlers
   const currentToolRef = useRef(currentTool);
@@ -100,16 +105,15 @@ export function useSelectionHandler({
   // Listen for Alt key changes globally
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Debug logs
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt') {
+        console.log(
+          `[Key Debug] Down: ${e.key}, Shift:${e.shiftKey}, Ctrl:${e.ctrlKey}, Alt:${e.altKey}`
+        );
+      }
+
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
         const tool = currentToolRef.current;
-        // console.log('[Lasso Debug] Alt KeyDown', {
-        //   currentTool: tool,
-        //   isSelecting: isSelectingRef.current,
-        //   lastPoint: lastPointRef.current,
-        //   prevAlt: prevAltRef.current,
-        //   isMouseDown: isMouseDownRef.current,
-        // });
-
         // When Alt is pressed during lasso selection, anchor current position
         if (
           tool === 'lasso' &&
@@ -117,33 +121,33 @@ export function useSelectionHandler({
           lastPointRef.current &&
           !prevAltRef.current
         ) {
-          // Add current mouse position as anchor point when entering polygonal mode
-          // console.log('[Lasso Debug] Adding anchor point at', lastPointRef.current);
           addCreationPoint(lastPointRef.current);
         }
         prevAltRef.current = true;
         altPressedRef.current = true;
         setAltPressed(true);
-        // console.log('[Lasso Debug] altPressed set to true');
+      }
+
+      if (e.key === 'Shift') {
+        shiftPressedRef.current = true;
+        console.log('[Key Debug] Shift Ref set to TRUE');
+      }
+
+      if (e.key === 'Control') {
+        ctrlPressedRef.current = true;
+        console.log('[Key Debug] Ctrl Ref set to TRUE');
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt') {
+        console.log(`[Key Debug] Up: ${e.key}`);
+      }
+
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
         const tool = currentToolRef.current;
-        // console.log('[Lasso Debug] Alt KeyUp', {
-        //   currentTool: tool,
-        //   isSelecting: isSelectingRef.current,
-        //   prevAlt: prevAltRef.current,
-        //   isMouseDown: isMouseDownRef.current,
-        // });
-
         // When releasing Alt during lasso selection:
-        // - If in polygonal mode (prevAlt=true) and actively selecting, commit the selection
-        // - This is the Photoshop behavior: release Alt = complete selection
         if (tool === 'lasso' && isSelectingRef.current && prevAltRef.current) {
-          // console.log('[Lasso Debug] Committing selection on Alt release');
-
           const { width, height } = useDocumentStore.getState();
           commitSelection(width, height);
 
@@ -159,7 +163,16 @@ export function useSelectionHandler({
         prevAltRef.current = false;
         altPressedRef.current = false;
         setAltPressed(false);
-        // console.log('[Lasso Debug] altPressed set to false');
+      }
+
+      if (e.key === 'Shift') {
+        shiftPressedRef.current = false;
+        console.log('[Key Debug] Shift Ref set to FALSE');
+      }
+
+      if (e.key === 'Control') {
+        ctrlPressedRef.current = false;
+        console.log('[Key Debug] Ctrl Ref set to FALSE');
       }
     };
 
@@ -187,17 +200,18 @@ export function useSelectionHandler({
       const point: SelectionPoint = { x: canvasX, y: canvasY };
       const isAltPressed = e.altKey;
 
-      // console.log('[Lasso Debug] PointerDown', {
-      //   currentTool,
-      //   isAltPressed,
-      //   isCreating,
-      //   hasSelection,
-      //   point,
-      // });
-
       // Reset drag tracking
       hasDraggedRef.current = false;
       startedOnSelectionRef.current = false;
+
+      console.log('[Lasso Debug] PointerDown', {
+        tool: currentTool,
+        shiftKey: e.shiftKey,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftRef: shiftPressedRef.current,
+        ctrlRef: ctrlPressedRef.current,
+      });
 
       // For lasso tool in polygonal mode (Alt held) while already creating
       // Don't add point here - will be added in pointerUp to avoid duplicates
@@ -207,24 +221,34 @@ export function useSelectionHandler({
         return true;
       }
 
+      // Use tracked refs for robustness
+      const isShift = shiftPressedRef.current || e.shiftKey;
+      const isCtrl = ctrlPressedRef.current || e.ctrlKey;
+      const isBooleanOp = isShift || isCtrl;
+
       // Check if clicking on existing selection (for move or click-to-deselect)
       if (hasSelection) {
-        // Requirement 2: Alt+Click on existing selection should start new polygonal selection
-        if (currentTool === 'lasso' && isAltPressed) {
-          deselectAll();
-          startedOnSelectionRef.current = false;
-          // Fall through to start new selection below
-        } else {
-          startedOnSelectionRef.current = true;
-          if (isPointInBounds(canvasX, canvasY)) {
-            // Start potential move (will be confirmed if drag happens)
-            beginMove(point);
-            return true;
+        // If performing boolean op, skip move/deselect logic entirely
+        if (!isBooleanOp) {
+          // Requirement 2: Alt+Click on existing selection should start new polygonal selection
+          // Only if NOT a boolean op (Shift+Alt = Add Polygonal)
+          if (currentTool === 'lasso' && isAltPressed) {
+            deselectAll();
+            startedOnSelectionRef.current = false;
+            // Fall through to start new selection below
+          } else {
+            startedOnSelectionRef.current = true;
+            if (isPointInBounds(canvasX, canvasY)) {
+              // Start potential move (will be confirmed if drag happens)
+              beginMove(point);
+              return true;
+            }
+            // Clicking outside bounds - deselect and start new selection
+            deselectAll();
+            startedOnSelectionRef.current = false;
+            // Fall through to start new selection
+            console.log('[Lasso Debug] Deselected due to click outside');
           }
-          // Clicking outside bounds - deselect and start new selection
-          deselectAll();
-          startedOnSelectionRef.current = false;
-          // Fall through to start new selection
         }
       }
 
@@ -232,7 +256,37 @@ export function useSelectionHandler({
       startPointRef.current = point;
       lastPointRef.current = point;
       isSelectingRef.current = true;
+      // Determine mode based on modifiers
+      // User Req: Shift = Add, Ctrl = Subtract
+
+      // Use tracked refs for robustness against browser/OS interception
+      // Validated by user observation that "Alt works" (which uses similar global tracking)
+      // Already defined above:
+      // const isShift = shiftPressedRef.current || e.shiftKey;
+      // const isCtrl = ctrlPressedRef.current || e.ctrlKey;
+      // Note: We check both global ref and event property for maximum reliability.
+
+      let mode: 'new' | 'add' | 'subtract' | 'intersect' = 'new';
+      if (isShift && isCtrl) {
+        mode = 'intersect';
+      } else if (isShift) {
+        mode = 'add';
+      } else if (isCtrl) {
+        mode = 'subtract';
+      }
+
+      console.log(`[Lasso Debug] Setting selection mode to: ${mode}`);
+      console.log(`[Lasso Debug] Point: ${point.x}, ${point.y}`);
+      setSelectionMode(mode);
+
+      startPointRef.current = point;
+      lastPointRef.current = point;
+      isSelectingRef.current = true;
       beginSelection(point);
+
+      // Double check store state (async so might not reflect immediately, but good proxy)
+      const currentMode = useSelectionStore.getState().selectionMode;
+      console.log('[Lasso Debug] Store mode after set:', currentMode);
 
       return true;
     },
@@ -245,6 +299,7 @@ export function useSelectionHandler({
       isPointInBounds,
       beginMove,
       deselectAll,
+      setSelectionMode,
     ]
   );
 

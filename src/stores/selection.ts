@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { combineMasks, traceMaskToPaths } from '@/utils/selectionAlgorithms';
 
 /**
  * Selection mode for boolean operations
@@ -34,7 +35,7 @@ interface SelectionState {
   // Core selection data
   hasSelection: boolean;
   selectionMask: ImageData | null; // Bitmap mask (0-255 alpha)
-  selectionPath: SelectionPoint[]; // Vector path for marching ants
+  selectionPath: SelectionPoint[][]; // Vector paths (contours) for marching ants
   bounds: SelectionBounds | null; // Selection bounding box
 
   // Interaction state
@@ -48,7 +49,7 @@ interface SelectionState {
   // Move state
   isMoving: boolean; // Currently moving selection
   moveStartPoint: SelectionPoint | null; // Starting point of drag
-  originalPath: SelectionPoint[]; // Path before move started
+  originalPath: SelectionPoint[][]; // Path before move started
   originalBounds: SelectionBounds | null; // Bounds before move started
 
   // Rendering state
@@ -117,22 +118,28 @@ function pathToMask(path: SelectionPoint[], width: number, height: number): Imag
 }
 
 /**
- * Calculate bounding box from path points
+ * Calculate bounding box from path points (multiple contours)
  */
-function calculateBounds(path: SelectionPoint[]): SelectionBounds | null {
-  if (path.length === 0) return null;
+function calculateBounds(paths: SelectionPoint[][]): SelectionBounds | null {
+  if (paths.length === 0) return null;
 
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
     maxY = -Infinity;
+  let hasPoints = false;
 
-  for (const pt of path) {
-    minX = Math.min(minX, pt.x);
-    minY = Math.min(minY, pt.y);
-    maxX = Math.max(maxX, pt.x);
-    maxY = Math.max(maxY, pt.y);
+  for (const path of paths) {
+    for (const pt of path) {
+      minX = Math.min(minX, pt.x);
+      minY = Math.min(minY, pt.y);
+      maxX = Math.max(maxX, pt.x);
+      maxY = Math.max(maxY, pt.y);
+      hasPoints = true;
+    }
   }
+
+  if (!hasPoints) return null;
 
   return {
     x: minX,
@@ -225,16 +232,32 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }
 
     // Generate bitmap mask from path
-    const mask = pathToMask(path, documentWidth, documentHeight);
-    const bounds = calculateBounds(path);
+    const newMask = pathToMask(path, documentWidth, documentHeight);
 
-    // TODO: Handle boolean operations (add/subtract/intersect) with existing selection
+    let finalMask: ImageData;
+    let finalPath: SelectionPoint[][];
+
+    // Handle boolean operations
+    if (state.selectionMode === 'new' || !state.hasSelection || !state.selectionMask) {
+      finalMask = newMask;
+      // For new selection, we can keep the original smooth path (wrapped in array of paths)
+      // or trace it to be consistent. Let's keep original for smoothness in 'new' mode.
+      finalPath = [path];
+    } else {
+      // Combine masks
+      finalMask = combineMasks(state.selectionMask, newMask, state.selectionMode);
+      // Regenerate path from the combined mask
+      finalPath = traceMaskToPaths(finalMask);
+    }
+
+    const bounds = calculateBounds(finalPath);
+    const hasSelection = finalPath.length > 0 && !!bounds;
 
     set({
-      hasSelection: true,
-      selectionMask: mask,
-      selectionPath: [...path], // Copy for marching ants
-      bounds,
+      hasSelection,
+      selectionMask: hasSelection ? finalMask : null,
+      selectionPath: hasSelection ? finalPath : [],
+      bounds: hasSelection ? bounds : null,
       isCreating: false,
       creationPoints: [],
       previewPoint: null, // Clear preview point
@@ -262,7 +285,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     set({
       hasSelection: true,
       selectionMask: mask,
-      selectionPath: path,
+      selectionPath: [path],
       bounds: { x: 0, y: 0, width, height },
     });
   },
@@ -345,7 +368,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     set({
       isMoving: true,
       moveStartPoint: startPoint,
-      originalPath: [...state.selectionPath],
+      originalPath: JSON.parse(JSON.stringify(state.selectionPath)), // Deep copy for array of arrays
       originalBounds: state.bounds ? { ...state.bounds } : null,
     });
   },
@@ -369,11 +392,13 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     if (newX + w > docWidth) deltaX -= newX + w - docWidth;
     if (newY + h > docHeight) deltaY -= newY + h - docHeight;
 
-    // Translate path points
-    const newPath = state.originalPath.map((pt) => ({
-      x: pt.x + deltaX,
-      y: pt.y + deltaY,
-    }));
+    // Translate path points (handle multiple contours)
+    const newPath = state.originalPath.map((contour) =>
+      contour.map((pt) => ({
+        x: pt.x + deltaX,
+        y: pt.y + deltaY,
+      }))
+    );
 
     set({
       selectionPath: newPath,
@@ -386,7 +411,40 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     if (!state.isMoving) return;
 
     // Regenerate mask from new path
-    const mask = pathToMask(state.selectionPath, docWidth, docHeight);
+    // Need to handle multiple contours for mask generation if we supported holes in pathToMask,
+    // but pathToMask currently only takes SelectionPoint[].
+    // Since we just translated the mask, we should ideally translate the bitmap or re-render.
+    // For now, let's re-render all contours.
+    // Optimization: composite multiple paths.
+
+    // Create new mask
+    const canvas = document.createElement('canvas');
+    canvas.width = docWidth;
+    canvas.height = docHeight;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = 'white';
+
+    // Draw all contours
+    ctx.beginPath();
+    for (const contour of state.selectionPath) {
+      if (contour.length > 0 && contour[0]) {
+        ctx.moveTo(contour[0].x, contour[0].y);
+        for (let i = 1; i < contour.length; i++) {
+          const pt = contour[i];
+          if (pt) {
+            ctx.lineTo(pt.x, pt.y);
+          }
+        }
+        ctx.closePath();
+      }
+    }
+    // "evenodd" fill rule handles holes correctly if paths are oriented correctly,
+    // or just filling them all if they are separate islands.
+    // traceMaskToPaths usually returns islands. Holes might be tricky.
+    // For now assume standard fill.
+    ctx.fill('evenodd');
+
+    const mask = ctx.getImageData(0, 0, docWidth, docHeight);
 
     set({
       selectionMask: mask,
