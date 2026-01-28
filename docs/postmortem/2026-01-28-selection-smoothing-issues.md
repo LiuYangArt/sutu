@@ -1,66 +1,70 @@
-# Selection Smoothing Implementation Postmortem
+# 选区平滑实现复盘 (Postmortem)
 
-Date: 2026-01-28
-Status: In Progress
+日期: 2026-01-28
+状态: 已解决
 
-## 1. Context
+## 1. 背景 (Context)
 
-To match professional painting software (e.g., Photoshop), we aimed to optimize the smoothness of selection fills. The original implementation produced jagged, pixelated edges for freehand lasso selections.
+为了对标专业绘画软件（如 Photoshop），我们需要优化选区填充的平滑度。原有的实现中，自由套索（Freehand Lasso）产生的选区边缘存在明显的锯齿和像素化。
 
-## 2. Changes Implemented
+## 2. 实施的变更 (Changes Implemented)
 
-### Phase 1: Freehand Smoothing
+### 第一阶段：自由选区平滑 (Freehand Smoothing)
 
-- **Algorithm**: Replaced raw line connections with **Chaikin Subdivision** (Quadratic Bezier with weighted control points).
-- **Noise Reduction**: Applied **Ramer-Douglas-Peucker (RDP)** simplification (tolerance: 1.5px) to remove input jitter.
-- **Constraint**: Switched from Catmull-Rom (which overshot selection bounds) to Chaikin to guarantee the curve stays within the polygon's convex hull.
+- **算法**：使用 **Chaikin 细分算法**（加权控制点的二次贝塞尔曲线）替代原始的直线连接。
+- **降噪**：应用 **Ramer-Douglas-Peucker (RDP)** 简化算法（容差: 1.5px）以去除输入噪点。
+- **约束**：放弃了 Catmull-Rom（会导致更严重的溢出），改用 Chaikin 以保证曲线严格位于多边形的凸包内。
 
-### Phase 2: Brush Anti-aliasing
+### 第二阶段：笔刷抗锯齿 (Brush Anti-aliasing)
 
-- **Issue**: Brush strokes inside a selection had aliased (jagged) edges even if the selection mask was smooth.
-- **Fix**: Updated `GPUStrokeAccumulator` to use the selection mask's alpha channel as a blending factor (`maskAlpha / 255`) instead of a binary check (`maskAlpha === 0`).
+- **问题**：即使选区遮罩本身是平滑的，在选区内使用笔刷绘图时，边缘依然有锯齿。
+- **修复**：更新 `GPUStrokeAccumulator`，使用选区遮罩的 Alpha 通道作为混合因子 (`maskAlpha / 255`)，而不仅仅是二值检查 (`maskAlpha === 0`)。
 
-### Phase 3: Polygonal vs. Freehand Distinction
+### 第三阶段：多边形与自由选区区分 (Polygonal vs. Freehand)
 
-- **Logic**: Modified `pathToMask` to accept `lassoMode`.
-- **Differentiation**:
-  - `freehand` (points > 20): Apply smoothing.
-  - `polygonal`: Use standard `lineTo` for sharp corners.
+- **逻辑**：修改 `pathToMask` 函数以接收 `lassoMode` 参数。
+- **区分策略**：
+  - `freehand` (且点数 > 20)：应用平滑算法。
+  - `polygonal`：使用标准的 `lineTo` 绘制，保留锐利尖角。
 
-## 3. Current Issues (The "Polygonal Mismatch")
+## 3. 遇到的问题：多边形失配 ("Polygonal Mismatch")
 
-### Observation
+### 观察到的现象
 
-Despite the logic to disable smoothing for polygonal selections, user feedback shows that **polygonal selection fills are rounded/shrunk** relative to the visual outline (marching ants).
+尽管添加了禁用多边形选区平滑的逻辑，用户反馈显示 **多边形选区填充依然被圆润化/收缩**，与视觉轮廓（蚂蚁线）不符。
 
-### Symptoms
+### 症状
 
-- The fill area does not perfectly cover the area defined by the selection points.
-- Corners are rounded or the fill is "inset" compared to the dotted line.
+- 填充区域没有完全覆盖选区点定义的区域。
+- 尖角被变圆，填充范围比虚线轮廓“缩进”了一圈。
 
-### Potential Root Causes to Investigate
+### 根因分析 (Root Cause Analysis)
 
-1.  **Selection Path Regeneration (`traceMaskToPaths`)**
-    - PaintBoard stores the selection primarily as a **Bitmap Mask** (`ImageData`).
-    - The "Marching Ants" outline is _regenerated_ from this mask using `traceMaskToPaths` (Moore-Neighbor Tracing).
-    - **Hypothesis**: The tracing algorithm might be biased (tracing the center of pixels vs outer edge) or the mask generation itself (via Canvas `fill()`) has anti-aliasing that causes the "thresholded" outline to drift from the fill's visual edge.
+经过调查，发现**状态持久化缺失**是根本原因：
 
-2.  **Coordinate Alignment**
-    - Canvas `fill()` operates on sub-pixel coordinates.
-    - If the input points are integers, `fill()` covers pixels whose centers are inside.
-    - `SelectionOverlay` draws the _vector path_ (the input points).
-    - If there's a 0.5px offset in rendering logic between the overlay and the mask generation, a mismatch occurs.
+1. **Lasso Mode 状态丢失**：虽然 `SelectionStore` 定义了 `lassoMode` 字段，但在实际操作中，**从未调用过更新状态的 Action**。因此，`lassoMode` 始终保持默认值 `'freehand'`。
+2. **错误的平滑决策**：由于状态总是 `freehand`，`pathToMask` 只要检测到点数足够多（多边形选区点数也可能超过 20），就会错误地应用平滑算法。
+3. **混合模式检测不足**：原始代码仅基于当前的 Alt 键状态判断模式，没有记录“整个选区创建过程是否包含拖拽”。
 
-3.  **Lasso Mode Persistence**
-    - If `lassoMode` is not correctly persisted in the undo/redo stack or during "commit", the re-generated path might be processed incorrectly.
-    - However, `pathToMask` generates the mask _once_ at creation. If that initial mask is wrong (smoothed when it shouldn't be), then the fill is wrong.
-    - **Counter-evidence**: The user image shows the dotted line is _outside_ the fill. If the mask was smoothed, the dotted line (traced from mask) should _match_ the smooth mask.
-    - **CRITICAL**: The fact that the dotted line is **sharp** (polygonal) but the fill is **rounded** suggests they are sourcing from different data, OR the dotted line is the _creation path_ (which hasn't been updated to the committed mask yet?).
-    - If the dotted line is the `selectionPath`, and `selectionPath` is traced from the mask, then a smooth mask should yield a smooth outline.
-    - **Possibility**: The dotted line shown is the **Creation Preview** (which is sharp vector lines), while the fill is the **Resulting Mask**. If so, `pathToMask` IS applying smoothing when it shouldn't.
+## 4. 最终解决方案 (Final Solution)
 
-## 4. Next Steps
+###Store 更新
+在 `selection.ts` 中添加并实现了 `setLassoMode` action。
 
-1.  Verify if `lassoMode` is correctly passed to `pathToMask`.
-2.  Check why `path.length > 20` heuristic might be failing (complex polygons can exceed 20 points).
-3.  Investigate coordinate systems in `pathToMask` vs `SelectionOverlay`.
+### 逻辑优化 (`useSelectionHandler.ts`)
+
+引入了对 **"纯多边形意图" (Pure Polygonal Intent)** 的追踪：
+
+1. **追踪**：引入 `isPurePolygonalRef`。如果在创建过程中发生任何**拖拽**行为（超过阈值），将其标记为 `false`。
+2. **提交**：在选区提交（Commit）时，根据追踪结果设置最终的 `lassoMode`：
+   - **纯点击 (Alt+Click)** → `setLassoMode('polygonal')` → `pathToMask` 保留尖角。
+   - **包含拖拽 (Freehand)** → `setLassoMode('freehand')` → `pathToMask` 应用平滑。
+3. **代码清理**：重构了路径平滑工具函数，提升了代码可读性。
+
+## 5. 结论
+
+通过正确管理选区模式状态，并智能区分用户的操作意图（点击 vs 拖拽），我们成功实现了：
+
+- 自由手绘选区的平滑抗锯齿。
+- 多边形选区的精确锐利尖角。
+- 笔刷绘图与选区边缘的完美融合。
