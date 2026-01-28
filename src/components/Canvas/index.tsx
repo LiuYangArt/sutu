@@ -281,9 +281,37 @@ export function Canvas() {
       const beforeImage = renderer.getLayerImageData(activeLayerId);
       if (!beforeImage) return;
 
-      // Fill the layer
-      layer.ctx.fillStyle = color;
-      layer.ctx.fillRect(0, 0, width, height);
+      // Check for active selection
+      const { hasSelection, selectionPath } = useSelectionStore.getState();
+
+      if (hasSelection && selectionPath.length > 0) {
+        // Fill only within selection
+        layer.ctx.save();
+        layer.ctx.beginPath();
+
+        for (const contour of selectionPath) {
+          const startPoint = contour[0];
+          if (startPoint) {
+            layer.ctx.moveTo(startPoint.x, startPoint.y);
+            for (let i = 1; i < contour.length; i++) {
+              const pt = contour[i];
+              if (pt) {
+                layer.ctx.lineTo(pt.x, pt.y);
+              }
+            }
+            layer.ctx.closePath();
+          }
+        }
+
+        layer.ctx.clip('evenodd');
+        layer.ctx.fillStyle = color;
+        layer.ctx.fillRect(0, 0, width, height);
+        layer.ctx.restore();
+      } else {
+        // Fill the entire layer
+        layer.ctx.fillStyle = color;
+        layer.ctx.fillRect(0, 0, width, height);
+      }
 
       // Save to history
       pushStroke(activeLayerId, beforeImage);
