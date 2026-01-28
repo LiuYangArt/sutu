@@ -1,118 +1,61 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
-import { decompressLz4PrependSize } from '@/utils/lz4';
-import { useDocumentStore } from '@/stores/document';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { useToolStore, applyPressureCurve, ToolType } from '@/stores/tool';
-import { useSettingsStore } from '@/stores/settings';
+import { useSelectionStore } from '@/stores/selection';
+import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
-import { useTabletStore, drainPointBuffer, clearPointBuffer } from '@/stores/tablet';
-import { useSelectionStore } from '@/stores/selection';
-import { StrokeBuffer, Point } from '@/utils/interpolation';
-import { LayerRenderer } from '@/utils/layerRenderer';
-import './Canvas.css';
-
+import { useTabletStore, drainPointBuffer, clearPointBuffer, RawInputPoint } from '@/stores/tablet';
+import { useSettingsStore } from '@/stores/settings';
+import { useSelectionHandler } from './useSelectionHandler';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
-import { getEffectiveInputData } from './inputUtils';
-import { useRawPointerInput, supportsPointerRawUpdate } from './useRawPointerInput';
-import { useSelectionHandler } from './useSelectionHandler';
+import { useRawPointerInput } from './useRawPointerInput';
 import { SelectionOverlay } from './SelectionOverlay';
-import { LatencyProfiler, FPSCounter, LagometerMonitor } from '@/benchmark';
+import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
+import { LayerRenderer } from '@/utils/layerRenderer';
+import { StrokeBuffer, Point as BufferPoint } from '@/utils/interpolation';
+import { getEffectiveInputData } from './inputUtils';
+import { decompressLz4PrependSize } from '@/utils/lz4';
+import { Plus, Minus } from 'lucide-react';
+import './Canvas.css';
 
-declare global {
-  interface Window {
-    __strokeDiagnostics?: {
-      onStrokeStart: () => void;
-      onStateChange: (state: string) => void;
-      onPointBuffered: () => void;
-      onPointDropped: () => void;
-      onStrokeEnd: () => void;
-    };
-    __canvasFillLayer?: (color: string) => void;
-    // File save/load interfaces
-    __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
-    __getFlattenedImage?: () => Promise<string | undefined>;
-    __getThumbnail?: () => Promise<string | undefined>;
-    __loadLayerImages?: (layers: Array<{ id: string; imageData?: string }>) => Promise<void>;
-  }
-}
+// Types
+const MAX_POINTS_PER_FRAME = 80;
 
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
-
-  // Benchmark refs
-  const pointIndexRef = useRef(0);
-  const latencyProfilerRef = useRef<LatencyProfiler>(new LatencyProfiler());
-  const fpsCounterRef = useRef<FPSCounter>(new FPSCounter());
-  const lagometerRef = useRef<LagometerMonitor>(new LagometerMonitor());
-  const lastRenderedPosRef = useRef<{ x: number; y: number } | null>(null);
-
-  // Performance optimization: Input queue for batch processing
-  type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number };
-  const inputQueueRef = useRef<QueuedPoint[]>([]);
-  const MAX_POINTS_PER_FRAME = 2000;
-  const needsRenderRef = useRef(false);
-
-  // Expose for debug panel (including getQueueDepth for performance monitoring)
-  useEffect(() => {
-    window.__benchmark = {
-      latencyProfiler: latencyProfilerRef.current,
-      fpsCounter: fpsCounterRef.current,
-      lagometer: lagometerRef.current,
-      // Queue depth monitoring for performance diagnosis
-      getQueueDepth: () => inputQueueRef.current.length,
-      // Q1: pointerrawupdate support status
-      supportsPointerRawUpdate,
-      // Reset function for benchmark runner
-      resetForScenario: () => {
-        pointIndexRef.current = 0;
-        lastRenderedPosRef.current = null;
-        inputQueueRef.current = [];
-      },
-    };
-  }, []);
-
-  // Phase 2.7: State machine for brush strokes
-  // Solves race conditions where input events arrive before initialization completes
-  type StrokeState = 'idle' | 'starting' | 'active' | 'finishing';
-
-  // State machine refs
-  const strokeStateRef = useRef<StrokeState>('idle');
-  const pendingPointsRef = useRef<
-    Array<{ x: number; y: number; pressure: number; pointIndex: number }>
-  >([]);
-  const pendingEndRef = useRef(false); // Flag: PointerUp arrived during 'starting' phase
-
-  const isZoomingRef = useRef(false);
-  const zoomStartRef = useRef<{ x: number; y: number; startScale: number } | null>(null);
-  const strokeBufferRef = useRef<StrokeBuffer>(new StrokeBuffer(2));
-  const panStartRef = useRef<{ x: number; y: number } | null>(null);
-  const layerRendererRef = useRef<LayerRenderer | null>(null);
-  const historyInitializedRef = useRef(false);
-
-  const [spacePressed, setSpacePressed] = useState(false);
-  const [altPressed, setAltPressed] = useState(false);
-
   const brushCursorRef = useRef<HTMLDivElement>(null);
   const eyedropperCursorRef = useRef<HTMLDivElement>(null);
-  const previousToolRef = useRef<string | null>(null);
+  const layerRendererRef = useRef<LayerRenderer | null>(null);
+  const strokeBufferRef = useRef(new StrokeBuffer());
+  const lagometerRef = useRef(new LagometerMonitor());
+  const fpsCounterRef = useRef(new FPSCounter());
+  const lastRenderedPosRef = useRef<{ x: number; y: number } | null>(null);
+  const needsRenderRef = useRef(false);
+  const pendingEndRef = useRef(false);
+  const panStartRef = useRef<{ x: number; y: number } | null>(null);
+  const zoomStartRef = useRef<{ x: number; y: number; startScale: number } | null>(null);
+  const isZoomingRef = useRef(false);
+  const previousToolRef = useRef<ToolType | null>('brush');
+  const historyInitializedRef = useRef(false);
 
-  const { width, height, layers, activeLayerId, initDocument, updateLayerThumbnail } =
-    useDocumentStore((s) => ({
-      width: s.width,
-      height: s.height,
-      layers: s.layers,
-      activeLayerId: s.activeLayerId,
-      initDocument: s.initDocument,
-      updateLayerThumbnail: s.updateLayerThumbnail,
-    }));
+  // Input processing refs
+  const strokeStateRef = useRef<string>('idle');
+  const pendingPointsRef = useRef<any[]>([]);
+  const inputQueueRef = useRef<any[]>([]);
+  const pointIndexRef = useRef(0);
 
+  // Profiling
+  const latencyProfilerRef = useRef(new LatencyProfiler());
+
+  // Store access
   const {
     currentTool,
-    brushSize,
-    eraserSize,
+    brushRoundness,
+    brushAngle,
+    brushTexture,
     brushColor,
     backgroundColor,
     brushOpacity,
@@ -120,71 +63,75 @@ export function Canvas() {
     brushHardness,
     brushMaskType,
     brushSpacing,
-    brushRoundness,
-    brushAngle,
-    pressureCurve,
-    pressureSizeEnabled,
-    pressureFlowEnabled,
-    pressureOpacityEnabled,
+    shapeDynamics,
+    scatter,
+    colorDynamics,
+    transfer,
+    wetEdge,
+    wetEdgeEnabled,
+    shapeDynamicsEnabled,
+    scatterEnabled,
+    colorDynamicsEnabled,
+    transferEnabled,
+    showCrosshair,
+    setTool,
     setCurrentSize,
     setBrushColor,
-    setTool,
-    showCrosshair,
-    brushTexture,
-    shapeDynamicsEnabled,
-    shapeDynamics,
-    scatterEnabled,
-    scatter,
-    colorDynamicsEnabled,
-    colorDynamics,
-    wetEdgeEnabled,
-    wetEdge,
-    transferEnabled,
-    transfer,
-  } = useToolStore((s) => ({
-    currentTool: s.currentTool,
-    brushSize: s.brushSize,
-    eraserSize: s.eraserSize,
-    brushColor: s.brushColor,
-    backgroundColor: s.backgroundColor,
-    brushOpacity: s.brushOpacity,
-    brushFlow: s.brushFlow,
-    brushHardness: s.brushHardness,
-    brushMaskType: s.brushMaskType,
-    brushSpacing: s.brushSpacing,
-    brushRoundness: s.brushRoundness,
-    brushAngle: s.brushAngle,
-    pressureCurve: s.pressureCurve,
-    pressureSizeEnabled: s.pressureSizeEnabled,
-    pressureFlowEnabled: s.pressureFlowEnabled,
-    pressureOpacityEnabled: s.pressureOpacityEnabled,
-    setCurrentSize: s.setCurrentSize,
-    setBrushColor: s.setBrushColor,
-    setTool: s.setTool,
-    showCrosshair: s.showCrosshair,
-    brushTexture: s.brushTexture,
-    shapeDynamicsEnabled: s.shapeDynamicsEnabled,
-    shapeDynamics: s.shapeDynamics,
-    scatterEnabled: s.scatterEnabled,
-    scatter: s.scatter,
-    colorDynamicsEnabled: s.colorDynamicsEnabled,
-    colorDynamics: s.colorDynamics,
-    wetEdgeEnabled: s.wetEdgeEnabled,
-    wetEdge: s.wetEdge,
-    transferEnabled: s.transferEnabled,
-    transfer: s.transfer,
-  }));
+    pressureCurve,
+    pressureFlowEnabled,
+    pressureOpacityEnabled,
+    pressureSizeEnabled,
+  } = useToolStore();
 
-  // Get render mode from settings store (persisted to settings.json)
-  const renderMode = useSettingsStore((s) => s.brush.renderMode);
-
-  // Get current tool size (brush or eraser)
+  const { eraserSize } = useToolStore();
+  const brushSize = useToolStore((s) => s.brushSize);
   const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
 
-  const { scale, offsetX, offsetY, isPanning, zoomIn, zoomOut, pan, setIsPanning, setScale } =
+  const {
+    brush: { renderMode },
+  } = useSettingsStore();
+
+  const { width, height, activeLayerId, layers, initDocument, updateLayerThumbnail } =
+    useDocumentStore();
+
+  const { pushStroke, pushAddLayer, pushRemoveLayer, undo, redo } = useHistoryStore();
+
+  const { isPanning, scale, setScale, setIsPanning, pan, zoomIn, zoomOut, offsetX, offsetY } =
     useViewportStore();
 
-  const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
+  // Local state
+  const [spacePressed, setSpacePressed] = useState(false);
+  const [altPressed, setAltPressed] = useState(false);
+
+  // Keyboard event listeners for modifiers
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat) setSpacePressed(true);
+      if (e.key === 'Alt' && !e.repeat) setAltPressed(true);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpacePressed(false);
+      if (e.key === 'Alt') setAltPressed(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  const {
+    cursorStyle,
+    showDomCursor,
+    showEyedropperDomCursor,
+    // New selection props
+    selectionCursorRef,
+    showSelectionModifier,
+    selectionModifier,
+  } = useCursor({
     currentTool,
     currentSize,
     scale,
@@ -204,8 +151,6 @@ export function Canvas() {
       : null,
     canvasRef,
   });
-
-  const { pushStroke, pushAddLayer, pushRemoveLayer, undo, redo } = useHistoryStore();
 
   // Selection handler for rect select and lasso tools
   const {
@@ -1043,7 +988,7 @@ export function Canvas() {
 
   // 绘制插值后的点序列 (used for eraser, legacy fallback)
   const drawPoints = useCallback(
-    (points: Point[]) => {
+    (points: RawInputPoint[]) => {
       const ctx = getActiveLayerCtx();
       if (!ctx || points.length < 2) return;
 
@@ -1130,9 +1075,16 @@ export function Canvas() {
       compositeAndRender();
     } else {
       // For eraser, use the legacy stroke buffer
-      const remainingPoints = strokeBufferRef.current.finish();
+      const remainingPoints = strokeBufferRef.current?.finish() ?? [];
       if (remainingPoints.length > 0) {
-        drawPoints(remainingPoints);
+        drawPoints(
+          remainingPoints.map((p) => ({
+            ...p,
+            tilt_x: p.tiltX ?? 0,
+            tilt_y: p.tiltY ?? 0,
+            timestamp_ms: 0,
+          }))
+        );
       }
     }
 
@@ -1285,7 +1237,7 @@ export function Canvas() {
       // Start Drawing
       canvas.setPointerCapture(e.pointerId);
       isDrawingRef.current = true;
-      strokeBufferRef.current.reset();
+      strokeBufferRef.current?.reset();
 
       // Capture layer state before stroke starts (for undo)
       captureBeforeImage();
@@ -1306,7 +1258,7 @@ export function Canvas() {
       }
 
       // Eraser/Other Tools: Legacy Logic
-      const point: Point = {
+      const point: BufferPoint = {
         x: canvasX,
         y: canvasY,
         pressure,
@@ -1314,9 +1266,16 @@ export function Canvas() {
         tiltY: e.tiltY ?? 0,
       };
 
-      const interpolatedPoints = strokeBufferRef.current.addPoint(point);
+      const interpolatedPoints = strokeBufferRef.current?.addPoint(point) ?? [];
       if (interpolatedPoints.length > 0) {
-        drawPoints(interpolatedPoints);
+        drawPoints(
+          interpolatedPoints.map((p) => ({
+            ...p,
+            tilt_x: p.tiltX ?? 0,
+            tilt_y: p.tiltY ?? 0,
+            timestamp_ms: 0,
+          }))
+        );
       }
     },
     [
@@ -1443,7 +1402,7 @@ export function Canvas() {
         }
 
         // For eraser, use the legacy stroke buffer
-        const point: Point = {
+        const point: BufferPoint = {
           x: canvasX,
           y: canvasY,
           pressure,
@@ -1451,9 +1410,16 @@ export function Canvas() {
           tiltY,
         };
 
-        const interpolatedPoints = strokeBufferRef.current.addPoint(point);
+        const interpolatedPoints = strokeBufferRef.current?.addPoint(point) ?? [];
         if (interpolatedPoints.length > 0) {
-          drawPoints(interpolatedPoints);
+          drawPoints(
+            interpolatedPoints.map((p) => ({
+              ...p,
+              tilt_x: p.tiltX ?? 0,
+              tilt_y: p.tiltY ?? 0,
+              timestamp_ms: 0,
+            }))
+          );
         }
       }
     },
@@ -1832,6 +1798,28 @@ export function Canvas() {
               strokeLinejoin="round"
             />
           </svg>
+        </div>
+      )}
+      {/* Selection Modifier Cursor (+/-) */}
+      {showSelectionModifier && (
+        <div
+          ref={selectionCursorRef}
+          className="selection-modifier-cursor"
+          style={{
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            pointerEvents: 'none',
+            zIndex: 'var(--z-overlay)',
+            width: 16,
+            height: 16,
+            // Add drop shadow for better visibility against any background
+            filter: 'drop-shadow(0px 1px 2px rgba(0,0,0,0.5))',
+          }}
+        >
+          {selectionModifier === 'add' && <Plus size={16} strokeWidth={3} color="white" />}
+          {selectionModifier === 'subtract' && <Minus size={16} strokeWidth={3} color="white" />}
+          {/* Use dual-stroke layering for visibility if simple color isnt enough, but drop-shadow usually works */}
         </div>
       )}
     </div>

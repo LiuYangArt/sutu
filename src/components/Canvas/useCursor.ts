@@ -208,6 +208,23 @@ export function useCursor({
     brushTexture,
   ]);
 
+  // Selection modifiers
+  const { selectionMode } = useSelectionStore();
+  const selectionCursorRef = useRef<HTMLDivElement>(null);
+
+  // Helper to determine active selection modifier
+  const getSelectionModifier = () => {
+    if (!isSelectionTool || isCreatingSelection) return null;
+    // Only show modifier if we are in a boolean mode
+    if (selectionMode === 'add') return 'plus';
+    if (selectionMode === 'subtract') return 'minus';
+    // intersect? User didn't ask for symbol, maybe 'x'? For now just +/- as requested.
+    return null;
+  };
+
+  const selectionModifier = getSelectionModifier();
+  const showSelectionModifier = !!selectionModifier;
+
   // Handle native pointer events for DOM cursors (zero-lag update)
   useEffect(() => {
     const container = containerRef.current;
@@ -231,15 +248,20 @@ export function useCursor({
       if (eyedropperCursor) {
         setCursorPosition(eyedropperCursor, e.clientX, e.clientY);
       }
+
+      // Update selection modifier cursor position
+      const selectionCursor = selectionCursorRef.current;
+      if (selectionCursor) {
+        // Offset the modifier slightly to the bottom-right of the crosshair
+        const offset = 16;
+        setCursorPosition(selectionCursor, e.clientX + offset, e.clientY + offset);
+      }
     };
 
     const handleNativePointerLeave = () => {
-      if (brushCursorRef.current) {
-        brushCursorRef.current.style.display = 'none';
-      }
-      if (eyedropperCursorRef.current) {
-        eyedropperCursorRef.current.style.display = 'none';
-      }
+      if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
+      if (eyedropperCursorRef.current) eyedropperCursorRef.current.style.display = 'none';
+      if (selectionCursorRef.current) selectionCursorRef.current.style.display = 'none';
     };
 
     const handleNativePointerEnter = (e: PointerEvent) => {
@@ -256,6 +278,13 @@ export function useCursor({
         eyedropperCursor.style.display = 'block';
         setCursorPosition(eyedropperCursor, e.clientX, e.clientY);
       }
+
+      const selectionCursor = selectionCursorRef.current;
+      if (selectionCursor) {
+        selectionCursor.style.display = 'block';
+        const offset = 16;
+        setCursorPosition(selectionCursor, e.clientX + offset, e.clientY + offset);
+      }
     };
 
     container.addEventListener('pointermove', handleNativePointerMove, { passive: true });
@@ -267,7 +296,7 @@ export function useCursor({
       container.removeEventListener('pointerleave', handleNativePointerLeave);
       container.removeEventListener('pointerenter', handleNativePointerEnter);
     };
-  }, [containerRef, brushCursorRef, eyedropperCursorRef, checkSelectionHover]);
+  }, [containerRef, brushCursorRef, eyedropperCursorRef, checkSelectionHover]); // selectionCursorRef is ref, stable
 
   const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
 
@@ -276,7 +305,7 @@ export function useCursor({
   const showEyedropperDomCursor = currentTool === 'eyedropper' && !isInteracting;
 
   // Initialize DOM cursor position when it becomes visible
-  // Handles: brush size change via keyboard, Alt key switching to eyedropper
+  // Handles: brush size change via keyboard, Alt key switching to eyedropper, Mode changes
   useEffect(() => {
     const lastPos = lastMousePosRef.current;
     if (!lastPos) return;
@@ -287,14 +316,39 @@ export function useCursor({
     if (showEyedropperDomCursor && eyedropperCursorRef.current) {
       setCursorPosition(eyedropperCursorRef.current, lastPos.x, lastPos.y);
     }
-  }, [showDomCursor, showEyedropperDomCursor, brushCursorRef, eyedropperCursorRef]);
+    // Update selection cursor visibility/position
+    if (showSelectionModifier && selectionCursorRef.current) {
+      const offset = 16;
+      setCursorPosition(selectionCursorRef.current, lastPos.x + offset, lastPos.y + offset);
+    }
+  }, [
+    showDomCursor,
+    showEyedropperDomCursor,
+    showSelectionModifier,
+    brushCursorRef,
+    eyedropperCursorRef,
+  ]);
 
   let cursorStyle = TOOL_CURSORS[currentTool];
   if (isInteracting) {
     cursorStyle = 'grab';
   } else if (isSelectionTool && isOverSelection && !isCreatingSelection) {
     // Show move cursor when hovering over existing selection
-    cursorStyle = SELECTION_MOVE_CURSOR;
+    // Override standard cursor if NOT performing boolean op (Shift/Ctrl)?
+    // Actually, boolean ops often override move.
+    // Let's check selectionMode. If new/none, allow move. If add/subtract, show modifier?
+    // User wants explicit modifier.
+    // If hovering selection BUT modifying, we should probably show modifier + crosshair.
+    // Logic:
+    // If Selection + Modifier -> Crosshair + Modifier
+    // If Selection + No Modifier + Hover -> Move
+
+    // Priority: Modifier > Hover Move
+    if (showSelectionModifier) {
+      cursorStyle = 'crosshair';
+    } else {
+      cursorStyle = SELECTION_MOVE_CURSOR;
+    }
   } else if (showEyedropperDomCursor) {
     // Use DOM cursor for eyedropper, hide system cursor
     cursorStyle = 'none';
@@ -306,5 +360,13 @@ export function useCursor({
     cursorStyle = 'crosshair';
   }
 
-  return { cursorStyle, showDomCursor, showEyedropperDomCursor };
+  return {
+    cursorStyle,
+    showDomCursor,
+    showEyedropperDomCursor,
+    // Selection specific
+    selectionCursorRef,
+    showSelectionModifier,
+    selectionModifier,
+  };
 }
