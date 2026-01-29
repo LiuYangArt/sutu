@@ -607,6 +607,14 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         parse_ms
     );
 
+    // Log pattern count for debugging
+    if !abr_file.patterns.is_empty() {
+        tracing::info!(
+            "[ABR Import] Found {} patterns (textures)",
+            abr_file.patterns.len()
+        );
+    }
+
     // Step 3: Cache textures and build presets
     let cache_start = std::time::Instant::now();
     let mut raw_bytes: usize = 0;

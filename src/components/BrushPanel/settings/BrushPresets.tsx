@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useToolStore, BrushTexture } from '@/stores/tool';
-import { BrushPreset, DEFAULT_ROUND_BRUSH, ImportAbrResult } from '../types';
+import {
+  BrushPreset,
+  DEFAULT_ROUND_BRUSH,
+  DEFAULT_TEXTURE_SETTINGS,
+  ImportAbrResult,
+} from '../types';
 import { BrushThumbnail } from '../BrushThumbnail';
 
 interface BrushPresetsProps {
@@ -26,6 +31,8 @@ export function BrushPresets({
     setBrushAngle,
     setBrushTexture,
     clearBrushTexture,
+    setTextureEnabled,
+    setTextureSettings,
   } = useToolStore();
 
   /** Import ABR file (optimized: zero-encoding, LZ4 compression) */
@@ -92,6 +99,16 @@ export function BrushPresets({
     } else {
       // Clear texture for procedural brushes
       clearBrushTexture();
+    }
+
+    // Apply texture settings from preset (Photoshop Texture panel)
+    if (preset.textureSettings) {
+      setTextureEnabled(preset.textureSettings.enabled);
+      setTextureSettings(preset.textureSettings);
+    } else {
+      // Reset to defaults if preset has no texture settings
+      setTextureEnabled(false);
+      setTextureSettings(DEFAULT_TEXTURE_SETTINGS);
     }
   };
 

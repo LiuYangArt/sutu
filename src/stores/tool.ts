@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { TextureSettings, DEFAULT_TEXTURE_SETTINGS } from '@/components/BrushPanel/types';
 
 export type ToolType = 'brush' | 'eraser' | 'eyedropper' | 'move' | 'select' | 'lasso' | 'zoom';
 
@@ -247,6 +248,10 @@ interface ToolState {
   transferEnabled: boolean;
   transfer: TransferSettings;
 
+  // Texture settings (Photoshop-compatible)
+  textureEnabled: boolean;
+  textureSettings: TextureSettings;
+
   // Actions
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
@@ -273,6 +278,11 @@ interface ToolState {
   togglePressureOpacity: () => void;
   setPressureCurve: (curve: PressureCurve) => void;
   toggleCrosshair: () => void;
+  // Texture actions
+  setTextureEnabled: (enabled: boolean) => void;
+  toggleTexture: () => void;
+  setTextureSettings: (settings: Partial<TextureSettings>) => void;
+  resetTextureSettings: () => void;
   // Shape Dynamics actions
   setShapeDynamicsEnabled: (enabled: boolean) => void;
   toggleShapeDynamics: () => void;
@@ -346,6 +356,10 @@ export const useToolStore = create<ToolState>()(
       transferEnabled: false,
       transfer: { ...DEFAULT_TRANSFER_SETTINGS },
 
+      // Texture (default: disabled)
+      textureEnabled: false,
+      textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
+
       // Actions
       setTool: (tool) => set({ currentTool: tool }),
 
@@ -414,6 +428,18 @@ export const useToolStore = create<ToolState>()(
       setPressureCurve: (curve) => set({ pressureCurve: curve }),
 
       toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
+
+      // Texture actions
+      setTextureEnabled: (enabled) => set({ textureEnabled: enabled }),
+
+      toggleTexture: () => set((state) => ({ textureEnabled: !state.textureEnabled })),
+
+      setTextureSettings: (settings) =>
+        set((state) => ({
+          textureSettings: { ...state.textureSettings, ...settings },
+        })),
+
+      resetTextureSettings: () => set({ textureSettings: { ...DEFAULT_TEXTURE_SETTINGS } }),
 
       // Shape Dynamics actions
       setShapeDynamicsEnabled: (enabled) => set({ shapeDynamicsEnabled: enabled }),
