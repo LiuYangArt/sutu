@@ -812,28 +812,6 @@ impl AbrParser {
                             }
                         }
                     }
-
-                    // Log unused descriptors that might be sampled brushes
-                    #[cfg(feature = "debug_descriptors")] // Disabled by default
-                    {
-                        println!("--- UNUSED DESCRIPTORS REPORT ---");
-                        for (i, item) in brsh_list.iter().enumerate() {
-                            if !used_indices.contains(&i) {
-                                if let DescriptorValue::Descriptor(brush_desc) = item {
-                                    // Check if it's likely a sampled brush (no toolOptions)
-                                    let has_tool_opts = brush_desc.contains_key("toolOptions");
-                                    if !has_tool_opts {
-                                        if let Some(DescriptorValue::String(name)) =
-                                            brush_desc.get("Nm  ")
-                                        {
-                                            println!("Unused Descriptor #{}: '{}'", i, name);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        println!("---------------------------------");
-                    }
                 }
             }
             Err(e) => {

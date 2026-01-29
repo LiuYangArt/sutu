@@ -40,6 +40,225 @@ impl PatternResource {
             _ => "Unknown",
         }
     }
+
+    /// Decode the raw pattern data into RGBA pixel buffer
+    ///
+    /// The pattern data contains VMA (Virtual Memory Array) structured channels.
+    /// Each channel has a 31-byte header followed by uncompressed or RLE data.
+    pub fn decode_image(&self) -> Option<Vec<u8>> {
+        let n_channels = if self.mode == 3 { 3 } else { 1 };
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let pixel_count = width * height;
+
+        // Search for VMA header in first 100 bytes
+        let vma_info = self.find_vma_header()?;
+        let (vma_offset, actual_width, actual_height) = vma_info;
+
+        // Decode each channel
+        let mut channels: Vec<Vec<u8>> = Vec::new();
+        let mut offset = vma_offset;
+
+        for _chan_idx in 0..n_channels {
+            if offset + 31 > self.data.len() {
+                tracing::warn!("Not enough data for channel");
+                return None;
+            }
+
+            let d = &self.data[offset..];
+            let size = u32::from_be_bytes([d[4], d[5], d[6], d[7]]) as usize;
+            let compression = d[30];
+
+            let header_size = 31;
+            let channel_pixels = actual_width * actual_height;
+
+            let chan_data = if compression == 0 {
+                // Uncompressed
+                if offset + header_size + channel_pixels > self.data.len() {
+                    return None;
+                }
+                self.data[offset + header_size..offset + header_size + channel_pixels].to_vec()
+            } else {
+                // RLE compressed with row table
+                self.decode_rle_channel(offset + header_size, actual_width, actual_height)?
+            };
+
+            if chan_data.len() != channel_pixels {
+                tracing::warn!(
+                    "Channel size mismatch: {} vs expected {}",
+                    chan_data.len(),
+                    channel_pixels
+                );
+                return None;
+            }
+
+            channels.push(chan_data);
+            offset += 8 + size; // Move to next channel VMA
+        }
+
+        if channels.len() != n_channels {
+            return None;
+        }
+
+        // Convert to RGBA
+        let mut rgba = Vec::with_capacity(pixel_count * 4);
+
+        if n_channels == 3 {
+            // RGB -> RGBA
+            for ((r, g), b) in channels[0]
+                .iter()
+                .zip(channels[1].iter())
+                .zip(channels[2].iter())
+            {
+                rgba.push(*r);
+                rgba.push(*g);
+                rgba.push(*b);
+                rgba.push(255);
+            }
+        } else {
+            // Grayscale -> RGBA
+            for &gray in &channels[0] {
+                rgba.push(gray);
+                rgba.push(gray);
+                rgba.push(gray);
+                rgba.push(255);
+            }
+        }
+
+        Some(rgba)
+    }
+
+    /// Find VMA header in pattern data
+    fn find_vma_header(&self) -> Option<(usize, usize, usize)> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        for test_offset in 0..100 {
+            if test_offset + 31 > self.data.len() {
+                break;
+            }
+
+            let d = &self.data[test_offset..];
+
+            let version = i32::from_be_bytes([d[0], d[1], d[2], d[3]]);
+            let size = u32::from_be_bytes([d[4], d[5], d[6], d[7]]);
+            let top = i32::from_be_bytes([d[12], d[13], d[14], d[15]]);
+            let left = i32::from_be_bytes([d[16], d[17], d[18], d[19]]);
+            let bottom = i32::from_be_bytes([d[20], d[21], d[22], d[23]]);
+            let right = i32::from_be_bytes([d[24], d[25], d[26], d[27]]);
+            let depth = i16::from_be_bytes([d[28], d[29]]);
+            let compression = d[30];
+
+            // Use checked_sub to prevent overflow
+            let Some(h_diff) = bottom.checked_sub(top) else {
+                continue;
+            };
+            let Some(w_diff) = right.checked_sub(left) else {
+                continue;
+            };
+
+            if h_diff <= 0 || w_diff <= 0 {
+                continue;
+            }
+
+            let vma_height = h_diff as usize;
+            let vma_width = w_diff as usize;
+
+            // Allow swapped dimensions
+            let dims_match = (vma_height == height && vma_width == width)
+                || (vma_height == width && vma_width == height);
+
+            if (0..=10).contains(&version)
+                && size > 0
+                && size < 10_000_000
+                && dims_match
+                && depth == 8
+                && compression <= 1
+            {
+                return Some((test_offset, vma_width, vma_height));
+            }
+        }
+
+        None
+    }
+
+    /// Decode RLE compressed channel data (PackBits algorithm)
+    fn decode_rle_channel(
+        &self,
+        row_table_offset: usize,
+        width: usize,
+        height: usize,
+    ) -> Option<Vec<u8>> {
+        let row_table_size = height * 2;
+        if row_table_offset + row_table_size > self.data.len() {
+            return None;
+        }
+
+        // Read row lengths
+        let mut row_lengths: Vec<usize> = Vec::with_capacity(height);
+        for i in 0..height {
+            let idx = row_table_offset + i * 2;
+            let len = u16::from_be_bytes([self.data[idx], self.data[idx + 1]]) as usize;
+            row_lengths.push(len);
+        }
+
+        let data_start = row_table_offset + row_table_size;
+        let mut decoded = Vec::with_capacity(width * height);
+        let mut pos = data_start;
+
+        for &comp_len in &row_lengths {
+            if pos + comp_len > self.data.len() {
+                return None;
+            }
+
+            // PackBits decode for one row
+            let mut row = Vec::with_capacity(width);
+            let mut i = 0;
+            let input = &self.data[pos..pos + comp_len];
+
+            while i < input.len() && row.len() < width {
+                let b = input[i] as i8;
+                i += 1;
+
+                if b == -128 {
+                    // No-op
+                } else if b >= 0 {
+                    // Copy next n+1 bytes literally
+                    let count = (b as usize) + 1;
+                    for j in 0..count.min(width - row.len()) {
+                        if i + j < input.len() {
+                            row.push(input[i + j]);
+                        }
+                    }
+                    i += count;
+                } else {
+                    // Repeat next byte (-n + 1) times
+                    let count = ((-b) as usize) + 1;
+                    if i < input.len() {
+                        let val = input[i];
+                        i += 1;
+                        for _ in 0..count.min(width - row.len()) {
+                            row.push(val);
+                        }
+                    }
+                }
+            }
+
+            // Pad row if needed
+            while row.len() < width {
+                row.push(0);
+            }
+
+            decoded.extend(row);
+            pos += comp_len;
+        }
+
+        if decoded.len() == width * height {
+            Some(decoded)
+        } else {
+            None
+        }
+    }
 }
 
 /// Read UTF-16 BE string (4-byte length prefix = character count)
@@ -279,6 +498,68 @@ mod tests {
         }
 
         assert!(!patterns.is_empty(), "Should have at least one pattern");
+    }
+
+    #[test]
+    fn test_decode_pattern_images() {
+        // Test decode_image for all patterns
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("abr/liuyang_paintbrushes.abr");
+
+        if !path.exists() {
+            eprintln!("Test file not found: {:?}, skipping", path);
+            return;
+        }
+
+        let data = std::fs::read(&path).expect("Failed to read test file");
+        let patt_data = find_patt_section(&data).expect("Should find patt section");
+        let patterns = parse_patt_section(&patt_data).expect("Should parse patterns");
+
+        println!("Testing decode_image for {} patterns:", patterns.len());
+
+        let mut success_count = 0;
+        for (i, p) in patterns.iter().enumerate() {
+            let result = p.decode_image();
+            let expected_size = (p.width * p.height * 4) as usize;
+
+            match result {
+                Some(rgba) if rgba.len() == expected_size => {
+                    println!(
+                        "  ✓ Pattern {}: '{}' ({}x{} {})",
+                        i,
+                        p.name,
+                        p.width,
+                        p.height,
+                        p.mode_name()
+                    );
+                    success_count += 1;
+                }
+                Some(rgba) => {
+                    println!(
+                        "  ? Pattern {}: '{}' size mismatch: {} != {}",
+                        i,
+                        p.name,
+                        rgba.len(),
+                        expected_size
+                    );
+                }
+                None => {
+                    println!("  ✗ Pattern {}: '{}' failed to decode", i, p.name);
+                }
+            }
+        }
+
+        println!(
+            "\n{}/{} patterns decoded successfully",
+            success_count,
+            patterns.len()
+        );
+        assert!(
+            success_count == patterns.len(),
+            "All patterns should decode successfully"
+        );
     }
 
     /// Helper to find patt section in ABR data (for testing)

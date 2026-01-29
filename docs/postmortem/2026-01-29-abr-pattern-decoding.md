@@ -122,6 +122,6 @@ let vma_height = h_diff as usize;  // Safe
 
 ## 待办事项
 
-- [ ] 将 `correct_decode.rs` 的算法集成到 `src/abr/patt.rs`
-- [ ] 添加单元测试验证 13 个 patterns
-- [ ] 清理调试用的 example 脚本
+- [x] 将 `correct_decode.rs` 的算法集成到 `src/abr/patt.rs`
+- [x] 添加单元测试验证 13 个 patterns
+- [x] 清理调试用的 example 脚本（26 个 → 13 个）
