@@ -35,33 +35,20 @@ export async function loadBrushTexture(
     }
 
     const compressed = new Uint8Array(await response.arrayBuffer());
-    const data = decompressLz4PrependSize(compressed);
+    const gray = decompressLz4PrependSize(compressed);
 
-    // Check data format based on size
-    const expectedSizeRGBA = width * height * 4;
-    const expectedSizeGray8 = width * height;
-
-    if (data.length === expectedSizeRGBA) {
-      // Already RGBA (e.g. ABR Patterns)
-      return new ImageData(new Uint8ClampedArray(data), width, height);
-    } else if (data.length === expectedSizeGray8) {
-      // Gray8 -> RGBA conversion (e.g. Brushes)
-      const rgba = new Uint8ClampedArray(width * height * 4);
-      for (let i = 0; i < data.length; i++) {
-        const v = data[i]!;
-        const idx = i * 4;
-        rgba[idx] = v;
-        rgba[idx + 1] = v;
-        rgba[idx + 2] = v;
-        rgba[idx + 3] = 255;
-      }
-      return new ImageData(rgba, width, height);
-    } else {
-      console.warn(
-        `[BrushLoader] Unexpected data size for ${textureId}: ${data.length} (Expected ${expectedSizeGray8} or ${expectedSizeRGBA})`
-      );
-      return null;
+    // Gray8 → RGBA conversion
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < gray.length; i++) {
+      const v = gray[i]!;
+      const idx = i * 4;
+      rgba[idx] = v;
+      rgba[idx + 1] = v;
+      rgba[idx + 2] = v;
+      rgba[idx + 3] = 255;
     }
+
+    return new ImageData(rgba, width, height);
   } catch (err) {
     console.warn(`[BrushLoader] Protocol load failed for ${textureId}:`, err);
     return null;

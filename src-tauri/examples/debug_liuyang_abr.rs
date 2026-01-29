@@ -136,114 +136,517 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("  Expected Bytes: {}", expected_bytes);
 
-        // STRATEGY 1: Raw Grayscale Check
-        // If data length is >= expected pixels, check if overhead is small-ish (implying header)
-        if pattern.mode == 1 && pattern.data.len() >= expected_pixels {
-            let overhead = pattern.data.len() - expected_pixels;
-            println!("  [Strategy 1: Raw Check] Overhead: {}", overhead);
+        // 1. Try Raw (assuming it might be uncompressed)
+        let raw_filename = output_dir.join(format!("p{}_raw_planar.png", idx));
+        if pattern.mode == 3 {
+            save_rgb_planar(
+                raw_filename.to_str().unwrap(),
+                &pattern.data,
+                pattern.width,
+                pattern.height,
+            );
+            save_rgb_interleaved(
+                output_dir
+                    .join(format!("p{}_raw_interleaved.png", idx))
+                    .to_str()
+                    .unwrap(),
+                &pattern.data,
+                pattern.width,
+                pattern.height,
+            );
+        }
 
-            // Heuristic: If overhead is small (< 5000 bytes) and consistent with a header
-            // Or if just fits.
-            if overhead < 5000 {
-                // assume raw data at end
-                let raw_start = overhead;
-                let raw_data = &pattern.data[raw_start..raw_start + expected_pixels];
+        // 2. Try PackBits (Continuous)
+        // Offset 0
+        if let Some(decoded) = packbits_decode(&pattern.data, expected_bytes) {
+            println!("  [Decoded Continuous Offset 0] len: {}", decoded.len());
+            if pattern.mode == 3 {
+                save_rgb_planar(
+                    output_dir
+                        .join(format!("p{}_cont0_planar.png", idx))
+                        .to_str()
+                        .unwrap(),
+                    &decoded,
+                    pattern.width,
+                    pattern.height,
+                );
+                save_rgb_interleaved(
+                    output_dir
+                        .join(format!("p{}_cont0_interleaved.png", idx))
+                        .to_str()
+                        .unwrap(),
+                    &decoded,
+                    pattern.width,
+                    pattern.height,
+                );
+            }
+        } else {
+            println!("  [Decoded Continuous Offset 0] Failed");
+        }
 
-                let mut img = GrayImage::new(pattern.width as u32, pattern.height as u32);
-                for y in 0..pattern.height {
-                    for x in 0..pattern.width {
-                        let i = (y * pattern.width + x) as usize;
-                        img.put_pixel(x as u32, y as u32, Luma([raw_data[i]]));
-                    }
+        // Offset 2 (header skip?)
+        if pattern.data.len() > 2 {
+            if let Some(decoded) = packbits_decode(&pattern.data[2..], expected_bytes) {
+                println!("  [Decoded Continuous Offset 2] len: {}", decoded.len());
+                if pattern.mode == 3 {
+                    save_rgb_planar(
+                        output_dir
+                            .join(format!("p{}_cont2_planar.png", idx))
+                            .to_str()
+                            .unwrap(),
+                        &decoded,
+                        pattern.width,
+                        pattern.height,
+                    );
+                    save_rgb_interleaved(
+                        output_dir
+                            .join(format!("p{}_cont2_interleaved.png", idx))
+                            .to_str()
+                            .unwrap(),
+                        &decoded,
+                        pattern.width,
+                        pattern.height,
+                    );
                 }
-                let filename = output_dir.join(format!("p{}_raw_gray_offset{}.png", idx, overhead));
-                img.save(&filename).ok();
-                println!("    ✓ Saved Raw Grayscale {}", filename.display());
+            } else {
+                println!("  [Decoded Continuous Offset 2] Failed");
             }
         }
 
-        // STRATEGY 2: Universal Row Table Scan (RLE)
-        // Only if scan_h > 0
-        let scan_h = pattern.height as usize;
-        let scan_w = pattern.width as usize;
+        // 3. Try Scanline Row Table
+        // Assuming data starts with row table (Height * 2 or Height * 4 bytes?)
+        // Usually scanline tables in simple packbits are often 2 bytes per scanline (size of compressed line)
+        // Check if first few bytes look like scanline sizes
 
-        if scan_h > 0 {
-            println!("  [Strategy 2: Universal RLE Scan]");
-            // Scan for valid row table
-            for rt_offset in 20..300.min(pattern.data.len()) {
-                let table_size = scan_h * 2;
-                if rt_offset + table_size > pattern.data.len() {
-                    break;
-                }
+        // 4. Try Sequential Planar Decoding (Split Channels)
+        // Check if we can decode exactly W*H bytes 3 times
+        println!("  [Sequential Planar Decoding] Attempting...");
+        let channel_size = expected_pixels;
+        let mut offset = 0;
+        let mut r_plane = Vec::new();
+        let mut g_plane = Vec::new();
+        let mut b_plane = Vec::new();
 
-                let mut row_lengths: Vec<usize> = Vec::with_capacity(scan_h);
-                let mut valid = true;
+        let mut split_success = false;
 
-                for i in 0..scan_h {
-                    let start = rt_offset + i * 2;
-                    let len = i16::from_be_bytes([pattern.data[start], pattern.data[start + 1]]);
-                    // Heuristic: valid row length
-                    if len <= 0 || len as usize > scan_w * 2 {
-                        valid = false;
-                        break;
+        // Try decode R
+        if let Some((r_data, consumed_r)) =
+            packbits_decode_limit(&pattern.data[offset..], channel_size)
+        {
+            if r_data.len() == channel_size {
+                r_plane = r_data;
+                offset += consumed_r;
+                // Try decode G
+                if offset < pattern.data.len() {
+                    if let Some((g_data, consumed_g)) =
+                        packbits_decode_limit(&pattern.data[offset..], channel_size)
+                    {
+                        if g_data.len() == channel_size {
+                            g_plane = g_data;
+                            offset += consumed_g;
+                            // Try decode B
+                            if offset < pattern.data.len() {
+                                if let Some((b_data, consumed_b)) =
+                                    packbits_decode_limit(&pattern.data[offset..], channel_size)
+                                {
+                                    if b_data.len() == channel_size {
+                                        b_plane = b_data;
+                                        offset += consumed_b;
+                                        println!(
+                                            "    Success! Consumed {}/{} bytes",
+                                            offset,
+                                            pattern.data.len()
+                                        );
+                                        split_success = true;
+                                    }
+                                }
+                            }
+                        }
                     }
-                    row_lengths.push(len as usize);
+                }
+            }
+        }
+
+        if split_success {
+            // Combine Planes
+            let mut img = RgbImage::new(pattern.width, pattern.height);
+            for y in 0..pattern.height {
+                for x in 0..pattern.width {
+                    let i = (y * pattern.width + x) as usize;
+                    img.put_pixel(x, y, Rgb([r_plane[i], g_plane[i], b_plane[i]]));
+                }
+            }
+            let filename = output_dir.join(format!("p{}_sequential_planar.png", idx));
+            img.save(&filename).expect("Failed to save image");
+            println!("  Saved {}", filename.to_str().unwrap());
+        } else {
+            println!("    Failed sequential decoding");
+        }
+
+        // For Grayscale patterns, test with VMA (Virtual Memory Array) header parsing
+        if pattern.mode == 1 {
+            println!("  [Grayscale Mode] Testing...");
+
+            // Print first 32 bytes to understand the structure
+            let bytes_to_show = 32.min(pattern.data.len());
+            print!("    First {} bytes: ", bytes_to_show);
+            for i in 0..bytes_to_show {
+                print!("{:02X} ", pattern.data[i]);
+            }
+            println!();
+
+            // According to GIMP source (gimppattern-load.c):
+            //
+            // Data structure (after pattern metadata already parsed in patt.rs):
+            //
+            // IMAGE BLOCK HEADER (28 bytes):
+            // - 4 bytes: block version
+            // - 4 bytes: block size
+            // - 4 bytes: top
+            // - 4 bytes: left
+            // - 4 bytes: bottom (= height)
+            // - 4 bytes: right (= width)
+            // - 4 bytes: depth
+            //
+            // Then per channel, VMA HEADER (31 bytes):
+            // - 4 bytes: chan_version
+            // - 4 bytes: chan_size
+            // - 4 bytes: dummy
+            // - 4 bytes: chan_top
+            // - 4 bytes: chan_left
+            // - 4 bytes: chan_bottom
+            // - 4 bytes: chan_right
+            // - 2 bytes: chan_depth
+            // - 1 byte: compression
+            // Then row table (height * 2 bytes), then RLE data
+
+            let image_block_header_size = 28;
+            let vma_header_size = 31;
+            if pattern.data.len() > image_block_header_size + vma_header_size {
+                // Search for height and width values in the data
+                let h = pattern.height;
+                let w = pattern.width;
+                let h_bytes_be = (h as u16).to_be_bytes();
+                let w_bytes_be = (w as u16).to_be_bytes();
+
+                println!(
+                    "    [Searching for dimensions: {}x{} = 0x{:04X} x 0x{:04X}]",
+                    h, w, h, w
+                );
+
+                for i in 0..64.min(pattern.data.len().saturating_sub(4)) {
+                    // Check for u16 BE height
+                    if pattern.data[i] == h_bytes_be[0] && pattern.data[i + 1] == h_bytes_be[1] {
+                        // Found height, check if width follows nearby
+                        for j in (i + 2)..=(i + 10).min(pattern.data.len().saturating_sub(2)) {
+                            if pattern.data[j] == w_bytes_be[0]
+                                && pattern.data[j + 1] == w_bytes_be[1]
+                            {
+                                println!("      Found h@{} w@{} (gap={})", i, j, j - i - 2);
+                                // Check compression byte after width
+                                if j + 3 < pattern.data.len() {
+                                    let after = [pattern.data[j + 2], pattern.data[j + 3]];
+                                    println!(
+                                        "        Bytes after width: {:02X} {:02X}",
+                                        after[0], after[1]
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
 
-                if valid {
-                    let total_comp: usize = row_lengths.iter().sum();
-                    // Basic sanity check: compressed data size
-                    let remaining = pattern.data.len() - rt_offset - table_size;
-                    if total_comp > remaining {
+                // Try multiple offsets to find where the actual VMA header starts
+                println!("    [Scanning for VMA header...]");
+
+                for test_offset in [0_usize, 2, 4, 8, 28, 59] {
+                    if pattern.data.len() <= test_offset + 31 {
                         continue;
                     }
 
-                    // Try decode
-                    let data_start = rt_offset + table_size;
-                    let mut decoded = Vec::with_capacity(expected_pixels);
-                    let mut stream_pos = data_start;
-                    let mut success = true;
+                    // VMA structure: version(4) + size(4) + dummy(4) + rect(16) + depth(2) + compression(1)
+                    // rect = top + left + bottom + right (each 4 bytes at offsets 12, 16, 20, 24)
+                    let pos = test_offset;
+                    let bottom = u32::from_be_bytes([
+                        pattern.data[pos + 20],
+                        pattern.data[pos + 21],
+                        pattern.data[pos + 22],
+                        pattern.data[pos + 23],
+                    ]) as usize;
+                    let right = u32::from_be_bytes([
+                        pattern.data[pos + 24],
+                        pattern.data[pos + 25],
+                        pattern.data[pos + 26],
+                        pattern.data[pos + 27],
+                    ]) as usize;
+                    let depth =
+                        u16::from_be_bytes([pattern.data[pos + 28], pattern.data[pos + 29]]);
+                    let compression = pattern.data[pos + 30];
 
-                    for &comp_len in &row_lengths {
-                        if stream_pos + comp_len > pattern.data.len() {
-                            success = false;
-                            break;
-                        }
-                        let row_data = &pattern.data[stream_pos..stream_pos + comp_len];
-                        if let Some(row_decoded) = packbits_decode(row_data, scan_w) {
-                            decoded.extend_from_slice(&row_decoded);
-                        } else {
-                            success = false;
-                            break;
-                        }
-                        stream_pos += comp_len;
-                    }
+                    let is_match =
+                        bottom == pattern.height as usize && right == pattern.width as usize;
 
-                    if success && decoded.len() == expected_pixels {
-                        println!(
-                            "    ✓✓ FOUND VALID ROW TABLE AT {}! Total compressed: {}",
-                            rt_offset, total_comp
-                        );
-                        let mut img = GrayImage::new(scan_w as u32, scan_h as u32);
-                        for y in 0..scan_h {
-                            for x in 0..scan_w {
-                                let i = y * scan_w + x;
-                                img.put_pixel(x as u32, y as u32, Luma([decoded[i]]));
+                    println!(
+                        "      offset {:2} -> bottom={:4}, right={:4}, depth={:2}, comp={} {}",
+                        test_offset,
+                        bottom,
+                        right,
+                        depth,
+                        compression,
+                        if is_match { "✓ MATCH!" } else { "" }
+                    );
+                }
+
+                // DISCOVERED STRUCTURE from dimension search:
+                // height at byte 17-18 (u16 BE)
+                // width at byte 21-22 (u16 BE)
+                // depth at byte 25-26 (likely 0x0018 = 24)
+                // compression at byte 30 (0x01 = RLE)
+                // row table starts at byte 31
+                println!("    [Trying discovered structure: h@17, w@21, comp@30]");
+
+                if pattern.data.len() > 31 + pattern.height as usize * 2 {
+                    let h = u16::from_be_bytes([pattern.data[17], pattern.data[18]]) as usize;
+                    let w = u16::from_be_bytes([pattern.data[21], pattern.data[22]]) as usize;
+                    let depth = u16::from_be_bytes([pattern.data[25], pattern.data[26]]);
+                    let compression = pattern.data[30];
+
+                    println!(
+                        "      h={}, w={}, depth={}, comp={}",
+                        h, w, depth, compression
+                    );
+
+                    if h == pattern.height as usize
+                        && w == pattern.width as usize
+                        && compression == 1
+                    {
+                        println!("      ✓ Dimensions match!");
+                        // Print bytes 31-64 to inspect what follows
+                        if pattern.data.len() > 64 {
+                            println!("      Bytes 31-64: {:02X?}", &pattern.data[31..64]);
+                        }
+
+                        // Try multiple row table start positions
+                        for row_table_start in [31_usize, 32, 62, 63] {
+                            let row_count = h;
+                            let table_size = row_count * 2;
+
+                            if pattern.data.len() > row_table_start + table_size {
+                                let mut row_lengths: Vec<usize> = Vec::with_capacity(row_count);
+                                let mut valid = true;
+
+                                for i in 0..row_count {
+                                    let offset = row_table_start + i * 2;
+                                    let len = i16::from_be_bytes([
+                                        pattern.data[offset],
+                                        pattern.data[offset + 1],
+                                    ]);
+                                    if len <= 0 || len > 10000 {
+                                        valid = false;
+                                        break;
+                                    }
+                                    row_lengths.push(len as usize);
+                                }
+
+                                if valid {
+                                    println!(
+                                        "        rt@{} valid! First 3: {:?}",
+                                        row_table_start,
+                                        &row_lengths[..3.min(row_lengths.len())]
+                                    );
+                                    let total_compressed: usize = row_lengths.iter().sum();
+                                    let data_start = row_table_start + table_size;
+
+                                    // Row-by-row RLE decode
+                                    let mut decoded: Vec<u8> = Vec::with_capacity(h * w);
+                                    let mut stream_pos = data_start;
+                                    let mut success = true;
+
+                                    for (row_idx, &comp_len) in row_lengths.iter().enumerate() {
+                                        if stream_pos + comp_len > pattern.data.len() {
+                                            success = false;
+                                            break;
+                                        }
+                                        let row_data =
+                                            &pattern.data[stream_pos..stream_pos + comp_len];
+                                        if let Some(row_decoded) = packbits_decode(row_data, w) {
+                                            decoded.extend_from_slice(&row_decoded);
+                                        } else {
+                                            success = false;
+                                            break;
+                                        }
+                                        stream_pos += comp_len;
+                                    }
+
+                                    if success && decoded.len() == h * w {
+                                        println!(
+                                            "      ✓✓ DECODE SUCCESS at rt@{}",
+                                            row_table_start
+                                        );
+                                        let mut img = GrayImage::new(w as u32, h as u32);
+                                        for y in 0..h {
+                                            for x in 0..w {
+                                                let i = y * w + x;
+                                                img.put_pixel(
+                                                    x as u32,
+                                                    y as u32,
+                                                    Luma([decoded[i]]),
+                                                );
+                                            }
+                                        }
+                                        let filename = output_dir
+                                            .join(format!("p{}_rt{}.png", idx, row_table_start));
+                                        img.save(&filename).ok();
+                                        println!("      Saved {}", filename.display());
+                                        break; // Found successful decode, stop trying
+                                    }
+                                }
                             }
                         }
-                        let filename =
-                            output_dir.join(format!("p{}_univ_rt{}.png", idx, rt_offset));
-                        img.save(&filename).ok();
-                        println!("      Saved {}", filename.display());
+                    }
+                }
 
-                        // Break after finding one valid interpretation? Maybe not, keep scanning for safety in debug
-                        // break;
+                // Try alternative structure: 2-byte rect fields instead of 4-byte
+                // Structure might be: version(4) + size(4) + top(2) + left(2) + bottom(2) + right(2) + depth(2) + compression(1)
+                // That's 4+4+2+2+2+2+2+1 = 19 bytes header
+                println!("    [Scanning with 2-byte rect fields...]");
+
+                for test_offset in [0_usize, 2, 4, 8] {
+                    if pattern.data.len() <= test_offset + 19 {
+                        continue;
+                    }
+
+                    let pos = test_offset;
+                    // After version(4) + size(4) = offset 8
+                    let top =
+                        u16::from_be_bytes([pattern.data[pos + 8], pattern.data[pos + 9]]) as usize;
+                    let left = u16::from_be_bytes([pattern.data[pos + 10], pattern.data[pos + 11]])
+                        as usize;
+                    let bottom =
+                        u16::from_be_bytes([pattern.data[pos + 12], pattern.data[pos + 13]])
+                            as usize;
+                    let right = u16::from_be_bytes([pattern.data[pos + 14], pattern.data[pos + 15]])
+                        as usize;
+                    let depth =
+                        u16::from_be_bytes([pattern.data[pos + 16], pattern.data[pos + 17]]);
+                    let compression = pattern.data[pos + 18];
+
+                    let is_match =
+                        bottom == pattern.height as usize && right == pattern.width as usize;
+
+                    println!(
+                        "      offset {:2} -> rect=({},{},{},{}), depth={:2}, comp={} {}",
+                        test_offset,
+                        top,
+                        left,
+                        bottom,
+                        right,
+                        depth,
+                        compression,
+                        if is_match { "✓ MATCH!" } else { "" }
+                    );
+
+                    // If dimensions match and compression is RLE, try to decode
+                    if is_match && compression == 1 && (depth == 8 || depth == 24) {
+                        let row_table_start = pos + 19; // 19-byte header
+                        let row_count = bottom;
+                        let _width = right;
+                        let table_size = row_count * 2;
+
+                        if pattern.data.len() > row_table_start + table_size {
+                            let mut row_lengths: Vec<usize> = Vec::with_capacity(row_count);
+                            let mut valid = true;
+
+                            for i in 0..row_count {
+                                let offset = row_table_start + i * 2;
+                                let len = i16::from_be_bytes([
+                                    pattern.data[offset],
+                                    pattern.data[offset + 1],
+                                ]);
+                                if len <= 0 || len > 10000 {
+                                    valid = false;
+                                    break;
+                                }
+                                row_lengths.push(len as usize);
+                            }
+
+                            if valid && row_lengths.len() == row_count {
+                                let total_compressed: usize = row_lengths.iter().sum();
+                                let data_start = row_table_start + table_size;
+
+                                println!(
+                                    "        Row table valid! First 3: {:?}, total: {}",
+                                    &row_lengths[..3.min(row_lengths.len())],
+                                    total_compressed
+                                );
+
+                                // Try row-by-row RLE decode
+                                let mut decoded: Vec<u8> = Vec::with_capacity(right * bottom);
+                                let mut stream_pos = data_start;
+                                let mut success = true;
+
+                                for (row_idx, &comp_len) in row_lengths.iter().enumerate() {
+                                    if stream_pos + comp_len > pattern.data.len() {
+                                        success = false;
+                                        println!("        Row {} overflow", row_idx);
+                                        break;
+                                    }
+                                    let row_data = &pattern.data[stream_pos..stream_pos + comp_len];
+                                    if let Some(row_decoded) = packbits_decode(row_data, right) {
+                                        decoded.extend_from_slice(&row_decoded);
+                                    } else {
+                                        success = false;
+                                        println!("        Row {} decode failed", row_idx);
+                                        break;
+                                    }
+                                    stream_pos += comp_len;
+                                }
+
+                                if success && decoded.len() == right * bottom {
+                                    println!("    ✓ VMA DECODE SUCCESS at offset {}!", test_offset);
+                                    let mut img = GrayImage::new(pattern.width, pattern.height);
+                                    for y in 0..pattern.height {
+                                        for x in 0..pattern.width {
+                                            let i = (y * pattern.width + x) as usize;
+                                            img.put_pixel(x, y, Luma([decoded[i]]));
+                                        }
+                                    }
+                                    let filename = output_dir
+                                        .join(format!("p{}_vma_offset{}.png", idx, test_offset));
+                                    img.save(&filename).expect("Failed to save");
+                                    println!("  Saved {}", filename.display());
+                                } else {
+                                    println!(
+                                        "        Decode failed: got {} bytes, need {}",
+                                        decoded.len(),
+                                        right * bottom
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
+
+            // Raw (no compression) - using data after potential 2-byte header
+            let data_offset = 2.min(pattern.data.len());
+            if pattern.data.len() - data_offset >= expected_pixels {
+                let mut img = GrayImage::new(pattern.width, pattern.height);
+                for y in 0..pattern.height {
+                    for x in 0..pattern.width {
+                        let i = (y * pattern.width + x) as usize;
+                        if data_offset + i < pattern.data.len() {
+                            img.put_pixel(x, y, Luma([pattern.data[data_offset + i]]));
+                        }
+                    }
+                }
+                let filename = output_dir.join(format!("p{}_gray_offset2.png", idx));
+                img.save(&filename).expect("Failed to save");
+                println!("  Saved {}", filename.display());
+            }
         }
 
-        // Limit to first 12 patterns
+        // Limit to first 6 patterns for manageability
         if idx >= 11 {
             break;
         }
@@ -268,6 +671,7 @@ fn packbits_decode_limit(input: &[u8], target_len: usize) -> Option<(Vec<u8>, us
             // Literal run
             let count = (b as usize) + 1;
             if output.len() + count > target_len {
+                // Only verify we have enough input, but strict limit output
                 if i + count > input.len() {
                     return None;
                 }
@@ -277,6 +681,8 @@ fn packbits_decode_limit(input: &[u8], target_len: usize) -> Option<(Vec<u8>, us
             }
 
             if i + count > input.len() {
+                // Read truncated (or fail?)
+                // Standard packbits should not truncate literals in middle of stream
                 return None;
             }
             output.extend_from_slice(&input[i..i + count]);
@@ -290,6 +696,7 @@ fn packbits_decode_limit(input: &[u8], target_len: usize) -> Option<(Vec<u8>, us
             let val = input[i];
             i += 1;
 
+            // Limit output
             let remaining_needed = target_len - output.len();
             let actual_count = std::cmp::min(count, remaining_needed);
 
