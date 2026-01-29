@@ -378,8 +378,25 @@ impl AbrParser {
         let aligned_size = (brush_size + 3) & !3;
         let next_brush = cursor.position() + aligned_size as u64;
 
-        // Skip key (37 bytes)
-        cursor.seek(SeekFrom::Current(37))?;
+        // Read key (37 bytes)
+        let mut key_bytes = [0u8; 37];
+        cursor.read_exact(&mut key_bytes)?;
+
+        // Extract UUID string (skip leading '$' if present)
+        let uuid_str = String::from_utf8_lossy(&key_bytes).to_string();
+        let clean_uuid = uuid_str.trim_matches(char::from(0)).trim();
+        let final_uuid = if clean_uuid.starts_with('$') {
+            clean_uuid[1..].to_string()
+        } else {
+            clean_uuid.to_string()
+        };
+
+        let brush_uuid = if final_uuid.len() >= 36 {
+            Some(final_uuid)
+        } else {
+            // Fallback
+            Some(format!("abr-{}", id))
+        };
 
         // Skip additional bytes based on subversion
         if header.subversion == 1 {
@@ -424,7 +441,7 @@ impl AbrParser {
         // Usually there is a descriptor block here.
 
         let mut texture_settings = None;
-        let mut uuid = Some(format!("abr-{}", id));
+        let mut uuid = brush_uuid;
         let mut name = None;
 
         // Let's see if we have bytes left before next_brush
@@ -630,65 +647,190 @@ impl AbrParser {
         match parse_descriptor(&mut Cursor::new(&desc_data)) {
             Ok(desc) => {
                 if let Some(DescriptorValue::List(brsh_list)) = desc.get("Brsh") {
+                    // Helper to find UUID recursively in sampledData
+                    fn find_uuid(val: &DescriptorValue) -> Option<String> {
+                        match val {
+                            DescriptorValue::String(s) => return Some(s.clone()),
+                            DescriptorValue::Descriptor(d) => {
+                                if let Some(uuid) = d.get("sampledData") {
+                                    if let DescriptorValue::String(s) = uuid {
+                                        return Some(s.clone());
+                                    }
+                                }
+                                // Recursive search
+                                for v in d.values() {
+                                    if let Some(res) = find_uuid(v) {
+                                        return Some(res);
+                                    }
+                                }
+                            }
+                            DescriptorValue::List(l) => {
+                                for v in l {
+                                    if let Some(res) = find_uuid(v) {
+                                        return Some(res);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        None
+                    }
+
                     tracing::debug!(
                         "Found 'Brsh' list with {} items in desc section",
                         brsh_list.len()
                     );
 
+                    let mut used_indices = std::collections::HashSet::new();
+
                     for (i, item) in brsh_list.iter().enumerate() {
-                        if i >= brushes.len() {
-                            break;
-                        }
-
                         if let DescriptorValue::Descriptor(brush_desc) = item {
-                            // Extract Brush Name
-                            if let Some(DescriptorValue::String(name)) = brush_desc.get("Nm  ") {
-                                brushes[i].name = name.clone();
-                            }
+                            // 1. Try to find the target UUID for this descriptor
+                            // It is usually hidden deep inside, prominently in 'sampledData'
+                            let target_uuid =
+                                find_uuid(&DescriptorValue::Descriptor(brush_desc.clone()));
 
-                            // Look for Txtr in multiple locations
-                            // 1. Direct child of brush descriptor
-                            let txtr_opt = brush_desc.get("Txtr");
+                            if let Some(uuid_raw) = target_uuid {
+                                let uuid = uuid_raw.trim().to_string();
 
-                            if let Some(DescriptorValue::Descriptor(txtr)) = txtr_opt {
-                                // Found texture settings!
-                                let mut settings = Self::parse_texture_settings(txtr);
+                                // Find the matching brush
+                                if let Some(brush) = brushes.iter_mut().find(|b| {
+                                    b.uuid.as_ref().map(|u| u.trim()) == Some(uuid.as_str())
+                                }) {
+                                    used_indices.insert(i);
 
-                                // Try to link pattern by UUID first
-                                let mut linked = false;
-                                if let Some(uuid) = &settings.pattern_uuid {
-                                    if let Some(p) = patterns.iter().find(|p| &p.id == uuid) {
-                                        settings.pattern_id = Some(p.id.clone());
-                                        settings.pattern_name = Some(p.name.clone());
-                                        linked = true;
-                                        tracing::debug!(
-                                            "Brush #{}: Associated pattern by UUID '{}' -> '{}'",
-                                            i,
-                                            uuid,
-                                            p.name
-                                        );
+                                    // Apply Name
+                                    if let Some(DescriptorValue::String(name)) =
+                                        brush_desc.get("Nm  ")
+                                    {
+                                        brush.name = name.clone();
                                     }
-                                }
 
-                                if !linked {
-                                    // Fallback: try name linking if UUID failed
-                                    if let Some(name) = &settings.pattern_name {
-                                        if let Some(p) = patterns.iter().find(|p| &p.name == name) {
-                                            settings.pattern_id = Some(p.id.clone());
-                                            tracing::debug!(
-                                                "Brush #{}: Associated pattern by Name '{}' -> '{}'",
-                                                i,
-                                                name,
-                                                p.id
-                                            );
+                                    // Apply Texture
+                                    if let Some(DescriptorValue::Descriptor(txtr)) =
+                                        brush_desc.get("Txtr")
+                                    {
+                                        let mut settings = Self::parse_texture_settings(txtr);
+
+                                        // Link Pattern (existing logic)
+                                        let mut linked = false;
+                                        if let Some(pid) = &settings.pattern_uuid {
+                                            if let Some(p) = patterns.iter().find(|p| &p.id == pid)
+                                            {
+                                                settings.pattern_id = Some(p.id.clone());
+                                                settings.pattern_name = Some(p.name.clone());
+                                                linked = true;
+                                            }
                                         }
+                                        if !linked {
+                                            if let Some(name) = &settings.pattern_name {
+                                                if let Some(p) =
+                                                    patterns.iter().find(|p| &p.name == name)
+                                                {
+                                                    settings.pattern_id = Some(p.id.clone());
+                                                }
+                                            }
+                                        }
+                                        brush.texture_settings = Some(settings);
                                     }
                                 }
-
-                                brushes[i].texture_settings = Some(settings);
                             }
                         }
                     }
+
+                    // 2. Fallback: Link remaining brushes to unused sampled descriptors sequentially
+                    // 2. Fallback: Link remaining brushes to unused sampled descriptors sequentially
+                    let mut unlinked_brush_indices = Vec::new();
+                    for (i, brush) in brushes.iter().enumerate() {
+                        // Check if name is still generic (starts with Brush_)
+                        // Note: A better check might be a flag, but checking name pattern is safe enough
+                        // since UUID linking would have overwritten the name.
+                        if brush.name.starts_with("Brush_") {
+                            unlinked_brush_indices.push(i);
+                        }
+                    }
+
+                    // Collect unused sampled descriptors
+                    let mut unused_desc_indices = Vec::new();
+                    for (i, item) in brsh_list.iter().enumerate() {
+                        if !used_indices.contains(&i) {
+                            if let DescriptorValue::Descriptor(brush_desc) = item {
+                                // Filter out likely computed brushes (have toolOptions)
+                                if !brush_desc.contains_key("toolOptions") {
+                                    unused_desc_indices.push(i);
+                                }
+                            }
+                        }
+                    }
+
+                    tracing::debug!(
+                        "Fallback Linking: {} unlinked brushes, {} unused descriptors",
+                        unlinked_brush_indices.len(),
+                        unused_desc_indices.len()
+                    );
+
+                    for (brush_idx, desc_idx) in unlinked_brush_indices
+                        .iter()
+                        .zip(unused_desc_indices.iter())
+                    {
+                        if let DescriptorValue::Descriptor(brush_desc) = &brsh_list[*desc_idx] {
+                            let brush = &mut brushes[*brush_idx];
+
+                            tracing::debug!(
+                                "Fallback linking Brush #{} to Descriptor #{}",
+                                brush_idx,
+                                desc_idx
+                            );
+
+                            // Apply Name
+                            if let Some(DescriptorValue::String(name)) = brush_desc.get("Nm  ") {
+                                brush.name = name.clone();
+                            }
+
+                            // Apply Texture
+                            if let Some(DescriptorValue::Descriptor(txtr)) = brush_desc.get("Txtr")
+                            {
+                                let mut settings = Self::parse_texture_settings(txtr);
+
+                                // Link Pattern
+                                let mut linked = false;
+                                if let Some(pid) = &settings.pattern_uuid {
+                                    if let Some(p) = patterns.iter().find(|p| &p.id == pid) {
+                                        settings.pattern_id = Some(p.id.clone());
+                                        settings.pattern_name = Some(p.name.clone());
+                                        linked = true;
+                                    }
+                                }
+                                if !linked {
+                                    if let Some(name) = &settings.pattern_name {
+                                        if let Some(p) = patterns.iter().find(|p| &p.name == name) {
+                                            settings.pattern_id = Some(p.id.clone());
+                                        }
+                                    }
+                                }
+                                brush.texture_settings = Some(settings);
+                            }
+                        }
+                    }
+
+                    // Log unused descriptors that might be sampled brushes
+                    println!("--- UNUSED DESCRIPTORS REPORT ---");
+                    for (i, item) in brsh_list.iter().enumerate() {
+                        if !used_indices.contains(&i) {
+                            if let DescriptorValue::Descriptor(brush_desc) = item {
+                                // Check if it's likely a sampled brush (no toolOptions)
+                                let has_tool_opts = brush_desc.contains_key("toolOptions");
+                                if !has_tool_opts {
+                                    if let Some(DescriptorValue::String(name)) =
+                                        brush_desc.get("Nm  ")
+                                    {
+                                        println!("Unused Descriptor #{}: '{}'", i, name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    println!("---------------------------------");
                 }
             }
             Err(e) => {

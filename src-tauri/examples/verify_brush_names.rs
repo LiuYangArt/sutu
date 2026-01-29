@@ -26,7 +26,14 @@ fn main() {
         Ok(abr) => {
             println!("Found {} brushes", abr.brushes.len());
             for (i, brush) in abr.brushes.iter().enumerate() {
-                println!("Brush #{}: Name='{}'", i, brush.name);
+                if i == 0 || i == 6 {
+                    println!(">>> CHECK BRUSH #{} <<<", i);
+                    println!("Name: '{}'", brush.name);
+                    println!("UUID: '{:?}'", brush.uuid);
+                }
+                if i > 6 {
+                    break;
+                }
             }
         }
         Err(e) => {
