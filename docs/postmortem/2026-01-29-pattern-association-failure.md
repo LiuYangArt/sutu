@@ -1,64 +1,78 @@
-# Postmortem: ABR 笔刷图案关联失效问题的根因分析与修复
+# ABR 笔刷 Pattern 关联失败与 UI 缺失分析报告
 
 **日期**: 2026-01-29
-**状态**: 已诊断，等待实施
-**文件**: `docs/postmortem/2026-01-29-pattern-association-failure.md`
+**相关模块**: `abr/parser`, `commands.rs`, `packbits_decode`, `TextureSettings.tsx`
+**状态**: 部分修复 (解码成功，UI 显示与部分关联仍有待解决)
 
-## 1. 问题定义 (Problem Definition)
+## 1. 问题背景
 
-**症状**: 导入 ABR 笔刷（如 `liuyang_paintbrushes.abr`）时，虽然正确加载了笔刷形状和 Pattern 资源，但笔刷的纹理设置丢失（UI 显示 "Texture: None"）。
+用户反馈在导入 ABR 笔刷文件时，遇到 "Texture: None" 问题，即笔刷未正确关联到纹理图案。
+经过初步修复（PackBits 解码优化）后，所有 Pattern 数据已成功加载，但仍遗留两个新问题：
 
-**影响**: 笔刷系统的核心“纹理”功能不可用，无法还原 Photoshop 笔刷的质感。
+1.  **部分关联失败**：个别笔刷（如 Brush 65）显示警告 `has texture enabled but pattern could not be resolved`。
+2.  **UI 不显示缩略图**：即使关联成功的笔刷（如 Brush 64），UI 上的 Texture 面板仍未显示图案缩略图。
 
-## 2. 调查过程 (Investigation)
+## 2. 根因分析 (Root Cause Analysis)
 
-### 初步假设与推翻
+### 2.1 PackBits 解码失败 (已解决)
 
-最初推测 Pattern 资源的 ID 格式不匹配（如 parse 出来的 ID 为空字符串），导致笔刷无法通过 ID 引用 Pattern。
-然而，通过编写测试脚本 `src-tauri/examples/test_pattern_association.rs` 解析发现：
+- **现象**: `debug_abr_full.rs` 显示所有 Pattern 的 PackBits 解码均失败，导致 Pattern 未加载，从而无法建立关联。
+- **原因**:
+  1.  **Strict Size Check**: 原 `packbits_decode` 函数严格校验解压后大小必须等于预期大小。但 ABR 文件中的 RLE 数据常含有 Padding（如多出几字节的无用数据），导致校验失败。
+  2.  **Double Header**: 部分 Pattern 数据包含 2 字节的头部（`00 00` 或 `03 00`），若不跳过会由 Offset 0 开始解码导致数据错位。
+- **修复**:
+  - 放宽 `packbits_decode` 校验，允许解压数据略大于预期（截断即可）。
+  - 调整解码策略，优先尝试 Offset 2（跳过 2 字节头）。
+- **结果**: 所有 10 个 Pattern 均成功解码。
 
-1. **Pattern ID 完好**：解析出的 10 个 Pattern 均拥有有效的 Pascal String ID（如 `b7334...`）。
-2. **内嵌 Descriptor 无效**：尝试从 `samp` section 的笔刷数据块中提取内嵌描述符，结果未能提取到任何有效的 Txtr 信息。
+### 2.2 UI 缩略图缺失 (待修复)
 
-### 关键发现 (Breakthrough)
+- **现象**: 前端 Texture 设置面板未显示关联成功的图案。
+- **原因**:
+  - **前端代码**: `TextureSettings.tsx` 依赖 `textureSettings.patternId` 字段来生成预览 URL (`project://pattern/{id}`)。
+  - **后端定义**: 在 `src-tauri/src/abr/types.rs` 中：
+    ```rust
+    pub struct TextureSettings {
+        pub pattern_id: Option<String>, // 用于前端
+        #[serde(skip)]
+        pub pattern_uuid: Option<String>, // 内部使用，实际存储了 UUID
+    }
+    ```
+  - **数据流断裂**: 修复后的 Parser 逻辑将解析出的 Pattern UUID 存入了 `pattern_uuid` 字段，但**并未**赋值给 `pattern_id`。
+  - 由于 `pattern_uuid` 被标记为 `#[serde(skip)]`，加上 `pattern_id` 为空，前端接收到的 JSON 中 `patternId` 为 `null`，导致无法渲染缩略图。
 
-通过深度分析 ABR 文件结构（`src-tauri/examples/find_txtr_ids.rs`）：
+### 2.3 部分笔刷关联失败 (Brush 65)
 
-1. **全局 desc section 包含真相**：在全局 `desc` (8BIM section) 中发现了 14 个 `Txtr` 描述符对象。
-2. **UUID 完美匹配**：
-   - Txtr #10 的 `Idnt` (UUID) 为 `b7334da0-122f-11d4-8bb5-e27e45023b5f`。
-   - 这与 Pattern `Bubbles` 的 ID 完全一致。
-3. **结构错位**：当前的 `AbrParser` 是基于旧有的假设编写的，即“每个笔刷的设置存储在其 samp 数据块尾部的内嵌描述符中”。实际上，Photoshop (v6+) 经常将完整的笔刷预设列表存储在全局 `desc` section 中，而 samp section 仅存储图像数据。
+- **现象**: 日志显示 `Brush 'Brush_65' requests Pattern ID 'None' Name 'None'`，但同时提示 `has texture enabled`。
+- **分析**:
+  - 该笔刷在 Global `desc` section 中的 `Txtr` 描述符存在，导致代码认为其开启了纹理。
+  - 但在解析该 `Txtr` 描述符时，未能提取到 `Idnt` (Pattern UUID) 或 `Nm  ` (Pattern Name)。
+  - 这可能是该笔刷在 Photoshop 中虽勾选了 Texture 选项，但实际并未选中任何 Pattern（使用了默认或空状态），或者是 ABR 文件结构的特殊边缘情况。
+  - **结论**: 这是一个具体数据的边缘 Case，优先级的确低于 UI 显示问题。
 
-## 3. 根因 (Root Cause)
+## 3. 解决方案建议 (Next Steps)
 
-**架构性缺失**：解析器缺乏对全局 `desc` section 的解析能力。
+### 3.1 修复 UI 数据传输
 
-- **现状**：`AbrParser` 按顺序扫描 `samp` section，试图从每个笔刷图像数据后读取描述符。对于许多 ABR 文件，这里并没有包含完整的 Texturing 信息。
-- **真相**：ABR 文件（特别是 Tool Presets）使用分离式存储——图像在 `samp`，元数据在 `desc`。两者通过顺序索引对应（Brsh 列表的第 N 项对应 samp 中的第 N 个图像）。
+在 `parser.rs` 的 `apply_global_texture_settings` 函数中，将解析出的 UUID 同时赋值给 `pattern_id` 字段，确保前端能接收到 ID。
 
-## 4. 解决方案 (Solution)
+```rust
+// 伪代码
+settings.pattern_uuid = Some(pattern_uuid.clone());
+settings.pattern_id = Some(pattern_uuid); // FIX: 赋值给前端可见字段
+```
 
-采用 **"二次解析" (Two-Pass Parsing)** 策略：
+### 3.2 验证修复
 
-1. **Pass 1 (现有)**：保留现有的 `samp` section 解析，提取所有的 `AbrBrush` 对象（包含 tip_image, diameter 等基础属性）。
-2. **Pass 2 (新增)**：
-   - 定位并解析全局 `desc` section。
-   - 提取 `Brsh` 列表。
-   - 遍历列表，提取其中的 `Txtr` 设置（包含 Scale, Depth, **Pattern UUID** 等）。
-   - 按索引将 Txtr 设置注入到 Pass 1 生成的 `AbrBrush` 对象中。
-3. **关联 (Linking)**：
-   - 利用提取到的 Pattern UUID，在 `patt` section 解析出的 Pattern 列表中查找匹配项。
-   - 将匹配到的 Pattern ID (internal id) 赋值给笔刷配置。
+1.  修改代码后，重新运行 `import_abr_file`。
+2.  检查前端 Developer Tools Network 面板或 Console，确认 `patternId` 字段已包含 UUID。
+3.  确认 UI 缩略图正确加载。
 
-## 5. 经验教训 (Lessons Learned)
+### 3.3 补充日志
 
-- **不要盲信文档或局部样本**：之前的解析器可能参考了特定版本的 ABR 或开源实现（如 Krita 旧代码），但在面对更复杂的 Photoshop ABR 变体时失效。
-- **数据取证优先**：在猜测代码逻辑之前，先写脚本 dump 原始二进制结构（Hex Dump + 结构化解析）是最高效的排错手段。如果早点分析 desc section，能节省大量猜测时间。
-- **全貌观**：文件格式解析不能只盯着局部数据块 (chunk)，要关注所有顶层结构 (sections) 的交互。
+对于 Brush 65 这类情况，增加更详细的 Debug 日志（打印该 `Txtr` 块的所有 Key），以确定是解析漏了还是文件本身确实为空。
 
-## 6. 后续行动 (Action Items)
+## 4. 经验总结
 
-- [ ] 修改 `src-tauri/src/abr/parser.rs`，实现 `apply_global_texture_settings`。
-- [ ] 确保 `Txtr` 解析逻辑能正确处理 `Idnt` (UUID) 字段。
-- [ ] 验证修复后的笔刷是否能正确显示纹理名称和效果。
+- **数据完整性 vs 鲁棒性**: 在处理遗留/非标准文件格式（如 PSD/ABR Pattern）时，解码器过于严格的校验（Strict Size Check）往往会因为微小的 Padding 差异而导致整个流程失败。应在该宽容的地方宽容。
+- **前后端契约**: 修改后端数据结构（添加 `pattern_uuid`）时，未能充分考虑到前端已有的字段依赖 (`patternId`) 及序列化行为 (`serde(skip)`), 导致数据虽已解析但无法传输。修改 API 契约需全链路 Check。
