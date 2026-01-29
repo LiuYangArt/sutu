@@ -50,7 +50,7 @@ impl AbrParser {
         }
 
         // Parse based on version
-        let brushes = if header.version.is_new_format() {
+        let mut brushes = if header.version.is_new_format() {
             Self::parse_v6(&mut cursor, &header)?
         } else {
             Self::parse_v12(&mut cursor, &header)?
@@ -65,6 +65,16 @@ impl AbrParser {
         } else {
             Vec::new()
         };
+
+        // NEW: Apply texture settings from global 'desc' section if available
+        // This is necessary because v6+ brushes often store metadata in a separate 'desc' section
+        // rather than embedding it in the 'samp' section as per older specs.
+        if header.version.is_new_format() {
+            if let Err(e) = Self::apply_global_texture_settings(data, &mut brushes, &patterns) {
+                tracing::warn!("Failed to apply global texture settings: {}", e);
+                // Non-fatal error, continue with brushes as-is
+            }
+        }
 
         Ok(AbrFile {
             version: header.version,
@@ -589,6 +599,210 @@ impl AbrParser {
         }
 
         String::from_utf16(&utf16_data).map_err(|e| AbrError::StringDecode(e.to_string()))
+    }
+
+    /// Apply texture settings from global 'desc' section
+    fn apply_global_texture_settings(
+        data: &[u8],
+        brushes: &mut [AbrBrush],
+        patterns: &[super::patt::PatternResource],
+    ) -> Result<(), AbrError> {
+        let desc_data = match Self::find_desc_section(data) {
+            Some(d) => d,
+            None => {
+                tracing::debug!("No 'desc' section found, skipping global texture settings");
+                return Ok(());
+            }
+        };
+
+        tracing::debug!("desc section size: {}", desc_data.len());
+        if desc_data.len() > 16 {
+            tracing::debug!("desc content head: {:02X?}", &desc_data[0..16]);
+        }
+
+        match parse_descriptor(&mut Cursor::new(&desc_data)) {
+            Ok(desc) => {
+                if let Some(DescriptorValue::List(brsh_list)) = desc.get("Brsh") {
+                    tracing::debug!(
+                        "Found 'Brsh' list with {} items in desc section",
+                        brsh_list.len()
+                    );
+
+                    for (i, item) in brsh_list.iter().enumerate() {
+                        if i >= brushes.len() {
+                            break;
+                        }
+
+                        if let DescriptorValue::Descriptor(brush_desc) = item {
+                            // Look for Txtr in multiple locations
+                            // 1. Direct child of brush descriptor
+                            let txtr_opt = brush_desc.get("Txtr");
+
+                            if let Some(DescriptorValue::Descriptor(txtr)) = txtr_opt {
+                                // Found texture settings!
+                                let mut settings = Self::parse_texture_settings(txtr);
+
+                                // Try to link pattern by UUID first
+                                let mut linked = false;
+                                if let Some(uuid) = &settings.pattern_uuid {
+                                    if let Some(p) = patterns.iter().find(|p| &p.id == uuid) {
+                                        settings.pattern_id = Some(p.id.clone());
+                                        settings.pattern_name = Some(p.name.clone());
+                                        linked = true;
+                                        tracing::debug!(
+                                            "Brush #{}: Associated pattern by UUID '{}' -> '{}'",
+                                            i,
+                                            uuid,
+                                            p.name
+                                        );
+                                    }
+                                }
+
+                                if !linked {
+                                    // Fallback: try name linking if UUID failed
+                                    if let Some(name) = &settings.pattern_name {
+                                        if let Some(p) = patterns.iter().find(|p| &p.name == name) {
+                                            settings.pattern_id = Some(p.id.clone());
+                                            tracing::debug!(
+                                                "Brush #{}: Associated pattern by Name '{}' -> '{}'",
+                                                i,
+                                                name,
+                                                p.id
+                                            );
+                                        }
+                                    }
+                                }
+
+                                brushes[i].texture_settings = Some(settings);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to parse global descriptor: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn find_desc_section(data: &[u8]) -> Option<Vec<u8>> {
+        let mut cursor = Cursor::new(data);
+        cursor.seek(SeekFrom::Start(4)).ok()?; // Skip ABR header
+
+        let data_len = data.len() as u64;
+
+        while cursor.position() + 12 <= data_len {
+            let pos = cursor.position();
+            let mut signature = [0u8; 4];
+            if cursor.read_exact(&mut signature).is_err() {
+                break;
+            }
+
+            if &signature != b"8BIM" {
+                cursor.seek(SeekFrom::Start(pos + 1)).ok();
+                continue;
+            }
+
+            let mut tag = [0u8; 4];
+            cursor.read_exact(&mut tag).ok()?;
+            let tag_str = std::str::from_utf8(&tag).unwrap_or("????");
+
+            let section_size = cursor.read_u32::<BigEndian>().ok()? as usize;
+
+            if tag_str == "desc" {
+                let mut section = vec![0u8; section_size];
+                cursor.read_exact(&mut section).ok()?;
+                return Some(section);
+            } else {
+                cursor.seek(SeekFrom::Current(section_size as i64)).ok();
+                if section_size % 2 != 0 {
+                    cursor.seek(SeekFrom::Current(1)).ok();
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_texture_settings(
+        txtr: &std::collections::HashMap<String, DescriptorValue>,
+    ) -> TextureSettings {
+        let mut settings = TextureSettings::default();
+        settings.enabled = true; // Implicitly true if Txtr exists
+
+        // Idnt (UUID)
+        if let Some(DescriptorValue::String(id)) = txtr.get("Idnt") {
+            settings.pattern_uuid = Some(id.clone());
+        }
+
+        // PtNm (Pattern Name)
+        if let Some(DescriptorValue::String(name)) = txtr.get("PtNm") {
+            settings.pattern_name = Some(name.clone());
+        }
+
+        // Scale (Scl ) - Percent
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("Scl ") {
+            settings.scale = *value as f32;
+        }
+
+        // Brightness (Brgh) - Long
+        if let Some(DescriptorValue::Integer(val)) = txtr.get("Brgh") {
+            settings.brightness = *val;
+        } else if let Some(DescriptorValue::LargeInteger(val)) = txtr.get("Brgh") {
+            settings.brightness = *val as i32;
+        }
+
+        // Contrast (Cntr) - Long
+        if let Some(DescriptorValue::Integer(val)) = txtr.get("Cntr") {
+            settings.contrast = *val;
+        } else if let Some(DescriptorValue::LargeInteger(val)) = txtr.get("Cntr") {
+            settings.contrast = *val as i32;
+        }
+
+        // Depth (Dpth) - Percent
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("Dpth") {
+            settings.depth = *value as f32;
+        }
+
+        // Depth Minimum
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("DptM") {
+            settings.minimum_depth = *value as f32;
+        }
+
+        // Depth Jitter
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("DptJ") {
+            settings.depth_jitter = *value as f32;
+        }
+
+        // Mode (Md  ) - Enum
+        if let Some(DescriptorValue::Enum { value, .. }) = txtr.get("Md  ") {
+            settings.mode = match value.as_str() {
+                "Mltp" => super::types::TextureBlendMode::Multiply,
+                "Sbt " => super::types::TextureBlendMode::Subtract,
+                "Drkn" => super::types::TextureBlendMode::Darken,
+                "Ovrl" => super::types::TextureBlendMode::Overlay,
+                "CldD" => super::types::TextureBlendMode::ColorDodge,
+                "CldB" => super::types::TextureBlendMode::ColorBurn,
+                "LnrB" => super::types::TextureBlendMode::LinearBurn,
+                "HrdM" => super::types::TextureBlendMode::HardMix,
+                "LnrH" => super::types::TextureBlendMode::LinearHeight,
+                "Hght" => super::types::TextureBlendMode::Height,
+                _ => super::types::TextureBlendMode::Multiply,
+            };
+        }
+
+        // Invert (Invr) - Boolean
+        if let Some(DescriptorValue::Boolean(val)) = txtr.get("Invr") {
+            settings.invert = *val;
+        }
+
+        // Texture each tip (TxET) - Boolean
+        if let Some(DescriptorValue::Boolean(val)) = txtr.get("TxET") {
+            settings.texture_each_tip = *val;
+        }
+
+        settings
     }
 }
 

@@ -150,6 +150,9 @@ pub struct TextureSettings {
     pub pattern_id: Option<String>,
     /// Pattern Name (fallback for matching when ID mismatch occurs)
     pub pattern_name: Option<String>,
+    /// Raw pattern UUID from ABR descriptor (internal use for linking)
+    #[serde(skip)]
+    pub pattern_uuid: Option<String>,
     /// Scale percentage (10-200)
     pub scale: f32,
     /// Brightness adjustment (-150 to +150)
@@ -178,6 +181,7 @@ impl Default for TextureSettings {
             enabled: false,
             pattern_id: None,
             pattern_name: None,
+            pattern_uuid: None,
             scale: 100.0,
             brightness: 0,
             contrast: 0,

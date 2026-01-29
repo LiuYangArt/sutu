@@ -77,15 +77,27 @@ fn read_unicode_string(cursor: &mut Cursor<&[u8]>) -> Result<String, AbrError> {
 }
 
 /// Parse a descriptor from the cursor
+/// Helper to read a unicode string with u16 length (Version 1)
+fn read_unicode_string_u16(cursor: &mut Cursor<&[u8]>) -> Result<String, AbrError> {
+    let len = cursor.read_u16::<BigEndian>()?;
+    let mut utf16 = Vec::with_capacity(len as usize);
+    for _ in 0..len {
+        utf16.push(cursor.read_u16::<BigEndian>()?);
+    }
+    // Remove null terminator if present
+    if let Some(&0) = utf16.last() {
+        utf16.pop();
+    }
+    String::from_utf16(&utf16).map_err(|e| AbrError::StringDecode(e.to_string()))
+}
+
+/// Parse a descriptor from the cursor
 pub fn parse_descriptor(
     cursor: &mut Cursor<&[u8]>,
 ) -> Result<HashMap<String, DescriptorValue>, AbrError> {
     // Version check (usually 16)
     let version = cursor.read_u32::<BigEndian>()?;
-    if version != 16 {
-        // Some descriptors might be embedded without version if inside another structure,
-        // but ABR top-level descriptors usually have it.
-        // Let's assume valid for now or return error.
+    if version != 16 && version != 1 {
         return Err(AbrError::InvalidFormat(format!(
             "Unknown descriptor version: {}",
             version
@@ -93,7 +105,12 @@ pub fn parse_descriptor(
     }
 
     // Name/Class ID
-    let _name = read_unicode_string(cursor)?;
+    let _name = if version == 1 {
+        read_unicode_string_u16(cursor)?
+    } else {
+        read_unicode_string(cursor)?
+    };
+
     let _class_id = read_key(cursor)?;
 
     let count = cursor.read_u32::<BigEndian>()?;
@@ -102,8 +119,21 @@ pub fn parse_descriptor(
     for _ in 0..count {
         let key = read_key(cursor)?;
         let value_type = read_type(cursor)?;
-        let value = parse_value(cursor, &value_type)?;
-        items.insert(key, value);
+
+        match parse_value(cursor, &value_type) {
+            Ok(value) => {
+                items.insert(key, value);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to parse value for key '{}' type '{}': {}",
+                    key,
+                    value_type,
+                    e
+                );
+                return Err(e);
+            }
+        }
     }
 
     Ok(items)
@@ -223,6 +253,10 @@ fn parse_value(cursor: &mut Cursor<&[u8]>, value_type: &str) -> Result<Descripto
             let mut data = vec![0u8; len as usize];
             cursor.read_exact(&mut data)?;
             Ok(DescriptorValue::RawData(data))
+        }
+        "doub" => {
+            let val = cursor.read_f64::<BigEndian>()?;
+            Ok(DescriptorValue::Double(val))
         }
         _ => Err(AbrError::InvalidFormat(format!(
             "Unknown descriptor value type: {}",
