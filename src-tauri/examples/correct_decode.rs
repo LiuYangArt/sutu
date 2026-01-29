@@ -66,9 +66,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let depth = i16::from_be_bytes([d[28], d[29]]);
             let compression = d[30];
 
+            // Use checked_sub to prevent overflow panic
+            let Some(h_diff) = bottom.checked_sub(top) else {
+                continue;
+            };
+            let Some(w_diff) = right.checked_sub(left) else {
+                continue;
+            };
+
+            if h_diff <= 0 || w_diff <= 0 {
+                continue;
+            }
+
             // VMA dimensions
-            let vma_height = (bottom - top) as usize;
-            let vma_width = (right - left) as usize;
+            let vma_height = h_diff as usize;
+            let vma_width = w_diff as usize;
 
             // Check if dimensions match (allow swapped)
             let dims_match = (vma_height == pattern_height && vma_width == pattern_width)
@@ -78,10 +90,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 && version <= 10
                 && size > 0
                 && size < 10000000
-                && top >= 0
-                && left >= 0
-                && bottom > top
-                && right > left
                 && dims_match
                 && depth == 8
                 && compression <= 1
