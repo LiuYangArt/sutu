@@ -838,6 +838,27 @@ impl AbrParser {
             }
         }
 
+        // Log final texture status for brushes
+        let textured_brushes = brushes
+            .iter()
+            .filter(|b| b.texture_settings.as_ref().map_or(false, |t| t.enabled))
+            .count();
+        if textured_brushes > 0 {
+            tracing::info!(
+                "[ABR Diagnosis] Found {} brushes with texture enabled",
+                textured_brushes
+            );
+            for b in brushes
+                .iter()
+                .filter(|b| b.texture_settings.as_ref().map_or(false, |t| t.enabled))
+            {
+                if let Some(tex) = &b.texture_settings {
+                    tracing::info!("  Brush '{}': PatternID='{:?}' Name='{:?}' Scale={:.0}% Depth={:.0}% Mode={:?}",
+                        b.name, tex.pattern_id, tex.pattern_name, tex.scale, tex.depth, tex.mode);
+                }
+            }
+        }
+
         Ok(())
     }
 

@@ -664,119 +664,98 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             let expected_len = pixel_count * channels;
 
             // Import byteorder for reading row table
-            use byteorder::{BigEndian, ReadBytesExt};
-            use std::io::Cursor;
 
-            // Robust decoding strategy
+            // Robust decoding strategy using Universal Scanner
             let raw_data = if pattern.data.len() == expected_len {
                 tracing::debug!("[ABR Import] Pattern '{}' is RAW", pattern.name);
                 Some(pattern.data.clone())
+            } else if pattern.mode == 1
+                && pattern.data.len() > expected_len
+                && (pattern.data.len() - expected_len) < 5000
+            {
+                // Strategy 1: Raw Grayscale with Header overhead (e.g. Patterns 6, 8, 9)
+                let offset = pattern.data.len() - expected_len;
+                tracing::debug!(
+                    "[ABR Import] Pattern '{}' is Raw Grayscale (Offset {})",
+                    pattern.name,
+                    offset
+                );
+                Some(pattern.data[offset..].to_vec())
             } else {
                 let mut decoded_data = None;
 
-                // Strategy 1: Blind PackBits (Continuous)
-                // Used for Patterns that lack Row Table (just stream)
-                // Prioritize Offset 2 (Skip 2-byte header common in ABR patterns)
-                let offsets = vec![2, 0];
-                for &offset in &offsets {
-                    if offset < pattern.data.len() {
-                        if let Ok(d) = packbits_decode(&pattern.data[offset..], expected_len) {
-                            tracing::debug!(
-                                "[ABR Import] Decoded '{}' (Blind Offset {})",
-                                pattern.name,
-                                offset
-                            );
-                            decoded_data = Some(d);
+                // Strategy 2: Universal Row Table Scan (RLE)
+                // Scan for row table for ALL channels (height * channels rows)
+                let scan_rows = (pattern.height as usize) * channels;
+
+                if scan_rows > 0 {
+                    // Try offsets 0..300 to catch standard PSD (0, 2) and embedded ABR (20-100+)
+                    for rt_offset in 0..300.min(pattern.data.len()) {
+                        let table_size = scan_rows * 2;
+                        if rt_offset + table_size > pattern.data.len() {
                             break;
                         }
-                    }
-                }
 
-                // Strategy 2: Row Table (Scanlines)
-                // Used for standard PSD RLE data (Row Counts + Data)
-                if decoded_data.is_none() && channels > 0 {
-                    let rows_total = pattern.height as usize * channels;
-                    // Try offsets for Table
-                    for &offset in &offsets {
-                        if offset + (rows_total * 2) > pattern.data.len() {
-                            continue;
-                        }
-
-                        let mut cursor = Cursor::new(&pattern.data[offset..]);
-                        let mut row_counts = Vec::with_capacity(rows_total);
+                        // Check if bytes at rt_offset look like reasonable row lengths
                         let mut valid_table = true;
+                        let mut total_comp = 0;
+                        let mut row_lengths = Vec::with_capacity(scan_rows);
 
-                        for _ in 0..rows_total {
-                            match cursor.read_u16::<BigEndian>() {
-                                Ok(c) => row_counts.push(c as usize),
-                                Err(_) => {
-                                    valid_table = false;
-                                    break;
-                                }
+                        for i in 0..scan_rows {
+                            let start = rt_offset + i * 2;
+                            let len_bytes = [pattern.data[start], pattern.data[start + 1]];
+                            let len = i16::from_be_bytes(len_bytes);
+
+                            // Heuristic: row length must be > 0 and <= width*2
+                            // For Multi-channel, width is per-channel width (pattern.width)
+                            if len <= 0 || len as usize > (pattern.width as usize) * 2 {
+                                valid_table = false;
+                                break;
                             }
+                            let l = len as usize;
+                            row_lengths.push(l);
+                            total_comp += l;
                         }
 
                         if valid_table {
-                            // Verify if table makes sense (sum of counts <= data len)
-                            let total_rle: usize = row_counts.iter().sum();
-                            let header_size = rows_total * 2;
-                            let available = pattern.data.len() - offset - header_size;
+                            // Check total size
+                            let remaining = pattern.data.len() - rt_offset - table_size;
+                            if total_comp > remaining {
+                                continue;
+                            }
 
-                            // Allow small slack or verifying exact match
-                            // Some formats pad scanlines
-                            if total_rle <= available + 256 {
-                                // heuristic slack
-                                let mut stream_pos = offset + header_size;
-                                let mut full_output = Vec::with_capacity(expected_len);
-                                let mut fail = false;
+                            // Try decode
+                            let data_start = rt_offset + table_size;
+                            let mut full_output = Vec::with_capacity(expected_len);
+                            let mut stream_pos = data_start;
+                            let mut success = true;
 
-                                for count in row_counts {
-                                    if stream_pos + count > pattern.data.len() {
-                                        fail = true;
-                                        break;
-                                    }
-                                    match packbits_decode(
-                                        &pattern.data[stream_pos..stream_pos + count],
-                                        0,
-                                    ) {
-                                        // 0 len = unknown/auto?
-                                        // Wait, packbits_decode takes expected_len.
-                                        // For a scanline, expected_len = width * bytes_per_pixel (usually 1 for planar?)
-                                        // ABR Patterns are Multi-Channel.
-                                        // Planar RLE?
-                                        // Width bytes per row.
-                                        Ok(row_data) => {
-                                            // Check if row_data.len matching width?
-                                            // packbits_decode checks length if strictly provided.
-                                            // We can pass row width (pattern.width).
-                                            full_output.extend(row_data);
-                                            stream_pos += count;
-                                        }
-                                        Err(_) => {
-                                            // Retry with passed length?
-                                            if let Ok(row_data) = packbits_decode(
-                                                &pattern.data[stream_pos..stream_pos + count],
-                                                pattern.width as usize,
-                                            ) {
-                                                full_output.extend(row_data);
-                                                stream_pos += count;
-                                            } else {
-                                                fail = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if !fail && full_output.len() == expected_len {
-                                    tracing::debug!(
-                                        "[ABR Import] Decoded '{}' (RowTable Offset {})",
-                                        pattern.name,
-                                        offset
-                                    );
-                                    decoded_data = Some(full_output);
+                            for &comp_len in &row_lengths {
+                                if stream_pos + comp_len > pattern.data.len() {
+                                    success = false;
                                     break;
                                 }
+                                let row_data = &pattern.data[stream_pos..stream_pos + comp_len];
+                                match packbits_decode(row_data, pattern.width as usize) {
+                                    Ok(row_decoded) => {
+                                        full_output.extend(row_decoded);
+                                    }
+                                    Err(_) => {
+                                        success = false;
+                                        break;
+                                    }
+                                }
+                                stream_pos += comp_len;
+                            }
+
+                            if success && full_output.len() == expected_len {
+                                tracing::debug!(
+                                    "[ABR Import] Decoded '{}' (Universal Scan RT Offset {})",
+                                    pattern.name,
+                                    rt_offset
+                                );
+                                decoded_data = Some(full_output);
+                                break; // Found it!
                             }
                         }
                     }
@@ -808,16 +787,16 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
                     // Trying Planar logic first
                     let area = pixel_count;
-                    if decoded.len() == area * 3 {
+                    if decoded.len() >= area * 3 {
                         // Planar
+                        // Use split_at for safe and efficient slicing without repeated bounds checks
+                        // structure: [R...R][G...G][B...B]
+                        let (r_plane, rest) = decoded.split_at(area);
+                        let (g_plane, b_rest) = rest.split_at(area);
+                        let b_plane = &b_rest[..area];
+
                         for i in 0..area {
-                            // Planar Check: simple bounds check
-                            if i + area * 2 < decoded.len() {
-                                let r = decoded[i];
-                                let g = decoded[i + area];
-                                let b = decoded[i + area * 2];
-                                rgba_data.extend_from_slice(&[r, g, b, 255]);
-                            }
+                            rgba_data.extend_from_slice(&[r_plane[i], g_plane[i], b_plane[i], 255]);
                         }
                         success = true;
                     } else {
@@ -1195,5 +1174,30 @@ mod tests {
             preset.texture_settings.unwrap().pattern_id,
             Some("test-pattern-id".to_string())
         );
+    }
+
+    #[test]
+    fn test_planar_decoding() {
+        // R: [10, 20], G: [30, 40], B: [50, 60]
+        // Flattened Planar: 10, 20, 30, 40, 50, 60
+        // Expected RGBA: (10,30,50,255), (20,40,60,255)
+
+        let decoded = vec![10, 20, 30, 40, 50, 60];
+        let pixel_count = 2;
+        let area = pixel_count;
+        let mut rgba_data = Vec::new();
+
+        if decoded.len() >= area * 3 {
+            let (r_plane, rest) = decoded.split_at(area);
+            let (g_plane, b_rest) = rest.split_at(area);
+            let b_plane = &b_rest[..area];
+
+            for i in 0..area {
+                rgba_data.extend_from_slice(&[r_plane[i], g_plane[i], b_plane[i], 255]);
+            }
+        }
+
+        assert_eq!(rgba_data.len(), 8);
+        assert_eq!(rgba_data, vec![10, 30, 50, 255, 20, 40, 60, 255]);
     }
 }
