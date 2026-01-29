@@ -475,13 +475,25 @@ pub fn push_pointer_event(
 // ============================================================================
 
 use crate::brush::soft_dab::{render_soft_dab, GaussParams};
+use crate::file::psd::compression::packbits_decode;
 
 // ============================================================================
 // ABR Brush Import
 // ============================================================================
 
 use crate::abr::{AbrBrush, AbrParser, BrushPreset};
-use crate::brush::cache_brush_gray;
+use crate::brush::{cache_brush_gray, cache_pattern_rgba};
+
+/// Pattern metadata for frontend
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternInfo {
+    pub id: String,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub mode: String,
+}
 
 /// ABR import result with benchmark info
 #[derive(Debug, Clone, Serialize)]
@@ -489,6 +501,8 @@ use crate::brush::cache_brush_gray;
 pub struct ImportAbrResult {
     /// Brush presets (metadata only, textures via protocol)
     pub presets: Vec<BrushPreset>,
+    /// Imported patterns (metadata)
+    pub patterns: Vec<PatternInfo>,
     /// Benchmark timing info
     pub benchmark: AbrBenchmark,
 }
@@ -620,6 +634,98 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
     // Step 3: Cache textures and build presets
     let cache_start = std::time::Instant::now();
     let mut raw_bytes: usize = 0;
+
+    // Cache patterns first
+    let mut pattern_infos = Vec::new();
+    for pattern in &abr_file.patterns {
+        let pixel_count = (pattern.width * pattern.height) as usize;
+        let mut rgba_data = Vec::new();
+        let mut success = false;
+
+        // Determine expected uncompressed size
+        let channels = match pattern.mode {
+            1 => 1, // Grayscale
+            3 => 3, // RGB
+            _ => 0,
+        };
+
+        if channels > 0 {
+            let expected_len = pixel_count * channels;
+
+            // decode strategies: 1. Raw, 2. PackBits
+            let raw_data = if pattern.data.len() == expected_len {
+                Some(pattern.data.clone())
+            } else {
+                packbits_decode(&pattern.data, expected_len).ok()
+            };
+
+            if let Some(decoded) = raw_data {
+                // Convert to RGBA
+                rgba_data.reserve(pixel_count * 4);
+
+                if pattern.mode == 3 && decoded.len() >= pixel_count * 3 {
+                    // RGB Planar (RRRGGGBBB) is common in PS structures, but .pat might be interleaved
+                    // Let's assume Interleaved (RGBRGB) for .pat as it's simpler format?
+                    // Actually PS .pat is often Index Color.
+                    // Let's try to assume Interleaved first. If it looks wrong, we fix later.
+                    // Wait, PS almost always uses Planar for internal storage.
+                    // Let's check logic: R[i], G[i + npixels], B[i + 2*npixels]
+
+                    // Trying Planar logic first
+                    let area = pixel_count;
+                    if decoded.len() == area * 3 {
+                        // Planar
+                        for i in 0..area {
+                            // Planar Check: simple bounds check
+                            if i + area * 2 < decoded.len() {
+                                let r = decoded[i];
+                                let g = decoded[i + area];
+                                let b = decoded[i + area * 2];
+                                rgba_data.extend_from_slice(&[r, g, b, 255]);
+                            }
+                        }
+                        success = true;
+                    } else {
+                        // Interleaved fallback
+                        for chunk in decoded.chunks(3) {
+                            if chunk.len() == 3 {
+                                rgba_data.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+                            }
+                        }
+                        success = true;
+                    }
+                } else if pattern.mode == 1 && decoded.len() >= pixel_count {
+                    // Grayscale
+                    for &v in &decoded {
+                        rgba_data.extend_from_slice(&[v, v, v, 255]);
+                    }
+                    success = true;
+                }
+            }
+        }
+
+        if success && !rgba_data.is_empty() {
+            cache_pattern_rgba(
+                pattern.id.clone(),
+                rgba_data,
+                pattern.width,
+                pattern.height,
+                pattern.name.clone(),
+                pattern.mode_name().to_string(),
+            );
+
+            pattern_infos.push(PatternInfo {
+                id: pattern.id.clone(),
+                name: pattern.name.clone(),
+                width: pattern.width,
+                height: pattern.height,
+                mode: pattern.mode_name().to_string(),
+            });
+
+            raw_bytes += pattern.data.len();
+        }
+    }
+
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
 
     for brush in abr_file.brushes {
@@ -682,6 +788,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
     Ok(ImportAbrResult {
         presets,
+        patterns: pattern_infos,
         benchmark: AbrBenchmark {
             total_ms,
             read_ms,

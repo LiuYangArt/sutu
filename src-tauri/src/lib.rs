@@ -155,6 +155,21 @@ pub fn run() {
                 } else {
                     tracing::warn!("Brush cache MISS: {}", brush_id);
                 }
+            } else if let Some(pattern_id) = path.strip_prefix("/pattern/") {
+                // Pattern texture endpoint: /pattern/{id}
+                tracing::debug!("Looking up pattern in cache: {}", pattern_id);
+                if let Some(cached) = brush::get_cached_pattern(pattern_id) {
+                    tracing::debug!(
+                        "Pattern cache HIT: {} ({} bytes, {}x{})",
+                        pattern_id,
+                        cached.data.len(),
+                        cached.width,
+                        cached.height
+                    );
+                    return build_rgba_lz4_response(cached.data, cached.width, cached.height);
+                } else {
+                    tracing::warn!("Pattern cache MISS: {}", pattern_id);
+                }
             } else if path == "/thumbnail" {
                 if let Some(cached) = file::get_cached_thumbnail() {
                     return build_response(cached.data, cached.mime_type);

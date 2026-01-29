@@ -35,7 +35,17 @@ export interface AbrBenchmark {
 /** ABR import result with benchmark info */
 export interface ImportAbrResult {
   presets: BrushPreset[];
+  patterns: PatternInfo[];
   benchmark: AbrBenchmark;
+}
+
+/** Pattern metadata */
+export interface PatternInfo {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  mode: string;
 }
 
 /** Texture blend mode (Photoshop-compatible) */

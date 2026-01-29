@@ -61,7 +61,15 @@ export function BrushPresets({
         );
         console.log(`[ABR Import] Backend benchmark:`, result.benchmark);
 
-        setImportedPresets(result.presets);
+        // Add presets
+        // Append presets
+        setImportedPresets([...importedPresets, ...result.presets]);
+
+        // Add patterns if any
+        if (result.patterns && result.patterns.length > 0) {
+          useToolStore.getState().appendPatterns(result.patterns);
+          console.log(`[BrushPresets] Imported ${result.patterns.length} patterns`);
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

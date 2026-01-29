@@ -52,6 +52,8 @@ function sourceToDepthControl(source: ControlSource): number {
 
 export function TextureSettings(): JSX.Element {
   const { textureEnabled, textureSettings, setTextureSettings, toggleTexture } = useToolStore();
+  const patternId = textureSettings?.patternId;
+  const patternUrl = patternId ? `project://pattern/${patternId}` : null;
 
   const disabled = !textureEnabled;
   const depthControlSource = depthControlToSource(textureSettings.depthControl);
@@ -67,6 +69,36 @@ export function TextureSettings(): JSX.Element {
           <input type="checkbox" checked={textureEnabled} onChange={toggleTexture} />
           <h4>Texture</h4>
         </label>
+
+        {/* Pattern Preview */}
+        <div
+          className="pattern-preview"
+          title={patternId ? 'Current Pattern' : 'No Pattern'}
+          style={{
+            width: 40,
+            height: 40,
+            border: '1px solid var(--color-border)',
+            marginLeft: 'auto',
+            background: 'var(--color-bg-tertiary)',
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '4px',
+          }}
+        >
+          {patternUrl ? (
+            <img
+              src={patternUrl}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              alt="Pattern"
+            />
+          ) : (
+            <span style={{ fontSize: 10, color: 'var(--color-text-secondary)', opacity: 0.5 }}>
+              None
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Basic texture adjustments */}

@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { TextureSettings, DEFAULT_TEXTURE_SETTINGS } from '@/components/BrushPanel/types';
+import {
+  TextureSettings,
+  DEFAULT_TEXTURE_SETTINGS,
+  PatternInfo,
+} from '@/components/BrushPanel/types';
 
 export type ToolType = 'brush' | 'eraser' | 'eyedropper' | 'move' | 'select' | 'lasso' | 'zoom';
 
@@ -252,7 +256,13 @@ interface ToolState {
   textureEnabled: boolean;
   textureSettings: TextureSettings;
 
+  // Patterns
+  patterns: PatternInfo[];
+
   // Actions
+  setPatterns: (patterns: PatternInfo[]) => void;
+  appendPatterns: (patterns: PatternInfo[]) => void;
+
   setTool: (tool: ToolType) => void;
   setBrushSize: (size: number) => void;
   setBrushFlow: (flow: number) => void;
@@ -360,7 +370,14 @@ export const useToolStore = create<ToolState>()(
       textureEnabled: false,
       textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
 
+      // Patterns
+      patterns: [],
+
       // Actions
+      setPatterns: (patterns) => set({ patterns }),
+      appendPatterns: (newPatterns) =>
+        set((state) => ({ patterns: [...state.patterns, ...newPatterns] })),
+
       setTool: (tool) => set({ currentTool: tool }),
 
       setBrushSize: (size) => set({ brushSize: clampSize(size) }),
