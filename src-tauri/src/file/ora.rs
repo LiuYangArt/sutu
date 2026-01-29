@@ -444,6 +444,7 @@ pub fn load_ora(path: &Path) -> Result<ProjectData, FileError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

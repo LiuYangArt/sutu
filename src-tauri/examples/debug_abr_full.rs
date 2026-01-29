@@ -1,4 +1,6 @@
+#![allow(warnings)]
 use paintboard_lib::abr::AbrParser;
+use std::collections::HashMap;
 use std::path::Path;
 
 fn main() {

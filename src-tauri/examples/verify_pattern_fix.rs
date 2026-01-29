@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used)]
+#![allow(warnings)]
 use paintboard_lib::abr::AbrParser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

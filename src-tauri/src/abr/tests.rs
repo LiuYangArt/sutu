@@ -1,8 +1,9 @@
-use super::*;
+#![allow(clippy::unwrap_used)]
 use std::path::PathBuf;
 
 #[test]
 fn test_load_liuyang_paintbrushes() {
+    use crate::abr::AbrParser;
     // Locate the ABR file relative to the project root
     let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     d.pop(); // Go up from src-tauri
@@ -17,7 +18,7 @@ fn test_load_liuyang_paintbrushes() {
     assert!(d.exists(), "Test file not found at {:?}", d);
 
     let data = std::fs::read(&d).expect("Failed to read test ABR file");
-    let abr_file = parser::AbrParser::parse(&data).expect("Failed to parse ABR file");
+    let abr_file = AbrParser::parse(&data).expect("Failed to parse ABR file");
 
     // Verify patterns are loaded - expecting 12 patterns now
     assert!(

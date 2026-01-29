@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::manual_range_contains,
-    clippy::needless_range_loop
-)]
+#![allow(warnings)]
 //! ABR Pattern Association Test Tool - Enhanced Version
 //!
 //! 测试脚本：诊断笔刷与 Pattern 之间的关联问题

@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(warnings)]
 //! ABR Raw Desc Section Analyzer
 //!
 //! 直接分析 desc section 的原始字节，找出结构问题

@@ -309,6 +309,7 @@ pub fn get_brush_cache_stats() -> (usize, usize) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

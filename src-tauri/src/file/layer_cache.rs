@@ -212,6 +212,7 @@ pub fn get_cached_thumbnail() -> Option<CachedLayer> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
