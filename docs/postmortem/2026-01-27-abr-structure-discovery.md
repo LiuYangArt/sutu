@@ -37,7 +37,74 @@ We are moving to a two-phase import strategy:
 1.  Parse the `desc` section to extract the `Brush -> Pattern` mapping and parameters (Scale, Mode, Depth).
 2.  Apply these settings to the loaded `AbrBrush` instances before returning to the frontend.
 
+## Implementation Update (2026-01-29)
+
+Successfully implemented pattern extraction test script (`src-tauri/examples/extract_abr_patterns.rs`).
+
+### Pattern Format Discovery
+
+After hex dump analysis, the patt section pattern format was determined:
+
+```
+- 4 bytes: pattern total size (includes this field)
+- 4 bytes: version (1)
+- 4 bytes: color mode (1=Grayscale, 3=RGB, etc.)
+- 2 bytes: width
+- 2 bytes: height
+- 4 bytes: name length (in UTF-16 characters, not bytes)
+- N×2 bytes: name (UTF-16 BE encoding)
+- Pascal string: ID/UUID (1-byte length + ASCII chars, 2-byte aligned)
+- Padding to 4-byte boundary
+- Image data (Raw or PackBits RLE compressed)
+```
+
+**Key findings:**
+1. Pattern names use **UTF-16 BE** encoding (not ASCII/Pascal string as initially assumed)
+2. Width/Height are 2-byte integers immediately after mode (not in bounds rect)
+3. Each pattern has a 4-byte size prefix, followed by version and mode
+
+### Test Results
+
+Successfully extracted **10 patterns** from `liuyang_paintbrushes.abr`:
+
+| Pattern Name | Dimensions | Mode |
+|--------------|------------|------|
+| Bubbles | 80x80 | RGB |
+| Gravel | 200x200 | RGB |
+| Black Marble | 200x200 | RGB |
+| rough charlk | 200x200 | RGB |
+| Sparse Basic Noise | 200x200 | Grayscale |
+| Pattern 8 | 256x256 | RGB |
+| sparthtex01 | 900x1200 | Grayscale |
+| metal2 | 616x616 | Grayscale |
+| SI080_L.jpg | 480x640 | RGB |
+| 2 | 400x400 | RGB |
+
+**Stats:** 3 Grayscale, 7 RGB patterns; Total 2.16 MPixels
+
+### Implementation Notes
+
+**Script location:** `src-tauri/examples/extract_abr_patterns.rs`
+
+**Usage:**
+```bash
+cd src-tauri && cargo run --example extract_abr_patterns
+```
+
+The script implements:
+- 8BIM section scanner to locate `patt` section
+- Pattern parser with UTF-16 BE string decoding
+- Bounds validation (width/height sanity checks)
+- Progress reporting and summary statistics
+
 ## Lessons Learned
+
 - **Don't assume locality**: In formats like PSD/ABR/TIFF, data is often referenced rather than embedded.
 - **Global Scanning**: When local parsing fails, a global structure scan (dumping all top-level tags) is a powerful debugging tool.
 - **Legacy vs. Modern**: ABR is a container format that has evolved from simple bitmaps (v1) to complex object hierarchies (v10). Support requires handling multiple internal architectures.
+- **Text Encoding**: Photoshop formats often use UTF-16 BE for strings, not ASCII. Always verify encoding when parsing names.
+- **Hex Dump Analysis**: When documentation is lacking, analyzing hex dumps of known-good files is essential for reverse engineering. Look for:
+  - Recognizable ASCII/Unicode strings
+  - Size fields (often 4-byte big-endian preceding data blocks)
+  - Version numbers (commonly 1)
+  - Coordinate values (small integers for dimensions)
