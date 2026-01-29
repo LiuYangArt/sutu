@@ -307,6 +307,7 @@ pub fn load_tiff(path: &Path) -> Result<ProjectData, FileError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
