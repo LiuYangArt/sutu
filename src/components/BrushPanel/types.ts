@@ -27,6 +27,7 @@ export interface AbrBenchmark {
   parseMs: number;
   cacheMs: number;
   brushCount: number;
+  patternCount: number;
   rawBytes: number;
   compressedBytes: number;
 }

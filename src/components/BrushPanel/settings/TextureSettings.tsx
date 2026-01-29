@@ -1,118 +1,211 @@
-import { useToolStore } from '@/stores/tool';
-
 /**
- * Texture settings panel (Photoshop-compatible Texture panel)
+ * TextureSettings - Photoshop-compatible Texture panel
  *
- * Allows controlling how texture/pattern is applied to brush strokes.
+ * Controls how pattern/texture modifies brush alpha:
+ * - Pattern selection (preview)
+ * - Scale, Brightness, Contrast
+ * - Texture Each Tip toggle
+ * - Mode (blend mode for texture application)
+ * - Depth + Minimum + Jitter + Control
+ * - Invert toggle
  */
+
+import { useToolStore, ControlSource } from '@/stores/tool';
+import { TextureBlendMode } from '../types';
+import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
+
+/** Control options for Texture Depth */
+const DEPTH_CONTROL_OPTIONS: ControlSourceOption[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'fade', label: 'Fade' },
+  { value: 'penPressure', label: 'Pen Pressure' },
+  { value: 'penTilt', label: 'Pen Tilt' },
+  { value: 'rotation', label: 'Rotation' },
+];
+
+/** Texture blend mode options */
+const BLEND_MODE_OPTIONS: { value: TextureBlendMode; label: string }[] = [
+  { value: 'multiply', label: 'Multiply' },
+  { value: 'subtract', label: 'Subtract' },
+  { value: 'darken', label: 'Darken' },
+  { value: 'overlay', label: 'Overlay' },
+  { value: 'colorDodge', label: 'Color Dodge' },
+  { value: 'colorBurn', label: 'Color Burn' },
+  { value: 'linearBurn', label: 'Linear Burn' },
+  { value: 'hardMix', label: 'Hard Mix' },
+  { value: 'linearHeight', label: 'Linear Height' },
+  { value: 'height', label: 'Height' },
+];
+
+/** Map depthControl number to ControlSource */
+function depthControlToSource(value: number): ControlSource {
+  switch (value) {
+    case 0:
+      return 'off';
+    case 1:
+      return 'fade';
+    case 2:
+      return 'penPressure';
+    case 3:
+      return 'penTilt';
+    case 4:
+      return 'rotation';
+    default:
+      return 'off';
+  }
+}
+
+/** Map ControlSource to depthControl number */
+function sourceToDepthControl(source: ControlSource): number {
+  switch (source) {
+    case 'off':
+      return 0;
+    case 'fade':
+      return 1;
+    case 'penPressure':
+      return 2;
+    case 'penTilt':
+      return 3;
+    case 'rotation':
+      return 4;
+    default:
+      return 0;
+  }
+}
+
 export function TextureSettings(): JSX.Element {
-  const { textureEnabled, textureSettings, setTextureEnabled, setTextureSettings } = useToolStore();
+  const { textureEnabled, textureSettings, setTextureSettings, toggleTexture } = useToolStore();
+
+  const disabled = !textureEnabled;
+  const depthControlSource = depthControlToSource(textureSettings.depthControl);
 
   return (
     <div className="brush-panel-section">
-      <div className="setting-row">
-        <label>
-          <input
-            type="checkbox"
-            checked={textureEnabled}
-            onChange={(e) => setTextureEnabled(e.target.checked)}
-          />
-          Enable Texture
+      {/* Section header with enable checkbox */}
+      <div className="section-header-row">
+        <label className="section-checkbox-label">
+          <input type="checkbox" checked={textureEnabled} onChange={toggleTexture} />
+          <h4>Texture</h4>
         </label>
       </div>
 
-      <fieldset disabled={!textureEnabled} className="texture-settings-fieldset">
-        <div className="setting-row">
-          <label>Scale</label>
-          <input
-            type="range"
-            min={10}
-            max={200}
-            value={textureSettings.scale}
-            onChange={(e) => setTextureSettings({ scale: Number(e.target.value) })}
-          />
-          <span className="setting-value">{Math.round(textureSettings.scale)}%</span>
-        </div>
+      {/* Basic texture adjustments */}
+      <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
+        <SliderRow
+          label="Scale"
+          value={textureSettings.scale}
+          min={10}
+          max={200}
+          displayValue={`${Math.round(textureSettings.scale)}%`}
+          onChange={(v) => setTextureSettings({ scale: v })}
+        />
 
-        <div className="setting-row">
-          <label>Brightness</label>
-          <input
-            type="range"
-            min={-150}
-            max={150}
-            value={textureSettings.brightness}
-            onChange={(e) => setTextureSettings({ brightness: Number(e.target.value) })}
-          />
-          <span className="setting-value">{textureSettings.brightness}</span>
-        </div>
+        <SliderRow
+          label="Brightness"
+          value={textureSettings.brightness}
+          min={-150}
+          max={150}
+          displayValue={`${textureSettings.brightness}`}
+          onChange={(v) => setTextureSettings({ brightness: v })}
+        />
 
-        <div className="setting-row">
-          <label>Contrast</label>
-          <input
-            type="range"
-            min={-50}
-            max={50}
-            value={textureSettings.contrast}
-            onChange={(e) => setTextureSettings({ contrast: Number(e.target.value) })}
-          />
-          <span className="setting-value">{textureSettings.contrast}</span>
-        </div>
+        <SliderRow
+          label="Contrast"
+          value={textureSettings.contrast}
+          min={-50}
+          max={50}
+          displayValue={`${textureSettings.contrast}`}
+          onChange={(v) => setTextureSettings({ contrast: v })}
+        />
+      </div>
 
-        <div className="setting-row">
-          <label>Depth</label>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={textureSettings.depth}
-            onChange={(e) => setTextureSettings({ depth: Number(e.target.value) })}
-          />
-          <span className="setting-value">{Math.round(textureSettings.depth)}%</span>
-        </div>
-
-        <div className="setting-row">
-          <label>
-            <input
-              type="checkbox"
-              checked={textureSettings.invert}
-              onChange={(e) => setTextureSettings({ invert: e.target.checked })}
-            />
-            Invert
-          </label>
-        </div>
-
-        <div className="setting-row">
+      {/* Texture Each Tip and Invert toggles */}
+      <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
+        <div className="setting-checkbox-row">
           <label>
             <input
               type="checkbox"
               checked={textureSettings.textureEachTip}
               onChange={(e) => setTextureSettings({ textureEachTip: e.target.checked })}
+              disabled={disabled}
             />
             Texture Each Tip
           </label>
         </div>
 
+        <div className="setting-checkbox-row">
+          <label>
+            <input
+              type="checkbox"
+              checked={textureSettings.invert}
+              onChange={(e) => setTextureSettings({ invert: e.target.checked })}
+              disabled={disabled}
+            />
+            Invert
+          </label>
+        </div>
+      </div>
+
+      {/* Blend Mode */}
+      <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <div className="setting-row">
-          <label>Mode</label>
+          <span className="setting-label">Mode</span>
           <select
+            className="setting-select"
             value={textureSettings.mode}
-            onChange={(e) =>
-              setTextureSettings({ mode: e.target.value as typeof textureSettings.mode })
-            }
+            onChange={(e) => setTextureSettings({ mode: e.target.value as TextureBlendMode })}
+            disabled={disabled}
           >
-            <option value="multiply">Multiply</option>
-            <option value="subtract">Subtract</option>
-            <option value="darken">Darken</option>
-            <option value="overlay">Overlay</option>
-            <option value="colorDodge">Color Dodge</option>
-            <option value="colorBurn">Color Burn</option>
-            <option value="linearBurn">Linear Burn</option>
-            <option value="hardMix">Hard Mix</option>
-            <option value="linearHeight">Linear Height</option>
-            <option value="height">Height</option>
+            {BLEND_MODE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
         </div>
-      </fieldset>
+      </div>
+
+      {/* Depth controls (only relevant when Texture Each Tip is enabled) */}
+      {textureSettings.textureEachTip && (
+        <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
+          <SliderRow
+            label="Depth"
+            value={textureSettings.depth}
+            min={0}
+            max={100}
+            displayValue={`${Math.round(textureSettings.depth)}%`}
+            onChange={(v) => setTextureSettings({ depth: v })}
+          />
+
+          <SliderRow
+            label="Minimum Depth"
+            value={textureSettings.minimumDepth}
+            min={0}
+            max={100}
+            displayValue={`${Math.round(textureSettings.minimumDepth)}%`}
+            onChange={(v) => setTextureSettings({ minimumDepth: v })}
+          />
+
+          <SliderRow
+            label="Depth Jitter"
+            value={textureSettings.depthJitter}
+            min={0}
+            max={100}
+            displayValue={`${Math.round(textureSettings.depthJitter)}%`}
+            onChange={(v) => setTextureSettings({ depthJitter: v })}
+          />
+
+          <ControlSourceSelect
+            label="Control"
+            value={depthControlSource}
+            options={DEPTH_CONTROL_OPTIONS}
+            onChange={(v) =>
+              setTextureSettings({ depthControl: sourceToDepthControl(v as ControlSource) })
+            }
+            disabled={disabled}
+          />
+        </div>
+      )}
     </div>
   );
 }

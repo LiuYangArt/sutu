@@ -57,7 +57,7 @@ export function BrushPresets({
 
         // Frontend benchmark log
         console.log(
-          `[ABR Import] Frontend received ${result.presets.length} brushes in ${frontendTime.toFixed(2)}ms`
+          `[ABR Import] Frontend received ${result.presets.length} brushes, ${result.benchmark.patternCount} patterns in ${frontendTime.toFixed(2)}ms`
         );
         console.log(`[ABR Import] Backend benchmark:`, result.benchmark);
 
@@ -102,14 +102,19 @@ export function BrushPresets({
     }
 
     // Apply texture settings from preset (Photoshop Texture panel)
+    // Enable texture if preset has texture data (hasTexture indicates sampled brush)
+    const shouldEnableTexture = preset.hasTexture;
+
     if (preset.textureSettings) {
-      setTextureEnabled(preset.textureSettings.enabled);
+      // Use preset's texture settings if available
       setTextureSettings(preset.textureSettings);
     } else {
       // Reset to defaults if preset has no texture settings
-      setTextureEnabled(false);
       setTextureSettings(DEFAULT_TEXTURE_SETTINGS);
     }
+
+    // Enable texture based on whether the brush has texture data
+    setTextureEnabled(shouldEnableTexture);
   };
 
   return (

@@ -507,6 +507,8 @@ pub struct AbrBenchmark {
     pub cache_ms: f64,
     /// Number of brushes loaded
     pub brush_count: usize,
+    /// Number of patterns (textures) loaded
+    pub pattern_count: usize,
     /// Total raw texture bytes
     pub raw_bytes: usize,
     /// Total compressed bytes
@@ -686,6 +688,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             parse_ms,
             cache_ms,
             brush_count,
+            pattern_count: abr_file.patterns.len(),
             raw_bytes,
             compressed_bytes,
         },
