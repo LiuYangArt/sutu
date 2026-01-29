@@ -425,6 +425,7 @@ impl AbrParser {
 
         let mut texture_settings = None;
         let mut uuid = Some(format!("abr-{}", id));
+        let mut name = None;
 
         // Let's see if we have bytes left before next_brush
         let current_pos = cursor.position();
@@ -434,6 +435,11 @@ impl AbrParser {
             // ABR v6 usually puts the descriptor immediately after image data.
             match parse_descriptor(cursor) {
                 Ok(desc) => {
+                    // Extract brush name
+                    if let Some(DescriptorValue::String(n)) = desc.get("Nm  ") {
+                        name = Some(n.clone());
+                    }
+
                     // Extract pattern info
                     if let Some(DescriptorValue::Descriptor(txtr)) = desc.get("Txtr") {
                         // Extract texture settings
@@ -485,7 +491,8 @@ impl AbrParser {
                                 "HrdM" => super::types::TextureBlendMode::HardMix,
                                 "LnrH" => super::types::TextureBlendMode::LinearHeight,
                                 "Hght" => super::types::TextureBlendMode::Height,
-                                _ => super::types::TextureBlendMode::Multiply, // Default
+                                "_ " => super::types::TextureBlendMode::Multiply, // Default
+                                _ => super::types::TextureBlendMode::Multiply,
                             };
                         }
 
@@ -508,7 +515,7 @@ impl AbrParser {
         cursor.seek(SeekFrom::Start(next_brush))?;
 
         Ok(AbrBrush {
-            name: format!("Brush_{}", id + 1),
+            name: name.unwrap_or_else(|| format!("Brush_{}", id + 1)),
             uuid, // Use extracted or generated UUID
             tip_image: Some(normalized),
             diameter: width as f32,
@@ -634,6 +641,11 @@ impl AbrParser {
                         }
 
                         if let DescriptorValue::Descriptor(brush_desc) = item {
+                            // Extract Brush Name
+                            if let Some(DescriptorValue::String(name)) = brush_desc.get("Nm  ") {
+                                brushes[i].name = name.clone();
+                            }
+
                             // Look for Txtr in multiple locations
                             // 1. Direct child of brush descriptor
                             let txtr_opt = brush_desc.get("Txtr");
