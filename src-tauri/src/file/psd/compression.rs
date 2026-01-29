@@ -109,11 +109,16 @@ pub fn packbits_decode(input: &[u8], expected_len: usize) -> Result<Vec<u8>, Com
         // n == -128 is a no-op
     }
 
-    if output.len() != expected_len {
+    if output.len() < expected_len {
         return Err(CompressionError::SizeMismatch {
             expected: expected_len,
             actual: output.len(),
         });
+    }
+
+    // Truncate if we overshot (due to padding or run alignment)
+    if output.len() > expected_len {
+        output.truncate(expected_len);
     }
 
     Ok(output)

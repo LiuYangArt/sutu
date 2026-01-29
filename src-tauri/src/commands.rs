@@ -663,11 +663,135 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         if channels > 0 {
             let expected_len = pixel_count * channels;
 
-            // decode strategies: 1. Raw, 2. PackBits
+            // Import byteorder for reading row table
+            use byteorder::{BigEndian, ReadBytesExt};
+            use std::io::Cursor;
+
+            // Robust decoding strategy
             let raw_data = if pattern.data.len() == expected_len {
+                tracing::debug!("[ABR Import] Pattern '{}' is RAW", pattern.name);
                 Some(pattern.data.clone())
             } else {
-                packbits_decode(&pattern.data, expected_len).ok()
+                let mut decoded_data = None;
+
+                // Strategy 1: Blind PackBits (Continuous)
+                // Used for Patterns that lack Row Table (just stream)
+                // Prioritize Offset 2 (Skip 2-byte header common in ABR patterns)
+                let offsets = vec![2, 0];
+                for &offset in &offsets {
+                    if offset < pattern.data.len() {
+                        if let Ok(d) = packbits_decode(&pattern.data[offset..], expected_len) {
+                            tracing::debug!(
+                                "[ABR Import] Decoded '{}' (Blind Offset {})",
+                                pattern.name,
+                                offset
+                            );
+                            decoded_data = Some(d);
+                            break;
+                        }
+                    }
+                }
+
+                // Strategy 2: Row Table (Scanlines)
+                // Used for standard PSD RLE data (Row Counts + Data)
+                if decoded_data.is_none() && channels > 0 {
+                    let rows_total = pattern.height as usize * channels;
+                    // Try offsets for Table
+                    for &offset in &offsets {
+                        if offset + (rows_total * 2) > pattern.data.len() {
+                            continue;
+                        }
+
+                        let mut cursor = Cursor::new(&pattern.data[offset..]);
+                        let mut row_counts = Vec::with_capacity(rows_total);
+                        let mut valid_table = true;
+
+                        for _ in 0..rows_total {
+                            match cursor.read_u16::<BigEndian>() {
+                                Ok(c) => row_counts.push(c as usize),
+                                Err(_) => {
+                                    valid_table = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if valid_table {
+                            // Verify if table makes sense (sum of counts <= data len)
+                            let total_rle: usize = row_counts.iter().sum();
+                            let header_size = rows_total * 2;
+                            let available = pattern.data.len() - offset - header_size;
+
+                            // Allow small slack or verifying exact match
+                            // Some formats pad scanlines
+                            if total_rle <= available + 256 {
+                                // heuristic slack
+                                let mut stream_pos = offset + header_size;
+                                let mut full_output = Vec::with_capacity(expected_len);
+                                let mut fail = false;
+
+                                for count in row_counts {
+                                    if stream_pos + count > pattern.data.len() {
+                                        fail = true;
+                                        break;
+                                    }
+                                    match packbits_decode(
+                                        &pattern.data[stream_pos..stream_pos + count],
+                                        0,
+                                    ) {
+                                        // 0 len = unknown/auto?
+                                        // Wait, packbits_decode takes expected_len.
+                                        // For a scanline, expected_len = width * bytes_per_pixel (usually 1 for planar?)
+                                        // ABR Patterns are Multi-Channel.
+                                        // Planar RLE?
+                                        // Width bytes per row.
+                                        Ok(row_data) => {
+                                            // Check if row_data.len matching width?
+                                            // packbits_decode checks length if strictly provided.
+                                            // We can pass row width (pattern.width).
+                                            full_output.extend(row_data);
+                                            stream_pos += count;
+                                        }
+                                        Err(_) => {
+                                            // Retry with passed length?
+                                            if let Ok(row_data) = packbits_decode(
+                                                &pattern.data[stream_pos..stream_pos + count],
+                                                pattern.width as usize,
+                                            ) {
+                                                full_output.extend(row_data);
+                                                stream_pos += count;
+                                            } else {
+                                                fail = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !fail && full_output.len() == expected_len {
+                                    tracing::debug!(
+                                        "[ABR Import] Decoded '{}' (RowTable Offset {})",
+                                        pattern.name,
+                                        offset
+                                    );
+                                    decoded_data = Some(full_output);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if decoded_data.is_none() {
+                    tracing::warn!(
+                        "[ABR Import] Failed to decode '{}' (Mode {}, Exp {}, Data {})",
+                        pattern.name,
+                        pattern.mode,
+                        expected_len,
+                        pattern.data.len()
+                    );
+                }
+                decoded_data
             };
 
             if let Some(decoded) = raw_data {
