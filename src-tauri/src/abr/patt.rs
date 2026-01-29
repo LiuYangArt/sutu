@@ -25,6 +25,9 @@ pub struct PatternResource {
     pub data: Vec<u8>,
 }
 
+/// VMA header size in bytes
+const VMA_HEADER_SIZE: usize = 31;
+
 impl PatternResource {
     /// Get mode name for logging
     pub fn mode_name(&self) -> &'static str {
@@ -56,11 +59,12 @@ impl PatternResource {
         let (vma_offset, actual_width, actual_height) = vma_info;
 
         // Decode each channel
-        let mut channels: Vec<Vec<u8>> = Vec::new();
+        let mut channels: Vec<Vec<u8>> = Vec::with_capacity(n_channels);
         let mut offset = vma_offset;
+        let channel_pixels = actual_width * actual_height;
 
-        for _chan_idx in 0..n_channels {
-            if offset + 31 > self.data.len() {
+        for _ in 0..n_channels {
+            if offset + VMA_HEADER_SIZE > self.data.len() {
                 tracing::warn!("Not enough data for channel");
                 return None;
             }
@@ -69,18 +73,17 @@ impl PatternResource {
             let size = u32::from_be_bytes([d[4], d[5], d[6], d[7]]) as usize;
             let compression = d[30];
 
-            let header_size = 31;
-            let channel_pixels = actual_width * actual_height;
-
+            let data_start = offset + VMA_HEADER_SIZE;
             let chan_data = if compression == 0 {
                 // Uncompressed
-                if offset + header_size + channel_pixels > self.data.len() {
+                let data_end = data_start + channel_pixels;
+                if data_end > self.data.len() {
                     return None;
                 }
-                self.data[offset + header_size..offset + header_size + channel_pixels].to_vec()
+                self.data[data_start..data_end].to_vec()
             } else {
-                // RLE compressed with row table
-                self.decode_rle_channel(offset + header_size, actual_width, actual_height)?
+                // RLE compressed
+                self.decode_rle_channel(data_start, actual_width, actual_height)?
             };
 
             if chan_data.len() != channel_pixels {
@@ -93,11 +96,7 @@ impl PatternResource {
             }
 
             channels.push(chan_data);
-            offset += 8 + size; // Move to next channel VMA
-        }
-
-        if channels.len() != n_channels {
-            return None;
+            offset += 8 + size;
         }
 
         // Convert to RGBA
@@ -134,7 +133,7 @@ impl PatternResource {
         let height = self.height as usize;
 
         for test_offset in 0..100 {
-            if test_offset + 31 > self.data.len() {
+            if test_offset + VMA_HEADER_SIZE > self.data.len() {
                 break;
             }
 
@@ -190,74 +189,70 @@ impl PatternResource {
         height: usize,
     ) -> Option<Vec<u8>> {
         let row_table_size = height * 2;
-        if row_table_offset + row_table_size > self.data.len() {
+        let row_table_end = row_table_offset + row_table_size;
+        if row_table_end > self.data.len() {
             return None;
         }
 
-        // Read row lengths
-        let mut row_lengths: Vec<usize> = Vec::with_capacity(height);
-        for i in 0..height {
-            let idx = row_table_offset + i * 2;
-            let len = u16::from_be_bytes([self.data[idx], self.data[idx + 1]]) as usize;
-            row_lengths.push(len);
-        }
+        // Read row lengths from table
+        let row_lengths: Vec<usize> = (0..height)
+            .map(|i| {
+                let idx = row_table_offset + i * 2;
+                u16::from_be_bytes([self.data[idx], self.data[idx + 1]]) as usize
+            })
+            .collect();
 
-        let data_start = row_table_offset + row_table_size;
         let mut decoded = Vec::with_capacity(width * height);
-        let mut pos = data_start;
+        let mut pos = row_table_end;
 
         for &comp_len in &row_lengths {
             if pos + comp_len > self.data.len() {
                 return None;
             }
 
-            // PackBits decode for one row
-            let mut row = Vec::with_capacity(width);
-            let mut i = 0;
-            let input = &self.data[pos..pos + comp_len];
+            let row = self.decode_packbits_row(&self.data[pos..pos + comp_len], width);
+            decoded.extend(row);
+            pos += comp_len;
+        }
 
-            while i < input.len() && row.len() < width {
-                let b = input[i] as i8;
-                i += 1;
+        (decoded.len() == width * height).then_some(decoded)
+    }
 
-                if b == -128 {
-                    // No-op
-                } else if b >= 0 {
+    /// Decode a single row using PackBits algorithm
+    fn decode_packbits_row(&self, input: &[u8], width: usize) -> Vec<u8> {
+        let mut row = Vec::with_capacity(width);
+        let mut i = 0;
+
+        while i < input.len() && row.len() < width {
+            let b = input[i] as i8;
+            i += 1;
+
+            match b {
+                -128 => {} // No-op
+                0..=127 => {
                     // Copy next n+1 bytes literally
                     let count = (b as usize) + 1;
-                    for j in 0..count.min(width - row.len()) {
-                        if i + j < input.len() {
-                            row.push(input[i + j]);
-                        }
-                    }
+                    let available = count.min(input.len().saturating_sub(i));
+                    let to_copy = available.min(width - row.len());
+                    row.extend_from_slice(&input[i..i + to_copy]);
                     i += count;
-                } else {
+                }
+                _ => {
                     // Repeat next byte (-n + 1) times
                     let count = ((-b) as usize) + 1;
                     if i < input.len() {
                         let val = input[i];
                         i += 1;
-                        for _ in 0..count.min(width - row.len()) {
-                            row.push(val);
-                        }
+                        let to_repeat = count.min(width - row.len());
+                        row.resize(row.len() + to_repeat, val);
                     }
                 }
             }
-
-            // Pad row if needed
-            while row.len() < width {
-                row.push(0);
-            }
-
-            decoded.extend(row);
-            pos += comp_len;
         }
 
-        if decoded.len() == width * height {
-            Some(decoded)
-        } else {
-            None
-        }
+        // Pad row if needed
+        row.resize(width, 0);
+        row
     }
 }
 
