@@ -629,6 +629,14 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             "[ABR Import] Found {} patterns (textures)",
             abr_file.patterns.len()
         );
+        for (i, p) in abr_file.patterns.iter().enumerate() {
+            tracing::info!(
+                "[ABR Pattern #{}] Name='{}' ID='{}' FoundInPatt=true",
+                i,
+                p.name,
+                p.id
+            );
+        }
     }
 
     // Step 3: Cache textures and build presets
@@ -637,6 +645,9 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
     // Cache patterns first
     let mut pattern_infos = Vec::new();
+    let mut pattern_name_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
     for pattern in &abr_file.patterns {
         let pixel_count = (pattern.width * pattern.height) as usize;
         let mut rgba_data = Vec::new();
@@ -722,13 +733,55 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
                 mode: pattern.mode_name().to_string(),
             });
 
+            // Add to name map for fallback lookup
+            pattern_name_map.insert(pattern.name.clone(), pattern.id.clone());
+
             raw_bytes += pattern.data.len();
         }
     }
 
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
 
-    for brush in abr_file.brushes {
+    for mut brush in abr_file.brushes {
+        // Debug connection between brush and pattern
+        if let Some(ref mut tex) = brush.texture_settings {
+            tracing::info!(
+                "[ABR Brush Link] Brush '{}' requests Pattern ID '{:?}' Name '{:?}'",
+                brush.name,
+                tex.pattern_id,
+                tex.pattern_name
+            );
+
+            // Resolution Logic:
+            let mut resolved = false;
+            // 1. Check if pattern_id exists in our loaded patterns
+            if let Some(ref pid) = tex.pattern_id {
+                if pattern_infos.iter().any(|p| p.id == *pid) {
+                    resolved = true;
+                }
+            }
+
+            // 2. Fallback: Lookup by Name
+            if !resolved {
+                if let Some(ref pname) = tex.pattern_name {
+                    if let Some(mapped_id) = pattern_name_map.get(pname) {
+                        tracing::warn!(
+                            "[ABR Fix] Resolved pattern mismatch for brush '{}': UUID '{:?}' -> Name '{}' -> ID '{}'",
+                            brush.name,
+                            tex.pattern_id,
+                            pname,
+                            mapped_id
+                        );
+                        tex.pattern_id = Some(mapped_id.clone());
+                        resolved = true;
+                    }
+                }
+            }
+
+            if !resolved && tex.enabled {
+                tracing::warn!("[ABR Warning] Brush '{}' has texture enabled but pattern could not be resolved.", brush.name);
+            }
+        }
         // Generate ID first (before moving brush)
         let id = brush.uuid.clone().unwrap_or_else(|| {
             // Generate simple UUID

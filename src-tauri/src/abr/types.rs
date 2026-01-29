@@ -148,6 +148,8 @@ pub struct TextureSettings {
     pub enabled: bool,
     /// Pattern ID (references a pattern in the library)
     pub pattern_id: Option<String>,
+    /// Pattern Name (fallback for matching when ID mismatch occurs)
+    pub pattern_name: Option<String>,
     /// Scale percentage (10-200)
     pub scale: f32,
     /// Brightness adjustment (-150 to +150)
@@ -175,6 +177,7 @@ impl Default for TextureSettings {
         Self {
             enabled: false,
             pattern_id: None,
+            pattern_name: None,
             scale: 100.0,
             brightness: 0,
             contrast: 0,

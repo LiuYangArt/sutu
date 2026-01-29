@@ -434,8 +434,10 @@ impl AbrParser {
 
                         if let Some(DescriptorValue::String(id)) = txtr.get("Idnt") {
                             settings.pattern_id = Some(id.clone());
-                        } else if let Some(DescriptorValue::String(name)) = txtr.get("PtNm") {
-                            settings.pattern_id = Some(name.clone());
+                        }
+
+                        if let Some(DescriptorValue::String(name)) = txtr.get("PtNm") {
+                            settings.pattern_name = Some(name.clone());
                         }
 
                         // Scale (Scl ) - Percent
