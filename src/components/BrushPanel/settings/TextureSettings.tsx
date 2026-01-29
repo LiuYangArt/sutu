@@ -13,6 +13,7 @@
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { TextureBlendMode } from '../types';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
+import { LZ4Image } from '@/components/common/LZ4Image';
 
 /** Control options for Texture Depth */
 const DEPTH_CONTROL_OPTIONS: SelectOption[] = [
@@ -89,9 +90,9 @@ export function TextureSettings(): JSX.Element {
           }}
         >
           {patternUrl ? (
-            <img
+            <LZ4Image
               src={patternUrl}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               alt="Pattern"
             />
           ) : (
