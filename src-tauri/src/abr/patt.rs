@@ -93,7 +93,8 @@ fn parse_pattern(data: &[u8]) -> Result<(PatternResource, usize), AbrError> {
     // Read pattern total size
     let pattern_size = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
-    if !(40..=5_000_000).contains(&pattern_size) {
+    // Max size: 20MB to support large textures like 2048x1536 RGB
+    if !(40..=20_000_000).contains(&pattern_size) {
         return Err(AbrError::InvalidFile(format!(
             "Invalid pattern size: {}",
             pattern_size

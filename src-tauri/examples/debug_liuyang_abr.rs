@@ -4,6 +4,18 @@ use std::fs::File;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
+/// Sanitize a pattern name for use in filenames
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == ' ')
+        .take(30) // Limit length
+        .collect::<String>()
+        .trim()
+        .replace(' ', "_")
+        .trim_end_matches('\0')
+        .to_string()
+}
+
 // Include the packbits_decode function here to avoid visibility issues if it's private
 fn packbits_decode(input: &[u8], expected_len: usize) -> Option<Vec<u8>> {
     let mut output = Vec::with_capacity(expected_len);
@@ -502,6 +514,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     for (idx, pattern) in abr.patterns.iter().enumerate() {
+        // Create sanitized name for filenames
+        let safe_name = sanitize_filename(&pattern.name);
+
         println!("\nPattern #{}: {} (ID: {})", idx, pattern.name, pattern.id);
         println!("  Size: {}x{}", pattern.width, pattern.height);
         println!("  Mode: {:?}", pattern.mode); // 3=RGB, 1=Gray
@@ -517,17 +532,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Expected Bytes: {}", expected_bytes);
 
         // 1. Try Raw (assuming it might be uncompressed)
-        let raw_filename = output_dir.join(format!("p{}_raw_planar.png", idx));
         if pattern.mode == 3 {
             save_rgb_planar(
-                raw_filename.to_str().unwrap(),
+                output_dir
+                    .join(format!("p{}_{}_raw_planar.png", idx, safe_name))
+                    .to_str()
+                    .unwrap(),
                 &pattern.data,
                 pattern.width,
                 pattern.height,
             );
             save_rgb_interleaved(
                 output_dir
-                    .join(format!("p{}_raw_interleaved.png", idx))
+                    .join(format!("p{}_{}_raw_interleaved.png", idx, safe_name))
                     .to_str()
                     .unwrap(),
                 &pattern.data,
