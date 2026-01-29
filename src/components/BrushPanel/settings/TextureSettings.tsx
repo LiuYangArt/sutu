@@ -12,7 +12,12 @@
 
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { TextureBlendMode } from '../types';
-import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
+import {
+  SliderRow,
+  ControlSourceSelect,
+  SelectRow,
+  ControlSourceOption,
+} from '../BrushPanelComponents';
 
 /** Control options for Texture Depth */
 const DEPTH_CONTROL_OPTIONS: ControlSourceOption[] = [
@@ -79,6 +84,9 @@ export function TextureSettings(): JSX.Element {
   const disabled = !textureEnabled;
   const depthControlSource = depthControlToSource(textureSettings.depthControl);
 
+  // Controls related to individual tip variation are disabled unless Texture Each Tip is on
+  const tipVariationDisabled = disabled || !textureSettings.textureEachTip;
+
   return (
     <div className="brush-panel-section">
       {/* Section header with enable checkbox */}
@@ -122,90 +130,76 @@ export function TextureSettings(): JSX.Element {
       {/* Texture Each Tip and Invert toggles */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <div className="setting-checkbox-row">
-          <label>
+          <label className={`flip-checkbox ${disabled ? 'disabled' : ''}`}>
             <input
               type="checkbox"
               checked={textureSettings.textureEachTip}
               onChange={(e) => setTextureSettings({ textureEachTip: e.target.checked })}
               disabled={disabled}
             />
-            Texture Each Tip
+            <span>Texture Each Tip</span>
           </label>
         </div>
 
-        <div className="setting-checkbox-row">
-          <label>
+        <SelectRow
+          label="Mode"
+          value={textureSettings.mode}
+          options={BLEND_MODE_OPTIONS}
+          onChange={(v) => setTextureSettings({ mode: v as TextureBlendMode })}
+          disabled={disabled}
+        />
+
+        <SliderRow
+          label="Depth"
+          value={textureSettings.depth}
+          min={0}
+          max={100}
+          displayValue={`${Math.round(textureSettings.depth)}%`}
+          onChange={(v) => setTextureSettings({ depth: v })}
+        />
+
+        <SliderRow
+          label="Minimum Depth"
+          value={textureSettings.minimumDepth}
+          min={0}
+          max={100}
+          displayValue={`${Math.round(textureSettings.minimumDepth)}%`}
+          onChange={(v) => setTextureSettings({ minimumDepth: v })}
+          disabled={tipVariationDisabled}
+        />
+
+        <SliderRow
+          label="Depth Jitter"
+          value={textureSettings.depthJitter}
+          min={0}
+          max={100}
+          displayValue={`${Math.round(textureSettings.depthJitter)}%`}
+          onChange={(v) => setTextureSettings({ depthJitter: v })}
+          disabled={tipVariationDisabled}
+        />
+
+        <ControlSourceSelect
+          label="Control"
+          value={depthControlSource}
+          options={DEPTH_CONTROL_OPTIONS}
+          onChange={(v) =>
+            setTextureSettings({ depthControl: sourceToDepthControl(v as ControlSource) })
+          }
+          disabled={tipVariationDisabled}
+        />
+
+        <div className="setting-checkbox-row" style={{ marginTop: '8px' }}>
+          <label className={`flip-checkbox ${disabled ? 'disabled' : ''}`}>
             <input
               type="checkbox"
               checked={textureSettings.invert}
               onChange={(e) => setTextureSettings({ invert: e.target.checked })}
               disabled={disabled}
             />
-            Invert
+            <span>Invert</span>
           </label>
         </div>
       </div>
-
-      {/* Blend Mode */}
-      <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
-        <div className="setting-row">
-          <span className="setting-label">Mode</span>
-          <select
-            className="setting-select"
-            value={textureSettings.mode}
-            onChange={(e) => setTextureSettings({ mode: e.target.value as TextureBlendMode })}
-            disabled={disabled}
-          >
-            {BLEND_MODE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Depth controls (only relevant when Texture Each Tip is enabled) */}
-      {textureSettings.textureEachTip && (
-        <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
-          <SliderRow
-            label="Depth"
-            value={textureSettings.depth}
-            min={0}
-            max={100}
-            displayValue={`${Math.round(textureSettings.depth)}%`}
-            onChange={(v) => setTextureSettings({ depth: v })}
-          />
-
-          <SliderRow
-            label="Minimum Depth"
-            value={textureSettings.minimumDepth}
-            min={0}
-            max={100}
-            displayValue={`${Math.round(textureSettings.minimumDepth)}%`}
-            onChange={(v) => setTextureSettings({ minimumDepth: v })}
-          />
-
-          <SliderRow
-            label="Depth Jitter"
-            value={textureSettings.depthJitter}
-            min={0}
-            max={100}
-            displayValue={`${Math.round(textureSettings.depthJitter)}%`}
-            onChange={(v) => setTextureSettings({ depthJitter: v })}
-          />
-
-          <ControlSourceSelect
-            label="Control"
-            value={depthControlSource}
-            options={DEPTH_CONTROL_OPTIONS}
-            onChange={(v) =>
-              setTextureSettings({ depthControl: sourceToDepthControl(v as ControlSource) })
-            }
-            disabled={disabled}
-          />
-        </div>
-      )}
     </div>
   );
 }
