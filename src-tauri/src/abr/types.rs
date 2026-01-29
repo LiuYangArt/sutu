@@ -4,11 +4,15 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Parsed ABR file containing brushes
+use super::patt::PatternResource;
+
+/// Parsed ABR file containing brushes and patterns
 #[derive(Debug, Clone)]
 pub struct AbrFile {
     pub version: AbrVersion,
     pub brushes: Vec<AbrBrush>,
+    /// Pattern resources (textures) from patt section
+    pub patterns: Vec<PatternResource>,
 }
 
 /// ABR file format version
@@ -117,6 +121,72 @@ pub struct AbrDynamics {
     pub opacity_jitter: f32,
 }
 
+/// Texture blend mode (Photoshop-compatible)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextureBlendMode {
+    #[default]
+    Multiply,
+    Subtract,
+    Darken,
+    Overlay,
+    ColorDodge,
+    ColorBurn,
+    LinearBurn,
+    HardMix,
+    LinearHeight,
+    Height,
+}
+
+/// Texture settings for brush (Photoshop Texture panel compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureSettings {
+    /// Is texture feature enabled
+    pub enabled: bool,
+    /// Pattern ID (references a pattern in the library)
+    pub pattern_id: Option<String>,
+    /// Scale percentage (10-200)
+    pub scale: f32,
+    /// Brightness adjustment (-150 to +150)
+    pub brightness: i32,
+    /// Contrast adjustment (-50 to +50)
+    pub contrast: i32,
+    /// Apply texture to each dab tip (vs continuous)
+    pub texture_each_tip: bool,
+    /// Blend mode for texture application
+    pub mode: TextureBlendMode,
+    /// Depth/strength (0-100%)
+    pub depth: f32,
+    /// Minimum depth when using control (0-100%)
+    pub minimum_depth: f32,
+    /// Depth jitter amount (0-100%)
+    pub depth_jitter: f32,
+    /// Invert texture values
+    pub invert: bool,
+    /// Depth control source (0=Off, 2=Pressure, etc.)
+    pub depth_control: u32,
+}
+
+impl Default for TextureSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pattern_id: None,
+            scale: 100.0,
+            brightness: 0,
+            contrast: 0,
+            texture_each_tip: false,
+            mode: TextureBlendMode::Multiply,
+            depth: 100.0,
+            minimum_depth: 0.0,
+            depth_jitter: 0.0,
+            invert: false,
+            depth_control: 0,
+        }
+    }
+}
+
 /// Brush preset for frontend consumption (lightweight metadata only)
 ///
 /// Note: Texture data is NOT included here. Instead, textures are cached
@@ -151,6 +221,8 @@ pub struct BrushPreset {
     pub cursor_path: Option<String>,
     /// Cursor bounds for proper scaling
     pub cursor_bounds: Option<CursorBoundsData>,
+    /// Texture settings (from ABR Texture panel data)
+    pub texture_settings: Option<TextureSettings>,
 }
 
 /// Cursor bounds data for frontend
@@ -197,6 +269,7 @@ impl From<AbrBrush> for BrushPreset {
             opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
             cursor_path,
             cursor_bounds,
+            texture_settings: None, // Will be populated from desc section in Phase 3
         }
     }
 }

@@ -717,6 +717,7 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
         cursor_path,
         cursor_bounds,
+        texture_settings: None, // TODO: Parse from desc section
     }
 }
 

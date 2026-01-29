@@ -16,6 +16,8 @@ export interface BrushPreset {
   cursorPath?: string | null;
   /** Cursor bounds for proper scaling */
   cursorBounds?: { width: number; height: number } | null;
+  /** Texture settings from ABR Texture panel */
+  textureSettings?: TextureSettings | null;
 }
 
 /** ABR import benchmark timing */
@@ -35,6 +37,63 @@ export interface ImportAbrResult {
   benchmark: AbrBenchmark;
 }
 
+/** Texture blend mode (Photoshop-compatible) */
+export type TextureBlendMode =
+  | 'multiply'
+  | 'subtract'
+  | 'darken'
+  | 'overlay'
+  | 'colorDodge'
+  | 'colorBurn'
+  | 'linearBurn'
+  | 'hardMix'
+  | 'linearHeight'
+  | 'height';
+
+/** Texture settings for brush (Photoshop Texture panel compatible) */
+export interface TextureSettings {
+  /** Is texture feature enabled */
+  enabled: boolean;
+  /** Pattern ID (references a pattern in the library) */
+  patternId: string | null;
+  /** Scale percentage (10-200) */
+  scale: number;
+  /** Brightness adjustment (-150 to +150) */
+  brightness: number;
+  /** Contrast adjustment (-50 to +50) */
+  contrast: number;
+  /** Apply texture to each dab tip (vs continuous) */
+  textureEachTip: boolean;
+  /** Blend mode for texture application */
+  mode: TextureBlendMode;
+  /** Depth/strength (0-100%) */
+  depth: number;
+  /** Minimum depth when using control (0-100%) */
+  minimumDepth: number;
+  /** Depth jitter amount (0-100%) */
+  depthJitter: number;
+  /** Invert texture values */
+  invert: boolean;
+  /** Depth control source (0=Off, 2=Pressure, etc.) */
+  depthControl: number;
+}
+
+/** Default texture settings */
+export const DEFAULT_TEXTURE_SETTINGS: TextureSettings = {
+  enabled: false,
+  patternId: null,
+  scale: 100,
+  brightness: 0,
+  contrast: 0,
+  textureEachTip: false,
+  mode: 'multiply',
+  depth: 100,
+  minimumDepth: 0,
+  depthJitter: 0,
+  invert: false,
+  depthControl: 0,
+};
+
 /** Default procedural brush preset (always first in the list) */
 export const DEFAULT_ROUND_BRUSH: BrushPreset = {
   id: '__default_round__',
@@ -51,4 +110,5 @@ export const DEFAULT_ROUND_BRUSH: BrushPreset = {
   opacityPressure: false,
   cursorPath: null,
   cursorBounds: null,
+  textureSettings: null,
 };

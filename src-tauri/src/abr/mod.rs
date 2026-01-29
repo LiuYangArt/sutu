@@ -29,6 +29,7 @@ pub mod cursor;
 mod defaults;
 mod error;
 mod parser;
+pub mod patt;
 mod samp;
 mod types;
 
@@ -36,7 +37,9 @@ pub use cursor::{extract_cursor_outline, generate_cursor_data, CursorBounds};
 pub use defaults::AbrDefaults;
 pub use error::AbrError;
 pub use parser::AbrParser;
+pub use patt::PatternResource;
 pub use samp::normalize_brush_texture;
 pub use types::{
     AbrBrush, AbrDynamics, AbrFile, AbrVersion, BrushPreset, CursorBoundsData, GrayscaleImage,
+    TextureBlendMode, TextureSettings,
 };

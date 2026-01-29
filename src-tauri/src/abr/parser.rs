@@ -44,6 +44,7 @@ impl AbrParser {
             return Ok(AbrFile {
                 version: header.version,
                 brushes: Vec::new(),
+                patterns: Vec::new(),
             });
         }
 
@@ -54,9 +55,20 @@ impl AbrParser {
             Self::parse_v12(&mut cursor, &header)?
         };
 
+        // Parse patterns from patt section (V6+ only)
+        let patterns = if header.version.is_new_format() {
+            let mut pattern_cursor = Cursor::new(data);
+            // Skip header (4 bytes: version + subversion)
+            pattern_cursor.seek(SeekFrom::Start(4))?;
+            Self::parse_patterns(&mut pattern_cursor)?
+        } else {
+            Vec::new()
+        };
+
         Ok(AbrFile {
             version: header.version,
             brushes,
+            patterns,
         })
     }
 
@@ -135,6 +147,31 @@ impl AbrParser {
         cursor.seek(SeekFrom::Start(data_start))?;
 
         Ok(count)
+    }
+
+    /// Parse pattern resources from patt section
+    fn parse_patterns(
+        cursor: &mut Cursor<&[u8]>,
+    ) -> Result<Vec<super::patt::PatternResource>, AbrError> {
+        let origin = cursor.position();
+
+        // Try to find patt section
+        if !Self::reach_8bim_section(cursor, "patt")? {
+            cursor.seek(SeekFrom::Start(origin))?;
+            return Ok(Vec::new());
+        }
+
+        let section_size = cursor.read_u32::<BigEndian>()? as usize;
+        if section_size == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Read patt section data
+        let mut patt_data = vec![0u8; section_size];
+        cursor.read_exact(&mut patt_data)?;
+
+        // Parse patterns
+        super::patt::parse_patt_section(&patt_data)
     }
 
     /// Seek to a named 8BIM section
