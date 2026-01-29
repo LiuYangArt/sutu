@@ -436,8 +436,8 @@ mod tests {
         assert!(center_val.is_finite());
         assert!(edge_val.is_finite());
         // Verify both values are within valid range [0, 1]
-        assert!(center_val >= 0.0 && center_val <= 1.0);
-        assert!(edge_val >= 0.0 && edge_val <= 1.0);
+        assert!((0.0..=1.0).contains(&center_val));
+        assert!((0.0..=1.0).contains(&edge_val));
     }
 
     #[test]

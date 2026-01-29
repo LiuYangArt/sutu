@@ -10,9 +10,10 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use byteorder::{BigEndian, ReadBytesExt};
 
 use super::defaults::AbrDefaults;
+use super::descriptor::{parse_descriptor, DescriptorValue};
 use super::error::AbrError;
 use super::samp::normalize_brush_texture;
-use super::types::{AbrBrush, AbrDynamics, AbrFile, AbrVersion, GrayscaleImage};
+use super::types::{AbrBrush, AbrDynamics, AbrFile, AbrVersion, GrayscaleImage, TextureSettings};
 
 /// ABR file header information
 #[derive(Debug, Clone)]
@@ -321,6 +322,7 @@ impl AbrParser {
             hardness: None,
             dynamics: None,
             is_computed: false,
+            texture_settings: None,
         })
     }
 
@@ -406,12 +408,96 @@ impl AbrParser {
         let raw_image = GrayscaleImage::new(width, height, image_data);
         let normalized = normalize_brush_texture(&raw_image);
 
-        // Seek to next brush
+        // Parse descriptor if valid
+        // The descriptor is stored AFTER the image data in v6/v10
+        // But we need to be careful about current position vs next_brush
+        // Usually there is a descriptor block here.
+
+        let mut texture_settings = None;
+        let mut uuid = Some(format!("abr-{}", id));
+
+        // Let's see if we have bytes left before next_brush
+        let current_pos = cursor.position();
+        if current_pos < next_brush {
+            // Try to parse descriptor
+            // Note: sometimes there are padding bytes or other structures?
+            // ABR v6 usually puts the descriptor immediately after image data.
+            match parse_descriptor(cursor) {
+                Ok(desc) => {
+                    // Extract pattern info
+                    if let Some(DescriptorValue::Descriptor(txtr)) = desc.get("Txtr") {
+                        // Extract texture settings
+                        let mut settings = TextureSettings {
+                            enabled: true,
+                            ..Default::default()
+                        };
+
+                        if let Some(DescriptorValue::String(id)) = txtr.get("Idnt") {
+                            settings.pattern_id = Some(id.clone());
+                        } else if let Some(DescriptorValue::String(name)) = txtr.get("PtNm") {
+                            settings.pattern_id = Some(name.clone());
+                        }
+
+                        // Scale (Scl ) - Percent
+                        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("Scl ") {
+                            settings.scale = *value as f32;
+                        }
+
+                        // Brightness (Brgh) - Long
+                        if let Some(DescriptorValue::Integer(val)) = txtr.get("Brgh") {
+                            settings.brightness = *val;
+                        }
+
+                        // Contrast (Cntr) - Long
+                        if let Some(DescriptorValue::Integer(val)) = txtr.get("Cntr") {
+                            settings.contrast = *val;
+                        }
+
+                        // Depth (Dpth) - Percent
+                        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("Dpth") {
+                            settings.depth = *value as f32;
+                        }
+
+                        // Mode (Md  ) - Enum
+                        if let Some(DescriptorValue::Enum { value, .. }) = txtr.get("Md  ") {
+                            // Map enum to mode string (e.g. 'Mltp' -> multiply)
+                            // Helper needed for mapping
+                            settings.mode = match value.as_str() {
+                                "Mltp" => super::types::TextureBlendMode::Multiply,
+                                "Sbt " => super::types::TextureBlendMode::Subtract,
+                                "Drkn" => super::types::TextureBlendMode::Darken,
+                                "Ovrl" => super::types::TextureBlendMode::Overlay,
+                                "CldD" => super::types::TextureBlendMode::ColorDodge,
+                                "CldB" => super::types::TextureBlendMode::ColorBurn,
+                                "LnrB" => super::types::TextureBlendMode::LinearBurn,
+                                "HrdM" => super::types::TextureBlendMode::HardMix,
+                                "LnrH" => super::types::TextureBlendMode::LinearHeight,
+                                "Hght" => super::types::TextureBlendMode::Height,
+                                _ => super::types::TextureBlendMode::Multiply, // Default
+                            };
+                        }
+
+                        texture_settings = Some(settings);
+                    }
+
+                    // Try to extract brush UUID if present (Idnt inside root or main object?)
+                    if let Some(DescriptorValue::String(id)) = desc.get("Idnt") {
+                        uuid = Some(id.clone());
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("Failed to parse descriptor for brush #{}: {}", id, e);
+                    // Non-fatal, just no extended settings
+                }
+            }
+        }
+
+        // Seek to next brush to ensure sync
         cursor.seek(SeekFrom::Start(next_brush))?;
 
         Ok(AbrBrush {
             name: format!("Brush_{}", id + 1),
-            uuid: Some(format!("abr-{}", id)),
+            uuid, // Use extracted or generated UUID
             tip_image: Some(normalized),
             diameter: width as f32,
             spacing: AbrDefaults::SPACING,
@@ -420,6 +506,8 @@ impl AbrParser {
             hardness: None,
             dynamics: Some(AbrDynamics::default()),
             is_computed: false,
+            // Pass texture settings
+            texture_settings, // Add this field to AbrBrush struct first!
         })
     }
 
@@ -503,6 +591,7 @@ impl AbrParser {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

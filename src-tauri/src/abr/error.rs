@@ -17,6 +17,8 @@ pub enum AbrError {
 
     #[error("Invalid 8BIM block")]
     Invalid8BIMBlock,
+    #[error("Invalid file format: {0}")]
+    InvalidFormat(String),
 
     #[error("Unexpected end of data")]
     UnexpectedEof,

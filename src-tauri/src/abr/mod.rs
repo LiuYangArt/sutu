@@ -26,8 +26,9 @@
 //! ```
 
 pub mod cursor;
-mod defaults;
-mod error;
+pub mod defaults;
+pub mod descriptor;
+pub mod error;
 mod parser;
 pub mod patt;
 mod samp;

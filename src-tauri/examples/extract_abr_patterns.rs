@@ -1,4 +1,10 @@
-//! ABR Pattern 提取测试脚本
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::manual_range_contains,
+    clippy::needless_range_loop
+)]
+//! ABR Pattern extraction tool
 //!
 //! 用于测试从 @liuyang_paintbrushes.abr 文件提取笔刷对应的 pattern 资源
 

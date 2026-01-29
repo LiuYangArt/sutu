@@ -1,4 +1,6 @@
 //! PaintBoard - Professional painting software with low-latency pen input
+#![allow(clippy::expect_used)]
+
 //!
 //! This is the main library crate that exposes all modules for the Tauri backend.
 

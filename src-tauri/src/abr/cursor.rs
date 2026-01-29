@@ -414,6 +414,7 @@ pub fn generate_cursor_data(img: &GrayscaleImage) -> (Option<String>, Option<Cur
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

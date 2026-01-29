@@ -60,6 +60,8 @@ pub struct AbrBrush {
     pub dynamics: Option<AbrDynamics>,
     /// Whether this is a computed (parametric) brush vs sampled
     pub is_computed: bool,
+    /// Texture settings (parsed from descriptor)
+    pub texture_settings: Option<TextureSettings>,
 }
 
 /// Grayscale image data for brush tips
@@ -269,7 +271,7 @@ impl From<AbrBrush> for BrushPreset {
             opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
             cursor_path,
             cursor_bounds,
-            texture_settings: None, // Will be populated from desc section in Phase 3
+            texture_settings: brush.texture_settings,
         }
     }
 }
