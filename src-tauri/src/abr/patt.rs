@@ -191,13 +191,17 @@ pub fn parse_patt_section(data: &[u8]) -> Result<Vec<PatternResource>, AbrError>
             data[offset + 3],
         ]) as usize;
 
-        // Validate size (Allow up to 50MB per pattern)
-        if !(40..=50_000_000).contains(&size) || offset + size > data.len() {
+        let is_valid_size = (40..=50_000_000).contains(&size);
+        let exceeds_data = offset + size > data.len();
+
+        if !is_valid_size || exceeds_data {
             if offset % 1_000_000 == 0 {
-                tracing::warn!(
-                    "Skipping invalid pattern size at offset {}: {}",
+                tracing::debug!(
+                    "Skipping invalid pattern at offset {} (Size: {}, ValidSize: {}, Fits: {})",
                     offset,
-                    size
+                    size,
+                    is_valid_size,
+                    !exceeds_data
                 );
             }
             offset += 1;
@@ -218,7 +222,7 @@ pub fn parse_patt_section(data: &[u8]) -> Result<Vec<PatternResource>, AbrError>
                 offset += consumed;
             }
             Err(e) => {
-                tracing::warn!("Failed to parse pattern at offset {}: {}", offset, e);
+                tracing::debug!("Failed to parse pattern at offset {}: {}", offset, e);
                 offset += 1;
             }
         }

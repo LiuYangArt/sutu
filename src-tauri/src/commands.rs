@@ -1131,6 +1131,7 @@ pub fn detect_file_format(path: String) -> Option<FileFormat> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

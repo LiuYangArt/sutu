@@ -8,7 +8,7 @@ interface LZ4ImageProps {
   alt?: string;
 }
 
-export const LZ4Image: React.FC<LZ4ImageProps> = ({ src, style, className, alt }) => {
+export function LZ4Image({ src, style, className, alt }: LZ4ImageProps): JSX.Element | null {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState(false);
 
@@ -18,20 +18,22 @@ export const LZ4Image: React.FC<LZ4ImageProps> = ({ src, style, className, alt }
     let active = true;
     setError(false);
 
-    const fetchImage = async () => {
+    const fetchAndRender = async () => {
       try {
         const response = await fetch(src);
-        if (!response.ok) throw new Error(`Status ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`Status ${response.status}`);
+        }
 
-        const widthStr = response.headers.get('X-Image-Width');
-        const heightStr = response.headers.get('X-Image-Height');
+        const widthHeader = response.headers.get('X-Image-Width');
+        const heightHeader = response.headers.get('X-Image-Height');
 
-        if (!widthStr || !heightStr) {
+        if (!widthHeader || !heightHeader) {
           throw new Error('Missing dimension headers');
         }
 
-        const width = parseInt(widthStr, 10);
-        const height = parseInt(heightStr, 10);
+        const width = parseInt(widthHeader, 10);
+        const height = parseInt(heightHeader, 10);
 
         const buffer = await response.arrayBuffer();
         if (!active) return;
@@ -55,7 +57,7 @@ export const LZ4Image: React.FC<LZ4ImageProps> = ({ src, style, className, alt }
       }
     };
 
-    fetchImage();
+    void fetchAndRender();
     return () => {
       active = false;
     };
@@ -82,4 +84,4 @@ export const LZ4Image: React.FC<LZ4ImageProps> = ({ src, style, className, alt }
   }
 
   return <canvas ref={canvasRef} className={className} style={style} title={alt} />;
-};
+}

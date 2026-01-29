@@ -728,8 +728,10 @@ impl AbrParser {
     fn parse_texture_settings(
         txtr: &std::collections::HashMap<String, DescriptorValue>,
     ) -> TextureSettings {
-        let mut settings = TextureSettings::default();
-        settings.enabled = true; // Implicitly true if Txtr exists
+        let mut settings = TextureSettings {
+            enabled: true, // Implicitly true if Txtr exists
+            ..Default::default()
+        };
 
         // Idnt (UUID)
         if let Some(DescriptorValue::String(id)) = txtr.get("Idnt") {
