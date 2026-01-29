@@ -44,3 +44,6 @@ pub use types::{
     AbrBrush, AbrDynamics, AbrFile, AbrVersion, BrushPreset, CursorBoundsData, GrayscaleImage,
     TextureBlendMode, TextureSettings,
 };
+
+#[cfg(test)]
+mod tests;

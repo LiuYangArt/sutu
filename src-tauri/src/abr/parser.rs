@@ -734,6 +734,8 @@ impl AbrParser {
         // Idnt (UUID)
         if let Some(DescriptorValue::String(id)) = txtr.get("Idnt") {
             settings.pattern_uuid = Some(id.clone());
+            // Also set pattern_id as fallback so it's not lost if linking fails
+            settings.pattern_id = Some(id.clone());
         }
 
         // PtNm (Pattern Name)

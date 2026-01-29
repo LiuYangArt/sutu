@@ -53,7 +53,8 @@ function sourceToDepthControl(source: ControlSource): number {
 export function TextureSettings(): JSX.Element {
   const { textureEnabled, textureSettings, setTextureSettings, toggleTexture } = useToolStore();
   const patternId = textureSettings?.patternId;
-  const patternUrl = patternId ? `project://pattern/${patternId}` : null;
+  // Fix for Windows Tauri v2 custom protocol
+  const patternUrl = patternId ? `http://project.localhost/pattern/${patternId}` : null;
 
   const disabled = !textureEnabled;
   const depthControlSource = depthControlToSource(textureSettings.depthControl);
