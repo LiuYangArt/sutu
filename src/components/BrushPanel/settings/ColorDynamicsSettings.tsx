@@ -8,10 +8,10 @@
  */
 
 import { useToolStore, ControlSource } from '@/stores/tool';
-import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
+import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 
 /** Control options for Foreground/Background */
-const FB_CONTROL_OPTIONS: ControlSourceOption[] = [
+const FB_CONTROL_OPTIONS: SelectOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
@@ -45,7 +45,7 @@ export function ColorDynamicsSettings(): JSX.Element {
           displayValue={`${colorDynamics.foregroundBackgroundJitter}%`}
           onChange={(v) => setColorDynamics({ foregroundBackgroundJitter: v })}
         />
-        <ControlSourceSelect
+        <SelectRow
           label="Control"
           value={colorDynamics.foregroundBackgroundControl}
           options={FB_CONTROL_OPTIONS}

@@ -7,10 +7,10 @@
  */
 
 import { useToolStore, ControlSource } from '@/stores/tool';
-import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
+import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 
 /** Control options for Transfer (no direction-based controls) */
-const TRANSFER_CONTROL_OPTIONS: ControlSourceOption[] = [
+const TRANSFER_CONTROL_OPTIONS: SelectOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
@@ -48,7 +48,7 @@ function JitterGroup({
         displayValue={`${jitter}%`}
         onChange={onJitterChange}
       />
-      <ControlSourceSelect
+      <SelectRow
         label="Control"
         value={control}
         options={TRANSFER_CONTROL_OPTIONS}

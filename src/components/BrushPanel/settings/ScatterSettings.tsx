@@ -9,10 +9,10 @@
  */
 
 import { useToolStore, ControlSource } from '@/stores/tool';
-import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
+import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 
 /** Control options for Scatter (subset of Shape Dynamics options) */
-const SCATTER_CONTROL_OPTIONS: ControlSourceOption[] = [
+const SCATTER_CONTROL_OPTIONS: SelectOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
@@ -44,7 +44,7 @@ export function ScatterSettings(): JSX.Element {
           displayValue={`${scatter.scatter}%`}
           onChange={(v) => setScatter({ scatter: v })}
         />
-        <ControlSourceSelect
+        <SelectRow
           label="Control"
           value={scatter.scatterControl}
           options={SCATTER_CONTROL_OPTIONS}
@@ -72,7 +72,7 @@ export function ScatterSettings(): JSX.Element {
           displayValue={`${scatter.count}`}
           onChange={(v) => setScatter({ count: v })}
         />
-        <ControlSourceSelect
+        <SelectRow
           label="Control"
           value={scatter.countControl}
           options={SCATTER_CONTROL_OPTIONS}

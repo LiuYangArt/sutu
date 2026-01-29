@@ -12,15 +12,10 @@
 
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { TextureBlendMode } from '../types';
-import {
-  SliderRow,
-  ControlSourceSelect,
-  SelectRow,
-  ControlSourceOption,
-} from '../BrushPanelComponents';
+import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 
 /** Control options for Texture Depth */
-const DEPTH_CONTROL_OPTIONS: ControlSourceOption[] = [
+const DEPTH_CONTROL_OPTIONS: SelectOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
@@ -42,40 +37,17 @@ const BLEND_MODE_OPTIONS: { value: TextureBlendMode; label: string }[] = [
   { value: 'height', label: 'Height' },
 ];
 
+const DEPTH_SOURCE_MAP = ['off', 'fade', 'penPressure', 'penTilt', 'rotation'] as const;
+
 /** Map depthControl number to ControlSource */
 function depthControlToSource(value: number): ControlSource {
-  switch (value) {
-    case 0:
-      return 'off';
-    case 1:
-      return 'fade';
-    case 2:
-      return 'penPressure';
-    case 3:
-      return 'penTilt';
-    case 4:
-      return 'rotation';
-    default:
-      return 'off';
-  }
+  return (DEPTH_SOURCE_MAP[value] as ControlSource) || 'off';
 }
 
 /** Map ControlSource to depthControl number */
 function sourceToDepthControl(source: ControlSource): number {
-  switch (source) {
-    case 'off':
-      return 0;
-    case 'fade':
-      return 1;
-    case 'penPressure':
-      return 2;
-    case 'penTilt':
-      return 3;
-    case 'rotation':
-      return 4;
-    default:
-      return 0;
-  }
+  const index = DEPTH_SOURCE_MAP.indexOf(source as any);
+  return index >= 0 ? index : 0;
 }
 
 export function TextureSettings(): JSX.Element {
@@ -178,7 +150,7 @@ export function TextureSettings(): JSX.Element {
           disabled={tipVariationDisabled}
         />
 
-        <ControlSourceSelect
+        <SelectRow
           label="Control"
           value={depthControlSource}
           options={DEPTH_CONTROL_OPTIONS}

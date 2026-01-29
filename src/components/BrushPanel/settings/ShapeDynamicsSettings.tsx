@@ -9,10 +9,10 @@
  */
 
 import { useToolStore, ControlSource } from '@/stores/tool';
-import { SliderRow, ControlSourceSelect, ControlSourceOption } from '../BrushPanelComponents';
+import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 
 /** Base control options (shared by Size and Roundness) */
-const BASE_CONTROL_OPTIONS: ControlSourceOption[] = [
+const BASE_CONTROL_OPTIONS: SelectOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
@@ -21,7 +21,7 @@ const BASE_CONTROL_OPTIONS: ControlSourceOption[] = [
 ];
 
 /** Angle control adds direction options */
-const ANGLE_CONTROL_OPTIONS: ControlSourceOption[] = [
+const ANGLE_CONTROL_OPTIONS: SelectOption[] = [
   ...BASE_CONTROL_OPTIONS,
   { value: 'initial', label: 'Initial Direction' },
   { value: 'direction', label: 'Direction' },
@@ -53,7 +53,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
           displayValue={`${shapeDynamics.sizeJitter}%`}
           onChange={(v) => setShapeDynamics({ sizeJitter: v })}
         />
-        <ControlSourceSelect
+        <SelectRow
           label="Control"
           value={shapeDynamics.sizeControl}
           options={BASE_CONTROL_OPTIONS}
@@ -80,7 +80,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
           displayValue={`${shapeDynamics.angleJitter}°`}
           onChange={(v) => setShapeDynamics({ angleJitter: v })}
         />
-        <ControlSourceSelect
+        <SelectRow
           label="Control"
           value={shapeDynamics.angleControl}
           options={ANGLE_CONTROL_OPTIONS}
@@ -99,7 +99,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
           displayValue={`${shapeDynamics.roundnessJitter}%`}
           onChange={(v) => setShapeDynamics({ roundnessJitter: v })}
         />
-        <ControlSourceSelect
+        <SelectRow
           label="Control"
           value={shapeDynamics.roundnessControl}
           options={BASE_CONTROL_OPTIONS}
