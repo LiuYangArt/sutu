@@ -647,17 +647,15 @@ impl AbrParser {
         match parse_descriptor(&mut Cursor::new(&desc_data)) {
             Ok(desc) => {
                 if let Some(DescriptorValue::List(brsh_list)) = desc.get("Brsh") {
-                    // Helper to find UUID recursively in sampledData
+                    // Helper to find UUID from sampledData field (fixed: don't return arbitrary strings)
                     fn find_uuid(val: &DescriptorValue) -> Option<String> {
                         match val {
-                            DescriptorValue::String(s) => return Some(s.clone()),
                             DescriptorValue::Descriptor(d) => {
-                                if let Some(uuid) = d.get("sampledData") {
-                                    if let DescriptorValue::String(s) = uuid {
-                                        return Some(s.clone());
-                                    }
+                                // Only extract UUID from sampledData field
+                                if let Some(DescriptorValue::String(s)) = d.get("sampledData") {
+                                    return Some(s.clone());
                                 }
-                                // Recursive search
+                                // Recursive search in nested structures
                                 for v in d.values() {
                                     if let Some(res) = find_uuid(v) {
                                         return Some(res);
