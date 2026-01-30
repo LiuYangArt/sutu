@@ -20,7 +20,7 @@ import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
 import { calculateTextureInfluence } from './textureRendering';
 
-export interface TextureMaskParams {
+interface TextureMaskParams {
   /** Current brush size (diameter in pixels) */
   size: number;
   /** Brush roundness (0-1, 1 = use original aspect ratio) */
