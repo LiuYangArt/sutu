@@ -346,127 +346,174 @@ export class StrokeAccumulator {
    * - flow: per-dab accumulation rate
    * - dabOpacity: per-dab transparency multiplier
    */
+  /**
+   * Stamp an elliptical dab onto the buffer with anti-aliasing
+   * Uses cached mask for performance (Krita-style optimization)
+   * Hard brushes (hardness >= 0.99) use a fast path that skips mask caching
+   *
+   * Krita-style unified formula: dabAlpha = maskShape * flow * dabOpacity
+   * - maskShape: pure geometric gradient (0-1), center always = 1.0
+   * - flow: per-dab accumulation rate
+   * - dabOpacity: per-dab transparency multiplier
+   */
   stampDab(params: DabParams): void {
-    const {
-      x,
-      y,
-      size,
-      flow,
-      hardness,
-      maskType = 'gaussian',
-      color,
-      dabOpacity = 1.0,
-      roundness = 1,
-      angle = 0,
-      texture,
-      textureSettings,
-    } = params;
-
-    if (size < 1) return;
+    if (params.size < 1) return;
     if (!this.bufferData) return;
 
-    const rgb = hexToRgb(color);
-    let dabDirtyRect: Rect;
+    const rgb = hexToRgb(params.color);
 
     // Resolve pattern if enabled
     let pattern: PatternData | undefined;
-    if (textureSettings && textureSettings.patternId) {
-      pattern = patternManager.getPattern(textureSettings.patternId);
+    if (params.textureSettings?.patternId) {
+      pattern = patternManager.getPattern(params.textureSettings.patternId);
     }
 
-    // Texture brush path - use TextureMaskCache for sampled brushes
-    if (texture) {
-      // Fix for Wet Edge on Texture Brushes (v4 regression fix)
-      // If we are using a texture brush, we MUST use soft-brush wet edge settings (hardness=0)
-      // to ensure full edge boost and gamma are applied.
-      // If the stroke started with hardness > 0 (e.g. default 1.0), we need to rebuild the LUT now.
-      if (this.wetEdgeEnabled && this.wetEdgeHardness > 0) {
-        this.wetEdgeHardness = 0;
-        this.buildWetEdgeLut(0, this.wetEdgeStrength);
-      }
+    let dabDirtyRect: Rect;
 
-      // Always try to set texture - TextureMaskCache handles change detection internally
-      // This ensures we switch to the new texture when brush preset changes
-      if (!this.textureMaskCache.setTextureSync(texture)) {
-        // Async loading - skip this dab (texture will be ready for next)
-        void this.textureMaskCache.setTexture(texture);
-        return;
-      }
-
-      const textureParams = { size, roundness, angle };
-      if (this.textureMaskCache.needsUpdate(textureParams)) {
-        this.textureMaskCache.generateMask(textureParams);
-      }
-
-      dabDirtyRect = this.textureMaskCache.stampToBuffer(
-        this.bufferData,
-        this.width,
-        this.height,
-        x,
-        y,
-        flow,
-        dabOpacity,
-        rgb.r,
-        rgb.g,
-        rgb.b,
-        params.wetEdge ?? 0,
-        textureSettings,
-        pattern
-      );
-    } else if (hardness >= 0.99) {
-      // Fast path for hard brushes - skip mask caching entirely
-      dabDirtyRect = this.maskCache.stampHardBrush(
-        this.bufferData,
-        this.width,
-        this.height,
-        x,
-        y,
-        size / 2, // radius
-        roundness,
-        angle,
-        flow,
-        dabOpacity,
-        rgb.r,
-        rgb.g,
-        rgb.b,
-        params.wetEdge ?? 0,
-        textureSettings,
-        pattern
-      );
+    if (params.texture) {
+      dabDirtyRect = this.stampTextureBrush(params, rgb, pattern);
+    } else if (params.hardness >= 0.99) {
+      dabDirtyRect = this.stampHardBrush(params, rgb, pattern);
     } else {
-      // Soft brushes use cached mask
-      const cacheParams: MaskCacheParams = {
-        size,
-        hardness,
-        roundness,
-        angle,
-        maskType,
-      };
-
-      // Only regenerate mask when parameters change (major performance win)
-      if (this.maskCache.needsUpdate(cacheParams)) {
-        this.maskCache.generateMask(cacheParams);
-      }
-
-      // Use cached mask for fast blending
-      dabDirtyRect = this.maskCache.stampToBuffer(
-        this.bufferData,
-        this.width,
-        this.height,
-        x,
-        y,
-        flow,
-        dabOpacity,
-        rgb.r,
-        rgb.g,
-        rgb.b,
-        params.wetEdge ?? 0,
-        textureSettings,
-        pattern
-      );
+      dabDirtyRect = this.stampSoftBrush(params, rgb, pattern);
     }
 
-    // Expand main dirty rect
+    this.accumulateDirtyRect(dabDirtyRect);
+    this.checkAutoSync();
+  }
+
+  /**
+   * Handle stamping for texture-based brushes
+   */
+  private stampTextureBrush(
+    params: DabParams,
+    rgb: { r: number; g: number; b: number },
+    pattern?: PatternData
+  ): Rect {
+    const {
+      texture,
+      size,
+      roundness = 1,
+      angle = 0,
+      flow,
+      dabOpacity = 1.0,
+      textureSettings,
+      wetEdge = 0,
+    } = params;
+
+    if (!texture) return { left: 0, top: 0, right: 0, bottom: 0 };
+
+    // Fix for Wet Edge on Texture Brushes (v4 regression fix)
+    // If we are using a texture brush, we MUST use soft-brush wet edge settings (hardness=0)
+    // to ensure full edge boost and gamma are applied.
+    // If the stroke started with hardness > 0 (e.g. default 1.0), we need to rebuild the LUT now.
+    if (this.wetEdgeEnabled && this.wetEdgeHardness > 0) {
+      this.wetEdgeHardness = 0;
+      this.buildWetEdgeLut(0, this.wetEdgeStrength);
+    }
+
+    // Always try to set texture - TextureMaskCache handles change detection internally
+    // This ensures we switch to the new texture when brush preset changes
+    if (!this.textureMaskCache.setTextureSync(texture)) {
+      // Async loading - skip this dab (texture will be ready for next)
+      void this.textureMaskCache.setTexture(texture);
+      return { left: 0, top: 0, right: 0, bottom: 0 };
+    }
+
+    const textureParams = { size, roundness, angle };
+    if (this.textureMaskCache.needsUpdate(textureParams)) {
+      this.textureMaskCache.generateMask(textureParams);
+    }
+
+    return this.textureMaskCache.stampToBuffer(
+      this.bufferData!,
+      this.width,
+      this.height,
+      params.x,
+      params.y,
+      flow,
+      dabOpacity,
+      rgb.r,
+      rgb.g,
+      rgb.b,
+      wetEdge,
+      textureSettings,
+      pattern
+    );
+  }
+
+  /**
+   * Handle stamping for hard brushes (hardness >= 0.99)
+   */
+  private stampHardBrush(
+    params: DabParams,
+    rgb: { r: number; g: number; b: number },
+    pattern?: PatternData
+  ): Rect {
+    return this.maskCache.stampHardBrush(
+      this.bufferData!,
+      this.width,
+      this.height,
+      params.x,
+      params.y,
+      params.size / 2, // radius
+      params.roundness ?? 1,
+      params.angle ?? 0,
+      params.flow,
+      params.dabOpacity ?? 1.0,
+      rgb.r,
+      rgb.g,
+      rgb.b,
+      params.wetEdge ?? 0,
+      params.textureSettings,
+      pattern
+    );
+  }
+
+  /**
+   * Handle stamping for soft brushes
+   */
+  private stampSoftBrush(
+    params: DabParams,
+    rgb: { r: number; g: number; b: number },
+    pattern?: PatternData
+  ): Rect {
+    // Soft brushes use cached mask
+    const cacheParams: MaskCacheParams = {
+      size: params.size,
+      hardness: params.hardness,
+      roundness: params.roundness ?? 1,
+      angle: params.angle ?? 0,
+      maskType: params.maskType ?? 'gaussian',
+    };
+
+    // Only regenerate mask when parameters change (major performance win)
+    if (this.maskCache.needsUpdate(cacheParams)) {
+      this.maskCache.generateMask(cacheParams);
+    }
+
+    // Use cached mask for fast blending
+    return this.maskCache.stampToBuffer(
+      this.bufferData!,
+      this.width,
+      this.height,
+      params.x,
+      params.y,
+      params.flow,
+      params.dabOpacity ?? 1.0,
+      rgb.r,
+      rgb.g,
+      rgb.b,
+      params.wetEdge ?? 0,
+      params.textureSettings,
+      pattern
+    );
+  }
+
+  /**
+   * Accumulate the dirty rectangle from a single dab
+   */
+  private accumulateDirtyRect(dabDirtyRect: Rect): void {
     if (dabDirtyRect.right > dabDirtyRect.left && dabDirtyRect.bottom > dabDirtyRect.top) {
       this.dirtyRect.left = Math.min(this.dirtyRect.left, dabDirtyRect.left);
       this.dirtyRect.top = Math.min(this.dirtyRect.top, dabDirtyRect.top);
@@ -479,7 +526,12 @@ export class StrokeAccumulator {
       this.pendingDirtyRect.right = Math.max(this.pendingDirtyRect.right, dabDirtyRect.right);
       this.pendingDirtyRect.bottom = Math.max(this.pendingDirtyRect.bottom, dabDirtyRect.bottom);
     }
+  }
 
+  /**
+   * Check if we should sync to canvas (throttled)
+   */
+  private checkAutoSync(): void {
     // Throttled canvas sync - sync every N dabs instead of every dab
     this.syncCounter++;
     if (this.syncCounter >= StrokeAccumulator.SYNC_INTERVAL) {

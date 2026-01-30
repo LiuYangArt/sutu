@@ -319,10 +319,15 @@ fn decode_pattern_image(
             .min(channels[2].len())
             .min(channel_pixels);
 
-        for i in 0..len {
-            rgba.push(channels[0][i]);
-            rgba.push(channels[1][i]);
-            rgba.push(channels[2][i]);
+        for ((&r, &g), &b) in channels[0]
+            .iter()
+            .zip(channels[1].iter())
+            .zip(channels[2].iter())
+            .take(len)
+        {
+            rgba.push(r);
+            rgba.push(g);
+            rgba.push(b);
             rgba.push(255);
         }
         // Pad if needed

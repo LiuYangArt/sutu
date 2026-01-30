@@ -52,25 +52,35 @@ export class TextureMaskCache {
   private centerY: number = 0;
 
   /**
-   * Set the source texture (call when brush preset changes)
-   * Returns a Promise that resolves when texture is decoded
+   * Helper: Check if texture is already current or has cached ImageData
    */
-  async setTexture(texture: BrushTexture): Promise<void> {
-    // Use texture.id for change detection
+  private tryUseCachedTexture(texture: BrushTexture): boolean {
     const textureId = texture.id;
 
-    // Skip if same texture
+    // Check if same texture is already active
     if (textureId === this.currentTextureId && this.sourceImageData) {
-      return;
+      return true;
     }
 
-    // Check if texture already has cached ImageData
+    // Check if texture object has cached ImageData
     if (texture.imageData) {
       this.sourceImageData = texture.imageData;
       this.currentTextureId = textureId;
       this.invalidateCache();
-      return;
+      return true;
     }
+
+    return false;
+  }
+
+  /**
+   * Set the source texture (call when brush preset changes)
+   * Returns a Promise that resolves when texture is decoded
+   */
+  async setTexture(texture: BrushTexture): Promise<void> {
+    if (this.tryUseCachedTexture(texture)) return;
+
+    const textureId = texture.id;
 
     // Try to load via protocol first (new optimized path)
     let imageData = await loadBrushTexture(textureId, texture.width, texture.height);
@@ -97,20 +107,7 @@ export class TextureMaskCache {
    * Set texture synchronously (for immediate use, may fail)
    */
   setTextureSync(texture: BrushTexture): boolean {
-    // Use texture.id for change detection
-    const textureId = texture.id;
-
-    // Skip if same texture
-    if (textureId === this.currentTextureId && this.sourceImageData) {
-      return true;
-    }
-
-    if (texture.imageData) {
-      this.sourceImageData = texture.imageData;
-      this.currentTextureId = textureId;
-      this.invalidateCache();
-      return true;
-    }
+    if (this.tryUseCachedTexture(texture)) return true;
 
     // Try Base64 fallback for sync path
     if (texture.data) {
@@ -118,7 +115,7 @@ export class TextureMaskCache {
       if (imageData) {
         texture.imageData = imageData;
         this.sourceImageData = imageData;
-        this.currentTextureId = textureId;
+        this.currentTextureId = texture.id;
         this.invalidateCache();
         return true;
       }

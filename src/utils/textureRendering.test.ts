@@ -111,16 +111,24 @@ describe('calculateTextureInfluence', () => {
   });
 
   it('should apply Brightness correctly', () => {
-    // Increase brightness by ~50% (128/255) -> Inverted logic: Subtracts 0.5
+    // Increase brightness by ~50% (128/255 = 0.5) -> Additive: Adds 0.5
+    // Texture Value: 0 (Black) -> 1 (White)
     const settings = { ...defaultSettings, brightness: 128 };
 
-    // (1,0) White (1) becomes 1 - 0.5 = 0.5
-    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0)).toBeCloseTo(0.5, 1);
+    // (1,0) White (1) + 0.5 = 1.5 -> Clamped to 1.0
+    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0)).toBe(1.0);
 
-    // Decrease brightness (-255) -> Inverted logic: Adds 1.0
-    const darkSettings = { ...defaultSettings, brightness: -255 };
-    // (0,0) Black (0) becomes 0 + 1 = 1.0
-    expect(calculateTextureInfluence(0, 0, darkSettings, mockPattern, 1.0)).toBe(1.0);
+    // (0,0) Black (0) + 0.5 = 0.5
+    expect(calculateTextureInfluence(0, 0, settings, mockPattern, 1.0)).toBeCloseTo(0.5, 1);
+
+    // Decrease brightness (-128) -> Additive: Subtracts 0.5
+    const darkSettings = { ...defaultSettings, brightness: -128 };
+
+    // (1,0) White (1) - 0.5 = 0.5
+    expect(calculateTextureInfluence(1, 0, darkSettings, mockPattern, 1.0)).toBeCloseTo(0.5, 1);
+
+    // (0,0) Black (0) - 0.5 = -0.5 -> Clamped to 0.0
+    expect(calculateTextureInfluence(0, 0, darkSettings, mockPattern, 1.0)).toBe(0.0);
   });
 
   it('should apply Contrast correctly', () => {
