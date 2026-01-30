@@ -704,11 +704,20 @@ impl AbrParser {
                                         brush.name = name.clone();
                                     }
 
-                                    // Apply Texture
+                                    // Apply Texture settings
+                                    // Note: Pattern reference is in Txtr sub-object,
+                                    // but parameters (scale, depth, etc.) are at root level
                                     if let Some(DescriptorValue::Descriptor(txtr)) =
                                         brush_desc.get("Txtr")
                                     {
+                                        // Parse pattern reference from Txtr
                                         let mut settings = Self::parse_texture_settings(txtr);
+
+                                        // Parse texture parameters from ROOT descriptor (not Txtr!)
+                                        Self::apply_texture_params_from_root(
+                                            brush_desc,
+                                            &mut settings,
+                                        );
 
                                         // Link Pattern (existing logic)
                                         let mut linked = false;
@@ -730,6 +739,13 @@ impl AbrParser {
                                             }
                                         }
                                         brush.texture_settings = Some(settings);
+                                    }
+
+                                    // Apply Brush Tip Shape parameters from Brsh sub-object
+                                    if let Some(DescriptorValue::Descriptor(brsh)) =
+                                        brush_desc.get("Brsh")
+                                    {
+                                        Self::apply_brush_tip_params(brsh, brush);
                                     }
                                 }
                             }
@@ -898,6 +914,99 @@ impl AbrParser {
         }
 
         settings
+    }
+
+    /// Apply texture parameters from root descriptor (not from Txtr sub-object)
+    /// These fields are stored at the brush descriptor root level in ABR files:
+    /// - textureScale, textureBrightness, textureContrast
+    /// - textureDepth, minimumDepth, textureBlendMode, InvT, TxtC
+    fn apply_texture_params_from_root(
+        brush_desc: &indexmap::IndexMap<String, DescriptorValue>,
+        settings: &mut TextureSettings,
+    ) {
+        // Scale (textureScale) - Percent
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brush_desc.get("textureScale") {
+            settings.scale = *value as f32;
+        }
+
+        // Brightness (textureBrightness) - Long
+        if let Some(DescriptorValue::Integer(val)) = brush_desc.get("textureBrightness") {
+            settings.brightness = *val;
+        } else if let Some(DescriptorValue::LargeInteger(val)) = brush_desc.get("textureBrightness")
+        {
+            settings.brightness = *val as i32;
+        }
+
+        // Contrast (textureContrast) - Long
+        if let Some(DescriptorValue::Integer(val)) = brush_desc.get("textureContrast") {
+            settings.contrast = *val;
+        } else if let Some(DescriptorValue::LargeInteger(val)) = brush_desc.get("textureContrast") {
+            settings.contrast = *val as i32;
+        }
+
+        // Depth (textureDepth) - Percent
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brush_desc.get("textureDepth") {
+            settings.depth = *value as f32;
+        }
+
+        // Minimum Depth (minimumDepth) - Percent
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brush_desc.get("minimumDepth") {
+            settings.minimum_depth = *value as f32;
+        }
+
+        // Blend Mode (textureBlendMode) - Enum
+        if let Some(DescriptorValue::Enum { value, .. }) = brush_desc.get("textureBlendMode") {
+            settings.mode = match value.as_str() {
+                "Mltp" => super::types::TextureBlendMode::Multiply,
+                "Sbt " => super::types::TextureBlendMode::Subtract,
+                "Drkn" => super::types::TextureBlendMode::Darken,
+                "Ovrl" => super::types::TextureBlendMode::Overlay,
+                "CldD" => super::types::TextureBlendMode::ColorDodge,
+                "CldB" => super::types::TextureBlendMode::ColorBurn,
+                "LnrB" => super::types::TextureBlendMode::LinearBurn,
+                "HrdM" => super::types::TextureBlendMode::HardMix,
+                "LnrH" => super::types::TextureBlendMode::LinearHeight,
+                "Hght" => super::types::TextureBlendMode::Height,
+                _ => super::types::TextureBlendMode::Multiply,
+            };
+        }
+
+        // Invert (InvT) - Boolean
+        if let Some(DescriptorValue::Boolean(val)) = brush_desc.get("InvT") {
+            settings.invert = *val;
+        }
+
+        // Texture each tip (TxtC) - Boolean
+        if let Some(DescriptorValue::Boolean(val)) = brush_desc.get("TxtC") {
+            settings.texture_each_tip = *val;
+        }
+    }
+
+    /// Apply brush tip shape parameters from Brsh sub-object
+    /// Fields: Dmtr (diameter), Spcn (spacing), Angl (angle), Rndn (roundness), Hrdn (hardness)
+    fn apply_brush_tip_params(
+        brsh: &indexmap::IndexMap<String, DescriptorValue>,
+        brush: &mut AbrBrush,
+    ) {
+        // Spacing (Spcn) - Percent, stored as 0-100, we need 0.0-1.0
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Spcn") {
+            brush.spacing = (*value as f32) / 100.0;
+        }
+
+        // Angle (Angl) - Degrees
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Angl") {
+            brush.angle = *value as f32;
+        }
+
+        // Roundness (Rndn) - Percent, stored as 0-100, we need 0.0-1.0
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Rndn") {
+            brush.roundness = (*value as f32) / 100.0;
+        }
+
+        // Hardness (Hrdn) - Percent, stored as 0-100, we need 0.0-1.0
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Hrdn") {
+            brush.hardness = Some((*value as f32) / 100.0);
+        }
     }
 }
 
