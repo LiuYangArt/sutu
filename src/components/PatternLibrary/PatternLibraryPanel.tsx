@@ -126,7 +126,7 @@ export function PatternLibraryPanel({
     <div className="pattern-library-overlay" onClick={onClose}>
       <div className="pattern-library-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="pattern-library-header">
+        <div className="mica-panel-header pattern-library-header">
           <h2>Pattern Library</h2>
           <button className="pattern-library-close-btn" onClick={onClose}>
             <X size={18} />

@@ -15,6 +15,7 @@ import {
   Eye,
   EyeOff,
   SlidersHorizontal,
+  Stamp,
 } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
@@ -159,6 +160,18 @@ function AppMenu() {
                 <button className="menu-item" onClick={handleToggleBrushPanel}>
                   {brushPanel?.isOpen ? <Eye size={14} /> : <EyeOff size={14} />}
                   <span>Brush</span>
+                </button>
+                <button
+                  className="menu-item"
+                  onClick={() => {
+                    const win = window as Window & { __openPatternLibrary?: () => void };
+                    win.__openPatternLibrary?.();
+                    setIsOpen(false);
+                  }}
+                >
+                  <Stamp size={14} />
+                  <span>Pattern Library</span>
+                  <span className="shortcut">F6</span>
                 </button>
               </div>
             )}

@@ -18,21 +18,21 @@
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   min-width: 160px;
 }
 
 .pattern-picker-trigger:hover {
-  background: var(--color-bg-tertiary);
-  border-color: var(--color-border-hover);
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
 }
 
 .pattern-picker-preview {
   flex-shrink: 0;
-  background: var(--color-bg-tertiary);
+  background: var(--bg-tertiary);
   border-radius: 2px;
   overflow: hidden;
   display: flex;
@@ -42,14 +42,14 @@
 
 .pattern-picker-empty {
   font-size: 10px;
-  color: var(--color-text-tertiary);
+  color: var(--text-tertiary);
 }
 
 .pattern-picker-name {
   flex: 1;
   text-align: left;
   font-size: 12px;
-  color: var(--color-text-primary);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -57,7 +57,7 @@
 
 .pattern-picker-chevron {
   flex-shrink: 0;
-  color: var(--color-text-secondary);
+  color: var(--text-secondary);
 }
 
 /* Dropdown */
@@ -68,8 +68,8 @@
   z-index: 1000;
   min-width: 280px;
   max-height: 320px;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   overflow: hidden;
@@ -83,12 +83,12 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--border);
 }
 
 .pattern-picker-search svg {
   flex-shrink: 0;
-  color: var(--color-text-tertiary);
+  color: var(--text-tertiary);
 }
 
 .pattern-picker-search input {
@@ -97,11 +97,11 @@
   border: none;
   outline: none;
   font-size: 13px;
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 
 .pattern-picker-search input::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--text-tertiary);
 }
 
 /* Pattern grid */
@@ -117,7 +117,7 @@
 .pattern-grid-item {
   aspect-ratio: 1;
   padding: 2px;
-  background: var(--color-bg-tertiary);
+  background: var(--bg-tertiary);
   border: 2px solid transparent;
   border-radius: 4px;
   cursor: pointer;
@@ -125,13 +125,13 @@
 }
 
 .pattern-grid-item:hover {
-  border-color: var(--color-accent);
-  background: var(--color-bg-secondary);
+  border-color: var(--accent);
+  background: var(--bg-secondary);
 }
 
 .pattern-grid-item.selected {
-  border-color: var(--color-accent);
-  background: var(--color-accent-subtle);
+  border-color: var(--accent);
+  background: var(--primary-bg);
 }
 
 .pattern-grid-thumbnail {
@@ -145,8 +145,8 @@
 }
 
 .pattern-grid-thumbnail.empty {
-  background: var(--color-bg-secondary);
-  color: var(--color-text-tertiary);
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
   font-size: 20px;
 }
 
@@ -156,7 +156,7 @@
   grid-column: 1 / -1;
   padding: 24px;
   text-align: center;
-  color: var(--color-text-tertiary);
+  color: var(--text-tertiary);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -166,8 +166,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   overflow: hidden;
@@ -175,9 +175,9 @@
 }
 
 .pattern-preview-button:hover {
-  border-color: var(--color-accent);
+  border-color: var(--accent);
 }
 
 .pattern-preview-add-icon {
-  color: var(--color-text-tertiary);
+  color: var(--text-tertiary);
 }
