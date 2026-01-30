@@ -412,15 +412,9 @@ export class GPUStrokeAccumulator {
       return;
     }
 
-    // Parametric brush path (unchanged)
+    // Parametric brush path
     // Pattern Handling for Parametric Brush
     const newPatternSettings = this.extractPatternSettings(params.textureSettings);
-
-    // DEBUG: Trace pattern data flow
-    if (this.dabsSinceLastFlush === 0) {
-      console.log('[GPU Pattern Debug] Parametric Path - textureSettings:', params.textureSettings);
-      console.log('[GPU Pattern Debug] Extracted patternSettings:', newPatternSettings);
-    }
 
     if (this.hasPatternSettingsChanged(newPatternSettings)) {
       this.flushTextureBatch(); // Flush texture batch too to be safe (shared state)
@@ -429,18 +423,13 @@ export class GPUStrokeAccumulator {
     }
 
     this.currentPatternSettings = newPatternSettings;
-    if (this.currentPatternSettings && this.currentPatternSettings.patternId) {
+    if (this.currentPatternSettings?.patternId) {
       // Trigger async load if pattern not yet in cache
       const patternId = this.currentPatternSettings.patternId;
       if (!patternManager.hasPattern(patternId)) {
-        console.log('[GPU Pattern Debug] Pattern not in cache, triggering load:', patternId);
         void patternManager.loadPattern(patternId);
       }
-      const cacheResult = this.patternCache.update(patternId);
-      if (this.dabsSinceLastFlush === 0) {
-        console.log('[GPU Pattern Debug] patternCache.update result:', cacheResult);
-        console.log('[GPU Pattern Debug] patternCache.getTexture:', this.patternCache.getTexture());
-      }
+      this.patternCache.update(patternId);
     } else {
       this.patternCache.update(null);
     }
@@ -1297,9 +1286,8 @@ export class GPUStrokeAccumulator {
   private extractPatternSettings(
     settings?: import('@/components/BrushPanel/types').TextureSettings | null
   ): import('./types').GPUPatternSettings | null {
-    // Note: Do NOT check settings.enabled here!
-    // The caller (useBrushRenderer) already gates with config.textureEnabled.
-    // textureSettings.enabled is an internal field that may be out of sync.
+    // The caller (useBrushRenderer) gates with config.textureEnabled,
+    // so we only need to check for valid patternId here.
     if (!settings || !settings.patternId) {
       return null;
     }

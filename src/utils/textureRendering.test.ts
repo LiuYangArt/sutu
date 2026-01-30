@@ -29,7 +29,6 @@ const mockPattern: PatternData = {
 };
 
 const defaultSettings: TextureSettings = {
-  enabled: true,
   patternId: 'test-pattern',
   scale: 100,
   brightness: 0,
