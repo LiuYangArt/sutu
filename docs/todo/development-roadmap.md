@@ -266,8 +266,8 @@
 - [x] 实现 8BIMsamp 纹理提取与归一化
 - [x] 编写 ABR 导入器 (Tauri Command)
 - [ ] **[New]** 实现 Pattern Library (SHA-256 去重存储)
-- [ ] **[New]** 实现 .pat 文件解析与导入
-- [ ] **[New]** 实现 ABR 纹理 (Txtr) 参数解析与 Pattern 关联
+- [x] **[New]** 实现 .pat 文件解析与导入
+- [x] **[New]** 实现 ABR 纹理 (Txtr) 参数解析与 Pattern 关联
 
 #### 3.4 笔刷预设 UI (Phase 4) ✅ 基础版完成
 
