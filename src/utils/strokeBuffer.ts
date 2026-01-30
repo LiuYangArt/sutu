@@ -19,6 +19,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { MaskCache, type MaskCacheParams } from './maskCache';
 import { TextureMaskCache } from './textureMaskCache';
 import type { BrushTexture } from '@/stores/tool';
+import type { TextureSettings } from '@/components/BrushPanel/types';
+import { patternManager, type PatternData } from './patternManager';
 
 export type MaskType = 'gaussian' | 'default';
 
@@ -34,6 +36,7 @@ export interface DabParams {
   roundness?: number; // Brush roundness (0-1, 1 = circle, <1 = ellipse)
   angle?: number; // Brush angle in degrees (0-360)
   texture?: BrushTexture; // Texture for sampled brushes (from ABR import)
+  textureSettings?: TextureSettings | null; // Texture pattern settings (Mode, Scale, Depth, etc.)
   // Shape Dynamics: flip flags for sampled/texture brushes
   flipX?: boolean; // Flip horizontally
   flipY?: boolean; // Flip vertically
@@ -356,6 +359,7 @@ export class StrokeAccumulator {
       roundness = 1,
       angle = 0,
       texture,
+      textureSettings,
     } = params;
 
     if (size < 1) return;
@@ -363,6 +367,12 @@ export class StrokeAccumulator {
 
     const rgb = hexToRgb(color);
     let dabDirtyRect: Rect;
+
+    // Resolve pattern if enabled
+    let pattern: PatternData | undefined;
+    if (textureSettings?.enabled && textureSettings.patternId) {
+      pattern = patternManager.getPattern(textureSettings.patternId);
+    }
 
     // Texture brush path - use TextureMaskCache for sampled brushes
     if (texture) {
@@ -399,7 +409,9 @@ export class StrokeAccumulator {
         rgb.r,
         rgb.g,
         rgb.b,
-        params.wetEdge ?? 0
+        params.wetEdge ?? 0,
+        textureSettings,
+        pattern
       );
     } else if (hardness >= 0.99) {
       // Fast path for hard brushes - skip mask caching entirely
@@ -417,7 +429,9 @@ export class StrokeAccumulator {
         rgb.r,
         rgb.g,
         rgb.b,
-        params.wetEdge ?? 0
+        params.wetEdge ?? 0,
+        textureSettings,
+        pattern
       );
     } else {
       // Soft brushes use cached mask
@@ -446,7 +460,9 @@ export class StrokeAccumulator {
         rgb.r,
         rgb.g,
         rgb.b,
-        params.wetEdge ?? 0
+        params.wetEdge ?? 0,
+        textureSettings,
+        pattern
       );
     }
 

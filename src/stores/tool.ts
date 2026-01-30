@@ -5,6 +5,7 @@ import {
   DEFAULT_TEXTURE_SETTINGS,
   PatternInfo,
 } from '@/components/BrushPanel/types';
+import { patternManager } from '@/utils/patternManager';
 
 export type ToolType = 'brush' | 'eraser' | 'eyedropper' | 'move' | 'select' | 'lasso' | 'zoom';
 
@@ -451,10 +452,15 @@ export const useToolStore = create<ToolState>()(
 
       toggleTexture: () => set((state) => ({ textureEnabled: !state.textureEnabled })),
 
-      setTextureSettings: (settings) =>
+      setTextureSettings: (settings) => {
+        // Optimistically load pattern if ID is provided
+        if (settings.patternId) {
+          patternManager.loadPattern(settings.patternId);
+        }
         set((state) => ({
           textureSettings: { ...state.textureSettings, ...settings },
-        })),
+        }));
+      },
 
       resetTextureSettings: () => set({ textureSettings: { ...DEFAULT_TEXTURE_SETTINGS } }),
 

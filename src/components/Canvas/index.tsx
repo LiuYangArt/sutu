@@ -129,6 +129,8 @@ export function Canvas() {
     scatterEnabled,
     colorDynamicsEnabled,
     transferEnabled,
+    textureEnabled,
+    textureSettings,
     showCrosshair,
     setTool,
     setCurrentSize,
@@ -910,6 +912,8 @@ export function Canvas() {
       wetEdge,
       transferEnabled,
       transfer,
+      textureEnabled,
+      textureSettings,
     };
   }, [
     currentSize,
@@ -937,6 +941,8 @@ export function Canvas() {
     wetEdge,
     transferEnabled,
     transfer,
+    textureEnabled,
+    textureSettings,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position

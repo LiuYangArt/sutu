@@ -16,6 +16,9 @@ import type { Rect } from './strokeBuffer';
 import type { BrushTexture } from '@/stores/tool';
 import { loadBrushTexture } from './brushLoader';
 import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUtils';
+import type { TextureSettings } from '@/components/BrushPanel/types';
+import type { PatternData } from './patternManager';
+import { calculateTextureInfluence } from './textureRendering';
 
 export interface TextureMaskParams {
   /** Current brush size (diameter in pixels) */
@@ -279,7 +282,9 @@ export class TextureMaskCache {
     r: number,
     g: number,
     b: number,
-    _wetEdge: number = 0 // Unused: wet edge is handled at stroke buffer level
+    _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
+    textureSettings?: TextureSettings | null,
+    pattern?: PatternData
   ): Rect {
     if (!this.scaledMask) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -318,7 +323,20 @@ export class TextureMaskCache {
 
         const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-        // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
+        // Texture modulation
+        let textureMod = 1.0;
+        if (textureSettings && textureSettings.enabled && pattern) {
+          const depth = textureSettings.depth / 100.0;
+          textureMod = calculateTextureInfluence(
+            bufferLeft + mx,
+            bufferTop + my,
+            textureSettings,
+            pattern,
+            depth
+          );
+        }
+
+        // Standard Alpha Darken blend
         const srcAlpha = maskValue * flow;
 
         const dstR = buffer[idx]!;
@@ -326,7 +344,10 @@ export class TextureMaskCache {
         const dstB = buffer[idx + 2]!;
         const dstA = buffer[idx + 3]! / 255;
 
-        const outA = dstA >= dabOpacity - 0.001 ? dstA : dstA + (dabOpacity - dstA) * srcAlpha;
+        // Alpha Darken blending
+        const effectiveOpacity = dabOpacity * textureMod;
+        const outA =
+          dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
 
         if (outA > 0.001) {
           const hasColor = dstA > 0.001;

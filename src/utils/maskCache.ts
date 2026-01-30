@@ -11,6 +11,9 @@
  */
 
 import type { Rect } from './strokeBuffer';
+import type { TextureSettings } from '@/components/BrushPanel/types';
+import type { PatternData } from './patternManager';
+import { calculateTextureInfluence } from './textureRendering';
 
 export type MaskType = 'gaussian' | 'default';
 
@@ -262,7 +265,9 @@ export class MaskCache {
     r: number,
     g: number,
     b: number,
-    _wetEdge: number = 0 // Unused: wet edge is now handled at stroke buffer level
+    _wetEdge: number = 0, // Unused: wet edge is now handled at stroke buffer level
+    textureSettings?: TextureSettings | null,
+    pattern?: PatternData
   ): Rect {
     if (!this.mask) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -301,9 +306,24 @@ export class MaskCache {
 
         const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
+        // Texture modulation
+        let textureMod = 1.0;
+        if (textureSettings && textureSettings.enabled && pattern) {
+          // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
+          // TextureSettings.depth is 0-100
+          const depth = textureSettings.depth / 100.0;
+          textureMod = calculateTextureInfluence(
+            bufferLeft + mx,
+            bufferTop + my,
+            textureSettings,
+            pattern,
+            depth
+          );
+        }
+
         // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
         const srcAlpha = maskValue * flow;
-        this.blendPixel(buffer, idx, srcAlpha, dabOpacity, r, g, b);
+        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod, r, g, b);
       }
     }
 
@@ -339,7 +359,9 @@ export class MaskCache {
     r: number,
     g: number,
     b: number,
-    _wetEdge: number = 0 // Unused: wet edge is handled at stroke buffer level
+    _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
+    textureSettings?: TextureSettings | null,
+    pattern?: PatternData
   ): Rect {
     const radiusX = radius;
     const radiusY = radius * roundness;
@@ -398,9 +420,16 @@ export class MaskCache {
 
         const idx = (rowStart + px) * 4;
 
+        // Texture modulation
+        let textureMod = 1.0;
+        if (textureSettings && textureSettings.enabled && pattern) {
+          const depth = textureSettings.depth / 100.0;
+          textureMod = calculateTextureInfluence(px, py, textureSettings, pattern, depth);
+        }
+
         // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
         const srcAlpha = maskValue * flow;
-        this.blendPixel(buffer, idx, srcAlpha, dabOpacity, r, g, b);
+        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod, r, g, b);
       }
     }
 
