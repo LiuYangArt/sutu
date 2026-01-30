@@ -817,7 +817,7 @@ impl AbrParser {
     }
 
     fn parse_texture_settings(
-        txtr: &std::collections::HashMap<String, DescriptorValue>,
+        txtr: &indexmap::IndexMap<String, DescriptorValue>,
     ) -> TextureSettings {
         let mut settings = TextureSettings {
             enabled: true, // Implicitly true if Txtr exists

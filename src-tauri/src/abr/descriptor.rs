@@ -5,13 +5,13 @@
 
 use super::error::AbrError;
 use byteorder::{BigEndian, ReadBytesExt};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::io::{Cursor, Read};
 
 /// Descriptor value types
 #[derive(Debug, Clone)]
 pub enum DescriptorValue {
-    Descriptor(HashMap<String, DescriptorValue>),
+    Descriptor(IndexMap<String, DescriptorValue>),
     List(Vec<DescriptorValue>),
     Double(f64),
     UnitFloat {
@@ -94,7 +94,7 @@ fn read_unicode_string_u16(cursor: &mut Cursor<&[u8]>) -> Result<String, AbrErro
 /// Parse a descriptor from the cursor
 pub fn parse_descriptor(
     cursor: &mut Cursor<&[u8]>,
-) -> Result<HashMap<String, DescriptorValue>, AbrError> {
+) -> Result<IndexMap<String, DescriptorValue>, AbrError> {
     // Version check (usually 16)
     let version = cursor.read_u32::<BigEndian>()?;
     if version != 16 && version != 1 {
@@ -114,7 +114,7 @@ pub fn parse_descriptor(
     let _class_id = read_key(cursor)?;
 
     let count = cursor.read_u32::<BigEndian>()?;
-    let mut items = HashMap::new();
+    let mut items = IndexMap::new();
 
     for _ in 0..count {
         let key = read_key(cursor)?;
