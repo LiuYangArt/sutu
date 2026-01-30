@@ -23,6 +23,7 @@ import { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
 import { ComputeBrushPipeline } from './pipeline/ComputeBrushPipeline';
 import { ComputeTextureBrushPipeline } from './pipeline/ComputeTextureBrushPipeline';
 import { ComputeWetEdgePipeline } from './pipeline/ComputeWetEdgePipeline';
+import { GPUPatternCache } from './resources/GPUPatternCache';
 import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore } from '@/stores/tool';
@@ -42,10 +43,14 @@ export class GPUStrokeAccumulator {
   private textureBrushPipeline: TextureBrushPipeline;
   private computeTextureBrushPipeline: ComputeTextureBrushPipeline;
   private textureAtlas: TextureAtlas;
+  private patternCache: GPUPatternCache;
   private useTextureComputeShader: boolean = true; // Enable compute shader for texture brush
 
   // Current stroke mode: 'parametric' or 'texture'
   private strokeMode: 'parametric' | 'texture' = 'parametric';
+
+  // Track current pattern settings to detect changes and trigger flush
+  private currentPatternSettings: import('./types').GPUPatternSettings | null = null;
 
   private width: number;
   private height: number;
@@ -117,6 +122,7 @@ export class GPUStrokeAccumulator {
     this.computeTextureBrushPipeline = new ComputeTextureBrushPipeline(device);
     this.computeTextureBrushPipeline.updateCanvasSize(width, height);
     this.textureAtlas = new TextureAtlas(device);
+    this.patternCache = new GPUPatternCache(device);
 
     // Initialize wet edge post-processing pipeline
     this.wetEdgePipeline = new ComputeWetEdgePipeline(device);
@@ -321,7 +327,10 @@ export class GPUStrokeAccumulator {
       bottom: 0,
     };
     this.previewCtx.clearRect(0, 0, this.width, this.height);
+    this.previewCtx.clearRect(0, 0, this.width, this.height);
     this.dabsSinceLastFlush = 0;
+    this.currentPatternSettings = null;
+    this.patternCache.update(null);
   }
 
   /**
@@ -349,6 +358,23 @@ export class GPUStrokeAccumulator {
         // Texture not ready - trigger async load and skip this dab
         void this.textureAtlas.setTexture(params.texture);
         return;
+      }
+
+      // Pattern Handling
+      // If texture settings changed (e.g. depth, scale, id), we must flush current batch
+      // because these are passed as Uniforms to the compute shader.
+      const newPatternSettings = this.extractPatternSettings(params.textureSettings);
+
+      if (this.hasPatternSettingsChanged(newPatternSettings)) {
+        this.flushTextureBatch();
+        this.dabsSinceLastFlush = 0; // Reset counter after flush
+      }
+
+      this.currentPatternSettings = newPatternSettings;
+      if (this.currentPatternSettings && this.currentPatternSettings.patternId) {
+        this.patternCache.update(this.currentPatternSettings.patternId);
+      } else {
+        this.patternCache.update(null);
       }
 
       const textureDabData: TextureDabInstanceData = {
@@ -661,7 +687,9 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.source,
         this.pingPongBuffer.dest,
         currentTexture,
-        dabs
+        dabs,
+        this.patternCache.getTexture(),
+        this.currentPatternSettings
       );
 
       if (success) {
@@ -1223,5 +1251,49 @@ export class GPUStrokeAccumulator {
     this.readbackBuffer?.destroy();
     this.previewReadbackBuffer?.destroy();
     this.profiler.destroy();
+  }
+  /**
+   * Extract GPU-compatible pattern settings from generic settings
+   */
+  private extractPatternSettings(
+    settings?: import('@/components/BrushPanel/types').TextureSettings | null
+  ): import('./types').GPUPatternSettings | null {
+    if (!settings || !settings.enabled || !settings.patternId) {
+      return null;
+    }
+    return {
+      patternId: settings.patternId,
+      scale: settings.scale,
+      brightness: settings.brightness,
+      contrast: settings.contrast,
+      depth: settings.depth, // Note: Pressure control not yet supported on CPU/GPU
+      invert: settings.invert,
+      mode: settings.mode,
+    };
+  }
+
+  /**
+   * Check if pattern settings have changed
+   */
+  private hasPatternSettingsChanged(
+    newSettings: import('./types').GPUPatternSettings | null
+  ): boolean {
+    const current = this.currentPatternSettings;
+
+    // Both null
+    if (!current && !newSettings) return false;
+    // One null
+    if (!current || !newSettings) return true;
+
+    // Compare fields
+    return (
+      current.patternId !== newSettings.patternId ||
+      current.scale !== newSettings.scale ||
+      current.brightness !== newSettings.brightness ||
+      current.contrast !== newSettings.contrast ||
+      current.depth !== newSettings.depth ||
+      current.invert !== newSettings.invert ||
+      current.mode !== newSettings.mode
+    );
   }
 }

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-**PaintBoard** 是一个专业绘画软件，追求低延迟数位板输入体验。
+**PaintBoard** 是一个专业绘画软件，追求低延迟数位板输入体验。目标平台 windows x86
 这是一个纯AI vibe-coding项目，所有开发方案以ai native优先。
 
 | 技术栈   | 说明                         |
