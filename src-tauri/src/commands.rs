@@ -1029,7 +1029,7 @@ mod tests {
         // Flattened Planar: 10, 20, 30, 40, 50, 60
         // Expected RGBA: (10,30,50,255), (20,40,60,255)
 
-        let decoded = vec![10, 20, 30, 40, 50, 60];
+        let decoded: &[u8] = &[10, 20, 30, 40, 50, 60];
         let pixel_count = 2;
         let area = pixel_count;
         let mut rgba_data = Vec::new();

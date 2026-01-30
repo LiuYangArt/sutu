@@ -50,81 +50,9 @@ impl PatternResource {
     /// Each channel has a 31-byte header followed by uncompressed or RLE data.
     ///
     /// Note: The actual dimensions may differ from pattern metadata due to VMA structure.
-    /// The returned buffer size is (actual_width * actual_height * 4) bytes.
+    /// Use `decode_image_with_dimensions()` if you need the actual dimensions.
     pub fn decode_image(&self) -> Option<Vec<u8>> {
-        let n_channels = if self.mode == 3 { 3 } else { 1 };
-
-        // Search for VMA header
-        let vma_info = self.find_vma_header()?;
-        let (vma_offset, actual_width, actual_height) = vma_info;
-
-        // Decode each channel
-        let mut channels: Vec<Vec<u8>> = Vec::with_capacity(n_channels);
-        let mut offset = vma_offset;
-        let channel_pixels = actual_width * actual_height;
-
-        for _ in 0..n_channels {
-            if offset + VMA_HEADER_SIZE > self.data.len() {
-                tracing::warn!("Not enough data for channel");
-                return None;
-            }
-
-            let d = &self.data[offset..];
-            let size = u32::from_be_bytes([d[4], d[5], d[6], d[7]]) as usize;
-            let compression = d[30];
-
-            let data_start = offset + VMA_HEADER_SIZE;
-            let chan_data = if compression == 0 {
-                // Uncompressed
-                let data_end = data_start + channel_pixels;
-                if data_end > self.data.len() {
-                    return None;
-                }
-                self.data[data_start..data_end].to_vec()
-            } else {
-                // RLE compressed
-                self.decode_rle_channel(data_start, actual_width, actual_height)?
-            };
-
-            if chan_data.len() != channel_pixels {
-                tracing::warn!(
-                    "Channel size mismatch: {} vs expected {}",
-                    chan_data.len(),
-                    channel_pixels
-                );
-                return None;
-            }
-
-            channels.push(chan_data);
-            offset += 8 + size;
-        }
-
-        // Convert to RGBA using actual dimensions from VMA
-        let mut rgba = Vec::with_capacity(channel_pixels * 4);
-
-        if n_channels == 3 {
-            // RGB -> RGBA
-            for ((r, g), b) in channels[0]
-                .iter()
-                .zip(channels[1].iter())
-                .zip(channels[2].iter())
-            {
-                rgba.push(*r);
-                rgba.push(*g);
-                rgba.push(*b);
-                rgba.push(255);
-            }
-        } else {
-            // Grayscale -> RGBA
-            for &gray in &channels[0] {
-                rgba.push(gray);
-                rgba.push(gray);
-                rgba.push(gray);
-                rgba.push(255);
-            }
-        }
-
-        Some(rgba)
+        self.decode_image_with_dimensions().map(|(rgba, _, _)| rgba)
     }
 
     /// Decode the raw pattern data into RGBA pixel buffer with actual dimensions
