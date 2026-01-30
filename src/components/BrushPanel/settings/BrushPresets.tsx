@@ -116,8 +116,9 @@ export function BrushPresets({
     }
 
     // Apply texture settings from preset (Photoshop Texture panel)
-    // Enable texture if preset has texture data (hasTexture indicates sampled brush)
-    const shouldEnableTexture = preset.hasTexture;
+    // Enable texture only if preset explicitly has texture settings enabled
+    // Note: hasTexture indicates sampled brush (tip image), NOT Texture Tab
+    const shouldEnableTexture = preset.textureSettings?.enabled === true;
 
     if (preset.textureSettings) {
       // Use preset's texture settings if available
@@ -127,7 +128,7 @@ export function BrushPresets({
       setTextureSettings(DEFAULT_TEXTURE_SETTINGS);
     }
 
-    // Enable texture based on whether the brush has texture data
+    // Enable texture based on preset's texture settings, not brush tip type
     setTextureEnabled(shouldEnableTexture);
   };
 

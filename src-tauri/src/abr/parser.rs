@@ -705,40 +705,49 @@ impl AbrParser {
                                     }
 
                                     // Apply Texture settings
-                                    // Note: Pattern reference is in Txtr sub-object,
-                                    // but parameters (scale, depth, etc.) are at root level
-                                    if let Some(DescriptorValue::Descriptor(txtr)) =
-                                        brush_desc.get("Txtr")
-                                    {
-                                        // Parse pattern reference from Txtr
-                                        let mut settings = Self::parse_texture_settings(txtr);
+                                    // Check useTexture flag from root descriptor first
+                                    let use_texture = matches!(
+                                        brush_desc.get("useTexture"),
+                                        Some(DescriptorValue::Boolean(true))
+                                    );
 
-                                        // Parse texture parameters from ROOT descriptor (not Txtr!)
-                                        Self::apply_texture_params_from_root(
-                                            brush_desc,
-                                            &mut settings,
-                                        );
+                                    // Only create texture settings if useTexture is true
+                                    // Pattern reference is in Txtr sub-object
+                                    if use_texture {
+                                        if let Some(DescriptorValue::Descriptor(txtr)) =
+                                            brush_desc.get("Txtr")
+                                        {
+                                            // Parse pattern reference from Txtr
+                                            let mut settings = Self::parse_texture_settings(txtr);
 
-                                        // Link Pattern (existing logic)
-                                        let mut linked = false;
-                                        if let Some(pid) = &settings.pattern_uuid {
-                                            if let Some(p) = patterns.iter().find(|p| &p.id == pid)
-                                            {
-                                                settings.pattern_id = Some(p.id.clone());
-                                                settings.pattern_name = Some(p.name.clone());
-                                                linked = true;
-                                            }
-                                        }
-                                        if !linked {
-                                            if let Some(name) = &settings.pattern_name {
+                                            // Parse texture parameters from ROOT descriptor (not Txtr!)
+                                            Self::apply_texture_params_from_root(
+                                                brush_desc,
+                                                &mut settings,
+                                            );
+
+                                            // Link Pattern (existing logic)
+                                            let mut linked = false;
+                                            if let Some(pid) = &settings.pattern_uuid {
                                                 if let Some(p) =
-                                                    patterns.iter().find(|p| &p.name == name)
+                                                    patterns.iter().find(|p| &p.id == pid)
                                                 {
                                                     settings.pattern_id = Some(p.id.clone());
+                                                    settings.pattern_name = Some(p.name.clone());
+                                                    linked = true;
                                                 }
                                             }
+                                            if !linked {
+                                                if let Some(name) = &settings.pattern_name {
+                                                    if let Some(p) =
+                                                        patterns.iter().find(|p| &p.name == name)
+                                                    {
+                                                        settings.pattern_id = Some(p.id.clone());
+                                                    }
+                                                }
+                                            }
+                                            brush.texture_settings = Some(settings);
                                         }
-                                        brush.texture_settings = Some(settings);
                                     }
 
                                     // Apply Brush Tip Shape parameters from Brsh sub-object
