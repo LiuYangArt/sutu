@@ -648,10 +648,11 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         std::collections::HashMap::new();
 
     for pattern in &abr_file.patterns {
-        // Use the verified decode_image() method from PatternResource
-        // This handles VMA headers, RLE compression, and channel extraction correctly
-        let rgba_data = match pattern.decode_image() {
-            Some(data) => data,
+        // Use decode_image_with_dimensions() to get both RGBA data AND actual dimensions
+        // The VMA structure may have different dimensions than pattern metadata
+        let (rgba_data, actual_width, actual_height) = match pattern.decode_image_with_dimensions()
+        {
+            Some(result) => result,
             None => {
                 tracing::warn!(
                     "[ABR Import] Failed to decode pattern '{}' ({}x{}, {})",
@@ -671,23 +672,23 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             }
 
             tracing::info!(
-                "[BrushPresets] Imported pattern: '{}' ({}x{}, {}) ID: {}",
+                "[BrushPresets] Imported pattern: '{}' ({}x{} -> actual {}x{}, {}) ID: {}",
                 pattern.name,
                 pattern.width,
                 pattern.height,
+                actual_width,
+                actual_height,
                 pattern.mode_name(),
                 pattern.id
             );
 
-            // CACHE THE PATTERN SO IT CAN BE SERVED!
-            // The `rgba_data` is the converted data, which is what the cache expects.
-            // The instruction's `pattern.data.clone()` would be the raw, potentially compressed, data.
-            // Assuming the intent is to cache the *processed* RGBA data for rendering.
+            // CACHE THE PATTERN WITH ACTUAL DIMENSIONS!
+            // Use actual_width/height from VMA, not pattern metadata
             cache_pattern_rgba(
                 pattern.id.clone(),
                 rgba_data, // Use the converted RGBA data
-                pattern.width,
-                pattern.height,
+                actual_width,
+                actual_height,
                 pattern.name.clone(),
                 pattern.mode_name().to_string(),
             );
@@ -695,8 +696,8 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             pattern_infos.push(PatternInfo {
                 id: pattern.id.clone(),
                 name: pattern.name.clone(),
-                width: pattern.width,
-                height: pattern.height,
+                width: actual_width,
+                height: actual_height,
                 mode: pattern.mode_name().to_string(),
             });
 

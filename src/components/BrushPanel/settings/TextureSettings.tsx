@@ -1,15 +1,4 @@
-/**
- * TextureSettings - Photoshop-compatible Texture panel
- *
- * Controls how pattern/texture modifies brush alpha:
- * - Pattern selection (preview)
- * - Scale, Brightness, Contrast
- * - Texture Each Tip toggle
- * - Mode (blend mode for texture application)
- * - Depth + Minimum + Jitter + Control
- * - Invert toggle
- */
-
+import { useState } from 'react';
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { TextureBlendMode } from '../types';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
@@ -53,6 +42,7 @@ function sourceToDepthControl(source: ControlSource): number {
 
 export function TextureSettings(): JSX.Element {
   const { textureEnabled, textureSettings, setTextureSettings, toggleTexture } = useToolStore();
+  const [showPreview, setShowPreview] = useState(false);
   const patternId = textureSettings?.patternId;
   // Fix for Windows Tauri v2 custom protocol
   const patternUrl = patternId ? `http://project.localhost/pattern/${patternId}` : null;
@@ -72,33 +62,74 @@ export function TextureSettings(): JSX.Element {
           <h4>Texture</h4>
         </label>
 
-        {/* Pattern Preview */}
+        {/* Pattern Preview with hover popup */}
         <div
-          className="pattern-preview"
-          title={patternId ? 'Current Pattern' : 'No Pattern'}
           style={{
-            width: 40,
-            height: 40,
-            border: '1px solid var(--color-border)',
+            position: 'relative',
             marginLeft: 'auto',
-            background: 'var(--color-bg-tertiary)',
-            overflow: 'hidden',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: '4px',
           }}
+          onMouseEnter={() => patternUrl && setShowPreview(true)}
+          onMouseLeave={() => setShowPreview(false)}
         >
-          {patternUrl ? (
-            <LZ4Image
-              src={patternUrl}
-              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-              alt="Pattern"
-            />
-          ) : (
-            <span style={{ fontSize: 10, color: 'var(--color-text-secondary)', opacity: 0.5 }}>
-              None
-            </span>
+          {/* Thumbnail container */}
+          <div
+            className="pattern-preview"
+            title={patternId ? 'Hover for preview' : 'No Pattern'}
+            style={{
+              width: 40,
+              height: 40,
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-bg-tertiary)',
+              overflow: 'hidden',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '4px',
+              cursor: patternUrl ? 'pointer' : 'default',
+            }}
+          >
+            {patternUrl ? (
+              <LZ4Image
+                src={patternUrl}
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                alt="Pattern"
+              />
+            ) : (
+              <span style={{ fontSize: 10, color: 'var(--color-text-secondary)', opacity: 0.5 }}>
+                None
+              </span>
+            )}
+          </div>
+
+          {/* Hover preview popup - outside overflow container */}
+          {showPreview && patternUrl && (
+            <div
+              style={{
+                position: 'fixed',
+                left: 'calc(100vw - 600px)',
+                top: 100,
+                maxWidth: 512,
+                maxHeight: 512,
+                padding: 8,
+                background: 'var(--color-bg-primary)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 8,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                zIndex: 9999,
+                pointerEvents: 'none',
+              }}
+            >
+              <LZ4Image
+                src={patternUrl}
+                style={{
+                  maxWidth: 496,
+                  maxHeight: 496,
+                  objectFit: 'contain',
+                  display: 'block',
+                }}
+                alt="Pattern Preview"
+              />
+            </div>
           )}
         </div>
       </div>
