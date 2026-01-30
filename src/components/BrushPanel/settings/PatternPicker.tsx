@@ -14,6 +14,7 @@ import {
   getPatternThumbnailUrl,
   PatternResource,
 } from '@/stores/pattern';
+import { patternManager } from '@/utils/patternManager';
 import './PatternPicker.css';
 
 interface PatternPickerProps {
@@ -63,6 +64,8 @@ export function PatternPicker({
   const handlePatternClick = (pattern: PatternResource) => {
     onSelect(pattern.id);
     setIsOpen(false);
+    // Pre-load pattern immediately to avoid delay on first stroke
+    void patternManager.loadPattern(pattern.id);
   };
 
   const handleClear = () => {
@@ -125,37 +128,45 @@ export function PatternPicker({
               </div>
             </button>
 
-            {isLoading ? (
-              <div className="pattern-picker-loading">Loading...</div>
-            ) : patterns.length === 0 ? (
-              <div className="pattern-picker-empty-state">
-                No patterns found.
-                <br />
-                Import a .pat file to get started.
-              </div>
-            ) : (
-              patterns.map((pattern) => (
-                <button
-                  key={pattern.id}
-                  className={`pattern-grid-item ${pattern.id === selectedId ? 'selected' : ''}`}
-                  onClick={() => handlePatternClick(pattern)}
-                  title={`${pattern.name} (${pattern.width}×${pattern.height})`}
-                >
-                  <div className="pattern-grid-thumbnail">
-                    <LZ4Image
-                      src={getPatternThumbnailUrl(pattern.id)}
-                      alt={pattern.name}
-                      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                    />
-                  </div>
-                </button>
-              ))
-            )}
+            {renderGridContent()}
           </div>
         </div>
       )}
     </div>
   );
+
+  function renderGridContent(): JSX.Element | JSX.Element[] {
+    if (isLoading) {
+      return <div className="pattern-picker-loading">Loading...</div>;
+    }
+
+    if (patterns.length === 0) {
+      return (
+        <div className="pattern-picker-empty-state">
+          No patterns found.
+          <br />
+          Import a .pat file to get started.
+        </div>
+      );
+    }
+
+    return patterns.map((pattern) => (
+      <button
+        key={pattern.id}
+        className={`pattern-grid-item ${pattern.id === selectedId ? 'selected' : ''}`}
+        onClick={() => handlePatternClick(pattern)}
+        title={`${pattern.name} (${pattern.width}×${pattern.height})`}
+      >
+        <div className="pattern-grid-thumbnail">
+          <LZ4Image
+            src={getPatternThumbnailUrl(pattern.id)}
+            alt={pattern.name}
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          />
+        </div>
+      </button>
+    ));
+  }
 }
 
 /**
