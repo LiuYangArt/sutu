@@ -475,7 +475,6 @@ pub fn push_pointer_event(
 // ============================================================================
 
 use crate::brush::soft_dab::{render_soft_dab, GaussParams};
-use crate::file::psd::compression::packbits_decode;
 
 // ============================================================================
 // ABR Brush Import
@@ -649,197 +648,23 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         std::collections::HashMap::new();
 
     for pattern in &abr_file.patterns {
-        let pixel_count = (pattern.width * pattern.height) as usize;
-        let mut rgba_data = Vec::new();
-        let mut success = false;
-
-        // Determine expected uncompressed size
-        let channels = match pattern.mode {
-            1 => 1, // Grayscale
-            3 => 3, // RGB
-            _ => 0,
+        // Use the verified decode_image() method from PatternResource
+        // This handles VMA headers, RLE compression, and channel extraction correctly
+        let rgba_data = match pattern.decode_image() {
+            Some(data) => data,
+            None => {
+                tracing::warn!(
+                    "[ABR Import] Failed to decode pattern '{}' ({}x{}, {})",
+                    pattern.name,
+                    pattern.width,
+                    pattern.height,
+                    pattern.mode_name()
+                );
+                continue;
+            }
         };
 
-        if channels > 0 {
-            let expected_len = pixel_count * channels;
-
-            // Import byteorder for reading row table
-            use byteorder::{BigEndian, ReadBytesExt};
-            use std::io::Cursor;
-
-            // Robust decoding strategy
-            let raw_data = if pattern.data.len() == expected_len {
-                tracing::debug!("[ABR Import] Pattern '{}' is RAW", pattern.name);
-                Some(pattern.data.clone())
-            } else {
-                let mut decoded_data = None;
-
-                // Strategy 1: Blind PackBits (Continuous)
-                // Used for Patterns that lack Row Table (just stream)
-                // Prioritize Offset 2 (Skip 2-byte header common in ABR patterns)
-                let offsets = vec![2, 0];
-                for &offset in &offsets {
-                    if offset < pattern.data.len() {
-                        if let Ok(d) = packbits_decode(&pattern.data[offset..], expected_len) {
-                            tracing::debug!(
-                                "[ABR Import] Decoded '{}' (Blind Offset {})",
-                                pattern.name,
-                                offset
-                            );
-                            decoded_data = Some(d);
-                            break;
-                        }
-                    }
-                }
-
-                // Strategy 2: Row Table (Scanlines)
-                // Used for standard PSD RLE data (Row Counts + Data)
-                if decoded_data.is_none() && channels > 0 {
-                    let rows_total = pattern.height as usize * channels;
-                    // Try offsets for Table
-                    for &offset in &offsets {
-                        if offset + (rows_total * 2) > pattern.data.len() {
-                            continue;
-                        }
-
-                        let mut cursor = Cursor::new(&pattern.data[offset..]);
-                        let mut row_counts = Vec::with_capacity(rows_total);
-                        let mut valid_table = true;
-
-                        for _ in 0..rows_total {
-                            match cursor.read_u16::<BigEndian>() {
-                                Ok(c) => row_counts.push(c as usize),
-                                Err(_) => {
-                                    valid_table = false;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if valid_table {
-                            // Verify if table makes sense (sum of counts <= data len)
-                            let total_rle: usize = row_counts.iter().sum();
-                            let header_size = rows_total * 2;
-                            let available = pattern.data.len() - offset - header_size;
-
-                            // Allow small slack or verifying exact match
-                            // Some formats pad scanlines
-                            if total_rle <= available + 256 {
-                                // heuristic slack
-                                let mut stream_pos = offset + header_size;
-                                let mut full_output = Vec::with_capacity(expected_len);
-                                let mut fail = false;
-
-                                for count in row_counts {
-                                    if stream_pos + count > pattern.data.len() {
-                                        fail = true;
-                                        break;
-                                    }
-                                    match packbits_decode(
-                                        &pattern.data[stream_pos..stream_pos + count],
-                                        0,
-                                    ) {
-                                        // 0 len = unknown/auto?
-                                        // Wait, packbits_decode takes expected_len.
-                                        // For a scanline, expected_len = width * bytes_per_pixel (usually 1 for planar?)
-                                        // ABR Patterns are Multi-Channel.
-                                        // Planar RLE?
-                                        // Width bytes per row.
-                                        Ok(row_data) => {
-                                            // Check if row_data.len matching width?
-                                            // packbits_decode checks length if strictly provided.
-                                            // We can pass row width (pattern.width).
-                                            full_output.extend(row_data);
-                                            stream_pos += count;
-                                        }
-                                        Err(_) => {
-                                            // Retry with passed length?
-                                            if let Ok(row_data) = packbits_decode(
-                                                &pattern.data[stream_pos..stream_pos + count],
-                                                pattern.width as usize,
-                                            ) {
-                                                full_output.extend(row_data);
-                                                stream_pos += count;
-                                            } else {
-                                                fail = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if !fail && full_output.len() == expected_len {
-                                    tracing::debug!(
-                                        "[ABR Import] Decoded '{}' (RowTable Offset {})",
-                                        pattern.name,
-                                        offset
-                                    );
-                                    decoded_data = Some(full_output);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if decoded_data.is_none() {
-                    tracing::warn!(
-                        "[ABR Import] Failed to decode '{}' (Mode {}, Exp {}, Data {})",
-                        pattern.name,
-                        pattern.mode,
-                        expected_len,
-                        pattern.data.len()
-                    );
-                }
-                decoded_data
-            };
-
-            if let Some(decoded) = raw_data {
-                // Convert to RGBA
-                rgba_data.reserve(pixel_count * 4);
-
-                if pattern.mode == 3 && decoded.len() >= pixel_count * 3 {
-                    // RGB Planar (RRRGGGBBB) is common in PS structures, but .pat might be interleaved
-                    // Let's assume Interleaved (RGBRGB) for .pat as it's simpler format?
-                    // Actually PS .pat is often Index Color.
-                    // Let's try to assume Interleaved first. If it looks wrong, we fix later.
-                    // Wait, PS almost always uses Planar for internal storage.
-                    // Let's check logic: R[i], G[i + npixels], B[i + 2*npixels]
-
-                    // Trying Planar logic first
-                    let area = pixel_count;
-                    if decoded.len() >= area * 3 {
-                        // Planar
-                        // Use split_at for safe and efficient slicing without repeated bounds checks
-                        // structure: [R...R][G...G][B...B]
-                        let (r_plane, rest) = decoded.split_at(area);
-                        let (g_plane, b_rest) = rest.split_at(area);
-                        let b_plane = &b_rest[..area];
-
-                        for i in 0..area {
-                            rgba_data.extend_from_slice(&[r_plane[i], g_plane[i], b_plane[i], 255]);
-                        }
-                        success = true;
-                    } else {
-                        // Interleaved fallback
-                        for chunk in decoded.chunks(3) {
-                            if chunk.len() == 3 {
-                                rgba_data.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
-                            }
-                        }
-                        success = true;
-                    }
-                } else if pattern.mode == 1 && decoded.len() >= pixel_count {
-                    // Grayscale
-                    for &v in &decoded {
-                        rgba_data.extend_from_slice(&[v, v, v, 255]);
-                    }
-                    success = true;
-                }
-            }
-        }
-
-        if success && !rgba_data.is_empty() {
+        {
             if pattern.id.is_empty() {
                 // Generate a UUID if missing - though parser usually handles this
                 continue;
