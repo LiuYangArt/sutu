@@ -231,14 +231,16 @@
 
 .abr-preset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
   margin-top: 8px;
 }
 
 .abr-preset-item {
-  aspect-ratio: 1;
-  padding: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
@@ -253,10 +255,22 @@
 }
 
 .abr-preset-texture {
-  width: 100%;
-  height: 100%;
+  width: 48px;
+  height: 48px;
   object-fit: contain;
   filter: invert(1);
+  flex-shrink: 0;
+}
+
+.abr-preset-name {
+  font-size: 9px;
+  color: var(--text-secondary);
+  text-align: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
 }
 
 .abr-preset-placeholder {

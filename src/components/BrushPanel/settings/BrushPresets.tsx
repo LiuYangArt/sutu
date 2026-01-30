@@ -61,9 +61,15 @@ export function BrushPresets({
         );
         console.log(`[ABR Import] Backend benchmark:`, result.benchmark);
 
-        // Add presets
-        // Append presets
-        setImportedPresets([...importedPresets, ...result.presets]);
+        // Add presets (dedupe by ID to prevent React key conflicts)
+        const existingIds = new Set(importedPresets.map((p) => p.id));
+        const newPresets = result.presets.filter((p) => !existingIds.has(p.id));
+        if (newPresets.length < result.presets.length) {
+          console.log(
+            `[ABR Import] Skipped ${result.presets.length - newPresets.length} duplicate brushes`
+          );
+        }
+        setImportedPresets([...importedPresets, ...newPresets]);
 
         // Add patterns if any
         if (result.patterns && result.patterns.length > 0) {
@@ -162,6 +168,7 @@ export function BrushPresets({
             ) : (
               <div className="abr-preset-placeholder">{Math.round(preset.diameter)}</div>
             )}
+            <span className="abr-preset-name">{preset.name}</span>
           </button>
         ))}
       </div>

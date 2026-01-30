@@ -738,79 +738,16 @@ impl AbrParser {
                         }
                     }
 
-                    // 2. Fallback: Link remaining brushes to unused sampled descriptors sequentially
-                    // 2. Fallback: Link remaining brushes to unused sampled descriptors sequentially
-                    let mut unlinked_brush_indices = Vec::new();
-                    for (i, brush) in brushes.iter().enumerate() {
-                        // Check if name is still generic (starts with Brush_)
-                        // Note: A better check might be a flag, but checking name pattern is safe enough
-                        // since UUID linking would have overwritten the name.
-                        if brush.name.starts_with("Brush_") {
-                            unlinked_brush_indices.push(i);
-                        }
-                    }
-
-                    // Collect unused sampled descriptors
-                    let mut unused_desc_indices = Vec::new();
-                    for (i, item) in brsh_list.iter().enumerate() {
-                        if !used_indices.contains(&i) {
-                            if let DescriptorValue::Descriptor(brush_desc) = item {
-                                // Filter out likely computed brushes (have toolOptions)
-                                if !brush_desc.contains_key("toolOptions") {
-                                    unused_desc_indices.push(i);
-                                }
-                            }
-                        }
-                    }
-
-                    tracing::debug!(
-                        "Fallback Linking: {} unlinked brushes, {} unused descriptors",
-                        unlinked_brush_indices.len(),
-                        unused_desc_indices.len()
-                    );
-
-                    for (brush_idx, desc_idx) in unlinked_brush_indices
+                    // Log unlinked brushes (removed fallback - UUID matching only)
+                    let unlinked_count = brushes
                         .iter()
-                        .zip(unused_desc_indices.iter())
-                    {
-                        if let DescriptorValue::Descriptor(brush_desc) = &brsh_list[*desc_idx] {
-                            let brush = &mut brushes[*brush_idx];
-
-                            tracing::debug!(
-                                "Fallback linking Brush #{} to Descriptor #{}",
-                                brush_idx,
-                                desc_idx
-                            );
-
-                            // Apply Name
-                            if let Some(DescriptorValue::String(name)) = brush_desc.get("Nm  ") {
-                                brush.name = name.clone();
-                            }
-
-                            // Apply Texture
-                            if let Some(DescriptorValue::Descriptor(txtr)) = brush_desc.get("Txtr")
-                            {
-                                let mut settings = Self::parse_texture_settings(txtr);
-
-                                // Link Pattern
-                                let mut linked = false;
-                                if let Some(pid) = &settings.pattern_uuid {
-                                    if let Some(p) = patterns.iter().find(|p| &p.id == pid) {
-                                        settings.pattern_id = Some(p.id.clone());
-                                        settings.pattern_name = Some(p.name.clone());
-                                        linked = true;
-                                    }
-                                }
-                                if !linked {
-                                    if let Some(name) = &settings.pattern_name {
-                                        if let Some(p) = patterns.iter().find(|p| &p.name == name) {
-                                            settings.pattern_id = Some(p.id.clone());
-                                        }
-                                    }
-                                }
-                                brush.texture_settings = Some(settings);
-                            }
-                        }
+                        .filter(|b| b.name.starts_with("Brush_"))
+                        .count();
+                    if unlinked_count > 0 {
+                        tracing::warn!(
+                            "[ABR] {} brushes could not be linked by UUID, keeping generic names",
+                            unlinked_count
+                        );
                     }
                 }
             }
