@@ -69,30 +69,30 @@ export function simplifyPath(points: Point[], tolerance: number): Point[] {
  * Draw a smooth closed path using Catmull-Rom splines converted to Cubic Beziers
  * This ensures the curve actually passes through the control points
  */
-export function drawSmoothMaskPath(ctx: CanvasRenderingContext2D, points: Point[]) {
+/**
+ * Draw a smooth path using Catmull-Rom splines converted to Cubic Beziers.
+ *
+ * @param ctx Canvas context
+ * @param points Points to draw through
+ * @param closePath If true, connects the last point back to the first point with a curve.
+ */
+export function drawSmoothMaskPath(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  closePath: boolean = true
+) {
   if (points.length < 3) {
+    if (points.length === 2) {
+      ctx.lineTo(points[1]!.x, points[1]!.y);
+    }
     return;
   }
 
-  // To make it a closed loop smoothly, we need to wrap around points.
-  // Catmull-Rom needs P0 (prev), P1 (start), P2 (end), P3 (next) to draw segment P1-P2.
-
-  // We want to draw segments for all points i:
-  // Segment i -> i+1 uses: P[i-1], P[i], P[i+1], P[i+2]
-
-  ctx.beginPath();
-
-  // Handling the closed loop:
-  // For the first point P0, prev is P[n-1]
-  // For the last point P[n-1], next is P[0], next-next is P[1]
-
-  ctx.moveTo(points[0]!.x, points[0]!.y);
-
   const n = points.length;
+  // If not closing, we stop at n-1 to avoid wrapping back to start
+  const limit = closePath ? n : n - 1;
 
-  // Use Chaikin subdivision for smoothing without overshoot
-  // This creates a curve that stays within the convex hull of control points
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < limit; i++) {
     const p0 = points[i]!;
     const p1 = points[(i + 1) % n]!;
 
@@ -104,6 +104,16 @@ export function drawSmoothMaskPath(ctx: CanvasRenderingContext2D, points: Point[
     const end_x = p0.x * 0.25 + p1.x * 0.75;
     const end_y = p0.y * 0.25 + p1.y * 0.75;
 
+    // For the first segment, connect with a line to ensure continuity
+    if (i === 0) {
+      ctx.lineTo(p0.x, p0.y);
+    }
+
     ctx.quadraticCurveTo(cp_x, cp_y, end_x, end_y);
+
+    // If path is open and this is the last segment, extend to the final point
+    if (!closePath && i === limit - 1) {
+      ctx.lineTo(p1.x, p1.y);
+    }
   }
 }

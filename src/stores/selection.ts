@@ -22,6 +22,7 @@ export type LassoMode = 'freehand' | 'polygonal';
 export interface SelectionPoint {
   x: number;
   y: number;
+  type?: 'freehand' | 'polygonal';
 }
 
 /** Selection bounding box */
@@ -92,12 +93,7 @@ interface SelectionState {
 /**
  * Convert a closed path to a bitmap mask using Canvas 2D fill
  */
-function pathToMask(
-  path: SelectionPoint[],
-  width: number,
-  height: number,
-  lassoMode: LassoMode = 'freehand'
-): ImageData {
+function pathToMask(path: SelectionPoint[], width: number, height: number): ImageData {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -106,43 +102,36 @@ function pathToMask(
   // Fill the path
   ctx.fillStyle = 'white';
   ctx.beginPath();
+
   if (path.length > 0) {
-    // Only apply smoothing for freehand lasso with enough points
-    // Polygonal lasso and rect selection should preserve sharp corners
-    // Freehand typically has many dense points (>20), polygonal has fewer deliberate clicks
-    const shouldSmooth = lassoMode === 'freehand' && path.length > 20;
-    if (shouldSmooth) {
-      // 1. Simplify path to remove noise (RDP algorithm)
-      // Tolerance 1.5 removes more intermediate points to prevent overshoot
-      const simplified = simplifyPath(path, 1.5);
+    const start = path[0];
+    if (start) {
+      ctx.moveTo(start.x, start.y);
+      let buffer: SelectionPoint[] = [start];
 
-      // 2. Use Catmull-Rom Spline for smooth curve through points
-      // This function handles beginPath internally, but we need to fill afterwards
-      // Note: drawSmoothMaskPath calls beginPath, so we don't need to call it before if we use it exclusively
-      // modify drawSmoothMaskPath to NOT call beginPath?
-      // Actually, let's just let it handle the path definition.
-
-      // But wait, the original code called ctx.beginPath outside.
-      // If drawSmoothMaskPath calls beginPath, it resets the context path.
-      // It's fine here because we are starting a new mask fill.
-      drawSmoothMaskPath(ctx, simplified);
-      ctx.closePath();
-      ctx.fill();
-    } else {
-      // Standard straight lines for Rect / simple polygons
-      ctx.beginPath();
-      const first = path[0];
-      if (first) {
-        ctx.moveTo(first.x, first.y);
-        for (let i = 1; i < path.length; i++) {
-          const pt = path[i];
-          if (pt) {
-            ctx.lineTo(pt.x, pt.y);
+      for (let i = 1; i < path.length; i++) {
+        const p = path[i];
+        if (p) {
+          if (p.type === 'polygonal') {
+            if (buffer.length > 1) {
+              const simplified = simplifyPath(buffer, 1.5);
+              drawSmoothMaskPath(ctx, simplified, false);
+            }
+            ctx.lineTo(p.x, p.y);
+            buffer = [p];
+          } else {
+            buffer.push(p);
           }
         }
-        ctx.closePath();
-        ctx.fill();
       }
+
+      if (buffer.length > 1) {
+        const simplified = simplifyPath(buffer, 1.5);
+        drawSmoothMaskPath(ctx, simplified, false);
+      }
+
+      ctx.closePath();
+      ctx.fill();
     }
   }
 
@@ -190,13 +179,15 @@ function createRectPath(start: SelectionPoint, end: SelectionPoint): SelectionPo
   const x2 = Math.max(start.x, end.x);
   const y2 = Math.max(start.y, end.y);
 
-  return [
+  const points = [
     { x: x1, y: y1 },
     { x: x2, y: y1 },
     { x: x2, y: y2 },
     { x: x1, y: y2 },
     { x: x1, y: y1 },
   ];
+
+  return points.map((p) => ({ ...p, type: 'polygonal' }));
 }
 
 export const useSelectionStore = create<SelectionState>()((set, get) => ({
@@ -266,8 +257,8 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }
 
     // Generate bitmap mask from path
-    // Pass lassoMode to determine if smoothing should be applied
-    const newMask = pathToMask(path, documentWidth, documentHeight, state.lassoMode);
+    // Generate bitmap mask from path
+    const newMask = pathToMask(path, documentWidth, documentHeight);
 
     // Determine if we should start a new selection or combine with existing
     const isNewSelection =

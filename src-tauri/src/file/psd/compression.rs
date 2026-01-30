@@ -109,11 +109,16 @@ pub fn packbits_decode(input: &[u8], expected_len: usize) -> Result<Vec<u8>, Com
         // n == -128 is a no-op
     }
 
-    if output.len() != expected_len {
+    if output.len() < expected_len {
         return Err(CompressionError::SizeMismatch {
             expected: expected_len,
             actual: output.len(),
         });
+    }
+
+    // Truncate if we overshot (due to padding or run alignment)
+    if output.len() > expected_len {
+        output.truncate(expected_len);
     }
 
     Ok(output)
@@ -140,6 +145,7 @@ pub fn encode_channel(rows: &[&[u8]]) -> (Vec<u16>, Vec<u8>) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -215,9 +221,7 @@ mod tests {
     #[test]
     fn test_roundtrip_realistic() {
         // Simulate image data with some patterns
-        let mut original = Vec::new();
-        // Some runs (transparent area)
-        original.extend(std::iter::repeat(0u8).take(100));
+        let mut original = vec![0u8; 100];
         // Some varied data (edge)
         original.extend((0..50).map(|i| (i * 5) as u8));
         // Another run

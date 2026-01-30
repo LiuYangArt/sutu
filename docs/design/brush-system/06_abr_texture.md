@@ -1,21 +1,66 @@
 # ABR 纹理与图案系统设计 (Revised)
 
-> 基于 Review 意见的修正版设计 (v2.0)
-> 核心策略转变：从“尝试从 ABR 提取”转变为“构建统一的 Pattern 库与链接机制”
+> 基于 Review 意见 + Postmortem 发现的修正版设计 (v2.1)
+> 核心策略转变：从"尝试从 ABR 提取"转变为"构建统一的 Pattern 库与链接机制"
+>
+> **Related**: [postmortem/2026-01-27-abr-structure-discovery.md](file:///f:/CodeProjects/PaintBoard/docs/postmortem/2026-01-27-abr-structure-discovery.md)”
 
 ## 1. 核心风险与对策
 
-**现状认知**：
-ABR 文件格式存在两种情况：
+### 1.1 ABR 格式现状认知
 
-1.  **嵌入式 (Embedded)**：极少数文件在 `8BIM` 块中包含完整的 `patt` 图像数据。
-2.  **引用式 (Referenced)**：**绝大多数** ABR 文件仅包含 `Txtr` 参数和一个指向外部图案的 `UUID/Name`。
+ABR 文件格式存在**两种存储架构**：
 
-**设计准则**:
-系统必须具备**容错性**。当 ABR 仅包含引用时，不能让功能失效，而应提供“缺失资源占位符”并允许用户通过导入 `.pat` 文件来补充资源。
+1.  **自包含式 (Self-Contained)**：老式或简单导出的 ABR，每个笔刷的 `8BIM` 块内部嵌入了 `Txtr` 参数和可能的图案数据。
+2.  **分离式 (Separated Storage)**：较新/大型的 ABR 文件（常见于 Tool Presets 导出），资源分布在文件的不同顶级 Section 中。
+
+> [!IMPORTANT]
+> **Postmortem 发现** (2026-01-27)：对 23MB 样本文件 (`liuyang_paintbrushes.abr`) 的分析揭示了分离式存储的具体结构：
+>
+> | Section | Size   | 内容                                          |
+> | ------- | ------ | --------------------------------------------- |
+> | `samp`  | 4.8MB  | 71 个笔刷头图像 (Tip Images Only)             |
+> | `patt`  | 19.0MB | **全局纹理图案库** - 所有笔刷共享的 Patterns  |
+> | `desc`  | 150KB  | **全局描述符** - Brush → Pattern 映射与参数表 |
+>
+> 当前解析器只读取了 `samp`，导致纹理信息完全丢失。
+
+### 1.2 引用式纹理的额外风险
+
+即使是自包含式 ABR，也可能存在**引用式纹理**：
+
+- ABR 仅包含 `Txtr` 参数和一个指向外部图案的 `UUID/Name`。
+- **绝大多数** 真实世界的 ABR 使用这种引用模式。
+
+### 1.3 设计准则
+
+系统必须具备**容错性**。当 ABR 仅包含引用时，不能让功能失效，而应提供"缺失资源占位符"并允许用户通过导入 `.pat` 文件来补充资源。
 
 **关键修正 (Based on Review)**:
-纹理必须是**Canvas Space (画布空间)**的，意味着纹理是“铺在纸上”的，而不是贴在笔刷也就是Dab上的，也不是贴在屏幕上的。笔刷Dab移动时，是作为一个“窗口”去透视底下的纹理。
+纹理必须是**Canvas Space (画布空间)**的，意味着纹理是"铺在纸上"的，而不是贴在笔刷也就是Dab上的，也不是贴在屏幕上的。笔刷Dab移动时，是作为一个"窗口"去透视底下的纹理。
+
+### 1.4 两阶段实现策略
+
+根据 Postmortem 的 "Solution Strategy"，采用**渐进式实现**：
+
+```mermaid
+flowchart LR
+    subgraph Phase1["Phase 1: Resource Extraction"]
+        A[扫描 patt Section] --> B[提取 Pattern 图像]
+        B --> C[导入 PatternLibrary]
+    end
+    subgraph Phase2["Phase 2: Linkage Reconstruction"]
+        D[解析 desc Section] --> E[提取 Brush→Pattern 映射]
+        E --> F[应用 Scale/Depth/Mode 参数]
+    end
+    Phase1 --> Phase2
+```
+
+**Phase 1 (Immediate)**: 优先提取 `patt` Section 中的纹理资源，让用户可以手动使用这些 Pattern。
+**Phase 2 (Future)**: 解析 `desc` Section，自动重建 Brush → Pattern 链接关系。
+
+> [!TIP]
+> Phase 1 完成后，即使 Phase 2 未实现，用户也可以手动为笔刷设置已导入的纹理。
 
 ## 2. 架构设计：Pattern Library
 
@@ -186,118 +231,153 @@ if (u_mode == TEXTURE_MODE_MULTIPLY) {
 final_alpha *= influence;
 ```
 
-### 4.3 CPU 渲染实现 (Rust)
+### 4.3 CPU 渲染实现
 
-在 Rust CPU 引擎中，必须手动计算坐标映射和混合。
+在 TypeScript CPU 引擎中 (`src/utils/`)，必须手动计算坐标映射和混合。
 
-````rust
-struct BrushState {
-    texture_data: Vec<u8>, // Grayscale Data
-    tex_w: usize,
-    tex_h: usize,
-    scale: f32,
-    depth: f32, // 0.0 - 1.0
-    invert: bool,
-    mode: TextureMode,
+> [!NOTE]
+> PaintBoard 的 CPU 笔刷引擎完全在 TypeScript 前端实现，参见 `src/utils/strokeBuffer.ts` 和 `src/utils/maskCache.ts`.
+
+```typescript
+// src/utils/patternRenderConfig.ts
+
+interface PatternRenderConfig {
+  textureData: Uint8Array; // Grayscale Data
+  texW: number;
+  texH: number;
+  scale: number;
+  depth: number; // 0.0 - 1.0
+  invert: boolean;
+  mode: TextureMode;
 }
 
-```rust
-fn rasterize_dab_cpu(
-    dab_buffer: &mut [u8],
-    brush_tip: &[u8],
-    width: usize,
-    height: usize,
-    canvas_pos_x: i32,     // Dab 在画布上的绝对坐标 X
-    canvas_pos_y: i32,     // Dab 在画布上的绝对坐标 Y
-    state: &BrushState
-) {
-    // 0. Safety Check: If no texture data (e.g. missing resource), fallback to normal rendering
-    if state.texture_data.is_empty() {
-        for y in 0..height {
-            for x in 0..width {
-                 let i = y * width + x;
-                 let tip_alpha = brush_tip[i];
-                 if tip_alpha > 0 {
-                    dab_buffer[i * 4 + 3] = tip_alpha;
-                 }
-            }
-        }
-        return;
-    }
-
-    for y in 0..height {
-        let global_y = canvas_pos_y + y as i32;
-
-        for x in 0..width {
-            let i = y * width + x;
-            let tip_alpha = brush_tip[i] as f32 / 255.0;
-
-            // 1. Skip invisible pixels
-            if tip_alpha <= 0.001 {
-                dab_buffer[i * 4 + 3] = 0;
-                continue;
-            }
-
-            // 2. Calculate Pattern Coordinates (Canvas Space)
-            // Tiling: Use rem_euclid to handle negative coordinates correctly
-            let u = ((canvas_pos_x + x as i32) as f32 / state.scale) as i32;
-            let v = (global_y as f32 / state.scale) as i32;
-
-            let tex_u = u.rem_euclid(state.tex_w as i32) as usize;
-            let tex_v = v.rem_euclid(state.tex_h as i32) as usize;
-
-            // 3. Sample Texture (Nearest Neighbor for performance)
-            let mut tex_val = state.texture_data[tex_v * state.tex_w + tex_u] as f32 / 255.0;
-            if state.invert { tex_val = 1.0 - tex_val; }
-
-            // 4. Blending
-            // Influence = 1.0 (No Effect) -> Target (Full Effect) based on Depth
-            let mut influence = 1.0;
-
-            match state.mode {
-                TextureMode::Multiply => {
-                     // mix(1.0, tex_val, depth)
-                     influence = 1.0 * (1.0 - state.depth) + tex_val * state.depth;
-                },
-                TextureMode::Subtract => {
-                     // mix(1.0, 1.0 - tex_val, depth)
-                     influence = 1.0 * (1.0 - state.depth) + (1.0 - tex_val) * state.depth;
-                },
-                 _ => {}
-            }
-
-            // 5. Apply to Alpha
-            let final_alpha = tip_alpha * influence;
-            dab_buffer[i * 4 + 3] = (final_alpha * 255.0) as u8;
-
-            // Note: RGB channels usually set by composition step or initialized before
-        }
-    }
+enum TextureMode {
+  Multiply,
+  Subtract,
+  Height,
 }
-````
+```
+
+```typescript
+// src/utils/strokeBuffer.ts (Pattern Texture Logic)
+
+function applyPatternTexture(
+  dabBuffer: Uint8ClampedArray,
+  brushTip: Float32Array, // Mask values 0.0-1.0
+  width: number,
+  height: number,
+  canvasPosX: number, // Dab 在画布上的绝对坐标 X
+  canvasPosY: number, // Dab 在画布上的绝对坐标 Y
+  config: PatternRenderConfig
+): void {
+  // 0. Safety Check: If no texture data (e.g. missing resource), fallback to normal rendering
+  if (!config.textureData || config.textureData.length === 0) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const tipAlpha = brushTip[i] ?? 0;
+        if (tipAlpha > 0) {
+          dabBuffer[i * 4 + 3] = Math.round(tipAlpha * 255);
+        }
+      }
+    }
+    return;
+  }
+
+  for (let y = 0; y < height; y++) {
+    const globalY = canvasPosY + y;
+
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const tipAlpha = brushTip[i] ?? 0;
+
+      // 1. Skip invisible pixels
+      if (tipAlpha <= 0.001) {
+        dabBuffer[i * 4 + 3] = 0;
+        continue;
+      }
+
+      // 2. Calculate Pattern Coordinates (Canvas Space)
+      // Tiling: Use modulo to handle negative coordinates correctly
+      const u = Math.floor((canvasPosX + x) / config.scale);
+      const v = Math.floor(globalY / config.scale);
+
+      // rem_euclid equivalent for negative-safe modulo
+      const texU = ((u % config.texW) + config.texW) % config.texW;
+      const texV = ((v % config.texH) + config.texH) % config.texH;
+
+      // 3. Sample Texture (Nearest Neighbor for performance)
+      let texVal = (config.textureData[texV * config.texW + texU] ?? 0) / 255;
+      if (config.invert) texVal = 1.0 - texVal;
+
+      // 4. Blending
+      // Influence = 1.0 (No Effect) -> Target (Full Effect) based on Depth
+      let influence = 1.0;
+
+      switch (config.mode) {
+        case TextureMode.Multiply:
+          // mix(1.0, texVal, depth)
+          influence = 1.0 * (1.0 - config.depth) + texVal * config.depth;
+          break;
+        case TextureMode.Subtract:
+          // mix(1.0, 1.0 - texVal, depth)
+          influence = 1.0 * (1.0 - config.depth) + (1.0 - texVal) * config.depth;
+          break;
+        default:
+          break;
+      }
+
+      // 5. Apply to Alpha
+      const finalAlpha = tipAlpha * influence;
+      dabBuffer[i * 4 + 3] = Math.round(finalAlpha * 255);
+
+      // Note: RGB channels usually set by composition step or initialized before
+    }
+  }
+}
+```
 
 ## 5. 任务清单 (Revised Task List)
 
-### Phase 3.1: 基础架构
+### Phase 1: ABR Texture 资源导入 (Immediate - 基于 Postmortem)
 
-- [ ] **Impl**: 实现 `PatternLibrary` 结构与 `CAS` 存储逻辑 (Hash计算, 文件读写)。
-- [ ] **Impl**: 实现基础 `.pat` 文件解析器 (支持 RLE, Mode 转换)。
+> [!NOTE]
+> 此阶段目标：让用户导入 ABR 时，自动提取内嵌的 Pattern 资源到 Pattern Library。
 
-### Phase 3.2: ABR 集成 (High Complexity)
+- [ ] **Infra**: 实现 `PatternLibrary` 结构与 `CAS` 存储逻辑 (Hash计算, 文件读写)。
+- [ ] **Parser**: 在 `AbrParser` 中添加 `patt` Section 扫描逻辑。
+- [ ] **Parser**: 实现 `PatParser` 解析 `patt` Section 中的图案数据。
+- [ ] **Integration**: ABR 导入流程调用 `PatternLibrary.import()` 注册提取的 Patterns。
+- [ ] **UI**: 在导入完成提示中显示 "Extracted N patterns"。
 
-- [ ] **Impl**: 升级 `AbrParser` 为 Multi-Pass 架构 (Top-level Scanner)。
-- [ ] **Impl**: 实现 `desc` 块解析器，提取 Brush-Texture 映射关系 (Key: `Txtr`).
-- [ ] **Impl**: 实现 `AbrParseContext` 并完成 `samp` (Brush) 与 `patt`/`desc` (Texture) 的重组。
-- [ ] **Impl**: 兼容性处理：保留对旧版“嵌入式 Txtr”结构的支持。
+### Phase 2: Pattern 外部导入支持
 
-### Phase 3.3: 渲染实现
+- [ ] **Parser**: 实现独立 `.pat` 文件解析器 (支持 RLE, Mode 转换)。
+- [ ] **UI**: 添加 "Import Patterns..." 菜单项。
+- [ ] **UI**: Pattern Library 面板 (预览、搜索、删除)。
 
-- [ ] **Impl**: `BrushShader` 增加 Pattern Uniforms (包含 `u_canvas_offset`).
-- [ ] **Impl**: 实现 `Texturize` 核心算法 (Canvas Space UV + Depth Mix).
-- [ ] **Impl**: 实现 Rust CPU 端 `rasterize_dab_cpu` 中的纹理采样逻辑.
+### Phase 3: Brush-Pattern 链接重建 (High Complexity)
+
+- [ ] **Parser**: 升级 `AbrParser` 为 Multi-Pass 架构 (Top-level Scanner)。
+- [ ] **Parser**: 实现 `desc` 块解析器，提取 Brush-Texture 映射关系 (Key: `Txtr`)。
+- [ ] **Parser**: 实现 `AbrParseContext` 并完成 `samp` / `patt` / `desc` 的重组。
+- [ ] **Compat**: 保留对旧版"嵌入式 Txtr"结构的兼容支持。
+
+### Phase 4: 渲染实现
+
+- [ ] **Shader**: `BrushShader` 增加 Pattern Uniforms (包含 `u_canvas_offset`)。
+- [ ] **Shader**: 实现 `Texturize` 核心算法 (Canvas Space UV + Depth Mix)。
+- [ ] **CPU**: 实现 TypeScript CPU 端 `strokeBuffer.ts` 中的纹理采样逻辑 (`applyPatternTexture`)。
 - [ ] **UI**: 笔刷设置面板增加 "Texture" 选项卡 (预览图 + 参数滑块)。
 
 ## 6. 验证计划
+
+### Phase 1 验证
+
+1.  **Unit Test**: 构造含 `patt` Section 的测试 ABR 文件，验证 Pattern 提取。
+2.  **Integration Test**: 导入 `liuyang_paintbrushes.abr`，断言 PatternLibrary 新增 N 个 Patterns。
+
+### Phase 2+ 验证
 
 1.  **Unit Test**: 构造极简的 `.pat` 文件进行解析测试。
 2.  **Integration Test**: 导入一个已知只含引用的 ABR，断言其 Pattern 状态为 Missing。

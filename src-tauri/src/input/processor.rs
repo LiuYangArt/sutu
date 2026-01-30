@@ -205,6 +205,7 @@ impl Default for InputProcessor {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

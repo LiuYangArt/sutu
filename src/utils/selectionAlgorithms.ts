@@ -9,8 +9,11 @@ export function combineMasks(base: ImageData, added: ImageData, mode: SelectionM
   const result = new ImageData(width, height);
 
   for (let i = 0; i < base.data.length; i += 4) {
-    const baseAlpha = base.data[i + 3] ?? 0;
-    const addedAlpha = added.data[i + 3] ?? 0;
+    const baseAlpha = base.data[i + 3];
+    const addedAlpha = added.data[i + 3];
+
+    // Safety check for undefined (though iterating by length should be safe)
+    if (baseAlpha === undefined || addedAlpha === undefined) continue;
 
     let finalAlpha = 0;
 
@@ -39,6 +42,7 @@ export function combineMasks(base: ImageData, added: ImageData, mode: SelectionM
       result.data[i + 2] = 255; // B
       result.data[i + 3] = finalAlpha; // A
     } else {
+      // Clear pixel (default is 0,0,0,0 but explicit is clearer)
       result.data[i] = 0;
       result.data[i + 1] = 0;
       result.data[i + 2] = 0;
@@ -119,44 +123,11 @@ export function traceMaskToPaths(mask: ImageData): SelectionPoint[][] {
           !isSelected(x, y + 1);
 
         if (isBoundary) {
-          // Check if this pixel is already part of a known path
-          // If not, trace it.
-          // Since this check is expensive, maybe we can simplify:
-          // Just scan for transitions.
-          // Left-to-Right scan:
-          // If we cross from 0 to 1, we found an Outer boundary.
-          // If we cross from 1 to 0, we found a Hole boundary?
-
-          // Let's implement the specific logic:
-          // If data[x,y] == 1 and visitedStart[x,y] is false...
-          // We assume visitedStart marks pixels that have been used as a START point.
-          // But that's not enough. We might hit the middle of a contour.
-
-          // Better approach: "Scheider's algorithm" or similar.
-          // For this task, maybe we can rely on a simplified version:
-          // Only distinct islands need distinct paths.
-          // Holes are also paths.
-
-          // Let's try to find a pixel that is 1, and verify if it's already 'traced'.
-          // To do this efficiently, we can mark the boundary pixels in a bitmap 'tracedPixels' as we trace them.
-
-          // Note: Selection uses '1' for selected.
-
-          // Logic:
-          // if (is 1) and (not traced):
-          //    if (is boundary):
-          //       trace() -> adds to paths, marks all boundary pixels as traced.
-
-          // Wait, if we use a bitmap for 'traced', we are good.
-          // But a pixel can be visited multiple times if the line doubles back?
-          // In Moore tracing, we stop when we return to start.
-
+          // Check if this pixel is already a known start point to avoid retracing
           if (visitedStart[idx]) continue;
 
-          // Valid start?
-          // We need an "entry direction" for Moore.
-          // If we come from left (x-1 is 0), enter from West.
-          let backtrack = null;
+          // Determine entry direction for Moore-Neighbor tracing
+          let backtrack: { x: number; y: number } | null = null;
           if (!isSelected(x - 1, y)) backtrack = { x: x - 1, y };
           else if (!isSelected(x, y - 1)) backtrack = { x, y: y - 1 };
           else if (!isSelected(x + 1, y)) backtrack = { x: x + 1, y };

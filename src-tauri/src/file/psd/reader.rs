@@ -368,6 +368,7 @@ fn psd_blend_mode_to_string(mode_debug: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

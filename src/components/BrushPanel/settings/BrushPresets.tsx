@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useToolStore, BrushTexture } from '@/stores/tool';
-import { BrushPreset, DEFAULT_ROUND_BRUSH, ImportAbrResult } from '../types';
+import {
+  BrushPreset,
+  DEFAULT_ROUND_BRUSH,
+  DEFAULT_TEXTURE_SETTINGS,
+  ImportAbrResult,
+} from '../types';
 import { BrushThumbnail } from '../BrushThumbnail';
 
 interface BrushPresetsProps {
@@ -26,14 +31,14 @@ export function BrushPresets({
     setBrushAngle,
     setBrushTexture,
     clearBrushTexture,
+    setTextureEnabled,
+    setTextureSettings,
   } = useToolStore();
 
   /** Import ABR file (optimized: zero-encoding, LZ4 compression) */
   const handleImportABR = async () => {
     setIsImporting(true);
     setImportError(null);
-
-    const frontendStart = performance.now();
 
     try {
       const selected = await open({
@@ -46,15 +51,15 @@ export function BrushPresets({
           path: selected,
         });
 
-        const frontendTime = performance.now() - frontendStart;
+        // Add presets (dedupe by ID to prevent React key conflicts)
+        const existingIds = new Set(importedPresets.map((p) => p.id));
+        const newPresets = result.presets.filter((p) => !existingIds.has(p.id));
+        setImportedPresets([...importedPresets, ...newPresets]);
 
-        // Frontend benchmark log
-        console.log(
-          `[ABR Import] Frontend received ${result.presets.length} brushes in ${frontendTime.toFixed(2)}ms`
-        );
-        console.log(`[ABR Import] Backend benchmark:`, result.benchmark);
-
-        setImportedPresets(result.presets);
+        // Add patterns if any
+        if (result.patterns && result.patterns.length > 0) {
+          useToolStore.getState().appendPatterns(result.patterns);
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -93,6 +98,22 @@ export function BrushPresets({
       // Clear texture for procedural brushes
       clearBrushTexture();
     }
+
+    // Apply texture settings from preset (Photoshop Texture panel)
+    // Enable texture only if preset explicitly has texture settings enabled
+    // Note: hasTexture indicates sampled brush (tip image), NOT Texture Tab
+    const shouldEnableTexture = preset.textureSettings?.enabled === true;
+
+    if (preset.textureSettings) {
+      // Use preset's texture settings if available
+      setTextureSettings(preset.textureSettings);
+    } else {
+      // Reset to defaults if preset has no texture settings
+      setTextureSettings(DEFAULT_TEXTURE_SETTINGS);
+    }
+
+    // Enable texture based on preset's texture settings, not brush tip type
+    setTextureEnabled(shouldEnableTexture);
   };
 
   return (
@@ -132,6 +153,7 @@ export function BrushPresets({
             ) : (
               <div className="abr-preset-placeholder">{Math.round(preset.diameter)}</div>
             )}
+            <span className="abr-preset-name">{preset.name}</span>
           </button>
         ))}
       </div>

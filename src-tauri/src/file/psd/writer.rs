@@ -472,6 +472,7 @@ fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

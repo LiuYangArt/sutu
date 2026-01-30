@@ -3,7 +3,7 @@
 //! Provides save/load functionality for PSD files with layer support.
 //! Uses the `psd` crate for reading and custom implementation for writing.
 
-mod compression;
+pub mod compression;
 mod reader;
 mod types;
 mod writer;

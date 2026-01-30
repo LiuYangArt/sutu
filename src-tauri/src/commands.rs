@@ -481,7 +481,18 @@ use crate::brush::soft_dab::{render_soft_dab, GaussParams};
 // ============================================================================
 
 use crate::abr::{AbrBrush, AbrParser, BrushPreset};
-use crate::brush::cache_brush_gray;
+use crate::brush::{cache_brush_gray, cache_pattern_rgba};
+
+/// Pattern metadata for frontend
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatternInfo {
+    pub id: String,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub mode: String,
+}
 
 /// ABR import result with benchmark info
 #[derive(Debug, Clone, Serialize)]
@@ -489,6 +500,8 @@ use crate::brush::cache_brush_gray;
 pub struct ImportAbrResult {
     /// Brush presets (metadata only, textures via protocol)
     pub presets: Vec<BrushPreset>,
+    /// Imported patterns (metadata)
+    pub patterns: Vec<PatternInfo>,
     /// Benchmark timing info
     pub benchmark: AbrBenchmark,
 }
@@ -507,6 +520,8 @@ pub struct AbrBenchmark {
     pub cache_ms: f64,
     /// Number of brushes loaded
     pub brush_count: usize,
+    /// Number of patterns (textures) loaded
+    pub pattern_count: usize,
     /// Total raw texture bytes
     pub raw_bytes: usize,
     /// Total compressed bytes
@@ -607,12 +622,134 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         parse_ms
     );
 
+    // Log pattern count for debugging
+    if !abr_file.patterns.is_empty() {
+        tracing::info!(
+            "[ABR Import] Found {} patterns (textures)",
+            abr_file.patterns.len()
+        );
+        for (i, p) in abr_file.patterns.iter().enumerate() {
+            tracing::info!(
+                "[ABR Pattern #{}] Name='{}' ID='{}' FoundInPatt=true",
+                i,
+                p.name,
+                p.id
+            );
+        }
+    }
+
     // Step 3: Cache textures and build presets
     let cache_start = std::time::Instant::now();
     let mut raw_bytes: usize = 0;
+
+    // Cache patterns first
+    let mut pattern_infos = Vec::new();
+    let mut pattern_name_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    for pattern in &abr_file.patterns {
+        // Use decode_image_with_dimensions() to get both RGBA data AND actual dimensions
+        // The VMA structure may have different dimensions than pattern metadata
+        let (rgba_data, actual_width, actual_height) = match pattern.decode_image_with_dimensions()
+        {
+            Some(result) => result,
+            None => {
+                tracing::warn!(
+                    "[ABR Import] Failed to decode pattern '{}' ({}x{}, {})",
+                    pattern.name,
+                    pattern.width,
+                    pattern.height,
+                    pattern.mode_name()
+                );
+                continue;
+            }
+        };
+
+        {
+            if pattern.id.is_empty() {
+                // Generate a UUID if missing - though parser usually handles this
+                continue;
+            }
+
+            tracing::info!(
+                "[BrushPresets] Imported pattern: '{}' ({}x{} -> actual {}x{}, {}) ID: {}",
+                pattern.name,
+                pattern.width,
+                pattern.height,
+                actual_width,
+                actual_height,
+                pattern.mode_name(),
+                pattern.id
+            );
+
+            // CACHE THE PATTERN WITH ACTUAL DIMENSIONS!
+            // Use actual_width/height from VMA, not pattern metadata
+            cache_pattern_rgba(
+                pattern.id.clone(),
+                rgba_data, // Use the converted RGBA data
+                actual_width,
+                actual_height,
+                pattern.name.clone(),
+                pattern.mode_name().to_string(),
+            );
+
+            pattern_infos.push(PatternInfo {
+                id: pattern.id.clone(),
+                name: pattern.name.clone(),
+                width: actual_width,
+                height: actual_height,
+                mode: pattern.mode_name().to_string(),
+            });
+
+            // Add to name map for fallback lookup
+            pattern_name_map.insert(pattern.name.clone(), pattern.id.clone());
+
+            raw_bytes += pattern.data.len();
+        }
+    }
+
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
 
-    for brush in abr_file.brushes {
+    for mut brush in abr_file.brushes {
+        // Debug connection between brush and pattern
+        if let Some(ref mut tex) = brush.texture_settings {
+            tracing::info!(
+                "[ABR Brush Link] Brush '{}' requests Pattern ID '{:?}' Name '{:?}'",
+                brush.name,
+                tex.pattern_id,
+                tex.pattern_name
+            );
+
+            // Resolution Logic:
+            let mut resolved = false;
+            // 1. Check if pattern_id exists in our loaded patterns
+            if let Some(ref pid) = tex.pattern_id {
+                if pattern_infos.iter().any(|p| p.id == *pid) {
+                    resolved = true;
+                }
+            }
+
+            // 2. Fallback: Lookup by Name
+            if !resolved {
+                if let Some(ref pname) = tex.pattern_name {
+                    if let Some(mapped_id) = pattern_name_map.get(pname) {
+                        tracing::warn!(
+                            "[ABR Fix] Resolved pattern mismatch for brush '{}': UUID '{:?}' -> Name '{}' -> ID '{}'",
+                            brush.name,
+                            tex.pattern_id,
+                            pname,
+                            mapped_id
+                        );
+                        tex.pattern_id = Some(mapped_id.clone());
+                        resolved = true;
+                    }
+                }
+            }
+
+            if !resolved && tex.enabled {
+                tracing::warn!("[ABR Warning] Brush '{}' has texture enabled but pattern could not be resolved.", brush.name);
+            }
+        }
         // Generate ID first (before moving brush)
         let id = brush.uuid.clone().unwrap_or_else(|| {
             // Generate simple UUID
@@ -672,12 +809,14 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
     Ok(ImportAbrResult {
         presets,
+        patterns: pattern_infos,
         benchmark: AbrBenchmark {
             total_ms,
             read_ms,
             parse_ms,
             cache_ms,
             brush_count,
+            pattern_count: abr_file.patterns.len(),
             raw_bytes,
             compressed_bytes,
         },
@@ -717,6 +856,7 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
         cursor_path,
         cursor_bounds,
+        texture_settings: brush.texture_settings,
     }
 }
 
@@ -817,6 +957,7 @@ pub fn detect_file_format(path: String) -> Option<FileFormat> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -847,5 +988,63 @@ mod tests {
         let info = get_system_info();
         assert!(!info.platform.is_empty());
         assert!(!info.arch.is_empty());
+    }
+
+    #[test]
+    fn test_build_preset_preserves_texture_settings() {
+        use crate::abr::{AbrBrush, TextureSettings};
+
+        let texture_settings = TextureSettings {
+            enabled: true,
+            pattern_id: Some("test-pattern-id".to_string()),
+            ..Default::default()
+        };
+
+        let brush = AbrBrush {
+            name: "Test Brush".to_string(),
+            uuid: Some("test-uuid".to_string()),
+            tip_image: None,
+            diameter: 100.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: None,
+            dynamics: None,
+            is_computed: false,
+            texture_settings: Some(texture_settings),
+        };
+
+        let preset = build_preset_with_id(brush, "preset-id".to_string());
+
+        assert!(preset.texture_settings.is_some());
+        assert_eq!(
+            preset.texture_settings.unwrap().pattern_id,
+            Some("test-pattern-id".to_string())
+        );
+    }
+
+    #[test]
+    fn test_planar_decoding() {
+        // R: [10, 20], G: [30, 40], B: [50, 60]
+        // Flattened Planar: 10, 20, 30, 40, 50, 60
+        // Expected RGBA: (10,30,50,255), (20,40,60,255)
+
+        let decoded: &[u8] = &[10, 20, 30, 40, 50, 60];
+        let pixel_count = 2;
+        let area = pixel_count;
+        let mut rgba_data = Vec::new();
+
+        if decoded.len() >= area * 3 {
+            let (r_plane, rest) = decoded.split_at(area);
+            let (g_plane, b_rest) = rest.split_at(area);
+            let b_plane = &b_rest[..area];
+
+            for i in 0..area {
+                rgba_data.extend_from_slice(&[r_plane[i], g_plane[i], b_plane[i], 255]);
+            }
+        }
+
+        assert_eq!(rgba_data.len(), 8);
+        assert_eq!(rgba_data, vec![10, 30, 50, 255, 20, 40, 60, 255]);
     }
 }

@@ -28,6 +28,9 @@ import {
   DEFAULT_SCENARIOS,
   downloadBenchmarkReport,
   type BenchmarkReport,
+  type LatencyProfiler,
+  type FPSCounter,
+  type LagometerMonitor,
 } from '@/benchmark';
 import { runLatencyBenchmark } from '@/utils/LatencyTest';
 import './DebugPanel.css';
@@ -383,10 +386,10 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       });
 
       const report = await runner.runScenarios(DEFAULT_SCENARIOS, {
-        latencyProfiler: bench.latencyProfiler,
-        fpsCounter: bench.fpsCounter,
-        lagometer: bench.lagometer,
-      } as any);
+        latencyProfiler: bench.latencyProfiler as LatencyProfiler,
+        fpsCounter: bench.fpsCounter as FPSCounter,
+        lagometer: bench.lagometer as LagometerMonitor,
+      });
 
       setLastReport(report);
       const summary = `Avg FPS: ${report.summary.avgFps.toFixed(1)}\nAvg Latency: ${report.summary.avgRenderLatency.toFixed(2)}ms\nMax Lag: ${report.summary.maxVisualLag.toFixed(1)}px`;

@@ -17,30 +17,29 @@ export function PressureToggle({ enabled, onToggle, title }: PressureToggleProps
   );
 }
 
-/** Control source option for Shape Dynamics */
-export interface ControlSourceOption {
+export interface SelectOption {
   value: string;
   label: string;
 }
 
-interface ControlSourceSelectProps {
+interface SelectRowProps {
   label: string;
   value: string;
-  options: ControlSourceOption[];
+  options: SelectOption[];
   onChange: (value: string) => void;
   disabled?: boolean;
 }
 
-/** Control source dropdown for Shape Dynamics parameters */
-export function ControlSourceSelect({
+/** Generic select dropdown row */
+export function SelectRow({
   label,
   value,
   options,
   onChange,
   disabled = false,
-}: ControlSourceSelectProps): JSX.Element {
+}: SelectRowProps): JSX.Element {
   return (
-    <div className="control-source-row">
+    <div className={`control-source-row ${disabled ? 'disabled' : ''}`}>
       <span className="control-source-label">{label}</span>
       <select
         className="control-source-select"
@@ -69,6 +68,7 @@ interface SliderRowProps {
   pressureEnabled?: boolean;
   onPressureToggle?: () => void;
   pressureTitle?: string;
+  disabled?: boolean;
 }
 
 /** Slider row component for brush parameters */
@@ -83,9 +83,10 @@ export function SliderRow({
   pressureEnabled,
   onPressureToggle,
   pressureTitle,
+  disabled = false,
 }: SliderRowProps): JSX.Element {
   return (
-    <div className="brush-setting-row">
+    <div className={`brush-setting-row ${disabled ? 'disabled' : ''}`}>
       <span className="brush-setting-label">{label}</span>
       {onPressureToggle && pressureTitle && (
         <PressureToggle
@@ -101,6 +102,7 @@ export function SliderRow({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        disabled={disabled}
       />
       <span className="brush-setting-value">{displayValue}</span>
     </div>

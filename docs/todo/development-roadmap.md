@@ -540,7 +540,7 @@
   - [x] GPU Timestamp Query
   - [x] BenchmarkRunner 自动化
 - [x] 视觉一致性测试 - 详见 `tests/visual/gpu-cpu-comparison.html`
-- [ ] 修复 Clippy 警告
+- [x] 修复 Clippy 警告
 
 ### 文档
 
