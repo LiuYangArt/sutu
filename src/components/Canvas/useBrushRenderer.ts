@@ -20,6 +20,7 @@ import {
   ColorDynamicsSettings,
   TransferSettings,
 } from '@/stores/tool';
+import type { TextureSettings } from '@/components/BrushPanel/types';
 import { RenderMode } from '@/stores/settings';
 import { LatencyProfiler } from '@/benchmark';
 import {
@@ -71,6 +72,9 @@ export interface BrushRenderConfig {
   // Transfer settings (Photoshop-compatible)
   transferEnabled: boolean;
   transfer?: TransferSettings;
+  // Texture settings (Photoshop-compatible pattern texture)
+  textureEnabled: boolean;
+  textureSettings?: TextureSettings | null;
 }
 
 export interface UseBrushRendererProps {
@@ -392,6 +396,7 @@ export function useBrushRenderer({
             flipX: dabFlipX,
             flipY: dabFlipY,
             wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
+            textureSettings: config.textureEnabled ? config.textureSettings : undefined,
           };
 
           if (backend === 'gpu' && gpuBufferRef.current) {

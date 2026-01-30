@@ -344,11 +344,11 @@ function applyPatternTexture(
 > [!NOTE]
 > 此阶段目标：让用户导入 ABR 时，自动提取内嵌的 Pattern 资源到 Pattern Library。
 
-- [ ] **Infra**: 实现 `PatternLibrary` 结构与 `CAS` 存储逻辑 (Hash计算, 文件读写)。
-- [ ] **Parser**: 在 `AbrParser` 中添加 `patt` Section 扫描逻辑。
-- [ ] **Parser**: 实现 `PatParser` 解析 `patt` Section 中的图案数据。
-- [ ] **Integration**: ABR 导入流程调用 `PatternLibrary.import()` 注册提取的 Patterns。
-- [ ] **UI**: 在导入完成提示中显示 "Extracted N patterns"。
+- [x] **Infra**: 实现 `PatternLibrary` 结构与 `CAS` 存储逻辑 (Hash计算, 文件读写)。
+- [x] **Parser**: 在 `AbrParser` 中添加 `patt` Section 扫描逻辑。
+- [x] **Parser**: 实现 `PatParser` 解析 `patt` Section 中的图案数据。
+- [x] **Integration**: ABR 导入流程调用 `PatternLibrary.import()` 注册提取的 Patterns。
+- [x] **UI**: 在导入完成提示中显示 "Extracted N patterns"。
 
 ### Phase 2: Pattern 外部导入支持
 

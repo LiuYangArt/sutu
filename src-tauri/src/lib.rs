@@ -11,6 +11,7 @@ pub mod brush;
 pub mod commands;
 pub mod file;
 pub mod input;
+pub mod pattern;
 
 use tauri::http::{Response, StatusCode};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -28,6 +29,9 @@ pub fn init() {
 
     // Initialize layer cache
     file::init_cache();
+
+    // Initialize pattern library
+    pattern::library::init_library();
 
     tracing::info!("PaintBoard initializing...");
 }
@@ -197,15 +201,22 @@ pub fn run() {
             commands::save_project,
             commands::load_project,
             commands::detect_file_format,
+            // Pattern Library
+            commands::get_patterns,
+            commands::import_pat_file,
+            commands::delete_pattern,
+            commands::rename_pattern,
+            commands::move_pattern_to_group,
+            commands::rename_pattern_group,
             // Benchmark
             commands::report_benchmark,
             bench::start_benchmark,
         ])
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(debug_assertions)]
             {
                 use tauri::Manager;
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) = _app.get_webview_window("main") {
                     window.open_devtools();
                 }
             }

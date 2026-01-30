@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react'
 import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { SettingsPanel } from './components/SettingsPanel';
+import { PatternLibraryPanel } from './components/PatternLibrary';
 import { useDocumentStore } from './stores/document';
 import { useTabletStore } from './stores/tablet';
 import { useToolStore } from './stores/tool';
@@ -13,6 +14,14 @@ import { usePanelStore } from './stores/panel';
 
 // Lazy load DebugPanel (only used in dev mode)
 const DebugPanel = lazy(() => import('./components/DebugPanel'));
+
+// Extend Window interface for global functions
+declare global {
+  interface Window {
+    __openPatternLibrary?: () => void;
+    __canvasFillLayer?: (color: string) => void;
+  }
+}
 
 // Check if running in Tauri environment
 const isTauri = () => {
@@ -33,6 +42,7 @@ const waitForTauri = async (maxRetries = 50, interval = 100): Promise<boolean> =
 function App() {
   const [isReady, setIsReady] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [showPatternLibrary, setShowPatternLibrary] = useState(false);
   const initDocument = useDocumentStore((s) => s.initDocument);
   const tabletInitializedRef = useRef(false);
 
@@ -91,6 +101,13 @@ function App() {
         return;
       }
 
+      // F6: Toggle pattern library panel
+      if (e.key === 'F6') {
+        e.preventDefault();
+        setShowPatternLibrary((prev) => !prev);
+        return;
+      }
+
       // Skip other shortcuts if focus is on input elements
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
@@ -124,8 +141,24 @@ function App() {
         return;
       }
     },
-    [togglePanel, isSettingsOpen, openSettings, closeSettings, fileSave, fileOpen]
+    [
+      togglePanel,
+      isSettingsOpen,
+      openSettings,
+      closeSettings,
+      fileSave,
+      fileOpen,
+      setShowPatternLibrary,
+    ]
   );
+
+  // Expose global function to open Pattern Library
+  useEffect(() => {
+    window.__openPatternLibrary = () => setShowPatternLibrary(true);
+    return () => {
+      delete window.__openPatternLibrary;
+    };
+  }, [setShowPatternLibrary]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleDebugShortcut);
@@ -232,6 +265,11 @@ function App() {
       <PanelLayer />
       {/* Settings Panel */}
       <SettingsPanel />
+      {/* Pattern Library Panel */}
+      <PatternLibraryPanel
+        isOpen={showPatternLibrary}
+        onClose={() => setShowPatternLibrary(false)}
+      />
       {/* Debug Panel - dev mode only */}
       {showDebugPanel && (
         <Suspense fallback={null}>

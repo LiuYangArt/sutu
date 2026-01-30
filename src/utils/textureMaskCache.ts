@@ -16,8 +16,11 @@ import type { Rect } from './strokeBuffer';
 import type { BrushTexture } from '@/stores/tool';
 import { loadBrushTexture } from './brushLoader';
 import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUtils';
+import type { TextureSettings } from '@/components/BrushPanel/types';
+import type { PatternData } from './patternManager';
+import { calculateTextureInfluence } from './textureRendering';
 
-export interface TextureMaskParams {
+interface TextureMaskParams {
   /** Current brush size (diameter in pixels) */
   size: number;
   /** Brush roundness (0-1, 1 = use original aspect ratio) */
@@ -49,25 +52,35 @@ export class TextureMaskCache {
   private centerY: number = 0;
 
   /**
-   * Set the source texture (call when brush preset changes)
-   * Returns a Promise that resolves when texture is decoded
+   * Helper: Check if texture is already current or has cached ImageData
    */
-  async setTexture(texture: BrushTexture): Promise<void> {
-    // Use texture.id for change detection
+  private tryUseCachedTexture(texture: BrushTexture): boolean {
     const textureId = texture.id;
 
-    // Skip if same texture
+    // Check if same texture is already active
     if (textureId === this.currentTextureId && this.sourceImageData) {
-      return;
+      return true;
     }
 
-    // Check if texture already has cached ImageData
+    // Check if texture object has cached ImageData
     if (texture.imageData) {
       this.sourceImageData = texture.imageData;
       this.currentTextureId = textureId;
       this.invalidateCache();
-      return;
+      return true;
     }
+
+    return false;
+  }
+
+  /**
+   * Set the source texture (call when brush preset changes)
+   * Returns a Promise that resolves when texture is decoded
+   */
+  async setTexture(texture: BrushTexture): Promise<void> {
+    if (this.tryUseCachedTexture(texture)) return;
+
+    const textureId = texture.id;
 
     // Try to load via protocol first (new optimized path)
     let imageData = await loadBrushTexture(textureId, texture.width, texture.height);
@@ -94,20 +107,7 @@ export class TextureMaskCache {
    * Set texture synchronously (for immediate use, may fail)
    */
   setTextureSync(texture: BrushTexture): boolean {
-    // Use texture.id for change detection
-    const textureId = texture.id;
-
-    // Skip if same texture
-    if (textureId === this.currentTextureId && this.sourceImageData) {
-      return true;
-    }
-
-    if (texture.imageData) {
-      this.sourceImageData = texture.imageData;
-      this.currentTextureId = textureId;
-      this.invalidateCache();
-      return true;
-    }
+    if (this.tryUseCachedTexture(texture)) return true;
 
     // Try Base64 fallback for sync path
     if (texture.data) {
@@ -115,7 +115,7 @@ export class TextureMaskCache {
       if (imageData) {
         texture.imageData = imageData;
         this.sourceImageData = imageData;
-        this.currentTextureId = textureId;
+        this.currentTextureId = texture.id;
         this.invalidateCache();
         return true;
       }
@@ -279,7 +279,9 @@ export class TextureMaskCache {
     r: number,
     g: number,
     b: number,
-    _wetEdge: number = 0 // Unused: wet edge is handled at stroke buffer level
+    _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
+    textureSettings?: TextureSettings | null,
+    pattern?: PatternData
   ): Rect {
     if (!this.scaledMask) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -318,7 +320,20 @@ export class TextureMaskCache {
 
         const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-        // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
+        // Texture modulation
+        let textureMod = 1.0;
+        if (textureSettings && pattern) {
+          const depth = textureSettings.depth / 100.0;
+          textureMod = calculateTextureInfluence(
+            bufferLeft + mx,
+            bufferTop + my,
+            textureSettings,
+            pattern,
+            depth
+          );
+        }
+
+        // Standard Alpha Darken blend
         const srcAlpha = maskValue * flow;
 
         const dstR = buffer[idx]!;
@@ -326,7 +341,10 @@ export class TextureMaskCache {
         const dstB = buffer[idx + 2]!;
         const dstA = buffer[idx + 3]! / 255;
 
-        const outA = dstA >= dabOpacity - 0.001 ? dstA : dstA + (dabOpacity - dstA) * srcAlpha;
+        // Alpha Darken blending
+        const effectiveOpacity = dabOpacity * textureMod;
+        const outA =
+          dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
 
         if (outA > 0.001) {
           const hasColor = dstA > 0.001;
