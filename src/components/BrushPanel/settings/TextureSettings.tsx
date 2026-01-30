@@ -108,8 +108,6 @@ export function TextureSettings(): JSX.Element {
                 position: 'fixed',
                 left: 'calc(100vw - 600px)',
                 top: 100,
-                maxWidth: 512,
-                maxHeight: 512,
                 padding: 8,
                 background: 'var(--color-bg-primary)',
                 border: '1px solid var(--color-border)',
@@ -122,9 +120,10 @@ export function TextureSettings(): JSX.Element {
               <LZ4Image
                 src={patternUrl}
                 style={{
+                  width: 'auto',
+                  height: 'auto',
                   maxWidth: 496,
                   maxHeight: 496,
-                  objectFit: 'contain',
                   display: 'block',
                 }}
                 alt="Pattern Preview"
