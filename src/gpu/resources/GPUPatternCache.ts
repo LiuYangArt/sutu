@@ -52,10 +52,12 @@ export class GPUPatternCache {
       return false;
     }
 
-    // Destroy old texture
-    if (this.texture) {
-      this.texture.destroy();
-    }
+    // Destroy old texture:
+    // WAITING ON GC instead of explicit destroy to prevent "Destroyed texture" error
+    // if the texture is still in flight in a submitted command buffer.
+    // if (this.texture) {
+    //   this.texture.destroy();
+    // }
 
     // Create new texture
     this.texture = this.device.createTexture({
