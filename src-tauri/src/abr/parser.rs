@@ -782,7 +782,7 @@ impl AbrParser {
         // Log final texture status for brushes
         let textured_brushes = brushes
             .iter()
-            .filter(|b| b.texture_settings.as_ref().map_or(false, |t| t.enabled))
+            .filter(|b| b.texture_settings.as_ref().is_some_and(|t| t.enabled))
             .count();
         if textured_brushes > 0 {
             tracing::info!(
@@ -791,7 +791,7 @@ impl AbrParser {
             );
             for b in brushes
                 .iter()
-                .filter(|b| b.texture_settings.as_ref().map_or(false, |t| t.enabled))
+                .filter(|b| b.texture_settings.as_ref().is_some_and(|t| t.enabled))
             {
                 if let Some(tex) = &b.texture_settings {
                     tracing::info!("  Brush '{}': PatternID='{:?}' Name='{:?}' Scale={:.0}% Depth={:.0}% Mode={:?}",
@@ -841,85 +841,28 @@ impl AbrParser {
         None
     }
 
+    /// Parse pattern reference from Txtr sub-object.
+    /// Note: Actual texture parameters (scale, depth, mode, etc.) are in the root descriptor,
+    /// not in Txtr. This function only extracts pattern UUID and name.
     fn parse_texture_settings(
         txtr: &indexmap::IndexMap<String, DescriptorValue>,
     ) -> TextureSettings {
         let mut settings = TextureSettings {
-            enabled: true, // Implicitly true if Txtr exists
+            enabled: true,
             ..Default::default()
         };
 
-        // Idnt (UUID)
+        // Pattern UUID (Idnt)
         if let Some(DescriptorValue::String(id)) = txtr.get("Idnt") {
             settings.pattern_uuid = Some(id.clone());
-            // Also set pattern_id as fallback so it's not lost if linking fails
             settings.pattern_id = Some(id.clone());
         }
 
-        // PtNm (Pattern Name)
+        // Pattern Name - try both "PtNm" and "Nm" keys
         if let Some(DescriptorValue::String(name)) = txtr.get("PtNm") {
             settings.pattern_name = Some(name.clone());
-        }
-
-        // Scale (Scl ) - Percent
-        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("Scl ") {
-            settings.scale = *value as f32;
-        }
-
-        // Brightness (Brgh) - Long
-        if let Some(DescriptorValue::Integer(val)) = txtr.get("Brgh") {
-            settings.brightness = *val;
-        } else if let Some(DescriptorValue::LargeInteger(val)) = txtr.get("Brgh") {
-            settings.brightness = *val as i32;
-        }
-
-        // Contrast (Cntr) - Long
-        if let Some(DescriptorValue::Integer(val)) = txtr.get("Cntr") {
-            settings.contrast = *val;
-        } else if let Some(DescriptorValue::LargeInteger(val)) = txtr.get("Cntr") {
-            settings.contrast = *val as i32;
-        }
-
-        // Depth (Dpth) - Percent
-        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("Dpth") {
-            settings.depth = *value as f32;
-        }
-
-        // Depth Minimum
-        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("DptM") {
-            settings.minimum_depth = *value as f32;
-        }
-
-        // Depth Jitter
-        if let Some(DescriptorValue::UnitFloat { value, .. }) = txtr.get("DptJ") {
-            settings.depth_jitter = *value as f32;
-        }
-
-        // Mode (Md  ) - Enum
-        if let Some(DescriptorValue::Enum { value, .. }) = txtr.get("Md  ") {
-            settings.mode = match value.as_str() {
-                "Mltp" => super::types::TextureBlendMode::Multiply,
-                "Sbt " => super::types::TextureBlendMode::Subtract,
-                "Drkn" => super::types::TextureBlendMode::Darken,
-                "Ovrl" => super::types::TextureBlendMode::Overlay,
-                "CldD" => super::types::TextureBlendMode::ColorDodge,
-                "CldB" => super::types::TextureBlendMode::ColorBurn,
-                "LnrB" => super::types::TextureBlendMode::LinearBurn,
-                "HrdM" => super::types::TextureBlendMode::HardMix,
-                "LnrH" => super::types::TextureBlendMode::LinearHeight,
-                "Hght" => super::types::TextureBlendMode::Height,
-                _ => super::types::TextureBlendMode::Multiply,
-            };
-        }
-
-        // Invert (Invr) - Boolean
-        if let Some(DescriptorValue::Boolean(val)) = txtr.get("Invr") {
-            settings.invert = *val;
-        }
-
-        // Texture each tip (TxET) - Boolean
-        if let Some(DescriptorValue::Boolean(val)) = txtr.get("TxET") {
-            settings.texture_each_tip = *val;
+        } else if let Some(DescriptorValue::String(name)) = txtr.get("Nm  ") {
+            settings.pattern_name = Some(name.clone());
         }
 
         settings
