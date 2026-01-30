@@ -44,9 +44,9 @@ export function calculateTextureInfluence(
     textureValue = 1.0 - textureValue;
   }
 
-  // Fix: Brightness should be added, not subtracted
+  // Fix: Brightness should be subtracted to make the result lighter (less opaque)
   if (settings.brightness !== 0) {
-    textureValue += settings.brightness / 255.0;
+    textureValue -= settings.brightness / 255.0;
   }
 
   if (settings.contrast !== 0) {

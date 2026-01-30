@@ -111,24 +111,26 @@ describe('calculateTextureInfluence', () => {
   });
 
   it('should apply Brightness correctly', () => {
-    // Increase brightness by ~50% (128/255 = 0.5) -> Additive: Adds 0.5
-    // Texture Value: 0 (Black) -> 1 (White)
+    // Increase brightness by ~50% (128/255 = 0.5)
+    // Expectation: Texture value DECREASES (becomes lighter/more transparent)
+    // Texture Value: 1.0 (Opaque) -> 0.5 (Semi-transparent)
     const settings = { ...defaultSettings, brightness: 128 };
 
-    // (1,0) White (1) + 0.5 = 1.5 -> Clamped to 1.0
-    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0)).toBe(1.0);
+    // (1,0) White/Opaque (1.0) - 0.5 = 0.5
+    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0)).toBeCloseTo(0.5, 1);
 
-    // (0,0) Black (0) + 0.5 = 0.5
-    expect(calculateTextureInfluence(0, 0, settings, mockPattern, 1.0)).toBeCloseTo(0.5, 1);
+    // (0,0) Black/Transparent (0.0) - 0.5 = -0.5 -> Clamped to 0.0
+    expect(calculateTextureInfluence(0, 0, settings, mockPattern, 1.0)).toBe(0.0);
 
-    // Decrease brightness (-128) -> Additive: Subtracts 0.5
+    // Decrease brightness (-128) -> Negative subtraction = Addition 0.5
+    // Expectation: Texture value INCREASES (becomes darker/more opaque)
     const darkSettings = { ...defaultSettings, brightness: -128 };
 
-    // (1,0) White (1) - 0.5 = 0.5
-    expect(calculateTextureInfluence(1, 0, darkSettings, mockPattern, 1.0)).toBeCloseTo(0.5, 1);
+    // (1,0) White (1.0) + 0.5 = 1.5 -> Clamped to 1.0
+    expect(calculateTextureInfluence(1, 0, darkSettings, mockPattern, 1.0)).toBe(1.0);
 
-    // (0,0) Black (0) - 0.5 = -0.5 -> Clamped to 0.0
-    expect(calculateTextureInfluence(0, 0, darkSettings, mockPattern, 1.0)).toBe(0.0);
+    // (0,0) Black (0.0) + 0.5 = 0.5
+    expect(calculateTextureInfluence(0, 0, darkSettings, mockPattern, 1.0)).toBeCloseTo(0.5, 1);
   });
 
   it('should apply Contrast correctly', () => {
