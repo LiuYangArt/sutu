@@ -380,7 +380,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             // Next channel
             // If we rely on PAT file structure, maybe channels appear sequentially.
             // VMA size field tells us exactly where next VMA starts.
-            let next_pos = start_vma as u64 + 8 + s as u64;
+            let next_pos = start_vma + 8 + s as u64;
             cursor.seek(SeekFrom::Start(next_pos))?;
         }
 
@@ -413,7 +413,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             img.save(&fname)?;
             println!("  -> Saved {}", fname.display());
-        } else if channels.len() >= 1 {
+        } else if !channels.is_empty() {
             let safe_name = name
                 .chars()
                 .filter(|c| c.is_alphanumeric() || *c == '_')
