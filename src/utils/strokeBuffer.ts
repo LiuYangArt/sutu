@@ -370,7 +370,7 @@ export class StrokeAccumulator {
 
     // Resolve pattern if enabled
     let pattern: PatternData | undefined;
-    if (textureSettings?.enabled && textureSettings.patternId) {
+    if (textureSettings && textureSettings.patternId) {
       pattern = patternManager.getPattern(textureSettings.patternId);
     }
 

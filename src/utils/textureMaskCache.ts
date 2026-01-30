@@ -325,7 +325,7 @@ export class TextureMaskCache {
 
         // Texture modulation
         let textureMod = 1.0;
-        if (textureSettings && textureSettings.enabled && pattern) {
+        if (textureSettings && pattern) {
           const depth = textureSettings.depth / 100.0;
           textureMod = calculateTextureInfluence(
             bufferLeft + mx,

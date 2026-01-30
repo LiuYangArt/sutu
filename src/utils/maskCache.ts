@@ -308,7 +308,7 @@ export class MaskCache {
 
         // Texture modulation
         let textureMod = 1.0;
-        if (textureSettings && textureSettings.enabled && pattern) {
+        if (textureSettings && pattern) {
           // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
           // TextureSettings.depth is 0-100
           const depth = textureSettings.depth / 100.0;
@@ -422,7 +422,7 @@ export class MaskCache {
 
         // Texture modulation
         let textureMod = 1.0;
-        if (textureSettings && textureSettings.enabled && pattern) {
+        if (textureSettings && pattern) {
           const depth = textureSettings.depth / 100.0;
           textureMod = calculateTextureInfluence(px, py, textureSettings, pattern, depth);
         }
