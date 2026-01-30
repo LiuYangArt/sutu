@@ -9,7 +9,7 @@
  * Performance target: P99 frame time < 25ms (vs ~68ms with render pipeline)
  */
 
-import type { DabInstanceData, BoundingBox } from '../types';
+import type { DabInstanceData, BoundingBox, GPUPatternSettings } from '../types';
 import { calculateEffectiveRadius } from '../types';
 import { erfLUT } from '@/utils/maskCache';
 import type { ColorBlendMode } from '@/stores/settings';
@@ -39,6 +39,10 @@ export class ComputeBrushPipeline {
   // BindGroup cache (reduce GC pressure)
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
 
+  // Dummy texture for pattern binding (when pattern_enabled = 0)
+  // Must be compatible with sampleType: 'float' (rgba8unorm safe, rgba32float not safe without extension)
+  private dummyPatternTexture: GPUTexture;
+
   private maxDabs = 256;
   private canvasWidth: number = 0;
   private canvasHeight: number = 0;
@@ -49,10 +53,11 @@ export class ComputeBrushPipeline {
   constructor(device: GPUDevice) {
     this.device = device;
 
-    // Uniform buffer: bbox_offset(8) + bbox_size(8) + canvas_size(8) + dab_count(4) + blend_mode(4) = 32 bytes
+    // Uniform buffer: Block 0-4 (matches ComputeTextureBrushPipeline)
+    // Size increased to 112 bytes to accommodate pattern settings
     this.uniformBuffer = device.createBuffer({
       label: 'Compute Brush Uniforms',
-      size: 32,
+      size: 112, // Increased from 32
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -70,6 +75,21 @@ export class ComputeBrushPipeline {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     device.queue.writeBuffer(this.gaussianBuffer, 0, erfLUT.buffer);
+
+    // Initialize dummy pattern texture (1x1 white)
+    this.dummyPatternTexture = device.createTexture({
+      label: 'Compute Brush Dummy Pattern',
+      size: [1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    // Upload white pixel
+    device.queue.writeTexture(
+      { texture: this.dummyPatternTexture },
+      new Uint8Array([255, 255, 255, 255]),
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
 
     this.initPipeline();
   }
@@ -103,6 +123,12 @@ export class ComputeBrushPipeline {
           binding: 4,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: 'read-only-storage' },
+        },
+        // Binding 5: Pattern Texture (matches ComputeTextureBrushPipeline)
+        {
+          binding: 5,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: 'float' }, // Using 'float' for filterable/bilinear
         },
       ],
     });
@@ -147,7 +173,9 @@ export class ComputeBrushPipeline {
     encoder: GPUCommandEncoder,
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
-    dabs: DabInstanceData[]
+    dabs: DabInstanceData[],
+    patternTexture: GPUTexture | null = null,
+    patternSettings: GPUPatternSettings | null = null
   ): boolean {
     if (dabs.length === 0) return true;
 
@@ -172,16 +200,64 @@ export class ComputeBrushPipeline {
     }
 
     // Upload uniforms
-    const uniformData = new Uint32Array([
-      bbox.x,
-      bbox.y, // bbox_offset
-      bbox.width,
-      bbox.height, // bbox_size
-      this.canvasWidth,
-      this.canvasHeight, // canvas_size
-      dabs.length, // dab_count
-      this.colorBlendMode, // color_blend_mode
-    ]);
+    const uniformData = new ArrayBuffer(112); // Total size 112 bytes
+    const view = new DataView(uniformData);
+
+    // Block 0: Bounding Box
+    view.setUint32(0, bbox.x, true);
+    view.setUint32(4, bbox.y, true);
+    view.setUint32(8, bbox.width, true);
+    view.setUint32(12, bbox.height, true);
+
+    // Block 1: Canvas & Dab Count
+    view.setUint32(16, this.canvasWidth, true);
+    view.setUint32(20, this.canvasHeight, true);
+    view.setUint32(24, dabs.length, true);
+    view.setUint32(28, this.colorBlendMode, true);
+
+    // Block 2: Pattern Settings
+    const hasPattern = patternTexture && patternSettings;
+    view.setUint32(32, hasPattern ? 1 : 0, true); // pattern_enabled
+    view.setUint32(36, hasPattern && patternSettings!.invert ? 1 : 0, true); // pattern_invert
+    // Map mode string to uint (0-8)
+    // Modes: multiply(0), subtract(1), darken(2), overlay(3), color-dodge(4), color-burn(5), linear-burn(6), hard-mix(7)
+    // height/linear-height map to multiply(0) for implementation simplicity or specific shader logic?
+    // Shader expects u32.
+    // We reuse the mapping logic:
+    const modeMap: Record<string, number> = {
+      multiply: 0,
+      subtract: 1,
+      darken: 2,
+      overlay: 3,
+      'color-dodge': 4,
+      'color-burn': 5,
+      'linear-burn': 6,
+      'hard-mix': 7,
+      height: 0,
+      'linear-height': 0,
+    };
+    const modeId = hasPattern ? (modeMap[patternSettings!.mode] ?? 0) : 0;
+    view.setUint32(40, modeId, true); // pattern_mode
+    view.setFloat32(44, hasPattern ? patternSettings!.scale : 100.0, true); // pattern_scale
+
+    // Block 3: Adjustments
+    view.setFloat32(48, hasPattern ? patternSettings!.brightness : 0.0, true);
+    view.setFloat32(52, hasPattern ? patternSettings!.contrast : 0.0, true);
+    view.setFloat32(56, hasPattern ? patternSettings!.depth : 0.0, true);
+    view.setUint32(60, 0, true); // padding
+
+    // Block 4: Pattern Size
+    if (patternTexture) {
+      view.setFloat32(64, patternTexture.width, true);
+      view.setFloat32(68, patternTexture.height, true);
+    } else {
+      view.setFloat32(64, 0, true);
+      view.setFloat32(68, 0, true);
+    }
+    view.setUint32(72, 0, true); // padding
+    view.setUint32(76, 0, true); // padding
+
+    // Write buffer
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
     // Upload dab data
@@ -189,7 +265,7 @@ export class ComputeBrushPipeline {
     this.device.queue.writeBuffer(this.dabBuffer, 0, dabData.buffer);
 
     // Get or create BindGroup
-    const bindGroup = this.getOrCreateBindGroup(inputTexture, outputTexture);
+    const bindGroup = this.getOrCreateBindGroup(inputTexture, outputTexture, patternTexture);
 
     // Dispatch
     const pass = encoder.beginComputePass({ label: 'Compute Brush Pass' });
@@ -217,7 +293,9 @@ export class ComputeBrushPipeline {
     encoder: GPUCommandEncoder,
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
-    dabs: DabInstanceData[]
+    dabs: DabInstanceData[],
+    patternTexture: GPUTexture | null = null,
+    patternSettings: GPUPatternSettings | null = null
   ): boolean {
     const batchSize = MAX_DABS_PER_BATCH;
     const batchCount = Math.ceil(dabs.length / batchSize);
@@ -231,7 +309,14 @@ export class ComputeBrushPipeline {
 
     for (let i = 0; i < dabs.length; i += batchSize) {
       const batch = dabs.slice(i, i + batchSize);
-      const success = this.dispatch(encoder, currentInput, currentOutput, batch);
+      const success = this.dispatch(
+        encoder,
+        currentInput,
+        currentOutput,
+        batch,
+        patternTexture,
+        patternSettings
+      );
       if (!success) return false;
 
       // Swap for next batch (proper ping-pong)
@@ -274,11 +359,45 @@ export class ComputeBrushPipeline {
 
   /**
    * Get or create BindGroup (with caching for performance)
-   * NOTE: Caching works correctly now that textures have unique labels (A/B)
    */
-  private getOrCreateBindGroup(inputTexture: GPUTexture, outputTexture: GPUTexture): GPUBindGroup {
-    // Use texture label as cache key (PingPong textures have unique labels A/B)
-    const key = `${inputTexture.label || 'input'}_${outputTexture.label || 'output'}`;
+  private getOrCreateBindGroup(
+    inputTexture: GPUTexture,
+    outputTexture: GPUTexture,
+    patternTexture: GPUTexture | null = null
+  ): GPUBindGroup {
+    // Cache key includes pattern texture ID (if present)
+    const patternKey = patternTexture ? patternTexture.label || 'pat' : 'none';
+    const key = `${inputTexture.label || 'input'}_${outputTexture.label || 'output'}_${patternKey}`;
+
+    // Create dummy 1x1 pattern texture if none provided (needed for binding)
+    const actualPatternTexture = patternTexture;
+    if (!actualPatternTexture) {
+      // Create a 1x1 white texture as placeholder
+      // Check if we have a cached dummy, otherwise create one (should act as singleton)
+      // ...For now, assume device can handle null? No, WebGPU doesn't allow unbound entries if logic uses it?
+      // Actually, logic is gated by `pattern_enabled`.
+      // But the binding must exist.
+      // We can create a dummy 1x1 texture on the fly or reuse one.
+      // Let's rely on a getter for a shared dummy?
+      // For simplicity in this edit, creating a new one or reusing existing is tricky in "replace".
+      // BUT, ComputeTextureBrushPipeline likely handles this.
+      // Wait, binding must be populated.
+      // I will assume the caller passes a valid dummy if pattern is null, OR I create one here.
+      // Creating one here is safer.
+      // Since I can't easily add a property in this edit, I will create one locally or reuse.
+      // BETTER: Assume caller (GPUStrokeAccumulator) might pass null, so handle it.
+    }
+
+    // HACK: If no pattern texture, we MUST bind something.
+    // GPUStrokeAccumulator should ideally provide a dummy.
+    // But if I create one here, I risk leaking it if not destroyed.
+    // Let's assume inputTexture can be reused? No, dimensions mismatch.
+    // Let's try to bind inputTexture as patternTexture if null?
+    // It's a float texture.
+    // It might work as a placeholder if shader gated.
+    // But binding 5 is "texture_2d<f32>".
+    const bindTexture = actualPatternTexture || this.dummyPatternTexture;
+    // ^ Potentially dangerous if input is storage? No, input is binding 2 (sampled).
 
     let bindGroup = this.cachedBindGroups.get(key);
     if (!bindGroup) {
@@ -291,6 +410,7 @@ export class ComputeBrushPipeline {
           { binding: 2, resource: inputTexture.createView() },
           { binding: 3, resource: outputTexture.createView() },
           { binding: 4, resource: { buffer: this.gaussianBuffer } },
+          { binding: 5, resource: bindTexture.createView() },
         ],
       });
       this.cachedBindGroups.set(key, bindGroup);
@@ -388,6 +508,7 @@ export class ComputeBrushPipeline {
     this.uniformBuffer.destroy();
     this.dabBuffer.destroy();
     this.gaussianBuffer.destroy();
+    this.dummyPatternTexture.destroy();
     this.cachedBindGroups.clear();
   }
 }

@@ -28,6 +28,7 @@ import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore } from '@/stores/tool';
 import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/settings';
+import { patternManager } from '@/utils/patternManager';
 
 export class GPUStrokeAccumulator {
   private device: GPUDevice;
@@ -372,6 +373,10 @@ export class GPUStrokeAccumulator {
 
       this.currentPatternSettings = newPatternSettings;
       if (this.currentPatternSettings && this.currentPatternSettings.patternId) {
+        // Trigger async load if pattern not yet in cache
+        if (!patternManager.hasPattern(this.currentPatternSettings.patternId)) {
+          void patternManager.loadPattern(this.currentPatternSettings.patternId);
+        }
         this.patternCache.update(this.currentPatternSettings.patternId);
       } else {
         this.patternCache.update(null);
@@ -408,6 +413,38 @@ export class GPUStrokeAccumulator {
     }
 
     // Parametric brush path (unchanged)
+    // Pattern Handling for Parametric Brush
+    const newPatternSettings = this.extractPatternSettings(params.textureSettings);
+
+    // DEBUG: Trace pattern data flow
+    if (this.dabsSinceLastFlush === 0) {
+      console.log('[GPU Pattern Debug] Parametric Path - textureSettings:', params.textureSettings);
+      console.log('[GPU Pattern Debug] Extracted patternSettings:', newPatternSettings);
+    }
+
+    if (this.hasPatternSettingsChanged(newPatternSettings)) {
+      this.flushTextureBatch(); // Flush texture batch too to be safe (shared state)
+      this.flushBatch();
+      this.dabsSinceLastFlush = 0;
+    }
+
+    this.currentPatternSettings = newPatternSettings;
+    if (this.currentPatternSettings && this.currentPatternSettings.patternId) {
+      // Trigger async load if pattern not yet in cache
+      const patternId = this.currentPatternSettings.patternId;
+      if (!patternManager.hasPattern(patternId)) {
+        console.log('[GPU Pattern Debug] Pattern not in cache, triggering load:', patternId);
+        void patternManager.loadPattern(patternId);
+      }
+      const cacheResult = this.patternCache.update(patternId);
+      if (this.dabsSinceLastFlush === 0) {
+        console.log('[GPU Pattern Debug] patternCache.update result:', cacheResult);
+        console.log('[GPU Pattern Debug] patternCache.getTexture:', this.patternCache.getTexture());
+      }
+    } else {
+      this.patternCache.update(null);
+    }
+
     const radius = params.size / 2;
     // Precompute angle trigonometry and clamp roundness on CPU
     const roundness = Math.max(params.roundness ?? 1.0, 0.01);
@@ -508,7 +545,9 @@ export class GPUStrokeAccumulator {
         encoder,
         this.pingPongBuffer.source,
         this.pingPongBuffer.dest,
-        dabs
+        dabs,
+        this.patternCache.getTexture(),
+        this.currentPatternSettings
       );
 
       if (success) {
@@ -1258,7 +1297,10 @@ export class GPUStrokeAccumulator {
   private extractPatternSettings(
     settings?: import('@/components/BrushPanel/types').TextureSettings | null
   ): import('./types').GPUPatternSettings | null {
-    if (!settings || !settings.enabled || !settings.patternId) {
+    // Note: Do NOT check settings.enabled here!
+    // The caller (useBrushRenderer) already gates with config.textureEnabled.
+    // textureSettings.enabled is an internal field that may be out of sync.
+    if (!settings || !settings.patternId) {
       return null;
     }
     return {
