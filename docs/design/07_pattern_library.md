@@ -251,7 +251,7 @@ pub async fn rename_group(old_name: String, new_name: String) -> Result<(), Stri
 
 ## 4. UI 设计
 
-### 4.1 Texture Tab 中的 Pattern 选择器
+### 4.1 BrushSettings > Texture Tab 中的 Pattern 选择器
 
 在现有 `TextureSettings.tsx` 的 Pattern 缩略图区域添加交互：
 

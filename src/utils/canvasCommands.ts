@@ -9,6 +9,7 @@ type CanvasWindow = Window & {
   __canvasFillLayer?: (color: string) => void;
   __canvasRemoveLayer?: (id: string) => void;
   __canvasDuplicateLayer?: (from: string, to: string) => void;
+  __openPatternLibrary?: () => void;
 };
 
 const getWin = (): CanvasWindow => window as CanvasWindow;

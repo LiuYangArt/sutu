@@ -3,6 +3,7 @@ import { useToolStore, ControlSource } from '@/stores/tool';
 import { TextureBlendMode } from '../types';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { LZ4Image } from '@/components/common/LZ4Image';
+import { PatternPicker } from './PatternPicker';
 
 /** Control options for Texture Depth */
 const DEPTH_CONTROL_OPTIONS: SelectOption[] = [
@@ -52,6 +53,10 @@ export function TextureSettings(): JSX.Element {
 
   // Controls related to individual tip variation are disabled unless Texture Each Tip is on
   const tipVariationDisabled = disabled || !textureSettings.textureEachTip;
+
+  const handlePatternSelect = (newPatternId: string | null) => {
+    setTextureSettings({ patternId: newPatternId });
+  };
 
   return (
     <div className="brush-panel-section">
@@ -130,6 +135,21 @@ export function TextureSettings(): JSX.Element {
               />
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Pattern Picker */}
+      <div className={`dynamics-group ${disabled ? 'disabled' : ''}`} style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', minWidth: 60 }}>
+            Pattern
+          </span>
+          <PatternPicker
+            selectedId={patternId ?? null}
+            onSelect={handlePatternSelect}
+            disabled={disabled}
+            thumbnailSize={32}
+          />
         </div>
       </div>
 

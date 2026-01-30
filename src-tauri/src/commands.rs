@@ -956,6 +956,49 @@ pub fn detect_file_format(path: String) -> Option<FileFormat> {
     FileFormat::from_path(&path)
 }
 
+// ============================================================================
+// Pattern Library Commands
+// ============================================================================
+
+use crate::pattern::{self, ImportResult as PatternImportResult, PatternResource};
+
+/// Get all patterns from the library
+#[tauri::command]
+pub fn get_patterns() -> Vec<PatternResource> {
+    pattern::library::get_all_patterns()
+}
+
+/// Import a .pat file into the library
+#[tauri::command]
+pub async fn import_pat_file(path: String) -> Result<PatternImportResult, String> {
+    let path_ref = std::path::Path::new(&path);
+    pattern::library::import_pat_file(path_ref)
+}
+
+/// Delete a pattern from the library
+#[tauri::command]
+pub fn delete_pattern(id: String) -> Result<(), String> {
+    pattern::library::delete_pattern(&id)
+}
+
+/// Rename a pattern
+#[tauri::command]
+pub fn rename_pattern(id: String, new_name: String) -> Result<(), String> {
+    pattern::library::rename_pattern(&id, new_name)
+}
+
+/// Move a pattern to a different group
+#[tauri::command]
+pub fn move_pattern_to_group(id: String, group: String) -> Result<(), String> {
+    pattern::library::move_to_group(&id, group)
+}
+
+/// Rename a group
+#[tauri::command]
+pub fn rename_pattern_group(old_name: String, new_name: String) -> Result<(), String> {
+    pattern::library::rename_group(&old_name, new_name)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
