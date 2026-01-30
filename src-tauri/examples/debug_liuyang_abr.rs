@@ -1,7 +1,9 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use image::{GrayImage, Luma, Rgb, RgbImage};
 use paintboard_lib::abr::AbrParser;
 use std::fs::File;
-use std::io::{Cursor, Read, Write};
+use std::io::Read;
 use std::path::Path;
 
 /// Sanitize a pattern name for use in filenames
@@ -982,7 +984,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         row_table_start,
                                         &row_lengths[..3.min(row_lengths.len())]
                                     );
-                                    let total_compressed: usize = row_lengths.iter().sum();
+                                    let _total_compressed: usize = row_lengths.iter().sum();
                                     let data_start = row_table_start + table_size;
 
                                     // Row-by-row RLE decode
@@ -990,7 +992,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let mut stream_pos = data_start;
                                     let mut success = true;
 
-                                    for (row_idx, &comp_len) in row_lengths.iter().enumerate() {
+                                    for &comp_len in row_lengths.iter() {
                                         if stream_pos + comp_len > pattern.data.len() {
                                             success = false;
                                             break;

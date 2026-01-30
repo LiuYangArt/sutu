@@ -385,11 +385,10 @@ impl AbrParser {
         // Extract UUID string (skip leading '$' if present)
         let uuid_str = String::from_utf8_lossy(&key_bytes).to_string();
         let clean_uuid = uuid_str.trim_matches(char::from(0)).trim();
-        let final_uuid = if clean_uuid.starts_with('$') {
-            clean_uuid[1..].to_string()
-        } else {
-            clean_uuid.to_string()
-        };
+        let final_uuid = clean_uuid
+            .strip_prefix('$')
+            .unwrap_or(clean_uuid)
+            .to_string();
 
         let brush_uuid = if final_uuid.len() >= 36 {
             Some(final_uuid)

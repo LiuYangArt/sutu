@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 /// Correct ABR pattern decoder based on discovered structure
 /// Handles both normal and swapped width/height in VMA rects
 use image::{GrayImage, Luma, Rgba, RgbaImage};
@@ -86,8 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dims_match = (vma_height == pattern_height && vma_width == pattern_width)
                 || (vma_height == pattern_width && vma_width == pattern_height);
 
-            if version >= 0
-                && version <= 10
+            if (0..=10).contains(&version)
                 && size > 0
                 && size < 10000000
                 && dims_match

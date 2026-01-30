@@ -40,8 +40,6 @@ export function BrushPresets({
     setIsImporting(true);
     setImportError(null);
 
-    const frontendStart = performance.now();
-
     try {
       const selected = await open({
         multiple: false,
@@ -53,28 +51,14 @@ export function BrushPresets({
           path: selected,
         });
 
-        const frontendTime = performance.now() - frontendStart;
-
-        // Frontend benchmark log
-        console.log(
-          `[ABR Import] Frontend received ${result.presets.length} brushes, ${result.benchmark.patternCount} patterns in ${frontendTime.toFixed(2)}ms`
-        );
-        console.log(`[ABR Import] Backend benchmark:`, result.benchmark);
-
         // Add presets (dedupe by ID to prevent React key conflicts)
         const existingIds = new Set(importedPresets.map((p) => p.id));
         const newPresets = result.presets.filter((p) => !existingIds.has(p.id));
-        if (newPresets.length < result.presets.length) {
-          console.log(
-            `[ABR Import] Skipped ${result.presets.length - newPresets.length} duplicate brushes`
-          );
-        }
         setImportedPresets([...importedPresets, ...newPresets]);
 
         // Add patterns if any
         if (result.patterns && result.patterns.length > 0) {
           useToolStore.getState().appendPatterns(result.patterns);
-          console.log(`[BrushPresets] Imported ${result.patterns.length} patterns`);
         }
       }
     } catch (err) {

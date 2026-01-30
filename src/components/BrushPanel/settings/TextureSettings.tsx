@@ -36,7 +36,7 @@ function depthControlToSource(value: number): ControlSource {
 
 /** Map ControlSource to depthControl number */
 function sourceToDepthControl(source: ControlSource): number {
-  const index = DEPTH_SOURCE_MAP.indexOf(source as any);
+  const index = (DEPTH_SOURCE_MAP as readonly string[]).indexOf(source);
   return index >= 0 ? index : 0;
 }
 
