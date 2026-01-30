@@ -85,4 +85,30 @@ if (!patternManager.hasPattern(patternId)) {
 
 ## 后续建议
 
-- 考虑在 Pattern Picker UI 组件中，当用户选择 Pattern 时就预先触发加载，而不是等到渲染时才触发，以减少"第一笔无纹理"的现象。
+- [x] 考虑在 Pattern Picker UI 组件中，当用户选择 Pattern 时就预先触发加载，而不是等到渲染时才触发，以减少"第一笔无纹理"的现象。(已于 2026-01-31 实现)
+
+## 2026-01-31 更新：Pattern Pre-loading 实现
+
+针对上述建议，我们实现了 Pattern 的预加载机制，有效解决了"第一笔无纹理"的问题。
+
+### 实现方案
+
+修改了 `PatternPicker.tsx` 组件，在用户点击选择 Pattern 的瞬间（`handlePatternClick`），立即调用 `patternManager.loadPattern(id)`。
+
+```typescript
+// PatternPicker.tsx
+const handlePatternClick = (pattern: PatternResource) => {
+  onSelect(pattern.id);
+  setIsOpen(false);
+  // Pre-load pattern immediately to avoid delay on first stroke
+  void patternManager.loadPattern(pattern.id);
+};
+```
+
+### 效果
+
+利用用户关闭弹窗并移动鼠标到画布准备绘制的这段时间（通常数百毫秒到数秒），网络请求和解压过程在后台完成。当用户落笔时，`GPUStrokeAccumulator` 再次同步调用 `getPattern()` 时，数据通常已经准备就绪，从而消除了纹理加载延迟带来的视觉突变。
+
+### 代码简化
+
+同时，我们对 `PatternPicker.tsx` 进行了代码简化，将原来复杂的嵌套三元运算符重构为独立的 `renderGridContent` 函数，提升了代码的可读性。
