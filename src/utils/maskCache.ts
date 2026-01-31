@@ -417,7 +417,9 @@ export class MaskCache {
     b: number,
     _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
     textureSettings?: TextureSettings | null,
-    pattern?: PatternData
+    pattern?: PatternData,
+    dualMask?: Float32Array | null,
+    dualMode?: DualBlendMode
   ): Rect {
     const radiusX = radius;
     const radiusY = radius * roundness;
@@ -483,9 +485,28 @@ export class MaskCache {
           textureMod = calculateTextureInfluence(px, py, textureSettings, pattern, depth);
         }
 
+        // Dual Brush modulation
+        let dualMod = 1.0;
+        if (dualMask && dualMode) {
+          // For hard brush, we need to map pixel position to mask coordinates
+          // Since hard brush doesn't use mask cache, we sample from dualMask using center-relative coords
+          const maskWidth = Math.ceil(radius * 2 + 2);
+          const maskHeight = Math.ceil(radius * 2 + 2);
+          const maskCx = maskWidth / 2;
+          const maskCy = maskHeight / 2;
+          const mxFloat = px - cx + maskCx;
+          const myFloat = py - cy + maskCy;
+          const mx = Math.floor(mxFloat);
+          const my = Math.floor(myFloat);
+          if (mx >= 0 && mx < maskWidth && my >= 0 && my < maskHeight) {
+            const dualVal = dualMask[my * maskWidth + mx] ?? 0;
+            dualMod = blendDual(1.0, dualVal, dualMode);
+          }
+        }
+
         // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
         const srcAlpha = maskValue * flow;
-        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod, r, g, b);
+        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
       }
     }
 

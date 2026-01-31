@@ -587,13 +587,21 @@ export class StrokeAccumulator {
     rgb: { r: number; g: number; b: number },
     pattern?: PatternData
   ): Rect {
+    const radius = params.size / 2;
+    // Hard brush uses a mask size similar to soft brush for dual mask
+    const maskWidth = Math.ceil(radius * 2 + 2);
+    const maskHeight = Math.ceil(radius * 2 + 2);
+
+    // Prepare dual mask if dual brush is enabled
+    const dualMask = this.prepareDualMask(params, maskWidth, maskHeight);
+
     return this.maskCache.stampHardBrush(
       this.bufferData!,
       this.width,
       this.height,
       params.x,
       params.y,
-      params.size / 2, // radius
+      radius,
       params.roundness ?? 1,
       params.angle ?? 0,
       params.flow,
@@ -603,7 +611,9 @@ export class StrokeAccumulator {
       rgb.b,
       params.wetEdge ?? 0,
       params.textureSettings,
-      pattern
+      pattern,
+      dualMask,
+      params.dualBrush?.mode
     );
   }
 
