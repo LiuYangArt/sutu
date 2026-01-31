@@ -175,6 +175,7 @@ export type DualBlendMode =
 export interface DualBrushSettings {
   enabled: boolean;
   brushId: string | null; // UUID of the secondary brush
+  brushIndex: number | null; // Index in presets array (for uniqueness when UUIDs duplicate)
   brushName: string | null;
   mode: DualBlendMode;
   flip: boolean;
@@ -187,10 +188,10 @@ export interface DualBrushSettings {
   texture?: BrushTexture;
 }
 
-/** Default Dual Brush settings (off) */
 export const DEFAULT_DUAL_BRUSH: DualBrushSettings = {
   enabled: false,
   brushId: null,
+  brushIndex: null,
   brushName: null,
   mode: 'multiply',
   flip: false,
@@ -624,11 +625,11 @@ export const useToolStore = create<ToolState>()(
         transferEnabled: state.transferEnabled,
         transfer: state.transfer,
         dualBrushEnabled: state.dualBrushEnabled,
-        // Exclude texture (runtime data, loaded on demand) to avoid localStorage quota
         dualBrush: state.dualBrush
           ? {
               enabled: state.dualBrush.enabled,
               brushId: state.dualBrush.brushId,
+              brushIndex: state.dualBrush.brushIndex,
               brushName: state.dualBrush.brushName,
               mode: state.dualBrush.mode,
               flip: state.dualBrush.flip,

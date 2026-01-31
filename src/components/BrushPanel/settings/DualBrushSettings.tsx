@@ -29,6 +29,32 @@ const BLEND_MODE_OPTIONS: SelectOption[] = [
   { value: 'linearHeight', label: 'Linear Height' },
 ];
 
+// Helper to preload image data specifically for texture masks
+const loadTextureImageData = (url: string): Promise<ImageData> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous'; // Important for canvas access
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Failed to get 2d context'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      try {
+        resolve(ctx.getImageData(0, 0, img.width, img.height));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = () => reject(new Error(`Failed to load image from ${url}`));
+    img.src = url;
+  });
+};
+
 export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): JSX.Element {
   const { dualBrush, setDualBrush, dualBrushEnabled, toggleDualBrush } = useToolStore();
 
@@ -91,10 +117,11 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           {importedPresets.map((preset, index) => (
             <button
               key={`dual-${preset.id}-${index}`}
-              className={`abr-preset-item ${dualBrush.brushId === preset.id ? 'selected' : ''}`}
-              onClick={() =>
+              className={`abr-preset-item ${dualBrush.brushIndex === index ? 'selected' : ''}`}
+              onClick={() => {
                 setDualBrush({
                   brushId: preset.id,
+                  brushIndex: index,
                   brushName: preset.name,
                   texture: preset.hasTexture
                     ? {
@@ -104,8 +131,39 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
                         height: preset.textureHeight ?? 0,
                       }
                     : undefined,
-                })
-              }
+                });
+
+                // Preload and decode texture data immediately to avoid first stroke cache miss
+                if (preset.hasTexture) {
+                  const url = `project://brush/${preset.id}`;
+                  loadTextureImageData(url)
+                    .then((imageData) => {
+                      // Check if the brush is still selected before updating
+                      // Note: We access store directly to get current state
+                      const currentBrushId = useToolStore.getState().dualBrush.brushId;
+                      if (currentBrushId === preset.id) {
+                        useToolStore.setState((state) => {
+                          // Double check inside setter
+                          if (state.dualBrush.brushId !== preset.id || !state.dualBrush.texture)
+                            return state;
+
+                          return {
+                            dualBrush: {
+                              ...state.dualBrush,
+                              texture: {
+                                ...state.dualBrush.texture,
+                                imageData, // Inject the decoded data
+                              },
+                            },
+                          };
+                        });
+                      }
+                    })
+                    .catch((err) => {
+                      console.error('[DualBrush] Failed to preload texture:', err);
+                    });
+                }
+              }}
               title={preset.name}
               disabled={disabled}
             >
