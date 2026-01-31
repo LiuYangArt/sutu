@@ -709,6 +709,9 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
     }
 
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
+    // Track usage of IDs to ensure uniqueness within this import batch
+    // Map ID -> count (how many times seen so far)
+    let mut id_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for mut brush in abr_file.brushes {
         // Debug connection between brush and pattern
@@ -750,8 +753,8 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
                 tracing::warn!("[ABR Warning] Brush '{}' has texture enabled but pattern could not be resolved.", brush.name);
             }
         }
-        // Generate ID first (before moving brush)
-        let id = brush.uuid.clone().unwrap_or_else(|| {
+        // Generate base ID (from UUID or random)
+        let base_id = brush.uuid.clone().unwrap_or_else(|| {
             // Generate simple UUID
             use std::time::{SystemTime, UNIX_EPOCH};
             let now = SystemTime::now()
@@ -759,6 +762,25 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
                 .unwrap_or_default();
             format!("{:x}{:x}", now.as_secs(), now.subsec_nanos())
         });
+
+        // Ensure uniqueness
+        let count = id_counts.entry(base_id.clone()).or_insert(0);
+        let id = if *count == 0 {
+            base_id.clone()
+        } else {
+            // Append suffix for duplicates: uuid-1, uuid-2, etc.
+            format!("{}-{}", base_id, count)
+        };
+        *count += 1;
+
+        if id != base_id {
+            tracing::info!(
+                "[ABR Import] resolved duplicate ID for brush '{}': {} -> {}",
+                brush.name,
+                base_id,
+                id
+            );
+        }
 
         // Cache texture if present
         if let Some(ref tip) = brush.tip_image {
