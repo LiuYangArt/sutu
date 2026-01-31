@@ -79,3 +79,4 @@
 
 - `src-tauri/src/abr/parser.rs`: 核心解析逻辑重构
 - `src-tauri/examples/verify_brush_order_fix.rs`: 自动化验证脚本
+- `src/components/BrushPanel/settings/BrushPresets.tsx`: React key 修复
