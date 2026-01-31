@@ -268,7 +268,7 @@ export function useBrushRenderer({
 
         // Calculate secondary brush size (scale with main brush like PS)
         // Use the same scaling logic as before: relative to native size
-        let nativeSize = 128;
+        let nativeSize = 200;
         if (config.texture) {
           nativeSize = Math.max(config.texture.width, config.texture.height);
         }
@@ -276,7 +276,7 @@ export function useBrushRenderer({
         const secondarySize = dualBrush.size * scaleFactor;
 
         // Use secondary brush's own spacing (this was the missing part!)
-        const secondarySpacing = dualBrush.spacing ?? 0.25;
+        const secondarySpacing = dualBrush.spacing ?? 0.1;
 
         // Generate secondary dabs at this point
         const secondaryDabs = secondaryStamper.processPoint(
