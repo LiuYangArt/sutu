@@ -375,13 +375,16 @@ export class MaskCache {
         let srcAlpha = maskValue;
 
         // Apply Dual Brush Mask if present
+        let dualMod = 1.0;
         if (dualMask && dualMode) {
           const dualVal = dualMask[maskRowStart + mx]!;
-          srcAlpha = blendDual(srcAlpha, dualVal, dualMode);
+          // Apply to Opacity: Calculate density based on full coverage (1.0)
+          // This ensures Dual Brush acts as a ceiling/texture rather than flow modifier
+          dualMod = blendDual(1.0, dualVal, dualMode);
         }
 
         srcAlpha *= flow;
-        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod, r, g, b);
+        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
       }
     }
 

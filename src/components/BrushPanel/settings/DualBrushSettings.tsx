@@ -74,7 +74,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
         <div
           className="abr-preset-grid mini-grid"
           style={{
-            maxHeight: '150px',
+            maxHeight: '300px',
             overflowY: 'auto',
             marginTop: '8px',
             border: '1px solid #333',
