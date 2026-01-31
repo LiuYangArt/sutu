@@ -19,6 +19,7 @@ import {
   ScatterSettings,
   ColorDynamicsSettings,
   TransferSettings,
+  DualBrushSettings,
 } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { RenderMode } from '@/stores/settings';
@@ -75,6 +76,9 @@ export interface BrushRenderConfig {
   // Texture settings (Photoshop-compatible pattern texture)
   textureEnabled: boolean;
   textureSettings?: TextureSettings | null;
+  // Dual Brush settings (Photoshop-compatible)
+  dualBrushEnabled: boolean;
+  dualBrush?: DualBrushSettings;
 }
 
 export interface UseBrushRendererProps {
@@ -397,6 +401,13 @@ export function useBrushRenderer({
             flipY: dabFlipY,
             wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
             textureSettings: config.textureEnabled ? config.textureSettings : undefined,
+            dualBrush:
+              config.dualBrushEnabled && config.dualBrush
+                ? {
+                    ...config.dualBrush,
+                    brushTexture: config.dualBrush.texture,
+                  }
+                : undefined,
           };
 
           if (backend === 'gpu' && gpuBufferRef.current) {

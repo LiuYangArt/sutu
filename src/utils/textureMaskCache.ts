@@ -375,23 +375,25 @@ export class TextureMaskCache {
         }
 
         // Standard Alpha Darken blend
-        let alpha = maskValue;
+        const alpha = maskValue;
+        const srcAlpha = alpha * flow;
 
         // Apply Dual Brush Mask if present
+        // Dual brush modifies OPACITY (like texture), not flow
+        let dualMod = 1.0;
         if (dualMask && dualMode) {
           const dualVal = dualMask[maskRowStart + mx]!;
-          alpha = blendDual(alpha, dualVal, dualMode);
+          // Use maskValue as the primary to preserve brush shape; dualVal modulates density
+          dualMod = blendDual(maskValue, dualVal, dualMode);
         }
-
-        const srcAlpha = alpha * flow;
 
         const dstR = buffer[idx]!;
         const dstG = buffer[idx + 1]!;
         const dstB = buffer[idx + 2]!;
         const dstA = buffer[idx + 3]! / 255;
 
-        // Alpha Darken blending
-        const effectiveOpacity = dabOpacity * textureMod;
+        // Alpha Darken blending - dual brush affects opacity ceiling, not flow
+        const effectiveOpacity = dabOpacity * textureMod * dualMod;
         const outA =
           dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
 

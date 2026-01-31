@@ -92,7 +92,20 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
             <button
               key={`dual-${preset.id}-${index}`}
               className={`abr-preset-item ${dualBrush.brushId === preset.id ? 'selected' : ''}`}
-              onClick={() => setDualBrush({ brushId: preset.id, brushName: preset.name })}
+              onClick={() =>
+                setDualBrush({
+                  brushId: preset.id,
+                  brushName: preset.name,
+                  texture: preset.hasTexture
+                    ? {
+                        id: preset.id,
+                        data: '', // Loaded via project://brush/{id} protocol
+                        width: preset.textureWidth ?? 0,
+                        height: preset.textureHeight ?? 0,
+                      }
+                    : undefined,
+                })
+              }
               title={preset.name}
               disabled={disabled}
             >

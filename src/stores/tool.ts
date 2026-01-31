@@ -183,6 +183,8 @@ export interface DualBrushSettings {
   scatter: number; // Rust side uses f32
   bothAxes: boolean;
   count: number;
+  /** Secondary brush texture (constructed from preset) */
+  texture?: BrushTexture;
 }
 
 /** Default Dual Brush settings (off) */

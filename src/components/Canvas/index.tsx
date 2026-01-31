@@ -131,6 +131,8 @@ export function Canvas() {
     transferEnabled,
     textureEnabled,
     textureSettings,
+    dualBrush,
+    dualBrushEnabled,
     showCrosshair,
     setTool,
     setCurrentSize,
@@ -914,6 +916,8 @@ export function Canvas() {
       transfer,
       textureEnabled,
       textureSettings,
+      dualBrushEnabled,
+      dualBrush,
     };
   }, [
     currentSize,
@@ -943,6 +947,8 @@ export function Canvas() {
     transfer,
     textureEnabled,
     textureSettings,
+    dualBrushEnabled,
+    dualBrush,
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position
