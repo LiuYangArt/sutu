@@ -103,6 +103,11 @@ export class StrokeAccumulator {
   private dualMaskBuffer: Float32Array | null = null;
   private dualMaskDimensions: { width: number; height: number } = { width: 0, height: 0 };
 
+  // Stroke-level Dual Mask Accumulator (NEW: for independent secondary brush path)
+  // This accumulates secondary dabs across the entire stroke, not per-primary-dab
+  private dualMaskAccumulator: Float32Array | null = null;
+  private dualMaskAccumulatorDirty: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
+
   // Canvas sync throttling - sync every N dabs instead of every dab
   private syncCounter: number = 0;
   private static readonly SYNC_INTERVAL = 4; // Sync every 4 dabs (reduced from 2)
@@ -276,6 +281,15 @@ export class StrokeAccumulator {
     this.dualMaskBuffer = null;
     this.dualMaskDimensions = { width: 0, height: 0 };
 
+    // Clear stroke-level dual mask accumulator
+    this.dualMaskAccumulator = null;
+    this.dualMaskAccumulatorDirty = {
+      left: this.width,
+      top: this.height,
+      right: 0,
+      bottom: 0,
+    };
+
     // Don't clear syncImageData - it can be reused across strokes
   }
 
@@ -405,7 +419,137 @@ export class StrokeAccumulator {
   }
 
   /**
+   * Stamp a secondary brush dab to the stroke-level dual mask accumulator.
+   * This is called independently from primary dabs - secondary brush has its own spacing/path.
+   *
+   * The accumulator covers the entire canvas and secondary dabs are stamped at their
+   * absolute canvas coordinates. When primary dabs render, they sample from this accumulator.
+   *
+   * @param x - Canvas X coordinate
+   * @param y - Canvas Y coordinate
+   * @param size - Secondary brush size (already scaled by caller)
+   * @param dualBrush - Dual brush settings (for texture, scatter, etc.)
+   */
+  stampSecondaryDab(
+    x: number,
+    y: number,
+    size: number,
+    dualBrush: DualBrushSettings & { brushTexture?: BrushTexture }
+  ): void {
+    // Lazy initialize accumulator to canvas size
+    const accumulatorSize = this.width * this.height;
+    if (!this.dualMaskAccumulator) {
+      this.dualMaskAccumulator = new Float32Array(accumulatorSize);
+      this.dualMaskAccumulatorDirty = {
+        left: this.width,
+        top: this.height,
+        right: 0,
+        bottom: 0,
+      };
+    }
+
+    // Calculate effective size and scatter
+    const effectiveSize = Math.max(1, size);
+    const scatterAmount = ((dualBrush.scatter || 0) / 100.0) * effectiveSize;
+    const count = Math.max(1, dualBrush.count || 1);
+
+    // Setup secondary cache
+    let useTexture = false;
+    if (dualBrush.brushTexture) {
+      useTexture = true;
+      if (!this.secondaryTextureMaskCache.setTextureSync(dualBrush.brushTexture)) {
+        void this.secondaryTextureMaskCache.setTexture(dualBrush.brushTexture);
+        return; // Texture not ready yet
+      }
+      // Note: mask generation moved inside loop for per-dab angle jitter
+    }
+    // Note: for non-texture brushes, mask generation is also inside loop
+
+    // Stamp loop (for count > 1)
+    for (let i = 0; i < count; i++) {
+      // Apply scatter
+      let dx = 0;
+      let dy = 0;
+      if (scatterAmount > 0) {
+        dx = (Math.random() * 2 - 1) * scatterAmount;
+        dy = (Math.random() * 2 - 1) * scatterAmount;
+        // NOTE: bothAxes logic requires stroke direction info which we don't have here
+        // PS "single axis" scatter is perpendicular to stroke direction
+        // For now, always scatter on both axes to avoid direction-dependent artifacts
+        // TODO: Pass stroke direction to enable proper single-axis scatter
+      }
+
+      const stampX = x + dx;
+      const stampY = y + dy;
+
+      // Apply angle jitter (PS behavior: each secondary tip has random rotation)
+      const randomAngle = Math.random() * 360;
+
+      // Stamp to accumulator with rotation
+      if (useTexture) {
+        // Update mask with new angle for this dab
+        const texParams = {
+          size: effectiveSize,
+          roundness: 1,
+          angle: randomAngle,
+        };
+        if (this.secondaryTextureMaskCache.needsUpdate(texParams)) {
+          this.secondaryTextureMaskCache.generateMask(texParams);
+        }
+        this.secondaryTextureMaskCache.stampToMask(
+          this.dualMaskAccumulator,
+          this.width,
+          this.height,
+          stampX,
+          stampY,
+          1.0
+        );
+      } else {
+        // Update mask with new angle for this dab
+        const maskParams = {
+          size: effectiveSize,
+          hardness: 1.0,
+          roundness: 1.0,
+          angle: randomAngle,
+          maskType: 'gaussian' as const,
+        };
+        if (this.secondaryMaskCache.needsUpdate(maskParams)) {
+          this.secondaryMaskCache.generateMask(maskParams);
+        }
+        this.secondaryMaskCache.stampToMask(
+          this.dualMaskAccumulator,
+          this.width,
+          this.height,
+          stampX,
+          stampY,
+          1.0
+        );
+      }
+
+      // Expand dirty rect
+      const radius = effectiveSize / 2;
+      this.dualMaskAccumulatorDirty.left = Math.min(
+        this.dualMaskAccumulatorDirty.left,
+        Math.floor(stampX - radius)
+      );
+      this.dualMaskAccumulatorDirty.top = Math.min(
+        this.dualMaskAccumulatorDirty.top,
+        Math.floor(stampY - radius)
+      );
+      this.dualMaskAccumulatorDirty.right = Math.max(
+        this.dualMaskAccumulatorDirty.right,
+        Math.ceil(stampX + radius)
+      );
+      this.dualMaskAccumulatorDirty.bottom = Math.max(
+        this.dualMaskAccumulatorDirty.bottom,
+        Math.ceil(stampY + radius)
+      );
+    }
+  }
+
+  /**
    * Prepare Dual Brush Mask buffer
+
    * Returns null if dual brush is disabled or mask generation failed
    */
   private prepareDualMask(params: DabParams, width: number, height: number): Float32Array | null {
@@ -413,7 +557,11 @@ export class StrokeAccumulator {
       return null;
     }
 
-    const { dualBrush } = params;
+    // NEW: Sample from stroke-level accumulator instead of generating dabs here
+    // The secondary dabs are now generated independently via stampSecondaryDab()
+    if (!this.dualMaskAccumulator) {
+      return null; // No secondary dabs have been stamped yet
+    }
 
     // Ensure buffer size matches primary mask
     const requiredSize = width * height;
@@ -429,107 +577,30 @@ export class StrokeAccumulator {
 
     if (!this.dualMaskBuffer) return null;
 
-    // Center of the primary mask (relative to top-left of mask)
-    const centerX = width / 2;
-    const centerY = height / 2;
+    // FIX: Use params.size (square) for canvas sampling, not mask dimensions
+    // This prevents direction-dependent artifacts when primary brush has non-square aspect ratio
+    const sampleSize = params.size;
+    const dabLeft = Math.floor(params.x - sampleSize / 2);
+    const dabTop = Math.floor(params.y - sampleSize / 2);
 
-    // --- FIX 1: Relative Size Scaling ---
-    // Calculate scale relative to "Native Size" of the main brush.
-    // For Texture brushes: Native Size = Texture Width.
-    // For Procedural brushes: Assume 128px as virtual native size.
-    let nativeSize = 128;
-    if (params.texture) {
-      nativeSize = Math.max(params.texture.width, params.texture.height);
-    }
-    // Calculate scale factor: Current Brush Size / Native Size
-    // This ensures Dual Brush scales proportionally with Main Brush (both Pressure and Slider)
-    const scaleFactor = params.size / nativeSize;
+    // Sample from accumulator using square region, map to potentially non-square output buffer
+    for (let py = 0; py < height; py++) {
+      // Map output buffer Y to canvas Y (linear interpolation if sizes differ)
+      const normalizedY = py / height;
+      const canvasY = Math.floor(dabTop + normalizedY * sampleSize);
+      if (canvasY < 0 || canvasY >= this.height) continue;
 
-    // Effective Dual Brush Size
-    const effectiveSize = dualBrush.size * scaleFactor;
+      for (let px = 0; px < width; px++) {
+        // Map output buffer X to canvas X (linear interpolation if sizes differ)
+        const normalizedX = px / width;
+        const canvasX = Math.floor(dabLeft + normalizedX * sampleSize);
+        if (canvasX < 0 || canvasX >= this.width) continue;
 
-    // --- FIX 2: Spacing/Density Normalization ---
-    // User report: "Main brush spacing affects secondary brush tip density" (Incorrect)
-    // Goal: Maintain constant secondary tips per pixel of stroke.
-    // dabs/pixel = 1 / (spacing * size)
-    // To keep tips/pixel constant, tips/dab (Count) must be proportional to Spacing.
-    // Reference: If user sets Count=1 at Spacing=25%, they expect Disjoint dabs to have 1 tip.
-    const mainSpacing = params.spacing ?? 0.25;
-    const referenceSpacing = 0.25;
+        const accumulatorIdx = canvasY * this.width + canvasX;
+        const bufferIdx = py * width + px;
 
-    // Effective Count per Dab
-    const densityFactor = mainSpacing / referenceSpacing;
-    const targetCount = Math.max(1, dualBrush.count || 1) * densityFactor;
-
-    // Handle fractional count (probabilistic stamping) for low spacing
-    let finalCount = Math.floor(targetCount);
-    const fractional = targetCount - finalCount;
-    if (Math.random() < fractional) {
-      finalCount++;
-    }
-
-    if (finalCount === 0) return this.dualMaskBuffer;
-
-    // --- FIX 3: Scatter Scaling ---
-    // Scatter distance should also scale with brush size
-    const scatterAmount = ((dualBrush.scatter || 0) / 100.0) * effectiveSize;
-
-    // Setup Secondary Cache
-    let useTexture = false;
-    if (dualBrush.brushTexture) {
-      useTexture = true;
-      // Update texture cache
-      if (!this.secondaryTextureMaskCache.setTextureSync(dualBrush.brushTexture)) {
-        void this.secondaryTextureMaskCache.setTexture(dualBrush.brushTexture);
-        return null;
-      }
-
-      const texParams = {
-        size: effectiveSize,
-        roundness: 1, // Secondary roundness not fully exposed yet? Assume 1
-        angle: 0, // Secondary angle not fully exposed?
-      };
-      if (this.secondaryTextureMaskCache.needsUpdate(texParams)) {
-        this.secondaryTextureMaskCache.generateMask(texParams);
-      }
-    } else {
-      // Use standard mask cache (Soft brush fallback)
-      const maskParams = {
-        size: effectiveSize,
-        hardness: 1.0,
-        roundness: 1.0,
-        angle: 0,
-        maskType: 'gaussian' as const,
-      };
-      if (this.secondaryMaskCache.needsUpdate(maskParams)) {
-        this.secondaryMaskCache.generateMask(maskParams);
-      }
-    }
-
-    // Stamp loop
-    for (let i = 0; i < finalCount; i++) {
-      // Scatter Calculation
-      let dx = 0;
-      let dy = 0;
-
-      if (scatterAmount > 0) {
-        dx = (Math.random() * 2 - 1) * scatterAmount;
-        dy = (Math.random() * 2 - 1) * scatterAmount;
-
-        if (!dualBrush.bothAxes) {
-          // If not both axes, typically scatter is perpendicular to stroke?
-          // For inner scatter, we assume isotropic for now as we lack dab rotation context here
-        }
-      }
-
-      const x = centerX + dx;
-      const y = centerY + dy;
-
-      // Stamp
-      if (useTexture) {
-        this.secondaryTextureMaskCache.stampToMask(this.dualMaskBuffer, width, height, x, y, 1.0);
-      } else {
-        this.secondaryMaskCache.stampToMask(this.dualMaskBuffer, width, height, x, y, 1.0);
+        // Copy the accumulated secondary brush value
+        this.dualMaskBuffer[bufferIdx] = this.dualMaskAccumulator[accumulatorIdx] ?? 0;
       }
     }
 

@@ -128,6 +128,9 @@ export function useBrushRenderer({
   // Shared stamper (generates dab positions)
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
 
+  // Secondary brush stamper (independent path for Dual Brush)
+  const secondaryStamperRef = useRef<BrushStamper>(new BrushStamper());
+
   // Optimization 7: Finishing lock to prevent "tailgating" race condition
   // When stroke 2 starts during stroke 1's await prepareEndStroke(),
   // stroke 2's clear() would wipe stroke 1's previewCanvas before composite.
@@ -209,6 +212,7 @@ export function useBrushRenderer({
       }
 
       stamperRef.current.beginStroke();
+      secondaryStamperRef.current.beginStroke();
 
       // Shape Dynamics: Reset direction tracking for new stroke
       prevDabPosRef.current = null;
@@ -250,6 +254,47 @@ export function useBrushRenderer({
 
       // Get dab positions from stamper
       const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
+
+      // ===== Dual Brush: Generate secondary dabs independently =====
+      // Secondary brush has its own spacing and path, separate from primary brush
+      if (
+        config.dualBrushEnabled &&
+        config.dualBrush &&
+        config.dualBrush.texture?.imageData &&
+        cpuBufferRef.current
+      ) {
+        const dualBrush = config.dualBrush;
+        const secondaryStamper = secondaryStamperRef.current;
+
+        // Calculate secondary brush size (scale with main brush like PS)
+        // Use the same scaling logic as before: relative to native size
+        let nativeSize = 128;
+        if (config.texture) {
+          nativeSize = Math.max(config.texture.width, config.texture.height);
+        }
+        const scaleFactor = size / nativeSize;
+        const secondarySize = dualBrush.size * scaleFactor;
+
+        // Use secondary brush's own spacing (this was the missing part!)
+        const secondarySpacing = dualBrush.spacing ?? 0.25;
+
+        // Generate secondary dabs at this point
+        const secondaryDabs = secondaryStamper.processPoint(
+          x,
+          y,
+          pressure,
+          secondarySize,
+          secondarySpacing
+        );
+
+        // Stamp each secondary dab to the stroke-level accumulator
+        for (const secDab of secondaryDabs) {
+          cpuBufferRef.current.stampSecondaryDab(secDab.x, secDab.y, secondarySize, {
+            ...dualBrush,
+            brushTexture: dualBrush.texture,
+          });
+        }
+      }
 
       // Shape Dynamics: Check if we need to apply dynamics
       const useShapeDynamics =
