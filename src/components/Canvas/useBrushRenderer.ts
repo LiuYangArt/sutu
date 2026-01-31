@@ -35,6 +35,7 @@ import {
   computeDabShape,
   calculateDirection,
   isShapeDynamicsActive,
+  computeControlledSize,
   type DynamicsInput,
 } from '@/utils/shapeDynamics';
 import { applyScatter, isScatterActive } from '@/utils/scatterDynamics';
@@ -96,7 +97,7 @@ export interface BrushRenderConfig {
   opacity: number;
   hardness: number;
   maskType: MaskType; // Mask type: 'gaussian' or 'default'
-  spacing: number; // Fraction of tip short edge (0-1)
+  spacing: number; // Fraction of tip short edge (0-10)
   roundness: number; // 0-100 (100 = circle, <100 = ellipse)
   angle: number; // 0-360 degrees
   color: string;
@@ -297,22 +298,32 @@ export function useBrushRenderer({
       // Apply pressure curve
       const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
 
-      // Calculate dynamic size for stamper spacing calculation
+      // Calculate base size (pressure toggle)
       const size = config.pressureSizeEnabled ? config.size * adjustedPressure : config.size;
 
+      // Shape Dynamics size control should affect spacing (jitter does not)
+      let spacingSize = size;
+      if (config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off') {
+        const spacingInput: DynamicsInput = {
+          pressure: adjustedPressure,
+          tiltX: 0,
+          tiltY: 0,
+          rotation: 0,
+          direction: 0,
+          initialDirection: 0,
+          fadeProgress: 0,
+        };
+        spacingSize = computeControlledSize(size, config.shapeDynamics, spacingInput);
+      }
+
       // Get dab positions from stamper
-      const spacingBase = computeSpacingBasePx(size, config.roundness / 100, config.texture);
+      const spacingBase = computeSpacingBasePx(spacingSize, config.roundness / 100, config.texture);
       const spacingPx = spacingBase * config.spacing;
       const dabs = stamper.processPoint(x, y, pressure, spacingPx);
 
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush
-      if (
-        config.dualBrushEnabled &&
-        config.dualBrush &&
-        config.dualBrush.texture?.imageData &&
-        cpuBufferRef.current
-      ) {
+      if (config.dualBrushEnabled && config.dualBrush && cpuBufferRef.current) {
         const dualBrush = config.dualBrush;
         const secondaryStamper = secondaryStamperRef.current;
 
@@ -327,7 +338,12 @@ export function useBrushRenderer({
 
         // Use secondary brush's own spacing (this was the missing part!)
         const secondarySpacing = dualBrush.spacing ?? 0.1;
-        const secondarySpacingBase = computeSpacingBasePx(secondarySize, 1, dualBrush.texture);
+        const secondaryRoundness = (dualBrush.roundness ?? 100) / 100;
+        const secondarySpacingBase = computeSpacingBasePx(
+          secondarySize,
+          secondaryRoundness,
+          dualBrush.texture
+        );
         const secondarySpacingPx = secondarySpacingBase * secondarySpacing;
 
         // Generate secondary dabs at this point

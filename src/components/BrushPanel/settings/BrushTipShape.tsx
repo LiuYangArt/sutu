@@ -78,7 +78,7 @@ export function BrushTipShape(): JSX.Element {
         label="Spacing"
         value={Math.round(brushSpacing * 100)}
         min={1}
-        max={100}
+        max={1000}
         displayValue={`${Math.round(brushSpacing * 100)}%`}
         onChange={(v) => setBrushSpacing(v / 100)}
       />

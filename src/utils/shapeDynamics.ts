@@ -161,6 +161,20 @@ export function applyControlWithMinimum(
 }
 
 /**
+ * Compute size using control + minimum only (no jitter).
+ * Used for spacing so jitter does not affect interval.
+ */
+export function computeControlledSize(
+  baseSize: number,
+  settings: ShapeDynamicsSettings,
+  input: DynamicsInput
+): number {
+  const sizeControl = getControlValue(settings.sizeControl, input);
+  const size = applyControlWithMinimum(baseSize, sizeControl, settings.minimumDiameter);
+  return Math.max(1, size);
+}
+
+/**
  * Compute shape dynamics for a single dab
  *
  * This is the main entry point for Shape Dynamics calculation.

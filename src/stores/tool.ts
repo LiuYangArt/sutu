@@ -180,7 +180,8 @@ export interface DualBrushSettings {
   mode: DualBlendMode;
   flip: boolean;
   size: number; // Pixels
-  spacing: number; // 0-1
+  spacing: number; // 0-10
+  roundness?: number; // 0-100 (secondary tip shape)
   scatter: number; // Rust side uses f32
   bothAxes: boolean;
   count: number;
@@ -197,6 +198,7 @@ export const DEFAULT_DUAL_BRUSH: DualBrushSettings = {
   flip: false,
   size: 25,
   spacing: 0.25,
+  roundness: 100,
   scatter: 0,
   bothAxes: false,
   count: 1,
@@ -262,7 +264,7 @@ interface ToolState {
   brushOpacity: number; // Opacity: ceiling for entire stroke
   brushHardness: number;
   brushMaskType: BrushMaskType; // Mask type: edge falloff algorithm
-  brushSpacing: number; // Spacing as fraction of tip short edge (0.01-1.0)
+  brushSpacing: number; // Spacing as fraction of tip short edge (0.01-10.0)
   brushRoundness: number; // Roundness: 0-100 (100 = circle, <100 = ellipse)
   brushAngle: number; // Angle: 0-360 degrees
   brushColor: string;
@@ -392,7 +394,7 @@ export const useToolStore = create<ToolState>()(
       brushOpacity: 1, // Default: full opacity ceiling
       brushHardness: 100,
       brushMaskType: 'default', // Default to simple Gaussian (perf preferred)
-      brushSpacing: 0.25, // 25% of brush size
+      brushSpacing: 0.25, // 25% of tip short edge
       brushRoundness: 100, // 100 = perfect circle
       brushAngle: 0, // 0 degrees
       brushColor: '#000000',
@@ -453,7 +455,7 @@ export const useToolStore = create<ToolState>()(
 
       setBrushMaskType: (maskType) => set({ brushMaskType: maskType }),
 
-      setBrushSpacing: (spacing) => set({ brushSpacing: Math.max(0.01, Math.min(1, spacing)) }),
+      setBrushSpacing: (spacing) => set({ brushSpacing: Math.max(0.01, Math.min(10, spacing)) }),
 
       setBrushRoundness: (roundness) =>
         set({ brushRoundness: Math.max(1, Math.min(100, roundness)) }),
@@ -635,6 +637,7 @@ export const useToolStore = create<ToolState>()(
               flip: state.dualBrush.flip,
               size: state.dualBrush.size,
               spacing: state.dualBrush.spacing,
+              roundness: state.dualBrush.roundness,
               scatter: state.dualBrush.scatter,
               bothAxes: state.dualBrush.bothAxes,
               count: state.dualBrush.count,

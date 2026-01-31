@@ -48,7 +48,7 @@ export interface DabParams {
   };
   // Context for relative scaling
   baseSize?: number; // Main brush base size (slider value)
-  spacing?: number; // Main brush spacing (0-1, fraction of tip short edge)
+  spacing?: number; // Main brush spacing (0-10, fraction of tip short edge)
 }
 
 export interface Rect {
@@ -519,6 +519,7 @@ export class StrokeAccumulator {
 
     // Calculate effective size and scatter
     const effectiveSize = Math.max(1, size);
+    const roundness = Math.max(0.01, Math.min(1, (dualBrush.roundness ?? 100) / 100));
 
     // Handle potential string values for scatter
     let scatterVal = dualBrush.scatter ?? 0;
@@ -567,7 +568,7 @@ export class StrokeAccumulator {
         // Update mask with new angle for this dab
         const texParams = {
           size: effectiveSize,
-          roundness: 1,
+          roundness,
           angle: randomAngle,
         };
         if (this.secondaryTextureMaskCache.needsUpdate(texParams)) {
@@ -586,7 +587,7 @@ export class StrokeAccumulator {
         const maskParams = {
           size: effectiveSize,
           hardness: 1.0,
-          roundness: 1.0,
+          roundness,
           angle: randomAngle,
           maskType: 'gaussian' as const,
         };

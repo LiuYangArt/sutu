@@ -43,6 +43,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
       brushId: preset.id,
       brushIndex: index,
       brushName: preset.name,
+      roundness: preset.roundness,
       texture: preset.hasTexture
         ? {
             id: preset.id,
@@ -130,7 +131,9 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           {/* Default round brush option */}
           <button
             className={`abr-preset-item ${dualBrush.brushId === null ? 'selected' : ''}`}
-            onClick={() => setDualBrush({ brushId: null, brushName: 'Default Round' })}
+            onClick={() =>
+              setDualBrush({ brushId: null, brushName: 'Default Round', roundness: 100 })
+            }
             title="Default Round Brush"
             disabled={disabled}
           >
@@ -193,7 +196,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           label="Spacing"
           value={Math.round(dualBrush.spacing * 100)}
           min={1}
-          max={100}
+          max={1000}
           displayValue={`${Math.round(dualBrush.spacing * 100)}%`}
           onChange={(v) => setDualBrush({ spacing: v / 100 })}
           disabled={disabled}
