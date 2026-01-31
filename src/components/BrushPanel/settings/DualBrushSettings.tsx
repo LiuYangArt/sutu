@@ -121,23 +121,13 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
                       // Note: We access store directly to get current state
                       const currentBrushId = useToolStore.getState().dualBrush.brushId;
                       if (currentBrushId === preset.id) {
-                        console.log('[DualBrush] Preloading texture finished for:', preset.name);
                         useToolStore.setState((state) => {
                           const dual = state.dualBrush;
                           // Double check inside setter
                           if (dual.brushId !== preset.id || !dual.texture) {
-                            console.warn(
-                              '[DualBrush] Store state changed during preload, aborting update'
-                            );
                             return state;
                           }
 
-                          console.log(
-                            '[DualBrush] Injecting ImageData into store. Size:',
-                            imageData.width,
-                            'x',
-                            imageData.height
-                          );
                           return {
                             dualBrush: {
                               ...dual,

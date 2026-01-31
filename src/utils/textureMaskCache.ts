@@ -106,7 +106,6 @@ export class TextureMaskCache {
       this.sourceImageData = texture.imageData;
       this.currentTextureId = textureId;
       this.invalidateCache();
-      console.log(`[TextureMaskCache] Using cached ImageData for ${textureId}`);
       return true;
     }
 
