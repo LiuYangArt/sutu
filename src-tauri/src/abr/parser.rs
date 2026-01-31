@@ -566,6 +566,154 @@ impl AbrParser {
         })
     }
 
+    /// Helper to find UUID from sampledData field recursively
+    fn find_sampled_data_uuid(val: &DescriptorValue) -> Option<String> {
+        match val {
+            DescriptorValue::Descriptor(d) => {
+                if let Some(DescriptorValue::String(s)) = d.get("sampledData") {
+                    return Some(s.clone());
+                }
+                for v in d.values() {
+                    if let Some(res) = Self::find_sampled_data_uuid(v) {
+                        return Some(res);
+                    }
+                }
+            }
+            DescriptorValue::List(l) => {
+                for v in l {
+                    if let Some(res) = Self::find_sampled_data_uuid(v) {
+                        return Some(res);
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Create logical AbrBrush from a descriptor entry (handling both Sampled and Computed)
+    fn create_brush_from_descriptor_entry(
+        brush_desc: &indexmap::IndexMap<String, DescriptorValue>,
+        index: usize,
+        samp_map: &HashMap<String, SampBrushData>,
+    ) -> AbrBrush {
+        // Extract common attributes - Name
+        let name = brush_desc
+            .get("Nm  ")
+            .and_then(|v| {
+                if let DescriptorValue::String(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| format!("Brush {}", index + 1));
+
+        // Try to find sampled data UUID
+        let target_uuid =
+            Self::find_sampled_data_uuid(&DescriptorValue::Descriptor(brush_desc.clone()));
+
+        // Check if it's a computed brush or sampled brush
+        let mut brush = if let Some(uuid) = target_uuid.as_ref() {
+            // It's a sampled brush, try to find image data
+            if let Some(samp_data) = samp_map.get(uuid) {
+                AbrBrush {
+                    name: name.clone(),
+                    uuid: Some(uuid.clone()),
+                    tip_image: Some(samp_data.tip_image.clone()),
+                    diameter: samp_data.diameter,
+                    spacing: samp_data.spacing,
+                    angle: samp_data.angle,
+                    roundness: samp_data.roundness,
+                    hardness: None,
+                    dynamics: Some(AbrDynamics::default()),
+                    is_computed: false,
+                    texture_settings: None,
+                }
+            } else {
+                // UUID found but no data?
+                tracing::warn!("Brush '{}' has UUID {} but no samp data found", name, uuid);
+                // Create a placeholder
+                AbrBrush {
+                    name: name.clone(),
+                    uuid: Some(uuid.clone()),
+                    tip_image: None,
+                    diameter: 10.0,
+                    spacing: 0.25,
+                    angle: 0.0,
+                    roundness: 1.0,
+                    hardness: None,
+                    dynamics: None,
+                    is_computed: false,
+                    texture_settings: None,
+                }
+            }
+        } else {
+            // No sampledData UUID -> Computed Brush
+            // Extract parameters to generate tip
+            let mut diameter = 10.0;
+            let mut hardness = 1.0;
+            let mut roundness = 1.0;
+            let mut angle = 0.0;
+            let mut spacing = 0.25;
+
+            if let Some(DescriptorValue::Descriptor(brsh)) = brush_desc.get("Brsh") {
+                if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Dmtr") {
+                    diameter = *value as f32;
+                }
+                if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Hrdn") {
+                    hardness = (*value as f32) / 100.0;
+                }
+                if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Rndn") {
+                    roundness = (*value as f32) / 100.0;
+                }
+                if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Angl") {
+                    angle = *value as f32;
+                }
+                if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Spcn") {
+                    spacing = (*value as f32) / 100.0;
+                }
+            }
+
+            let tip_image = Self::generate_computed_tip(diameter, hardness, roundness, angle);
+
+            AbrBrush {
+                name: name.clone(),
+                uuid: None,
+                tip_image: Some(tip_image),
+                diameter,
+                spacing,
+                angle,
+                roundness,
+                hardness: Some(hardness * 100.0),
+                dynamics: Some(AbrDynamics::default()),
+                is_computed: true,
+                texture_settings: None,
+            }
+        };
+
+        // Apply Texture settings
+        let use_texture = matches!(
+            brush_desc.get("useTexture"),
+            Some(DescriptorValue::Boolean(true))
+        );
+
+        if use_texture {
+            if let Some(DescriptorValue::Descriptor(txtr)) = brush_desc.get("Txtr") {
+                let mut settings = Self::parse_texture_settings(txtr);
+                Self::apply_texture_params_from_root(brush_desc, &mut settings);
+                brush.texture_settings = Some(settings);
+            }
+        }
+
+        // Apply Brush Tip Shape parameters override (for sampled brushes too)
+        if let Some(DescriptorValue::Descriptor(brsh)) = brush_desc.get("Brsh") {
+            Self::apply_brush_tip_params(brsh, &mut brush);
+        }
+
+        brush
+    }
+
     /// Create brushes from descriptor section (authoritative order)
     fn create_brushes_from_desc(
         _data: &[u8], // Full file data to search for desc section again if needed, or we pass body
@@ -574,181 +722,14 @@ impl AbrParser {
     ) -> Result<Vec<AbrBrush>, AbrError> {
         let mut brushes = Vec::new();
 
-        // Helper to find UUID from sampledData field
-        fn find_uuid(val: &DescriptorValue) -> Option<String> {
-            match val {
-                DescriptorValue::Descriptor(d) => {
-                    if let Some(DescriptorValue::String(s)) = d.get("sampledData") {
-                        return Some(s.clone());
-                    }
-                    for v in d.values() {
-                        if let Some(res) = find_uuid(v) {
-                            return Some(res);
-                        }
-                    }
-                }
-                DescriptorValue::List(l) => {
-                    for v in l {
-                        if let Some(res) = find_uuid(v) {
-                            return Some(res);
-                        }
-                    }
-                }
-                _ => {}
-            }
-            None
-        }
-
         match parse_descriptor(&mut Cursor::new(desc_data)) {
             Ok(desc) => {
                 if let Some(DescriptorValue::List(brsh_list)) = desc.get("Brsh") {
                     for (i, item) in brsh_list.iter().enumerate() {
                         if let DescriptorValue::Descriptor(brush_desc) = item {
-                            // Extract common attributes
-                            let name = brush_desc
-                                .get("Nm  ")
-                                .and_then(|v| {
-                                    if let DescriptorValue::String(s) = v {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or_else(|| format!("Brush {}", i + 1));
-
-                            // Try to find sampled data UUID
-                            let target_uuid =
-                                find_uuid(&DescriptorValue::Descriptor(brush_desc.clone()));
-
-                            // Check if it's a computed brush or sampled brush
-                            let mut brush = if let Some(uuid) = target_uuid.as_ref() {
-                                // It's a sampled brush, try to find image data
-                                if let Some(samp_data) = samp_map.get(uuid) {
-                                    AbrBrush {
-                                        name: name.clone(),
-                                        uuid: Some(uuid.clone()),
-                                        tip_image: Some(samp_data.tip_image.clone()),
-                                        diameter: samp_data.diameter,
-                                        spacing: samp_data.spacing,
-                                        angle: samp_data.angle,
-                                        roundness: samp_data.roundness,
-                                        hardness: None,
-                                        dynamics: Some(AbrDynamics::default()),
-                                        is_computed: false,
-                                        texture_settings: None,
-                                    }
-                                } else {
-                                    // UUID found but no data? Should be rare.
-                                    tracing::warn!(
-                                        "Brush '{}' has UUID {} but no samp data found",
-                                        name,
-                                        uuid
-                                    );
-                                    // Create a placeholder or skip?
-                                    // Let's create a placeholder
-                                    AbrBrush {
-                                        name: name.clone(),
-                                        uuid: Some(uuid.clone()),
-                                        tip_image: None,
-                                        diameter: 10.0,
-                                        spacing: 0.25,
-                                        angle: 0.0,
-                                        roundness: 1.0,
-                                        hardness: None,
-                                        dynamics: None,
-                                        is_computed: false,
-                                        texture_settings: None,
-                                    }
-                                }
-                            } else {
-                                // No sampledData UUID -> Computed Brush
-                                // Extract parameters to generate tip
-                                let mut diameter = 10.0;
-                                let mut hardness = 1.0;
-                                let mut roundness = 1.0;
-                                let mut angle = 0.0;
-                                let mut spacing = 0.25;
-
-                                if let Some(DescriptorValue::Descriptor(brsh)) =
-                                    brush_desc.get("Brsh")
-                                {
-                                    if let Some(DescriptorValue::UnitFloat { value, .. }) =
-                                        brsh.get("Dmtr")
-                                    {
-                                        // Diameter
-                                        diameter = *value as f32;
-                                    }
-                                    if let Some(DescriptorValue::UnitFloat { value, .. }) =
-                                        brsh.get("Hrdn")
-                                    {
-                                        // Hardness
-                                        hardness = (*value as f32) / 100.0;
-                                    }
-                                    if let Some(DescriptorValue::UnitFloat { value, .. }) =
-                                        brsh.get("Rndn")
-                                    {
-                                        // Roundness
-                                        roundness = (*value as f32) / 100.0;
-                                    }
-                                    if let Some(DescriptorValue::UnitFloat { value, .. }) =
-                                        brsh.get("Angl")
-                                    {
-                                        // Angle
-                                        angle = *value as f32;
-                                    }
-                                    if let Some(DescriptorValue::UnitFloat { value, .. }) =
-                                        brsh.get("Spcn")
-                                    {
-                                        // Spacing
-                                        spacing = (*value as f32) / 100.0;
-                                    }
-                                }
-
-                                let tip_image = Self::generate_computed_tip(
-                                    diameter, hardness, roundness, angle,
-                                );
-
-                                AbrBrush {
-                                    name: name.clone(),
-                                    uuid: None, // Computed brushes don't use UUID linking
-                                    tip_image: Some(tip_image),
-                                    diameter,
-                                    spacing,
-                                    angle,
-                                    roundness,
-                                    hardness: Some(hardness * 100.0),
-                                    dynamics: Some(AbrDynamics::default()),
-                                    is_computed: true,
-                                    texture_settings: None,
-                                }
-                            };
-
-                            // Apply Dynamics and Texture settings from descriptor
-                            // (Reuse existing logic or extract here)
-
-                            // Apply Texture settings
-                            // Check useTexture flag from root descriptor first
-                            let use_texture = matches!(
-                                brush_desc.get("useTexture"),
-                                Some(DescriptorValue::Boolean(true))
-                            );
-
-                            if use_texture {
-                                if let Some(DescriptorValue::Descriptor(txtr)) =
-                                    brush_desc.get("Txtr")
-                                {
-                                    let mut settings = Self::parse_texture_settings(txtr);
-                                    Self::apply_texture_params_from_root(brush_desc, &mut settings);
-                                    brush.texture_settings = Some(settings);
-                                }
-                            }
-
-                            // Apply Brush Tip Shape parameters override (for sampled brushes too)
-                            if let Some(DescriptorValue::Descriptor(brsh)) = brush_desc.get("Brsh")
-                            {
-                                Self::apply_brush_tip_params(brsh, &mut brush);
-                            }
-
+                            // Create brush from descriptor entry
+                            let brush =
+                                Self::create_brush_from_descriptor_entry(brush_desc, i, samp_map);
                             brushes.push(brush);
                         }
                     }
