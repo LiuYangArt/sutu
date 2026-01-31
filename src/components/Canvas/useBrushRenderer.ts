@@ -405,6 +405,7 @@ export function useBrushRenderer({
               config.dualBrushEnabled && config.dualBrush
                 ? {
                     ...config.dualBrush,
+                    enabled: config.dualBrushEnabled, // Sync enabled state
                     brushTexture: config.dualBrush.texture,
                   }
                 : undefined,

@@ -624,7 +624,22 @@ export const useToolStore = create<ToolState>()(
         transferEnabled: state.transferEnabled,
         transfer: state.transfer,
         dualBrushEnabled: state.dualBrushEnabled,
-        dualBrush: state.dualBrush,
+        // Exclude texture (runtime data, loaded on demand) to avoid localStorage quota
+        dualBrush: state.dualBrush
+          ? {
+              enabled: state.dualBrush.enabled,
+              brushId: state.dualBrush.brushId,
+              brushName: state.dualBrush.brushName,
+              mode: state.dualBrush.mode,
+              flip: state.dualBrush.flip,
+              size: state.dualBrush.size,
+              spacing: state.dualBrush.spacing,
+              scatter: state.dualBrush.scatter,
+              bothAxes: state.dualBrush.bothAxes,
+              count: state.dualBrush.count,
+              // texture is excluded - it's runtime data
+            }
+          : state.dualBrush,
       }),
     }
   )
