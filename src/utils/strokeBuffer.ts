@@ -527,7 +527,6 @@ export class StrokeAccumulator {
       flow,
       dabOpacity = 1.0,
       textureSettings,
-      wetEdge = 0,
     } = params;
 
     if (!texture) return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -571,7 +570,6 @@ export class StrokeAccumulator {
       rgb.r,
       rgb.g,
       rgb.b,
-      wetEdge,
       textureSettings,
       pattern,
       dualMask,

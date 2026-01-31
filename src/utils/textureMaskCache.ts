@@ -96,12 +96,12 @@ export class TextureMaskCache {
   private tryUseCachedTexture(texture: BrushTexture): boolean {
     const textureId = texture.id;
 
-    // Check if same texture is already active
+    // Fast path: same texture ID and data already loaded
     if (textureId === this.currentTextureId && this.sourceImageData) {
       return true;
     }
 
-    // Check if texture object has cached ImageData
+    // Check if texture object itself has cached ImageData
     if (texture.imageData) {
       this.sourceImageData = texture.imageData;
       this.currentTextureId = textureId;
@@ -121,10 +121,10 @@ export class TextureMaskCache {
 
     const textureId = texture.id;
 
-    // Try to load via protocol first (new optimized path)
+    // 1. Try protocol load (optimized)
     let imageData = await loadBrushTexture(textureId, texture.width, texture.height);
 
-    // Fallback to Base64 if protocol fails and data is available
+    // 2. Fallback to Base64 if needed
     if (!imageData && texture.data) {
       imageData = await decodeBase64ToImageData(texture.data, texture.width, texture.height);
     }
@@ -134,9 +134,8 @@ export class TextureMaskCache {
       return;
     }
 
-    // Cache in the texture object for future use
+    // Cache result
     texture.imageData = imageData;
-
     this.sourceImageData = imageData;
     this.currentTextureId = textureId;
     this.invalidateCache();
@@ -148,7 +147,7 @@ export class TextureMaskCache {
   setTextureSync(texture: BrushTexture): boolean {
     if (this.tryUseCachedTexture(texture)) return true;
 
-    // Try Base64 fallback for sync path
+    // Try synchronous Base64 fallback
     if (texture.data) {
       const imageData = decodeBase64ToImageDataSync(texture.data, texture.width, texture.height);
       if (imageData) {
@@ -160,9 +159,9 @@ export class TextureMaskCache {
       }
     }
 
-    // Need async loading - trigger it in background
+    // Trigger async load in background
     this.setTexture(texture).catch(() => {
-      // Silent fail - will retry on next paint
+      // Silent fail - will be handled by next repaint
     });
 
     return false;
@@ -208,7 +207,7 @@ export class TextureMaskCache {
     const srcH = this.sourceImageData.height;
     const srcData = this.sourceImageData.data;
 
-    // Calculate target size maintaining aspect ratio
+    // Maintain aspect ratio logic
     const aspectRatio = srcW / srcH;
     let targetW: number, targetH: number;
 
@@ -239,12 +238,10 @@ export class TextureMaskCache {
     // Allocate mask buffer
     this.scaledMask = new Float32Array(this.scaledWidth * this.scaledHeight);
 
-    // Pre-calculate rotation
+    // Pre-calculate rotation matrices
     const angleRad = (angle * Math.PI) / 180;
     const cosA = Math.cos(-angleRad);
     const sinA = Math.sin(-angleRad);
-
-    // Scale factors
     const scaleX = srcW / targetW;
     const scaleY = srcH / targetH;
 
@@ -277,24 +274,15 @@ export class TextureMaskCache {
         const fx = srcX - x0;
         const fy = srcY - y0;
 
-        // Sample alpha channel (grayscale texture uses all channels equally)
-        // For grayscale PNG, we use the first channel (R) as the mask value
-        const getAlpha = (x: number, y: number): number => {
-          const idx = (y * srcW + x) * 4;
-          // Use the grayscale value (R channel) as alpha
-          // ABR textures are grayscale: 0 = transparent, 255 = opaque
-          return srcData[idx]! / 255;
-        };
+        // Optimized alpha channel sampling helper
+        // Use R channel (index 0) since ABR textures are grayscale
+        const v00 = srcData[(y0 * srcW + x0) * 4]! / 255;
+        const v10 = srcData[(y0 * srcW + x1) * 4]! / 255;
+        const v01 = srcData[(y1 * srcW + x0) * 4]! / 255;
+        const v11 = srcData[(y1 * srcW + x1) * 4]! / 255;
 
-        const v00 = getAlpha(x0, y0);
-        const v10 = getAlpha(x1, y0);
-        const v01 = getAlpha(x0, y1);
-        const v11 = getAlpha(x1, y1);
-
-        const value =
+        this.scaledMask[py * this.scaledWidth + px] =
           v00 * (1 - fx) * (1 - fy) + v10 * fx * (1 - fy) + v01 * (1 - fx) * fy + v11 * fx * fy;
-
-        this.scaledMask[py * this.scaledWidth + px] = value;
       }
     }
 
@@ -304,8 +292,6 @@ export class TextureMaskCache {
   /**
    * Stamp the texture mask to buffer using Alpha Darken blending
    * Same blending logic as MaskCache for consistency
-   *
-   * @param wetEdge - Wet edge strength (0-1), creates hollow center effect
    */
   stampToBuffer(
     buffer: Uint8ClampedArray,
@@ -318,7 +304,6 @@ export class TextureMaskCache {
     r: number,
     g: number,
     b: number,
-    _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
     textureSettings?: TextureSettings | null,
     pattern?: PatternData,
     dualMask?: Float32Array | null,

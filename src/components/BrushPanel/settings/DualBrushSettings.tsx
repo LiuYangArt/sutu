@@ -37,6 +37,53 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
 
   const disabled = !dualBrushEnabled;
 
+  const handlePresetSelect = (preset: BrushPreset, index: number) => {
+    // 1. Immediate UI update
+    setDualBrush({
+      brushId: preset.id,
+      brushIndex: index,
+      brushName: preset.name,
+      texture: preset.hasTexture
+        ? {
+            id: preset.id,
+            data: '', // Loaded via project://brush/{id} protocol
+            width: preset.textureWidth ?? 0,
+            height: preset.textureHeight ?? 0,
+          }
+        : undefined,
+    });
+
+    // 2. Preload texture to prevent "first stroke black" issue
+    if (preset.hasTexture) {
+      loadBrushTexture(preset.id, preset.textureWidth ?? 0, preset.textureHeight ?? 0)
+        .then((imageData) => {
+          if (!imageData) return;
+
+          // Double-check if selection changed during load
+          const currentBrushId = useToolStore.getState().dualBrush.brushId;
+          if (currentBrushId === preset.id) {
+            useToolStore.setState((state) => {
+              const dual = state.dualBrush;
+              if (dual.brushId !== preset.id || !dual.texture) return state;
+
+              return {
+                dualBrush: {
+                  ...dual,
+                  texture: {
+                    ...dual.texture,
+                    imageData,
+                  },
+                },
+              };
+            });
+          }
+        })
+        .catch((err) => {
+          console.error('[DualBrush] Failed to preload texture:', err);
+        });
+    }
+  };
+
   return (
     <div className="brush-panel-section">
       {/* Section header with enable checkbox */}
@@ -95,56 +142,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
             <button
               key={`dual-${preset.id}-${index}`}
               className={`abr-preset-item ${dualBrush.brushIndex === index ? 'selected' : ''}`}
-              onClick={() => {
-                setDualBrush({
-                  brushId: preset.id,
-                  brushIndex: index,
-                  brushName: preset.name,
-                  texture: preset.hasTexture
-                    ? {
-                        id: preset.id,
-                        data: '', // Loaded via project://brush/{id} protocol
-                        width: preset.textureWidth ?? 0,
-                        height: preset.textureHeight ?? 0,
-                      }
-                    : undefined,
-                });
-
-                // Preload and decode texture data immediately to avoid first stroke cache miss
-                if (preset.hasTexture) {
-                  // Use loadBrushTexture which handles project:// protocol decompression
-                  loadBrushTexture(preset.id, preset.textureWidth ?? 0, preset.textureHeight ?? 0)
-                    .then((imageData) => {
-                      if (!imageData) return; // Load failed
-
-                      // Check if the brush is still selected before updating
-                      // Note: We access store directly to get current state
-                      const currentBrushId = useToolStore.getState().dualBrush.brushId;
-                      if (currentBrushId === preset.id) {
-                        useToolStore.setState((state) => {
-                          const dual = state.dualBrush;
-                          // Double check inside setter
-                          if (dual.brushId !== preset.id || !dual.texture) {
-                            return state;
-                          }
-
-                          return {
-                            dualBrush: {
-                              ...dual,
-                              texture: {
-                                ...dual.texture,
-                                imageData, // Inject the decoded data
-                              },
-                            },
-                          };
-                        });
-                      }
-                    })
-                    .catch((err) => {
-                      console.error('[DualBrush] Failed to preload texture:', err);
-                    });
-                }
-              }}
+              onClick={() => handlePresetSelect(preset, index)}
               title={preset.name}
               disabled={disabled}
             >
