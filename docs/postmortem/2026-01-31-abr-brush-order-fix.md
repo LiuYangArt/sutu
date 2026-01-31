@@ -60,6 +60,21 @@
 2.  **缺失数据往往是另一类数据**: 当发现部分数据“丢失”时，往往是因为它们属于另一种无需存储实体数据（如纯参数化）的类型。
 3.  **工具辅助分析**: 编写专门的分析脚本（如 `analyze_brush_structure`）比盲目猜测代码逻辑高效得多。
 
+## 后续修复: React Duplicate Key 警告
+
+在验证 UI 时发现控制台报告 `Warning: Encountered two children with the same key`。
+
+**原因**: 某些 ABR 笔刷共享相同的 UUID（例如 `Oil Pastel Large #41/36/45` 均源自同一基础模板）。在 `BrushPresets.tsx` 中直接使用 `preset.id`（即 UUID）作为 React key 导致冲突。
+
+**修复**: 改用 `${preset.id}-${index}` 作为复合 key，保证唯一性。
+
+```diff
+- {importedPresets.map((preset) => (
+-   <button key={preset.id} ...>
++ {importedPresets.map((preset, index) => (
++   <button key={`${preset.id}-${index}`} ...>
+```
+
 ## 相关工件
 
 - `src-tauri/src/abr/parser.rs`: 核心解析逻辑重构
