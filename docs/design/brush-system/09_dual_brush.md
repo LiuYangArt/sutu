@@ -19,6 +19,8 @@ Dual Brush（双笔刷）是 Photoshop 笔刷系统的高级功能，允许使�
 | [analyze_desc_raw.rs](file:///f:/CodeProjects/PaintBoard/src-tauri/examples/analyze_desc_raw.rs)         | 原始 desc section 字节分析               |
 | [debug_liuyang_abr.rs](file:///f:/CodeProjects/PaintBoard/src-tauri/examples/debug_liuyang_abr.rs)       | 调试 liuyang_paintbrushes.abr 的完整解析 |
 
+测试笔刷："F:\CodeProjects\PaintBoard\abr\liuyang_paintbrushes.abr"
+
 **运行方式**：
 
 ```bash
