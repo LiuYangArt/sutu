@@ -450,7 +450,24 @@ export class StrokeAccumulator {
 
     // Calculate effective size and scatter
     const effectiveSize = Math.max(1, size);
-    const scatterAmount = ((dualBrush.scatter || 0) / 100.0) * effectiveSize;
+
+    // Debug: Handle potential string values and log
+    let scatterVal = dualBrush.scatter ?? 0;
+    if (typeof scatterVal !== 'number') {
+      const parsed = parseFloat(String(scatterVal));
+      scatterVal = isNaN(parsed) ? 0 : parsed;
+    }
+
+    if (Math.random() < 0.05) {
+      console.log('[StrokeBuffer] DualBrush DBG:', {
+        raw: dualBrush.scatter,
+        val: scatterVal,
+        size,
+        count: dualBrush.count,
+      });
+    }
+
+    const scatterAmount = (scatterVal / 100.0) * effectiveSize * 0.5;
     const count = Math.max(1, dualBrush.count || 1);
 
     // Setup secondary cache
