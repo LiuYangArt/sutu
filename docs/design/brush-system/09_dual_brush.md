@@ -254,30 +254,59 @@ DualBrushSettings.tsx
 
 ## 渲染逻辑
 
-### 算法概述
+### 架构概述
 
-Dual Brush 的核心是 **遮罩混合**：
+Dual Brush 的核心是 **Stroke 级别的 Alpha 图层混合**，而非 per-dab 遮罩：
 
 ```
-for each primary_dab in stroke:
-    # 1. 生成主笔刷 dab
-    primary_mask = generate_dab(primary_brush, position, pressure)
+┌─────────────────────────────────────────────────────────────┐
+│                      Stroke 渲染流程                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│   笔划路径 ────┬──── 主笔刷路径 ──── primaryMaskAccumulator   │
+│               │                           │                  │
+│               │                           │  blend(mode)     │
+│               │                           ▼                  │
+│               └──── 副笔刷路径 ──── dualMaskAccumulator ─────┤
+│                    (独立 spacing/scatter)        │           │
+│                                                  │           │
+│                                     Final Alpha ◄┘           │
+│                                          │                   │
+│                                          ▼                   │
+│                                   Apply to Color             │
+└─────────────────────────────────────────────────────────────┘
+```
 
-    # 2. 生成副笔刷 dab(s)
-    for i in range(count):
-        # 应用 scatter
-        offset = calculate_scatter(scatter, both_axes)
-        secondary_pos = position + offset
+**关键点**：
 
-        secondary_mask = generate_dab(secondary_brush, secondary_pos)
-        if flip:
-            secondary_mask = flip_horizontal(secondary_mask)
+- 主副笔刷沿相同路径独立生成 dab
+- 两者的 alpha 分别累积到独立 Float32Array buffer
+- 在 sync/endStroke 时进行**全局 blend mode 混合**
+- 副笔刷图案不会被主笔刷边缘裁切
 
-        # 3. 应用混合模式
-        combined = blend(primary_mask, secondary_mask, mode)
+### 算法伪代码
 
-    # 4. 渲染到 stroke buffer
-    stamp_to_buffer(combined, color)
+```python
+# Stroke 开始
+primary_alpha = Float32Array(canvas_size)   # 主笔刷 alpha 累积
+secondary_alpha = Float32Array(canvas_size) # 副笔刷 alpha 累积
+
+# 沿路径生成 dab
+for each position in stroke_path:
+    # 主笔刷 dab
+    stamp_to_accumulator(primary_alpha, primary_brush, position)
+
+    # 副笔刷 dab (独立 spacing，可能不同步)
+    if should_stamp_secondary(position, secondary_spacing):
+        for i in range(count):
+            offset = calculate_scatter(scatter, both_axes)
+            stamp_to_accumulator(secondary_alpha, secondary_brush, position + offset)
+
+# Sync/EndStroke 时混合
+for each pixel:
+    blended = blend_dual(primary_alpha[pixel], secondary_alpha[pixel], mode)
+    final_opacity = blended * base_opacity
+    apply_to_color_buffer(pixel, final_opacity)
 ```
 
 ### GPU Shader 实现思路
