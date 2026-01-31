@@ -383,6 +383,10 @@ export function useBrushRenderer({
             )
           : [{ x: dab.x, y: dab.y }];
 
+        if (config.dualBrushEnabled && config.dualBrush?.texture?.imageData) {
+          // console.log('[useBrushRenderer] DualBrush has imageData prepared');
+        }
+
         // Stamp dab at each scattered position
         for (const pos of scatteredPositions) {
           const dabParams: DabParams = {

@@ -12,6 +12,7 @@ import { useToolStore, DualBlendMode } from '@/stores/tool';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { BrushPreset } from '../types';
 import { BrushThumbnail } from '../BrushThumbnail';
+import { loadBrushTexture } from '@/utils/brushLoader';
 
 interface DualBrushSettingsProps {
   importedPresets: BrushPreset[];
@@ -29,31 +30,7 @@ const BLEND_MODE_OPTIONS: SelectOption[] = [
   { value: 'linearHeight', label: 'Linear Height' },
 ];
 
-// Helper to preload image data specifically for texture masks
-const loadTextureImageData = (url: string): Promise<ImageData> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'Anonymous'; // Important for canvas access
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Failed to get 2d context'));
-        return;
-      }
-      ctx.drawImage(img, 0, 0);
-      try {
-        resolve(ctx.getImageData(0, 0, img.width, img.height));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    img.onerror = () => reject(new Error(`Failed to load image from ${url}`));
-    img.src = url;
-  });
-};
+// Helper removed - using shared brushLoader
 
 export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): JSX.Element {
   const { dualBrush, setDualBrush, dualBrushEnabled, toggleDualBrush } = useToolStore();
@@ -135,23 +112,37 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
 
                 // Preload and decode texture data immediately to avoid first stroke cache miss
                 if (preset.hasTexture) {
-                  const url = `project://brush/${preset.id}`;
-                  loadTextureImageData(url)
+                  // Use loadBrushTexture which handles project:// protocol decompression
+                  loadBrushTexture(preset.id, preset.textureWidth ?? 0, preset.textureHeight ?? 0)
                     .then((imageData) => {
+                      if (!imageData) return; // Load failed
+
                       // Check if the brush is still selected before updating
                       // Note: We access store directly to get current state
                       const currentBrushId = useToolStore.getState().dualBrush.brushId;
                       if (currentBrushId === preset.id) {
+                        console.log('[DualBrush] Preloading texture finished for:', preset.name);
                         useToolStore.setState((state) => {
+                          const dual = state.dualBrush;
                           // Double check inside setter
-                          if (state.dualBrush.brushId !== preset.id || !state.dualBrush.texture)
+                          if (dual.brushId !== preset.id || !dual.texture) {
+                            console.warn(
+                              '[DualBrush] Store state changed during preload, aborting update'
+                            );
                             return state;
+                          }
 
+                          console.log(
+                            '[DualBrush] Injecting ImageData into store. Size:',
+                            imageData.width,
+                            'x',
+                            imageData.height
+                          );
                           return {
                             dualBrush: {
-                              ...state.dualBrush,
+                              ...dual,
                               texture: {
-                                ...state.dualBrush.texture,
+                                ...dual.texture,
                                 imageData, // Inject the decoded data
                               },
                             },
