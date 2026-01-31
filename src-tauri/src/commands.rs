@@ -754,14 +754,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             }
         }
         // Generate base ID (from UUID or random)
-        let base_id = brush.uuid.clone().unwrap_or_else(|| {
-            // Generate simple UUID
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default();
-            format!("{:x}{:x}", now.as_secs(), now.subsec_nanos())
-        });
+        let base_id = brush.uuid.clone().unwrap_or_else(uuid_simple);
 
         // Ensure uniqueness
         let count = id_counts.entry(base_id.clone()).or_insert(0);
