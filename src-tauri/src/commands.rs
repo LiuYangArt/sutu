@@ -857,6 +857,7 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         cursor_path,
         cursor_bounds,
         texture_settings: brush.texture_settings,
+        dual_brush_settings: brush.dual_brush_settings,
     }
 }
 
@@ -1055,6 +1056,7 @@ mod tests {
             dynamics: None,
             is_computed: false,
             texture_settings: Some(texture_settings),
+            dual_brush_settings: None,
         };
 
         let preset = build_preset_with_id(brush, "preset-id".to_string());

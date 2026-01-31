@@ -18,7 +18,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { MaskCache, type MaskCacheParams } from './maskCache';
 import { TextureMaskCache } from './textureMaskCache';
-import type { BrushTexture } from '@/stores/tool';
+import type { BrushTexture, DualBrushSettings } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { patternManager, type PatternData } from './patternManager';
 
@@ -42,6 +42,10 @@ export interface DabParams {
   flipY?: boolean; // Flip vertically
   // Wet Edge: hollow center effect (Photoshop-compatible)
   wetEdge?: number; // Wet edge strength (0-1), 0 = off
+  // Dual Brush
+  dualBrush?: DualBrushSettings & {
+    brushTexture?: BrushTexture; // Secondary brush texture
+  };
 }
 
 export interface Rect {
@@ -87,6 +91,14 @@ export class StrokeAccumulator {
 
   // Texture mask cache for sampled brushes (from ABR import)
   private textureMaskCache: TextureMaskCache = new TextureMaskCache();
+
+  // Dual Brush support
+  // Secondary caches (independent state for secondary brush)
+  private secondaryMaskCache: MaskCache = new MaskCache();
+  private secondaryTextureMaskCache: TextureMaskCache = new TextureMaskCache();
+  // Buffer for composing the dual mask (reused to avoid allocation)
+  private dualMaskBuffer: Float32Array | null = null;
+  private dualMaskDimensions: { width: number; height: number } = { width: 0, height: 0 };
 
   // Canvas sync throttling - sync every N dabs instead of every dab
   private syncCounter: number = 0;
@@ -254,6 +266,13 @@ export class StrokeAccumulator {
     this.wetEdgeHardness = 0;
     this.wetEdgeBuffer = null;
     this.wetEdgeLutValid = false;
+
+    // Clear dual mask buffer but keep allocated if possible?
+    // Actually, just clear ref is safer, but reallocation is cheap for small buffers?
+    // Let's keep it null for now.
+    this.dualMaskBuffer = null;
+    this.dualMaskDimensions = { width: 0, height: 0 };
+
     // Don't clear syncImageData - it can be reused across strokes
   }
 
@@ -383,6 +402,116 @@ export class StrokeAccumulator {
   }
 
   /**
+   * Prepare Dual Brush Mask buffer
+   * Returns null if dual brush is disabled or mask generation failed
+   */
+  private prepareDualMask(params: DabParams, width: number, height: number): Float32Array | null {
+    if (!params.dualBrush?.enabled || width <= 0 || height <= 0) {
+      return null;
+    }
+
+    const { dualBrush } = params;
+
+    // Ensure buffer size matches primary mask
+    const requiredSize = width * height;
+    if (this.dualMaskDimensions.width !== width || this.dualMaskDimensions.height !== height) {
+      this.dualMaskBuffer = new Float32Array(requiredSize);
+      this.dualMaskDimensions = { width, height };
+    } else if (!this.dualMaskBuffer) {
+      this.dualMaskBuffer = new Float32Array(requiredSize);
+    } else {
+      // Clear buffer
+      this.dualMaskBuffer.fill(0);
+    }
+
+    if (!this.dualMaskBuffer) return null;
+
+    // Center of the primary mask (relative to top-left of mask)
+    const centerX = width / 2;
+    const centerY = height / 2;
+
+    const count = Math.max(1, dualBrush.count || 1);
+    const scatterAmount = ((dualBrush.scatter || 0) / 100.0) * dualBrush.size; // Scatter as factor of size? Or fixed?
+    // PS Scatter: % of brush diameter? Usually yes.
+
+    // Setup Secondary Cache
+    let useTexture = false;
+    if (dualBrush.brushTexture) {
+      useTexture = true;
+      // Update texture cache
+      if (!this.secondaryTextureMaskCache.setTextureSync(dualBrush.brushTexture)) {
+        // If async, trigger load and skip (visual glitch for first frame but fine)
+        void this.secondaryTextureMaskCache.setTexture(dualBrush.brushTexture);
+        return null;
+      }
+
+      const texParams = {
+        size: dualBrush.size,
+        roundness: 1, // Secondary roundness not fully exposed yet? Assume 1
+        angle: 0, // Secondary angle not fully exposed?
+      };
+      if (this.secondaryTextureMaskCache.needsUpdate(texParams)) {
+        this.secondaryTextureMaskCache.generateMask(texParams);
+      }
+    } else {
+      // Use standard mask cache (Soft brush fallback)
+      const maskParams = {
+        size: dualBrush.size,
+        hardness: 1.0, // Hardness for secondary? Usually secondary tips are somewhat hard or soft based on type.
+        roundness: 1.0,
+        angle: 0,
+        maskType: 'gaussian' as const,
+      };
+      if (this.secondaryMaskCache.needsUpdate(maskParams)) {
+        this.secondaryMaskCache.generateMask(maskParams);
+      }
+    }
+
+    // Stamp loop
+    for (let i = 0; i < count; i++) {
+      // Scatter Calculation
+      let dx = 0;
+      let dy = 0;
+
+      if (scatterAmount > 0) {
+        // Random offset (-1 to 1) * scatter
+        dx = (Math.random() * 2 - 1) * scatterAmount;
+        dy = (Math.random() * 2 - 1) * scatterAmount;
+
+        if (!dualBrush.bothAxes) {
+          // If not both axes, usually scatter is perpendicular to stroke?
+          // But for dual brush "inner" scatter, it might be just random.
+          // Simplification: Standard Scatter usually applies to both X/Y if 'Both Axes' is unchecked?
+          // Wait, PS Scatter: "Both Axes" means X and Y. Unchecked means only perpendicular?
+          // Since this is "inner" scattering relative to the dab, direction is ambiguous without stroke direction vector here.
+          // Let's assume isotropic scatter for now for simplicity, or just Y if !bothAxes?
+          // Let's do isotropic for now.
+        }
+      }
+
+      const x = centerX + dx;
+      const y = centerY + dy;
+
+      // Stamp
+      // We use opaque 1.0 stamps, MAX blending.
+      if (useTexture) {
+        this.secondaryTextureMaskCache.stampToMask(
+          this.dualMaskBuffer,
+          width,
+          height,
+          x,
+          y,
+          1.0 // Opacity 1.0
+        );
+      } else {
+        this.secondaryMaskCache.stampToMask(this.dualMaskBuffer, width, height, x, y, 1.0);
+      }
+    }
+
+    return this.dualMaskBuffer;
+  }
+
+  /**
    * Handle stamping for texture-based brushes
    */
   private stampTextureBrush(
@@ -425,6 +554,12 @@ export class StrokeAccumulator {
       this.textureMaskCache.generateMask(textureParams);
     }
 
+    const dualMask = this.prepareDualMask(
+      params,
+      this.textureMaskCache.getScaledWidth(),
+      this.textureMaskCache.getScaledHeight()
+    );
+
     return this.textureMaskCache.stampToBuffer(
       this.bufferData!,
       this.width,
@@ -438,7 +573,9 @@ export class StrokeAccumulator {
       rgb.b,
       wetEdge,
       textureSettings,
-      pattern
+      pattern,
+      dualMask,
+      params.dualBrush?.mode
     );
   }
 
@@ -492,6 +629,12 @@ export class StrokeAccumulator {
       this.maskCache.generateMask(cacheParams);
     }
 
+    const dualMask = this.prepareDualMask(
+      params,
+      this.maskCache.getMaskWidth(),
+      this.maskCache.getMaskHeight()
+    );
+
     // Use cached mask for fast blending
     return this.maskCache.stampToBuffer(
       this.bufferData!,
@@ -506,7 +649,9 @@ export class StrokeAccumulator {
       rgb.b,
       params.wetEdge ?? 0,
       params.textureSettings,
-      pattern
+      pattern,
+      dualMask,
+      params.dualBrush?.mode
     );
   }
 

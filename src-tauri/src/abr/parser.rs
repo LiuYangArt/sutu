@@ -377,6 +377,7 @@ impl AbrParser {
             dynamics: None,
             is_computed: false,
             texture_settings: None,
+            dual_brush_settings: None,
         })
     }
 
@@ -441,7 +442,9 @@ impl AbrParser {
                         hardness: None,
                         dynamics: None,
                         is_computed: false,
+
                         texture_settings: None,
+                        dual_brush_settings: None,
                     },
                 )
             })
@@ -630,6 +633,7 @@ impl AbrParser {
                     dynamics: Some(AbrDynamics::default()),
                     is_computed: false,
                     texture_settings: None,
+                    dual_brush_settings: None,
                 }
             } else {
                 // UUID found but no data?
@@ -647,6 +651,7 @@ impl AbrParser {
                     dynamics: None,
                     is_computed: false,
                     texture_settings: None,
+                    dual_brush_settings: None,
                 }
             }
         } else {
@@ -690,6 +695,7 @@ impl AbrParser {
                 dynamics: Some(AbrDynamics::default()),
                 is_computed: true,
                 texture_settings: None,
+                dual_brush_settings: None,
             }
         };
 
@@ -705,6 +711,17 @@ impl AbrParser {
                 Self::apply_texture_params_from_root(brush_desc, &mut settings);
                 brush.texture_settings = Some(settings);
             }
+        }
+
+        // Apply Dual Brush settings
+        // Check "useDualBrush" first
+        let use_dual_brush = matches!(
+            brush_desc.get("useDualBrush"),
+            Some(DescriptorValue::Boolean(true))
+        );
+
+        if use_dual_brush {
+            brush.dual_brush_settings = Self::parse_dual_brush_settings(brush_desc);
         }
 
         // Apply Brush Tip Shape parameters override (for sampled brushes too)
@@ -1058,6 +1075,126 @@ impl AbrParser {
         if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Hrdn") {
             brush.hardness = Some((*value as f32) / 100.0);
         }
+    }
+
+    /// Parse Dual Brush settings from descriptor
+    fn parse_dual_brush_settings(
+        brush_desc: &indexmap::IndexMap<String, DescriptorValue>,
+    ) -> Option<super::types::DualBrushSettings> {
+        // Look for "dualBrush" descriptor
+        let dual_desc = match brush_desc.get("dualBrush") {
+            Some(DescriptorValue::Descriptor(d)) => d,
+            _ => return None,
+        };
+
+        let mut settings = super::types::DualBrushSettings {
+            enabled: true,
+            ..Default::default()
+        };
+
+        // 1. Flip
+        if let Some(DescriptorValue::Boolean(val)) = dual_desc.get("Flip") {
+            settings.flip = *val;
+        } else if let Some(DescriptorValue::Boolean(val)) = brush_desc.get("Flip") {
+            // Sometimes it might be at root? Usually inside dualBrush.
+            // But let's stick to dual_desc for now as per analyze script structure.
+            settings.flip = *val;
+        }
+
+        // 2. Blend Mode (BlnM)
+        if let Some(DescriptorValue::Enum { value, .. }) = dual_desc.get("BlnM") {
+            settings.mode = match value.as_str() {
+                "Mltp" => super::types::DualBlendMode::Multiply,
+                "Drkn" => super::types::DualBlendMode::Darken,
+                "Lghn" => super::types::DualBlendMode::Lighten,
+                "CBrn" => super::types::DualBlendMode::ColorBurn,
+                "LBrn" => super::types::DualBlendMode::LinearBurn,
+                "CDdg" => super::types::DualBlendMode::ColorDodge,
+                "Ovrl" => super::types::DualBlendMode::Overlay,
+                "SftL" => super::types::DualBlendMode::SoftLight,
+                "HrdL" => super::types::DualBlendMode::HardLight,
+                "Dfrn" => super::types::DualBlendMode::Difference,
+                "Xclu" => super::types::DualBlendMode::Exclusion,
+                "Sbtr" => super::types::DualBlendMode::Subtract,
+                "Dvde" => super::types::DualBlendMode::Divide,
+                _ => super::types::DualBlendMode::Multiply,
+            };
+        }
+
+        // 3. Scatter (useScatter, bothAxes, scatterDynamics)
+        if let Some(DescriptorValue::Boolean(_)) = dual_desc.get("useScatter") {
+            // Note: In ABR structure, useScatter might be a flag, but actual scatter amount might be in Sctr?
+            // Wait, looking at analyze output (docs), dualBrush object HAS "useScatter" inside it.
+            // But where is the scatter amount?
+            // "scatterDynamics" is inside dualBrush.
+            // "cnt" (Count) is inside dualBrush.
+            // "spcn" (Spacing) is inside dualBrush -> Brsh.
+            // Let's re-read the doc or analyze output.
+            // Design doc:
+            // dualBrush: { ... useScatter: bool ... scatterDynamics: {...} }
+            // But usually scatter amount is a unit float?
+            // Actually, for Dual Brush, the scatter might be driven solely by dynamics?
+            // Or maybe there is a "Sctr" key inside dualBrush?
+            // Checking analyze output from doc:
+            //   Brsh: { ... }
+            //   BlnM: Enum
+            //   useScatter: bool
+            //   Cnt : UnitFloat
+            //   bothAxes: bool
+            //   countDynamics: { ... }
+            //   scatterDynamics: { ... }
+            // It seems 'Sctr' (scatter amount) might be missing or defaulted?
+            // Or maybe it is hidden in scatterDynamics as a 'nm' (minimum)?
+            // Let's assume 0 if not found, or check if there is a 'Sctr' key I missed in doc.
+            // Wait, standard Scattering has 'Sctr' key. Dual Brush might just have useScatter + dynamics.
+            // BUT, if I look at PS UI, there is a Scatter slider.
+            // Let's check for "Sctr" or "nm" or just assume it's part of dynamics.
+            // For now, let's leave scatter as 0.0 unless we find a specific key.
+            // WAIT, looking at my analyze script output simulation:
+            // There isn't a plain 'Sctr' showed in the dualBrush struct in the doc example.
+            // BUT, valid dual brush definitely has scatter.
+            // Let's check if `dual_desc` has "Sctr".
+            if let Some(DescriptorValue::UnitFloat { value, .. }) = dual_desc.get("Sctr") {
+                settings.scatter = *value as f32;
+            }
+        }
+
+        if let Some(DescriptorValue::Boolean(val)) = dual_desc.get("bothAxes") {
+            settings.both_axes = *val;
+        }
+
+        // 4. Count (Cnt)
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = dual_desc.get("Cnt ") {
+            settings.count = (*value as u32).max(1);
+        } else if let Some(DescriptorValue::Integer(val)) = dual_desc.get("Cnt ") {
+            settings.count = (*val as u32).max(1);
+        }
+
+        // 5. Secondary Brush Params (Brsh descriptor inside dualBrush)
+        if let Some(DescriptorValue::Descriptor(brsh)) = dual_desc.get("Brsh") {
+            // Size (Dmtr)
+            if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Dmtr") {
+                settings.size = *value as f32;
+            }
+
+            // Spacing (Spcn)
+            if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Spcn") {
+                settings.spacing = (*value as f32) / 100.0;
+            }
+
+            // Sampled Data UUID
+            // Note: This is crucial.
+            if let Some(DescriptorValue::String(uuid)) = brsh.get("sampledData") {
+                settings.brush_id = Some(uuid.clone());
+            }
+
+            // Name
+            if let Some(DescriptorValue::String(name)) = brsh.get("Nm  ") {
+                settings.brush_name = Some(name.clone());
+            }
+        }
+
+        Some(settings)
     }
 }
 

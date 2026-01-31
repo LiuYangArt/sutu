@@ -155,6 +155,54 @@ export const DEFAULT_TRANSFER_SETTINGS: TransferSettings = {
 };
 
 /**
+ * Dual Blend Mode (Photoshop-compatible)
+ */
+export type DualBlendMode =
+  | 'multiply'
+  | 'darken'
+  | 'lighten'
+  | 'colorBurn'
+  | 'linearBurn'
+  | 'colorDodge'
+  | 'overlay'
+  | 'softLight'
+  | 'hardLight'
+  | 'difference'
+  | 'exclusion'
+  | 'subtract'
+  | 'divide';
+
+/**
+ * Dual Brush settings (Photoshop Dual Brush panel compatible)
+ */
+export interface DualBrushSettings {
+  enabled: boolean;
+  brushId: string | null; // UUID of the secondary brush
+  brushName: string | null;
+  mode: DualBlendMode;
+  flip: boolean;
+  size: number; // Pixels
+  spacing: number; // 0-1
+  scatter: number; // Rust side uses f32
+  bothAxes: boolean;
+  count: number;
+}
+
+/** Default Dual Brush settings (off) */
+export const DEFAULT_DUAL_BRUSH: DualBrushSettings = {
+  enabled: false,
+  brushId: null,
+  brushName: null,
+  mode: 'multiply',
+  flip: false,
+  size: 25,
+  spacing: 0.25,
+  scatter: 0,
+  bothAxes: false,
+  count: 1,
+};
+
+/**
  * Brush texture data for sampled/imported brushes (e.g., from ABR files)
  * When set, the brush uses this texture instead of procedural mask generation
  */
@@ -257,6 +305,10 @@ interface ToolState {
   textureEnabled: boolean;
   textureSettings: TextureSettings;
 
+  // Dual Brush settings (Photoshop-compatible)
+  dualBrushEnabled: boolean;
+  dualBrush: DualBrushSettings;
+
   // Patterns
   patterns: PatternInfo[];
 
@@ -322,6 +374,12 @@ interface ToolState {
   toggleTransfer: () => void;
   setTransfer: (settings: Partial<TransferSettings>) => void;
   resetTransfer: () => void;
+
+  // Dual Brush actions
+  setDualBrushEnabled: (enabled: boolean) => void;
+  toggleDualBrush: () => void;
+  setDualBrush: (settings: Partial<DualBrushSettings>) => void;
+  resetDualBrush: () => void;
 }
 
 export const useToolStore = create<ToolState>()(
@@ -370,6 +428,10 @@ export const useToolStore = create<ToolState>()(
       // Texture (default: disabled)
       textureEnabled: false,
       textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
+
+      // Dual Brush (default: disabled)
+      dualBrushEnabled: false,
+      dualBrush: { ...DEFAULT_DUAL_BRUSH },
 
       // Patterns
       patterns: [],
@@ -520,6 +582,18 @@ export const useToolStore = create<ToolState>()(
         })),
 
       resetTransfer: () => set({ transfer: { ...DEFAULT_TRANSFER_SETTINGS } }),
+
+      // Dual Brush actions
+      setDualBrushEnabled: (enabled) => set({ dualBrushEnabled: enabled }),
+
+      toggleDualBrush: () => set((state) => ({ dualBrushEnabled: !state.dualBrushEnabled })),
+
+      setDualBrush: (settings) =>
+        set((state) => ({
+          dualBrush: { ...state.dualBrush, ...settings },
+        })),
+
+      resetDualBrush: () => set({ dualBrush: { ...DEFAULT_DUAL_BRUSH } }),
     }),
     {
       name: 'paintboard-brush-settings',
@@ -550,6 +624,8 @@ export const useToolStore = create<ToolState>()(
         wetEdge: state.wetEdge,
         transferEnabled: state.transferEnabled,
         transfer: state.transfer,
+        dualBrushEnabled: state.dualBrushEnabled,
+        dualBrush: state.dualBrush,
       }),
     }
   )

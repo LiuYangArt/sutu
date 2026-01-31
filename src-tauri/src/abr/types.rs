@@ -62,6 +62,8 @@ pub struct AbrBrush {
     pub is_computed: bool,
     /// Texture settings (parsed from descriptor)
     pub texture_settings: Option<TextureSettings>,
+    /// Dual brush settings (parsed from descriptor)
+    pub dual_brush_settings: Option<DualBrushSettings>,
 }
 
 /// Grayscale image data for brush tips
@@ -138,6 +140,78 @@ pub enum TextureBlendMode {
     HardMix,
     LinearHeight,
     Height,
+}
+
+/// Dual Brush blend mode (Photoshop-compatible)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DualBlendMode {
+    #[default]
+    Multiply, // Mltp - 正片叠底
+    Darken,     // Drkn - 变暗
+    Lighten,    // Lghn - 变亮
+    ColorBurn,  // CBrn - 颜色加深
+    LinearBurn, // LBrn - 线性加深
+    ColorDodge, // CDdg - 颜色减淡
+    Overlay,    // Ovrl - 叠加
+    SoftLight,  // SftL - 柔光
+    HardLight,  // HrdL - 强光
+    Difference, // Dfrn - 差值
+    Exclusion,  // Xclu - 排除
+    Subtract,   // Sbtr - 减去
+    Divide,     // Dvde - 划分
+}
+
+/// Dual Brush settings (Photoshop Dual Brush panel compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DualBrushSettings {
+    /// Is dual brush enabled
+    pub enabled: bool,
+
+    /// Secondary brush UUID (references samp section brush)
+    pub brush_id: Option<String>,
+
+    /// Secondary brush name (for UI display)
+    pub brush_name: Option<String>,
+
+    /// Blend mode for dual brush (how secondary affects primary)
+    pub mode: DualBlendMode,
+
+    /// Flip secondary brush horizontally
+    pub flip: bool,
+
+    /// Size override for secondary brush (pixels)
+    pub size: f32,
+
+    /// Spacing for secondary brush (% of diameter, 0.0-1.0)
+    pub spacing: f32,
+
+    /// Scatter amount (% displacement)
+    pub scatter: f32,
+
+    /// Apply scatter on both X and Y axes
+    pub both_axes: bool,
+
+    /// Number of secondary dabs per primary dab
+    pub count: u32,
+}
+
+impl Default for DualBrushSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            brush_id: None,
+            brush_name: None,
+            mode: DualBlendMode::Multiply,
+            flip: false,
+            size: 25.0,
+            spacing: 0.25,
+            scatter: 0.0,
+            both_axes: false,
+            count: 1,
+        }
+    }
 }
 
 /// Texture settings for brush (Photoshop Texture panel compatible)
@@ -232,6 +306,8 @@ pub struct BrushPreset {
     pub cursor_bounds: Option<CursorBoundsData>,
     /// Texture settings (from ABR Texture panel data)
     pub texture_settings: Option<TextureSettings>,
+    /// Dual brush settings (from ABR Dual Brush panel data)
+    pub dual_brush_settings: Option<DualBrushSettings>,
 }
 
 /// Cursor bounds data for frontend
@@ -279,6 +355,7 @@ impl From<AbrBrush> for BrushPreset {
             cursor_path,
             cursor_bounds,
             texture_settings: brush.texture_settings,
+            dual_brush_settings: brush.dual_brush_settings,
         }
     }
 }

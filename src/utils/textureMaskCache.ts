@@ -19,6 +19,44 @@ import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUti
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
 import { calculateTextureInfluence } from './textureRendering';
+import type { DualBlendMode } from '@/stores/tool';
+
+// Simple blendDual for TextureMaskCache (duplicated for now)
+function blendDual(primary: number, secondary: number, mode: DualBlendMode): number {
+  const s = Math.max(0, Math.min(1, secondary));
+  const p = Math.max(0, Math.min(1, primary));
+
+  switch (mode) {
+    case 'multiply':
+      return p * s;
+    case 'darken':
+      return Math.min(p, s);
+    case 'lighten':
+      return Math.max(p, s);
+    case 'colorBurn':
+      return s <= 0 ? 0 : 1.0 - (1.0 - p) / s;
+    case 'linearBurn':
+      return Math.max(0, p + s - 1.0);
+    case 'colorDodge':
+      return s >= 1.0 ? 1.0 : p / (1.0 - s);
+    case 'overlay':
+      return p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
+    case 'softLight':
+      return (1.0 - 2.0 * s) * p * p + 2.0 * s * p;
+    case 'hardLight':
+      return s < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
+    case 'difference':
+      return Math.abs(p - s);
+    case 'exclusion':
+      return p + s - 2.0 * p * s;
+    case 'subtract':
+      return Math.max(0, p - s);
+    case 'divide':
+      return s <= 0 ? 1.0 : Math.min(1.0, p / s);
+    default:
+      return p * s;
+  }
+}
 
 interface TextureMaskParams {
   /** Current brush size (diameter in pixels) */
@@ -54,6 +92,14 @@ export class TextureMaskCache {
   /**
    * Helper: Check if texture is already current or has cached ImageData
    */
+  getScaledWidth(): number {
+    return this.scaledWidth;
+  }
+
+  getScaledHeight(): number {
+    return this.scaledHeight;
+  }
+
   private tryUseCachedTexture(texture: BrushTexture): boolean {
     const textureId = texture.id;
 
@@ -281,7 +327,9 @@ export class TextureMaskCache {
     b: number,
     _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
     textureSettings?: TextureSettings | null,
-    pattern?: PatternData
+    pattern?: PatternData,
+    dualMask?: Float32Array | null,
+    dualMode?: DualBlendMode
   ): Rect {
     if (!this.scaledMask) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -334,7 +382,15 @@ export class TextureMaskCache {
         }
 
         // Standard Alpha Darken blend
-        const srcAlpha = maskValue * flow;
+        let alpha = maskValue;
+
+        // Apply Dual Brush Mask if present
+        if (dualMask && dualMode) {
+          const dualVal = dualMask[maskRowStart + mx]!;
+          alpha = blendDual(alpha, dualVal, dualMode);
+        }
+
+        const srcAlpha = alpha * flow;
 
         const dstR = buffer[idx]!;
         const dstG = buffer[idx + 1]!;
@@ -369,6 +425,53 @@ export class TextureMaskCache {
    */
   getDimensions(): { width: number; height: number } {
     return { width: this.scaledWidth, height: this.scaledHeight };
+  }
+
+  /**
+   * Stamp the texture mask into a float alpha buffer (for Dual Brush mask generation)
+   */
+  stampToMask(
+    buffer: Float32Array,
+    bufferWidth: number,
+    bufferHeight: number,
+    cx: number,
+    cy: number,
+    opacity: number
+  ): void {
+    if (!this.scaledMask) return;
+
+    // Calculate buffer position
+    const halfWidth = this.scaledWidth / 2;
+    const halfHeight = this.scaledHeight / 2;
+    const bufferLeft = Math.round(cx - halfWidth);
+    const bufferTop = Math.round(cy - halfHeight);
+
+    // Clipping
+    const startX = Math.max(0, -bufferLeft);
+    const startY = Math.max(0, -bufferTop);
+    const endX = Math.min(this.scaledWidth, bufferWidth - bufferLeft);
+    const endY = Math.min(this.scaledHeight, bufferHeight - bufferTop);
+
+    if (startX >= endX || startY >= endY) return;
+
+    // Blending loop - Max blending (keep strongest alpha)
+    for (let my = startY; my < endY; my++) {
+      const bufferRowStart = (bufferTop + my) * bufferWidth;
+      const maskRowStart = my * this.scaledWidth;
+
+      for (let mx = startX; mx < endX; mx++) {
+        const maskValue = this.scaledMask[maskRowStart + mx]!;
+        if (maskValue < 0.001) continue;
+
+        const idx = bufferRowStart + bufferLeft + mx;
+
+        // Simple Max blending
+        const newVal = maskValue * opacity;
+        if (newVal > buffer[idx]!) {
+          buffer[idx] = newVal;
+        }
+      }
+    }
   }
 
   /**

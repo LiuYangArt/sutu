@@ -10,6 +10,7 @@ import { ScatterSettings } from './settings/ScatterSettings';
 import { ColorDynamicsSettings } from './settings/ColorDynamicsSettings';
 import { WetEdgeSettings } from './settings/WetEdgeSettings';
 import { TextureSettings } from './settings/TextureSettings';
+import { DualBrushSettings } from './settings/DualBrushSettings';
 
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
@@ -22,7 +23,7 @@ export function BrushPanel(): JSX.Element {
     { id: 'shape_dynamics', label: 'Shape Dynamics' },
     { id: 'scattering', label: 'Scattering' },
     { id: 'texture', label: 'Texture' },
-    { id: 'dual_brush', label: 'Dual Brush', disabled: true },
+    { id: 'dual_brush', label: 'Dual Brush' },
     { id: 'color_dynamics', label: 'Color Dynamics' },
     { id: 'transfer', label: 'Transfer' },
     { id: 'brush_pose', label: 'Brush Pose', disabled: true },
@@ -47,6 +48,8 @@ export function BrushPanel(): JSX.Element {
         return <ScatterSettings />;
       case 'texture':
         return <TextureSettings />;
+      case 'dual_brush':
+        return <DualBrushSettings importedPresets={importedPresets} />;
       case 'color_dynamics':
         return <ColorDynamicsSettings />;
       case 'wet_edges':
