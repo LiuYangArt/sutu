@@ -1102,22 +1102,18 @@ impl AbrParser {
         }
 
         // 2. Blend Mode (BlnM)
+        // Dual Brush only supports 8 blend modes in PS
         if let Some(DescriptorValue::Enum { value, .. }) = dual_desc.get("BlnM") {
             settings.mode = match value.as_str() {
                 "Mltp" => super::types::DualBlendMode::Multiply,
                 "Drkn" => super::types::DualBlendMode::Darken,
-                "Lghn" => super::types::DualBlendMode::Lighten,
+                "Ovrl" => super::types::DualBlendMode::Overlay,
+                "CDdg" => super::types::DualBlendMode::ColorDodge,
                 "CBrn" => super::types::DualBlendMode::ColorBurn,
                 "LBrn" => super::types::DualBlendMode::LinearBurn,
-                "CDdg" => super::types::DualBlendMode::ColorDodge,
-                "Ovrl" => super::types::DualBlendMode::Overlay,
-                "SftL" => super::types::DualBlendMode::SoftLight,
-                "HrdL" => super::types::DualBlendMode::HardLight,
-                "Dfrn" => super::types::DualBlendMode::Difference,
-                "Xclu" => super::types::DualBlendMode::Exclusion,
-                "Sbtr" => super::types::DualBlendMode::Subtract,
-                "Dvde" => super::types::DualBlendMode::Divide,
-                _ => super::types::DualBlendMode::Multiply,
+                "HrdM" => super::types::DualBlendMode::HardMix,
+                "LnrH" => super::types::DualBlendMode::LinearHeight,
+                _ => super::types::DualBlendMode::Multiply, // Fallback
             };
         }
 

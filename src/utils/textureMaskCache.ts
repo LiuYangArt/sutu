@@ -21,7 +21,7 @@ import type { PatternData } from './patternManager';
 import { calculateTextureInfluence } from './textureRendering';
 import type { DualBlendMode } from '@/stores/tool';
 
-// Simple blendDual for TextureMaskCache (duplicated for now)
+// PS Dual Brush blend modes (only 8 supported)
 function blendDual(primary: number, secondary: number, mode: DualBlendMode): number {
   const s = Math.max(0, Math.min(1, secondary));
   const p = Math.max(0, Math.min(1, primary));
@@ -31,28 +31,21 @@ function blendDual(primary: number, secondary: number, mode: DualBlendMode): num
       return p * s;
     case 'darken':
       return Math.min(p, s);
-    case 'lighten':
-      return Math.max(p, s);
-    case 'colorBurn':
-      return s <= 0 ? 0 : 1.0 - (1.0 - p) / s;
-    case 'linearBurn':
-      return Math.max(0, p + s - 1.0);
-    case 'colorDodge':
-      return s >= 1.0 ? 1.0 : p / (1.0 - s);
     case 'overlay':
       return p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
-    case 'softLight':
-      return (1.0 - 2.0 * s) * p * p + 2.0 * s * p;
-    case 'hardLight':
-      return s < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
-    case 'difference':
-      return Math.abs(p - s);
-    case 'exclusion':
-      return p + s - 2.0 * p * s;
-    case 'subtract':
-      return Math.max(0, p - s);
-    case 'divide':
-      return s <= 0 ? 1.0 : Math.min(1.0, p / s);
+    case 'colorDodge':
+      return s >= 1.0 ? 1.0 : Math.min(1.0, p / (1.0 - s));
+    case 'colorBurn':
+      return s <= 0 ? 0 : Math.max(0, 1.0 - (1.0 - p) / s);
+    case 'linearBurn':
+      return Math.max(0, p + s - 1.0);
+    case 'hardMix':
+      // Hard Mix: result is 0 or 1 based on linear light threshold
+      return p + s >= 1.0 ? 1.0 : 0.0;
+    case 'linearHeight':
+      // Linear Height: similar to height/emboss effect
+      // Treats secondary as height map, scales primary
+      return p * (0.5 + s * 0.5);
     default:
       return p * s;
   }

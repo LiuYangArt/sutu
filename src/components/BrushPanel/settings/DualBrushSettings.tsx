@@ -17,20 +17,16 @@ interface DualBrushSettingsProps {
   importedPresets: BrushPreset[];
 }
 
+// PS Dual Brush only supports these 8 blend modes
 const BLEND_MODE_OPTIONS: SelectOption[] = [
   { value: 'multiply', label: 'Multiply' },
   { value: 'darken', label: 'Darken' },
-  { value: 'lighten', label: 'Lighten' },
   { value: 'overlay', label: 'Overlay' },
   { value: 'colorDodge', label: 'Color Dodge' },
   { value: 'colorBurn', label: 'Color Burn' },
   { value: 'linearBurn', label: 'Linear Burn' },
-  { value: 'hardLight', label: 'Hard Light' },
-  { value: 'softLight', label: 'Soft Light' },
-  { value: 'difference', label: 'Difference' },
-  { value: 'exclusion', label: 'Exclusion' },
-  { value: 'subtract', label: 'Subtract' },
-  { value: 'divide', label: 'Divide' },
+  { value: 'hardMix', label: 'Hard Mix' },
+  { value: 'linearHeight', label: 'Linear Height' },
 ];
 
 export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): JSX.Element {

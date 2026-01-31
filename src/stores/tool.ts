@@ -155,22 +155,19 @@ export const DEFAULT_TRANSFER_SETTINGS: TransferSettings = {
 };
 
 /**
- * Dual Blend Mode (Photoshop-compatible)
+ * Dual Blend Mode (Photoshop Dual Brush panel compatible)
+ * Only 8 modes are available: Multiply, Darken, Overlay,
+ * Color Dodge, Color Burn, Linear Burn, Hard Mix, Linear Height
  */
 export type DualBlendMode =
   | 'multiply'
   | 'darken'
-  | 'lighten'
+  | 'overlay'
+  | 'colorDodge'
   | 'colorBurn'
   | 'linearBurn'
-  | 'colorDodge'
-  | 'overlay'
-  | 'softLight'
-  | 'hardLight'
-  | 'difference'
-  | 'exclusion'
-  | 'subtract'
-  | 'divide';
+  | 'hardMix'
+  | 'linearHeight';
 
 /**
  * Dual Brush settings (Photoshop Dual Brush panel compatible)

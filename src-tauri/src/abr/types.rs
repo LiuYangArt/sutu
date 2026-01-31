@@ -142,24 +142,21 @@ pub enum TextureBlendMode {
     Height,
 }
 
-/// Dual Brush blend mode (Photoshop-compatible)
+/// Dual Brush blend mode (Photoshop Dual Brush panel compatible)
+/// Only 8 modes are available in PS Dual Brush: Multiply, Darken, Overlay,
+/// Color Dodge, Color Burn, Linear Burn, Hard Mix, Linear Height
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DualBlendMode {
     #[default]
     Multiply, // Mltp - 正片叠底
-    Darken,     // Drkn - 变暗
-    Lighten,    // Lghn - 变亮
-    ColorBurn,  // CBrn - 颜色加深
-    LinearBurn, // LBrn - 线性加深
-    ColorDodge, // CDdg - 颜色减淡
-    Overlay,    // Ovrl - 叠加
-    SoftLight,  // SftL - 柔光
-    HardLight,  // HrdL - 强光
-    Difference, // Dfrn - 差值
-    Exclusion,  // Xclu - 排除
-    Subtract,   // Sbtr - 减去
-    Divide,     // Dvde - 划分
+    Darken,       // Drkn - 变暗
+    Overlay,      // Ovrl - 叠加
+    ColorDodge,   // CDdg - 颜色减淡
+    ColorBurn,    // CBrn - 颜色加深
+    LinearBurn,   // LBrn - 线性加深
+    HardMix,      // HrdM - 实色混合
+    LinearHeight, // LnrH - 线性高度
 }
 
 /// Dual Brush settings (Photoshop Dual Brush panel compatible)
