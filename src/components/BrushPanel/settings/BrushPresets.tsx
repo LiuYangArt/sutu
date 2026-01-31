@@ -136,9 +136,9 @@ export function BrushPresets({
         </button>
 
         {/* Imported presets - using BrushThumbnail for texture display */}
-        {importedPresets.map((preset) => (
+        {importedPresets.map((preset, index) => (
           <button
-            key={preset.id}
+            key={`${preset.id}-${index}`}
             className={`abr-preset-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
             onClick={() => applyPreset(preset)}
             title={`${preset.name}\n${preset.diameter}px, ${preset.hardness}% hardness`}

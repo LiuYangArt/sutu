@@ -24,6 +24,7 @@ struct SampBrushData {
     spacing: f32,
     angle: f32,
     roundness: f32,
+    #[allow(dead_code)] // Reserved for future use (multi-depth brush support)
     depth: u16,
 }
 
