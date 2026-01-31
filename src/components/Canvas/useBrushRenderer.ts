@@ -42,13 +42,61 @@ import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
 import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { useSelectionStore } from '@/stores/selection';
 
+const MIN_ROUNDNESS = 0.01;
+
+function clampRoundness(roundness: number): number {
+  return Math.max(MIN_ROUNDNESS, Math.min(1, roundness));
+}
+
+function computeTipDimensions(
+  size: number,
+  roundness: number,
+  texture?: BrushTexture | null
+): { width: number; height: number } {
+  const safeSize = Math.max(1, size);
+  const roundnessScale = clampRoundness(roundness);
+
+  if (texture?.width && texture?.height) {
+    const aspect = texture.width / texture.height;
+    let baseW = safeSize;
+    let baseH = safeSize;
+
+    if (aspect >= 1) {
+      baseW = safeSize;
+      baseH = safeSize / aspect;
+    } else {
+      baseH = safeSize;
+      baseW = safeSize * aspect;
+    }
+
+    return {
+      width: baseW,
+      height: baseH * roundnessScale,
+    };
+  }
+
+  return {
+    width: safeSize,
+    height: safeSize * roundnessScale,
+  };
+}
+
+function computeSpacingBasePx(
+  size: number,
+  roundness: number,
+  texture?: BrushTexture | null
+): number {
+  const { width, height } = computeTipDimensions(size, roundness, texture);
+  return Math.min(width, height);
+}
+
 export interface BrushRenderConfig {
   size: number;
   flow: number;
   opacity: number;
   hardness: number;
   maskType: MaskType; // Mask type: 'gaussian' or 'default'
-  spacing: number;
+  spacing: number; // Fraction of tip short edge (0-1)
   roundness: number; // 0-100 (100 = circle, <100 = ellipse)
   angle: number; // 0-360 degrees
   color: string;
@@ -253,7 +301,9 @@ export function useBrushRenderer({
       const size = config.pressureSizeEnabled ? config.size * adjustedPressure : config.size;
 
       // Get dab positions from stamper
-      const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
+      const spacingBase = computeSpacingBasePx(size, config.roundness / 100, config.texture);
+      const spacingPx = spacingBase * config.spacing;
+      const dabs = stamper.processPoint(x, y, pressure, spacingPx);
 
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush
@@ -277,15 +327,11 @@ export function useBrushRenderer({
 
         // Use secondary brush's own spacing (this was the missing part!)
         const secondarySpacing = dualBrush.spacing ?? 0.1;
+        const secondarySpacingBase = computeSpacingBasePx(secondarySize, 1, dualBrush.texture);
+        const secondarySpacingPx = secondarySpacingBase * secondarySpacing;
 
         // Generate secondary dabs at this point
-        const secondaryDabs = secondaryStamper.processPoint(
-          x,
-          y,
-          pressure,
-          secondarySize,
-          secondarySpacing
-        );
+        const secondaryDabs = secondaryStamper.processPoint(x, y, pressure, secondarySpacingPx);
 
         // Stamp each secondary dab to the stroke-level accumulator
         for (const secDab of secondaryDabs) {

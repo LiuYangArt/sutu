@@ -207,24 +207,22 @@ export class TextureMaskCache {
     const srcH = this.sourceImageData.height;
     const srcData = this.sourceImageData.data;
 
-    // Maintain aspect ratio logic
+    // Maintain aspect ratio, then apply roundness (squeeze vertically)
     const aspectRatio = srcW / srcH;
-    let targetW: number, targetH: number;
+    const roundnessScale = Math.max(0.01, Math.min(1, roundness));
+    let baseW: number;
+    let baseH: number;
 
-    if (roundness >= 0.99) {
-      // Use original aspect ratio
-      if (aspectRatio >= 1) {
-        targetW = size;
-        targetH = size / aspectRatio;
-      } else {
-        targetH = size;
-        targetW = size * aspectRatio;
-      }
+    if (aspectRatio >= 1) {
+      baseW = size;
+      baseH = size / aspectRatio;
     } else {
-      // Apply roundness (squeeze vertically)
-      targetW = size;
-      targetH = size * roundness;
+      baseH = size;
+      baseW = size * aspectRatio;
     }
+
+    const targetW = baseW;
+    const targetH = baseH * roundnessScale;
 
     // Add margin for rotation
     const diagonal = Math.sqrt(targetW * targetW + targetH * targetH);

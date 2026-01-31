@@ -48,7 +48,7 @@ export interface DabParams {
   };
   // Context for relative scaling
   baseSize?: number; // Main brush base size (slider value)
-  spacing?: number; // Main brush spacing (0-1)
+  spacing?: number; // Main brush spacing (0-1, fraction of tip short edge)
 }
 
 export interface Rect {
@@ -1139,8 +1139,7 @@ export class BrushStamper {
     x: number,
     y: number,
     pressure: number,
-    size: number,
-    spacing: number
+    spacingPx: number
   ): Array<{ x: number; y: number; pressure: number }> {
     const dabs: Array<{ x: number; y: number; pressure: number }> = [];
 
@@ -1195,15 +1194,15 @@ export class BrushStamper {
 
     // Check for rapid pressure change - reduce spacing for smoother transition
     const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
-    let effectiveSpacing = spacing;
+    let effectiveSpacing = spacingPx;
     if (pressureChange > BrushStamper.PRESSURE_CHANGE_THRESHOLD) {
       // Reduce spacing when pressure is changing rapidly
       // This adds more dabs during transitions for smoother appearance
-      effectiveSpacing = spacing * 0.5;
+      effectiveSpacing = spacingPx * 0.5;
     }
 
-    // Spacing threshold based on current size (not pressure-scaled to avoid inconsistent spacing)
-    const threshold = Math.max(size * effectiveSpacing, 1);
+    // Spacing threshold based on precomputed tip size
+    const threshold = Math.max(effectiveSpacing, 1);
 
     this.accumulatedDistance += distance;
 

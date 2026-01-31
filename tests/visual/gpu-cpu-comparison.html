@@ -306,6 +306,7 @@
       }
 
       function generateDabPositions(mode, size, spacingPercent) {
+        const spacingPx = size * spacingPercent;
         if (mode === 'point') {
           // 5 overlapping points at center
           return [
@@ -344,7 +345,7 @@
               Math.min(1.0, basePressure + (Math.random() - 0.5) * 0.2)
             );
 
-            const newDabs = stamper.processPoint(x, y, pressure, size, spacingPercent);
+            const newDabs = stamper.processPoint(x, y, pressure, spacingPx);
             dabs.push(...newDabs);
           }
 
@@ -365,7 +366,7 @@
             const y = 150 + Math.sin(t * Math.PI * 2) * 50;
             const pressure = 0.5 + Math.sin(t * Math.PI) * 0.5;
 
-            const newDabs = stamper.processPoint(x, y, pressure, size, spacingPercent);
+            const newDabs = stamper.processPoint(x, y, pressure, spacingPx);
             dabs.push(...newDabs);
           }
 

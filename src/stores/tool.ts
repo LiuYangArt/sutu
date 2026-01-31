@@ -262,7 +262,7 @@ interface ToolState {
   brushOpacity: number; // Opacity: ceiling for entire stroke
   brushHardness: number;
   brushMaskType: BrushMaskType; // Mask type: edge falloff algorithm
-  brushSpacing: number; // Spacing as fraction of size (0.01-1.0)
+  brushSpacing: number; // Spacing as fraction of tip short edge (0.01-1.0)
   brushRoundness: number; // Roundness: 0-100 (100 = circle, <100 = ellipse)
   brushAngle: number; // Angle: 0-360 degrees
   brushColor: string;
