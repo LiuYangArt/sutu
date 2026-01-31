@@ -46,6 +46,9 @@ export interface DabParams {
   dualBrush?: DualBrushSettings & {
     brushTexture?: BrushTexture; // Secondary brush texture
   };
+  // Context for relative scaling
+  baseSize?: number; // Main brush base size (slider value)
+  spacing?: number; // Main brush spacing (0-1)
 }
 
 export interface Rect {
@@ -430,9 +433,46 @@ export class StrokeAccumulator {
     const centerX = width / 2;
     const centerY = height / 2;
 
-    const count = Math.max(1, dualBrush.count || 1);
-    const scatterAmount = ((dualBrush.scatter || 0) / 100.0) * dualBrush.size; // Scatter as factor of size? Or fixed?
-    // PS Scatter: % of brush diameter? Usually yes.
+    // --- FIX 1: Relative Size Scaling ---
+    // Calculate scale relative to "Native Size" of the main brush.
+    // For Texture brushes: Native Size = Texture Width.
+    // For Procedural brushes: Assume 128px as virtual native size.
+    let nativeSize = 128;
+    if (params.texture) {
+      nativeSize = Math.max(params.texture.width, params.texture.height);
+    }
+    // Calculate scale factor: Current Brush Size / Native Size
+    // This ensures Dual Brush scales proportionally with Main Brush (both Pressure and Slider)
+    const scaleFactor = params.size / nativeSize;
+
+    // Effective Dual Brush Size
+    const effectiveSize = dualBrush.size * scaleFactor;
+
+    // --- FIX 2: Spacing/Density Normalization ---
+    // User report: "Main brush spacing affects secondary brush tip density" (Incorrect)
+    // Goal: Maintain constant secondary tips per pixel of stroke.
+    // dabs/pixel = 1 / (spacing * size)
+    // To keep tips/pixel constant, tips/dab (Count) must be proportional to Spacing.
+    // Reference: If user sets Count=1 at Spacing=25%, they expect Disjoint dabs to have 1 tip.
+    const mainSpacing = params.spacing ?? 0.25;
+    const referenceSpacing = 0.25;
+
+    // Effective Count per Dab
+    const densityFactor = mainSpacing / referenceSpacing;
+    const targetCount = Math.max(1, dualBrush.count || 1) * densityFactor;
+
+    // Handle fractional count (probabilistic stamping) for low spacing
+    let finalCount = Math.floor(targetCount);
+    const fractional = targetCount - finalCount;
+    if (Math.random() < fractional) {
+      finalCount++;
+    }
+
+    if (finalCount === 0) return this.dualMaskBuffer;
+
+    // --- FIX 3: Scatter Scaling ---
+    // Scatter distance should also scale with brush size
+    const scatterAmount = ((dualBrush.scatter || 0) / 100.0) * effectiveSize;
 
     // Setup Secondary Cache
     let useTexture = false;
@@ -440,13 +480,12 @@ export class StrokeAccumulator {
       useTexture = true;
       // Update texture cache
       if (!this.secondaryTextureMaskCache.setTextureSync(dualBrush.brushTexture)) {
-        // If async, trigger load and skip (visual glitch for first frame but fine)
         void this.secondaryTextureMaskCache.setTexture(dualBrush.brushTexture);
         return null;
       }
 
       const texParams = {
-        size: dualBrush.size,
+        size: effectiveSize,
         roundness: 1, // Secondary roundness not fully exposed yet? Assume 1
         angle: 0, // Secondary angle not fully exposed?
       };
@@ -456,8 +495,8 @@ export class StrokeAccumulator {
     } else {
       // Use standard mask cache (Soft brush fallback)
       const maskParams = {
-        size: dualBrush.size,
-        hardness: 1.0, // Hardness for secondary? Usually secondary tips are somewhat hard or soft based on type.
+        size: effectiveSize,
+        hardness: 1.0,
         roundness: 1.0,
         angle: 0,
         maskType: 'gaussian' as const,
@@ -468,24 +507,18 @@ export class StrokeAccumulator {
     }
 
     // Stamp loop
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < finalCount; i++) {
       // Scatter Calculation
       let dx = 0;
       let dy = 0;
 
       if (scatterAmount > 0) {
-        // Random offset (-1 to 1) * scatter
         dx = (Math.random() * 2 - 1) * scatterAmount;
         dy = (Math.random() * 2 - 1) * scatterAmount;
 
         if (!dualBrush.bothAxes) {
-          // If not both axes, usually scatter is perpendicular to stroke?
-          // But for dual brush "inner" scatter, it might be just random.
-          // Simplification: Standard Scatter usually applies to both X/Y if 'Both Axes' is unchecked?
-          // Wait, PS Scatter: "Both Axes" means X and Y. Unchecked means only perpendicular?
-          // Since this is "inner" scattering relative to the dab, direction is ambiguous without stroke direction vector here.
-          // Let's assume isotropic scatter for now for simplicity, or just Y if !bothAxes?
-          // Let's do isotropic for now.
+          // If not both axes, typically scatter is perpendicular to stroke?
+          // For inner scatter, we assume isotropic for now as we lack dab rotation context here
         }
       }
 
@@ -493,16 +526,8 @@ export class StrokeAccumulator {
       const y = centerY + dy;
 
       // Stamp
-      // We use opaque 1.0 stamps, MAX blending.
       if (useTexture) {
-        this.secondaryTextureMaskCache.stampToMask(
-          this.dualMaskBuffer,
-          width,
-          height,
-          x,
-          y,
-          1.0 // Opacity 1.0
-        );
+        this.secondaryTextureMaskCache.stampToMask(this.dualMaskBuffer, width, height, x, y, 1.0);
       } else {
         this.secondaryMaskCache.stampToMask(this.dualMaskBuffer, width, height, x, y, 1.0);
       }

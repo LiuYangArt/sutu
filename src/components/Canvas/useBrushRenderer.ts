@@ -413,6 +413,8 @@ export function useBrushRenderer({
                     brushTexture: config.dualBrush.texture,
                   }
                 : undefined,
+            baseSize: config.size,
+            spacing: config.spacing,
           };
 
           if (backend === 'gpu' && gpuBufferRef.current) {
