@@ -333,6 +333,8 @@ impl From<AbrBrush> for BrushPreset {
             })
             .unwrap_or((None, None));
 
+        let has_texture = brush.tip_image.is_some() && !brush.is_computed;
+
         BrushPreset {
             id: brush
                 .uuid
@@ -343,10 +345,18 @@ impl From<AbrBrush> for BrushPreset {
             hardness: brush.hardness.unwrap_or(100.0),
             angle: brush.angle,
             roundness: brush.roundness * 100.0,
-            has_texture: brush.tip_image.is_some(),
+            has_texture,
             // Note: texture_data removed - textures served via project://brush/{id}
-            texture_width: brush.tip_image.as_ref().map(|img| img.width),
-            texture_height: brush.tip_image.as_ref().map(|img| img.height),
+            texture_width: if has_texture {
+                brush.tip_image.as_ref().map(|img| img.width)
+            } else {
+                None
+            },
+            texture_height: if has_texture {
+                brush.tip_image.as_ref().map(|img| img.height)
+            } else {
+                None
+            },
             size_pressure: dynamics.map(|d| d.size_control == 2).unwrap_or(false),
             opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
             cursor_path,
@@ -354,6 +364,57 @@ impl From<AbrBrush> for BrushPreset {
             texture_settings: brush.texture_settings,
             dual_brush_settings: brush.dual_brush_settings,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computed_brush_is_not_texture() {
+        let brush = AbrBrush {
+            name: "Computed".to_string(),
+            uuid: Some("computed-1".to_string()),
+            tip_image: Some(GrayscaleImage::new(2, 2, vec![0, 255, 255, 0])),
+            diameter: 20.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: Some(1.0),
+            dynamics: None,
+            is_computed: true,
+            texture_settings: None,
+            dual_brush_settings: None,
+        };
+
+        let preset: BrushPreset = brush.into();
+        assert!(!preset.has_texture);
+        assert!(preset.texture_width.is_none());
+        assert!(preset.texture_height.is_none());
+    }
+
+    #[test]
+    fn sampled_brush_keeps_texture() {
+        let brush = AbrBrush {
+            name: "Sampled".to_string(),
+            uuid: Some("sampled-1".to_string()),
+            tip_image: Some(GrayscaleImage::new(2, 2, vec![0, 255, 255, 0])),
+            diameter: 20.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: Some(1.0),
+            dynamics: None,
+            is_computed: false,
+            texture_settings: None,
+            dual_brush_settings: None,
+        };
+
+        let preset: BrushPreset = brush.into();
+        assert!(preset.has_texture);
+        assert_eq!(preset.texture_width, Some(2));
+        assert_eq!(preset.texture_height, Some(2));
     }
 }
 

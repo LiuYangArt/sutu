@@ -775,16 +775,18 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             );
         }
 
-        // Cache texture if present
+        // Cache texture if present (skip computed brushes - render procedurally)
         if let Some(ref tip) = brush.tip_image {
-            raw_bytes += tip.data.len();
-            cache_brush_gray(
-                id.clone(),
-                tip.data.clone(),
-                tip.width,
-                tip.height,
-                brush.name.clone(),
-            );
+            if !brush.is_computed {
+                raw_bytes += tip.data.len();
+                cache_brush_gray(
+                    id.clone(),
+                    tip.data.clone(),
+                    tip.width,
+                    tip.height,
+                    brush.name.clone(),
+                );
+            }
         }
 
         // Build preset with the ID we generated
@@ -856,6 +858,8 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         })
         .unwrap_or((None, None));
 
+    let has_texture = brush.tip_image.is_some() && !brush.is_computed;
+
     BrushPreset {
         id,
         name: brush.name,
@@ -864,9 +868,17 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         hardness: brush.hardness.unwrap_or(100.0),
         angle: brush.angle,
         roundness: brush.roundness * 100.0,
-        has_texture: brush.tip_image.is_some(),
-        texture_width: brush.tip_image.as_ref().map(|img| img.width),
-        texture_height: brush.tip_image.as_ref().map(|img| img.height),
+        has_texture,
+        texture_width: if has_texture {
+            brush.tip_image.as_ref().map(|img| img.width)
+        } else {
+            None
+        },
+        texture_height: if has_texture {
+            brush.tip_image.as_ref().map(|img| img.height)
+        } else {
+            None
+        },
         size_pressure: dynamics.map(|d| d.size_control == 2).unwrap_or(false),
         opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
         cursor_path,

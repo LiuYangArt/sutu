@@ -82,6 +82,33 @@ export class TextureMaskCache {
   private centerX: number = 0;
   private centerY: number = 0;
 
+  private static sampleBilinear(
+    data: Float32Array,
+    width: number,
+    height: number,
+    x: number,
+    y: number
+  ): number {
+    if (x < 0 || y < 0 || x > width - 1 || y > height - 1) return 0;
+
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = x0 + 1;
+    const y1 = y0 + 1;
+    const fx = x - x0;
+    const fy = y - y0;
+
+    const idx00 = y0 * width + x0;
+    const v00 = data[idx00] ?? 0;
+    const v10 = x1 < width ? (data[idx00 + 1] ?? 0) : 0;
+    const v01 = y1 < height ? (data[idx00 + width] ?? 0) : 0;
+    const v11 = x1 < width && y1 < height ? (data[idx00 + width + 1] ?? 0) : 0;
+
+    const v0 = v00 + (v10 - v00) * fx;
+    const v1 = v01 + (v11 - v01) * fx;
+    return v0 + (v1 - v0) * fy;
+  }
+
   /**
    * Helper: Check if texture is already current or has cached ImageData
    */
@@ -316,6 +343,9 @@ export class TextureMaskCache {
     const halfHeight = this.scaledHeight / 2;
     const bufferLeft = Math.round(cx - halfWidth);
     const bufferTop = Math.round(cy - halfHeight);
+    const offsetX = cx - (bufferLeft + halfWidth);
+    const offsetY = cy - (bufferTop + halfHeight);
+    const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -334,58 +364,129 @@ export class TextureMaskCache {
     const dirtyBottom = bufferTop + endY;
 
     // Blending loop
-    for (let my = startY; my < endY; my++) {
-      const bufferRowStart = (bufferTop + my) * bufferWidth;
-      const maskRowStart = my * this.scaledWidth;
+    if (!useSubpixel) {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+        const maskRowStart = my * this.scaledWidth;
 
-      for (let mx = startX; mx < endX; mx++) {
-        const maskValue = this.scaledMask[maskRowStart + mx]!;
-        if (maskValue < 0.001) continue;
+        for (let mx = startX; mx < endX; mx++) {
+          const maskValue = this.scaledMask[maskRowStart + mx]!;
+          if (maskValue < 0.001) continue;
 
-        const idx = (bufferRowStart + bufferLeft + mx) * 4;
+          const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-        // Texture modulation
-        let textureMod = 1.0;
-        if (textureSettings && pattern) {
-          const depth = textureSettings.depth / 100.0;
-          textureMod = calculateTextureInfluence(
-            bufferLeft + mx,
-            bufferTop + my,
-            textureSettings,
-            pattern,
-            depth
+          // Texture modulation
+          let textureMod = 1.0;
+          if (textureSettings && pattern) {
+            const depth = textureSettings.depth / 100.0;
+            textureMod = calculateTextureInfluence(
+              bufferLeft + mx,
+              bufferTop + my,
+              textureSettings,
+              pattern,
+              depth
+            );
+          }
+
+          // Standard Alpha Darken blend
+          const alpha = maskValue;
+          const srcAlpha = alpha * flow;
+
+          // Apply Dual Brush Mask if present
+          // Dual brush modifies OPACITY (like texture), not flow
+          let dualMod = 1.0;
+          if (dualMask && dualMode) {
+            const dualVal = dualMask[maskRowStart + mx]!;
+            // Use maskValue as the primary to preserve brush shape; dualVal modulates density
+            dualMod = blendDual(maskValue, dualVal, dualMode);
+          }
+
+          const dstR = buffer[idx]!;
+          const dstG = buffer[idx + 1]!;
+          const dstB = buffer[idx + 2]!;
+          const dstA = buffer[idx + 3]! / 255;
+
+          // Alpha Darken blending - dual brush affects opacity ceiling, not flow
+          const effectiveOpacity = dabOpacity * textureMod * dualMod;
+          const outA =
+            dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
+
+          if (outA > 0.001) {
+            const hasColor = dstA > 0.001;
+            buffer[idx] = (hasColor ? dstR + (r - dstR) * srcAlpha : r) + 0.5;
+            buffer[idx + 1] = (hasColor ? dstG + (g - dstG) * srcAlpha : g) + 0.5;
+            buffer[idx + 2] = (hasColor ? dstB + (b - dstB) * srcAlpha : b) + 0.5;
+            buffer[idx + 3] = outA * 255 + 0.5;
+          }
+        }
+      }
+    } else {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+
+        for (let mx = startX; mx < endX; mx++) {
+          const sampleX = mx - offsetX;
+          const sampleY = my - offsetY;
+          const maskValue = TextureMaskCache.sampleBilinear(
+            this.scaledMask,
+            this.scaledWidth,
+            this.scaledHeight,
+            sampleX,
+            sampleY
           );
-        }
+          if (maskValue < 0.001) continue;
 
-        // Standard Alpha Darken blend
-        const alpha = maskValue;
-        const srcAlpha = alpha * flow;
+          const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-        // Apply Dual Brush Mask if present
-        // Dual brush modifies OPACITY (like texture), not flow
-        let dualMod = 1.0;
-        if (dualMask && dualMode) {
-          const dualVal = dualMask[maskRowStart + mx]!;
-          // Use maskValue as the primary to preserve brush shape; dualVal modulates density
-          dualMod = blendDual(maskValue, dualVal, dualMode);
-        }
+          // Texture modulation
+          let textureMod = 1.0;
+          if (textureSettings && pattern) {
+            const depth = textureSettings.depth / 100.0;
+            textureMod = calculateTextureInfluence(
+              bufferLeft + mx,
+              bufferTop + my,
+              textureSettings,
+              pattern,
+              depth
+            );
+          }
 
-        const dstR = buffer[idx]!;
-        const dstG = buffer[idx + 1]!;
-        const dstB = buffer[idx + 2]!;
-        const dstA = buffer[idx + 3]! / 255;
+          // Standard Alpha Darken blend
+          const alpha = maskValue;
+          const srcAlpha = alpha * flow;
 
-        // Alpha Darken blending - dual brush affects opacity ceiling, not flow
-        const effectiveOpacity = dabOpacity * textureMod * dualMod;
-        const outA =
-          dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
+          // Apply Dual Brush Mask if present
+          // Dual brush modifies OPACITY (like texture), not flow
+          let dualMod = 1.0;
+          if (dualMask && dualMode) {
+            const dualVal = TextureMaskCache.sampleBilinear(
+              dualMask,
+              this.scaledWidth,
+              this.scaledHeight,
+              sampleX,
+              sampleY
+            );
+            // Use maskValue as the primary to preserve brush shape; dualVal modulates density
+            dualMod = blendDual(maskValue, dualVal, dualMode);
+          }
 
-        if (outA > 0.001) {
-          const hasColor = dstA > 0.001;
-          buffer[idx] = (hasColor ? dstR + (r - dstR) * srcAlpha : r) + 0.5;
-          buffer[idx + 1] = (hasColor ? dstG + (g - dstG) * srcAlpha : g) + 0.5;
-          buffer[idx + 2] = (hasColor ? dstB + (b - dstB) * srcAlpha : b) + 0.5;
-          buffer[idx + 3] = outA * 255 + 0.5;
+          const dstR = buffer[idx]!;
+          const dstG = buffer[idx + 1]!;
+          const dstB = buffer[idx + 2]!;
+          const dstA = buffer[idx + 3]! / 255;
+
+          // Alpha Darken blending - dual brush affects opacity ceiling, not flow
+          const effectiveOpacity = dabOpacity * textureMod * dualMod;
+          const outA =
+            dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
+
+          if (outA > 0.001) {
+            const hasColor = dstA > 0.001;
+            buffer[idx] = (hasColor ? dstR + (r - dstR) * srcAlpha : r) + 0.5;
+            buffer[idx + 1] = (hasColor ? dstG + (g - dstG) * srcAlpha : g) + 0.5;
+            buffer[idx + 2] = (hasColor ? dstB + (b - dstB) * srcAlpha : b) + 0.5;
+            buffer[idx + 3] = outA * 255 + 0.5;
+          }
         }
       }
     }
@@ -424,6 +525,9 @@ export class TextureMaskCache {
     const halfHeight = this.scaledHeight / 2;
     const bufferLeft = Math.round(cx - halfWidth);
     const bufferTop = Math.round(cy - halfHeight);
+    const offsetX = cx - (bufferLeft + halfWidth);
+    const offsetY = cy - (bufferTop + halfHeight);
+    const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -434,19 +538,44 @@ export class TextureMaskCache {
     if (startX >= endX || startY >= endY) return;
 
     // Blending loop - Alpha Darken style accumulation (flow fixed to 1.0 by caller)
-    for (let my = startY; my < endY; my++) {
-      const bufferRowStart = (bufferTop + my) * bufferWidth;
-      const maskRowStart = my * this.scaledWidth;
+    if (!useSubpixel) {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+        const maskRowStart = my * this.scaledWidth;
 
-      for (let mx = startX; mx < endX; mx++) {
-        const maskValue = this.scaledMask[maskRowStart + mx]!;
-        if (maskValue < 0.001) continue;
+        for (let mx = startX; mx < endX; mx++) {
+          const maskValue = this.scaledMask[maskRowStart + mx]!;
+          if (maskValue < 0.001) continue;
 
-        const idx = bufferRowStart + bufferLeft + mx;
+          const idx = bufferRowStart + bufferLeft + mx;
 
-        const dst = buffer[idx] ?? 0;
-        const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
-        buffer[idx] = out;
+          const dst = buffer[idx] ?? 0;
+          const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+          buffer[idx] = out;
+        }
+      }
+    } else {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+
+        for (let mx = startX; mx < endX; mx++) {
+          const sampleX = mx - offsetX;
+          const sampleY = my - offsetY;
+          const maskValue = TextureMaskCache.sampleBilinear(
+            this.scaledMask,
+            this.scaledWidth,
+            this.scaledHeight,
+            sampleX,
+            sampleY
+          );
+          if (maskValue < 0.001) continue;
+
+          const idx = bufferRowStart + bufferLeft + mx;
+
+          const dst = buffer[idx] ?? 0;
+          const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+          buffer[idx] = out;
+        }
       }
     }
   }
