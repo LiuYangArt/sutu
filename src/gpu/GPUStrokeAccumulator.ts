@@ -650,6 +650,10 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.textureWidth,
         this.pingPongBuffer.textureHeight
       );
+      this.wetEdgePipeline.updateCanvasSize(
+        this.pingPongBuffer.textureWidth,
+        this.pingPongBuffer.textureHeight
+      );
       this.dualMaskBuffer.setRenderScale(targetScale);
       this.computeDualMaskPipeline.updateCanvasSize(
         this.dualMaskBuffer.textureWidth,
