@@ -167,7 +167,6 @@ export class StrokeAccumulator {
   private wetEdgeHardness: number = 0; // Current brush hardness for adaptive wet edge
 
   // Wet Edge effect buffer - stores the processed result for preview
-  private wetEdgeBuffer: Uint8ClampedArray | null = null;
 
   // Wet Edge LUT - precomputed alpha mapping for performance (v4 optimization)
   private wetEdgeLut: Uint8Array = new Uint8Array(256);
@@ -219,7 +218,6 @@ export class StrokeAccumulator {
 
     // Initialize wet edge buffer if enabled
     if (this.wetEdgeEnabled) {
-      this.wetEdgeBuffer = new Uint8ClampedArray(this.width * this.height * 4);
       // Build LUT for this stroke's hardness/strength combination
       this.buildWetEdgeLut(hardness, wetEdge);
     }
@@ -309,7 +307,7 @@ export class StrokeAccumulator {
     this.wetEdgeEnabled = false;
     this.wetEdgeStrength = 1.0;
     this.wetEdgeHardness = 0;
-    this.wetEdgeBuffer = null;
+
     this.wetEdgeLutValid = false;
 
     // Clear stroke-level dual mask accumulators

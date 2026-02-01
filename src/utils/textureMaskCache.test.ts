@@ -20,6 +20,6 @@ describe('TextureMaskCache subpixel stamping', () => {
     cache.stampToMask(bufferA, 4, 4, 1.2, 1.2, 1.0);
     cache.stampToMask(bufferB, 4, 4, 1.4, 1.2, 1.0);
 
-    expect(bufferA[5]).not.toBeCloseTo(bufferB[5], 6);
+    expect(bufferA[5]!).not.toBeCloseTo(bufferB[5]!, 6);
   });
 });

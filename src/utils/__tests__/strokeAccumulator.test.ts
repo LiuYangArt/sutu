@@ -54,9 +54,10 @@ describe('StrokeAccumulator preview sync', () => {
   beforeEach(() => {
     ensureImageData();
     mockCtx = createMockContext();
+    // @ts-expect-error - Overloading getContext for testing causes TS issues with disjoint union types
     getContextSpy = vi
       .spyOn(HTMLCanvasElement.prototype, 'getContext')
-      .mockImplementation(() => mockCtx as unknown as CanvasRenderingContext2D);
+      .mockImplementation(() => mockCtx as any);
   });
 
   afterEach(() => {
