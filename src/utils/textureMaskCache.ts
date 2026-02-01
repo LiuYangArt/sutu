@@ -346,6 +346,8 @@ export class TextureMaskCache {
     const offsetX = cx - (bufferLeft + halfWidth);
     const offsetY = cy - (bufferTop + halfHeight);
     const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
+    const hasTexturePattern = Boolean(textureSettings && pattern);
+    const textureDepth = textureSettings ? textureSettings.depth / 100.0 : 0;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -373,24 +375,24 @@ export class TextureMaskCache {
           const maskValue = this.scaledMask[maskRowStart + mx]!;
           if (maskValue < 0.001) continue;
 
-          const idx = (bufferRowStart + bufferLeft + mx) * 4;
+          const bufferX = bufferLeft + mx;
+          const bufferY = bufferTop + my;
+          const idx = (bufferRowStart + bufferX) * 4;
 
           // Texture modulation
           let textureMod = 1.0;
-          if (textureSettings && pattern) {
-            const depth = textureSettings.depth / 100.0;
+          if (hasTexturePattern) {
             textureMod = calculateTextureInfluence(
-              bufferLeft + mx,
-              bufferTop + my,
-              textureSettings,
-              pattern,
-              depth
+              bufferX,
+              bufferY,
+              textureSettings!,
+              pattern!,
+              textureDepth
             );
           }
 
           // Standard Alpha Darken blend
-          const alpha = maskValue;
-          const srcAlpha = alpha * flow;
+          const srcAlpha = maskValue * flow;
 
           // Apply Dual Brush Mask if present
           // Dual brush modifies OPACITY (like texture), not flow
@@ -436,24 +438,24 @@ export class TextureMaskCache {
           );
           if (maskValue < 0.001) continue;
 
-          const idx = (bufferRowStart + bufferLeft + mx) * 4;
+          const bufferX = bufferLeft + mx;
+          const bufferY = bufferTop + my;
+          const idx = (bufferRowStart + bufferX) * 4;
 
           // Texture modulation
           let textureMod = 1.0;
-          if (textureSettings && pattern) {
-            const depth = textureSettings.depth / 100.0;
+          if (hasTexturePattern) {
             textureMod = calculateTextureInfluence(
-              bufferLeft + mx,
-              bufferTop + my,
-              textureSettings,
-              pattern,
-              depth
+              bufferX,
+              bufferY,
+              textureSettings!,
+              pattern!,
+              textureDepth
             );
           }
 
           // Standard Alpha Darken blend
-          const alpha = maskValue;
-          const srcAlpha = alpha * flow;
+          const srcAlpha = maskValue * flow;
 
           // Apply Dual Brush Mask if present
           // Dual brush modifies OPACITY (like texture), not flow
