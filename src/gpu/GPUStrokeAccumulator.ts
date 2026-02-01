@@ -195,6 +195,8 @@ export class GPUStrokeAccumulator {
       console.warn('[GPUStrokeAccumulator] GPU device lost:', info.message);
       this.deviceLost = true;
     });
+
+    this.prewarmPipelines();
   }
 
   private createDualBlendTexture(): GPUTexture {
@@ -212,6 +214,121 @@ export class GPUStrokeAccumulator {
   private recreateDualBlendTexture(): void {
     this.dualBlendTexture.destroy();
     this.dualBlendTexture = this.createDualBlendTexture();
+  }
+
+  private prewarmPipelines(): void {
+    try {
+      // Allocate display texture early to avoid first-stroke hitch when Wet Edge is enabled.
+      this.pingPongBuffer.ensureDisplayTexture();
+
+      const dummyInput = this.device.createTexture({
+        label: 'Prewarm Input',
+        size: [1, 1],
+        format: 'rgba32float',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+
+      const dummyOutput = this.device.createTexture({
+        label: 'Prewarm Output',
+        size: [1, 1],
+        format: 'rgba32float',
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.STORAGE_BINDING |
+          GPUTextureUsage.COPY_DST,
+      });
+
+      const dummyDual = this.device.createTexture({
+        label: 'Prewarm Dual',
+        size: [1, 1],
+        format: 'rgba32float',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+
+      const dummyBrushTexture = this.device.createTexture({
+        label: 'Prewarm Brush',
+        size: [1, 1],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+
+      this.device.queue.writeTexture(
+        { texture: dummyBrushTexture },
+        new Uint8Array([255, 255, 255, 255]),
+        { bytesPerRow: 4 },
+        { width: 1, height: 1 }
+      );
+
+      const dummyDab: DabInstanceData = {
+        x: 0.5,
+        y: 0.5,
+        size: 1,
+        hardness: 1,
+        r: 1,
+        g: 1,
+        b: 1,
+        dabOpacity: 1,
+        flow: 1,
+        roundness: 1,
+        angleCos: 1,
+        angleSin: 0,
+      };
+
+      const dummyTextureDab: TextureDabInstanceData = {
+        x: 0.5,
+        y: 0.5,
+        size: 1,
+        roundness: 1,
+        angle: 0,
+        r: 1,
+        g: 1,
+        b: 1,
+        dabOpacity: 1,
+        flow: 1,
+        texWidth: 1,
+        texHeight: 1,
+      };
+
+      const encoder = this.device.createCommandEncoder({
+        label: 'GPU Prewarm Encoder',
+      });
+
+      this.computeDualMaskPipeline.dispatch(encoder, dummyInput, dummyOutput, [dummyDab]);
+      this.computeDualTextureMaskPipeline.dispatch(
+        encoder,
+        dummyInput,
+        dummyOutput,
+        dummyBrushTexture,
+        [dummyTextureDab]
+      );
+      this.computeDualBlendPipeline.dispatch(
+        encoder,
+        dummyInput,
+        dummyDual,
+        dummyOutput,
+        { left: 0, top: 0, right: 1, bottom: 1 },
+        0,
+        1.0
+      );
+      this.wetEdgePipeline.dispatch(
+        encoder,
+        dummyInput,
+        dummyOutput,
+        { left: 0, top: 0, right: 1, bottom: 1 },
+        0,
+        0,
+        1.0
+      );
+
+      this.device.queue.submit([encoder.finish()]);
+
+      dummyInput.destroy();
+      dummyOutput.destroy();
+      dummyDual.destroy();
+      dummyBrushTexture.destroy();
+    } catch (error) {
+      console.warn('[GPUStrokeAccumulator] Prewarm failed:', error);
+    }
   }
 
   private createReadbackBuffer(): void {
