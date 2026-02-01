@@ -24,6 +24,7 @@ export class ComputeWetEdgePipeline {
 
   // BindGroup cache (reduce GC pressure)
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
+  private debugFirstBindGroup: boolean = false;
 
   private canvasWidth: number = 0;
   private canvasHeight: number = 0;
@@ -166,6 +167,12 @@ export class ComputeWetEdgePipeline {
 
     let bindGroup = this.cachedBindGroups.get(key);
     if (!bindGroup) {
+      let debugStart = 0;
+      if (!this.debugFirstBindGroup) {
+        this.debugFirstBindGroup = true;
+        debugStart = performance.now();
+        console.log('[ComputeWetEdgePipeline] First bind group create start');
+      }
       bindGroup = this.device.createBindGroup({
         label: `Wet Edge BindGroup (${key})`,
         layout: this.bindGroupLayout,
@@ -175,6 +182,11 @@ export class ComputeWetEdgePipeline {
           { binding: 2, resource: outputTexture.createView() },
         ],
       });
+      if (debugStart > 0) {
+        console.log(
+          `[ComputeWetEdgePipeline] First bind group create end: ${(performance.now() - debugStart).toFixed(2)}ms`
+        );
+      }
       this.cachedBindGroups.set(key, bindGroup);
     }
 

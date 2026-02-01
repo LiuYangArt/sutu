@@ -70,6 +70,18 @@ export class GPUStrokeAccumulator {
 
   private fallbackRequest: string | null = null;
 
+  // Debug: first-dispatch profiling (one-time logs)
+  private debugFirstFlush: boolean = false;
+  private debugFirstPrimaryDispatch: boolean = false;
+  private debugFirstSecondaryDispatch: boolean = false;
+  private debugFirstDualBlend: boolean = false;
+  private debugFirstWetEdgeDispatch: boolean = false;
+  private debugFirstPreviewReadback: boolean = false;
+  private debugNextWetEdgeDispatch: boolean = false;
+  private debugNextWetEdgeLabel: string | null = null;
+  private debugNextPreviewReadback: boolean = false;
+  private debugNextPreviewLabel: string | null = null;
+
   // Current stroke mode: 'parametric' or 'texture'
   private strokeMode: 'parametric' | 'texture' = 'parametric';
 
@@ -197,6 +209,7 @@ export class GPUStrokeAccumulator {
     });
 
     this.prewarmPipelines();
+    this.initializePresentableTextures();
   }
 
   private createDualBlendTexture(): GPUTexture {
@@ -331,6 +344,54 @@ export class GPUStrokeAccumulator {
     }
   }
 
+  private initializePresentableTextures(): void {
+    try {
+      // Ensure display texture exists so we can write into it.
+      this.pingPongBuffer.ensureDisplayTexture();
+
+      // Clear raw buffers to defined zero state before using them as inputs.
+      this.pingPongBuffer.clear(this.device);
+      this.dualMaskBuffer.clear(this.device);
+
+      const fullRect: Rect = {
+        left: 0,
+        top: 0,
+        right: this.width,
+        bottom: this.height,
+      };
+
+      const encoder = this.device.createCommandEncoder({
+        label: 'GPU Startup Init Encoder',
+      });
+
+      // Initialize dual blend output (avoid first-read implicit clear cost).
+      this.computeDualBlendPipeline.dispatch(
+        encoder,
+        this.pingPongBuffer.source,
+        this.dualMaskBuffer.source,
+        this.dualBlendTexture,
+        fullRect,
+        0,
+        this.currentRenderScale
+      );
+
+      // Initialize wet edge display output.
+      this.wetEdgePipeline.dispatch(
+        encoder,
+        this.pingPongBuffer.source,
+        this.pingPongBuffer.display,
+        fullRect,
+        0,
+        0,
+        this.currentRenderScale
+      );
+
+      this.device.queue.submit([encoder.finish()]);
+    } catch (error) {
+      console.warn('[GPUStrokeAccumulator] Startup init failed:', error);
+    }
+  }
+
   private createReadbackBuffer(): void {
     // Use actual texture dimensions (may be scaled)
     const texW = this.pingPongBuffer.textureWidth;
@@ -450,10 +511,51 @@ export class GPUStrokeAccumulator {
    */
   private syncWetEdgeSettings(): void {
     const { wetEdgeEnabled, wetEdge, brushHardness } = useToolStore.getState();
-    this.wetEdgeEnabled = wetEdgeEnabled && wetEdge > 0;
+    const prevEnabled = this.wetEdgeEnabled;
+    const nextEnabled = wetEdgeEnabled && wetEdge > 0;
+    this.wetEdgeEnabled = nextEnabled;
     this.wetEdgeStrength = wetEdge;
     // Convert hardness from 0-100 to 0-1 range
     this.wetEdgeHardness = brushHardness / 100;
+
+    if (!prevEnabled && nextEnabled) {
+      this.debugNextWetEdgeDispatch = true;
+      this.debugNextWetEdgeLabel = 'wetedge-enable';
+      this.debugNextPreviewReadback = true;
+      this.debugNextPreviewLabel = 'wetedge-enable';
+      console.log(
+        '[GPUStrokeAccumulator] WetEdge enabled: profile next dispatch + preview readback'
+      );
+    }
+  }
+
+  private beginWetEdgeDebug(context: string): { start: number; label: string | null } {
+    if (this.debugNextWetEdgeDispatch) {
+      this.debugNextWetEdgeDispatch = false;
+      const label = this.debugNextWetEdgeLabel ?? 'next';
+      this.debugNextWetEdgeLabel = null;
+      const start = performance.now();
+      console.log(`[GPUStrokeAccumulator] WetEdge ${context} dispatch (${label}) start`);
+      return { start, label };
+    }
+
+    if (!this.debugFirstWetEdgeDispatch) {
+      this.debugFirstWetEdgeDispatch = true;
+      const start = performance.now();
+      console.log(`[GPUStrokeAccumulator] WetEdge ${context} dispatch first start`);
+      return { start, label: 'first' };
+    }
+
+    return { start: 0, label: null };
+  }
+
+  private endWetEdgeDebug(context: string, start: number, label: string | null): void {
+    if (start > 0) {
+      const suffix = label ? ` (${label})` : '';
+      console.log(
+        `[GPUStrokeAccumulator] WetEdge ${context} dispatch${suffix} end: ${(performance.now() - start).toFixed(2)}ms`
+      );
+    }
   }
 
   /**
@@ -883,6 +985,14 @@ export class GPUStrokeAccumulator {
       return;
     }
 
+    const debugFirst = !this.debugFirstFlush;
+    let debugMark = 0;
+    if (debugFirst) {
+      this.debugFirstFlush = true;
+      debugMark = performance.now();
+      console.log('[GPUStrokeAccumulator] First flush start');
+    }
+
     const deferPost = this.dualMaskActive;
 
     const primaryDidFlush =
@@ -890,11 +1000,25 @@ export class GPUStrokeAccumulator {
         ? this.flushTextureBatch(deferPost)
         : this.flushBatch(deferPost);
 
+    if (debugFirst) {
+      const now = performance.now();
+      console.log(`[GPUStrokeAccumulator] First flush primary: ${(now - debugMark).toFixed(2)}ms`);
+      debugMark = now;
+    }
+
     if (this.fallbackRequest) {
       return;
     }
 
     const secondaryDidFlush = this.flushSecondaryBatches();
+
+    if (debugFirst) {
+      const now = performance.now();
+      console.log(
+        `[GPUStrokeAccumulator] First flush secondary: ${(now - debugMark).toFixed(2)}ms`
+      );
+      debugMark = now;
+    }
 
     if (this.fallbackRequest) {
       return;
@@ -903,6 +1027,13 @@ export class GPUStrokeAccumulator {
     if (this.dualMaskActive && (primaryDidFlush || secondaryDidFlush || this.dualPostPending)) {
       this.applyDualBlend();
       this.dualPostPending = false;
+      if (debugFirst) {
+        const now = performance.now();
+        console.log(
+          `[GPUStrokeAccumulator] First flush dual+wet: ${(now - debugMark).toFixed(2)}ms`
+        );
+        debugMark = now;
+      }
     }
   }
 
@@ -935,6 +1066,13 @@ export class GPUStrokeAccumulator {
       // This ensures Compute Shader reads the accumulated result from previous flushes
       this.pingPongBuffer.copySourceToDest(encoder);
 
+      let debugStart = 0;
+      if (!this.debugFirstPrimaryDispatch) {
+        this.debugFirstPrimaryDispatch = true;
+        debugStart = performance.now();
+        console.log('[GPUStrokeAccumulator] Primary compute first dispatch start');
+      }
+
       // Single dispatch for all dabs
       const success = this.computeBrushPipeline.dispatch(
         encoder,
@@ -945,6 +1083,12 @@ export class GPUStrokeAccumulator {
         this.currentPatternSettings
       );
 
+      if (debugStart > 0) {
+        console.log(
+          `[GPUStrokeAccumulator] Primary compute first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
+        );
+      }
+
       if (success) {
         // Swap so next flushBatch reads from the updated texture
         this.pingPongBuffer.swap();
@@ -954,6 +1098,7 @@ export class GPUStrokeAccumulator {
           // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
           // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
           if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+            const wetDebug = this.beginWetEdgeDebug('primary');
             this.wetEdgePipeline.dispatch(
               encoder,
               this.pingPongBuffer.source, // Raw buffer (input, read-only)
@@ -963,6 +1108,7 @@ export class GPUStrokeAccumulator {
               this.wetEdgeStrength,
               this.currentRenderScale
             );
+            this.endWetEdgeDebug('primary', wetDebug.start, wetDebug.label);
             // Note: No swap here - display buffer is separate from ping-pong
           }
         } else {
@@ -1131,6 +1277,13 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
       }
 
+      let debugStart = 0;
+      if (!this.debugFirstPrimaryDispatch) {
+        this.debugFirstPrimaryDispatch = true;
+        debugStart = performance.now();
+        console.log('[GPUStrokeAccumulator] Primary texture compute first dispatch start');
+      }
+
       // Single dispatch for all dabs
       const success = this.computeTextureBrushPipeline.dispatch(
         encoder,
@@ -1142,6 +1295,12 @@ export class GPUStrokeAccumulator {
         this.currentPatternSettings
       );
 
+      if (debugStart > 0) {
+        console.log(
+          `[GPUStrokeAccumulator] Primary texture compute first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
+        );
+      }
+
       if (success) {
         // Swap so next flushBatch reads from the updated texture
         this.pingPongBuffer.swap();
@@ -1151,6 +1310,7 @@ export class GPUStrokeAccumulator {
           // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
           // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
           if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+            const wetDebug = this.beginWetEdgeDebug('primary-texture');
             this.wetEdgePipeline.dispatch(
               encoder,
               this.pingPongBuffer.source, // Raw buffer (input, read-only)
@@ -1160,6 +1320,7 @@ export class GPUStrokeAccumulator {
               this.wetEdgeStrength,
               this.currentRenderScale
             );
+            this.endWetEdgeDebug('primary-texture', wetDebug.start, wetDebug.label);
             // Note: No swap here - display buffer is separate from ping-pong
           }
         } else {
@@ -1312,12 +1473,25 @@ export class GPUStrokeAccumulator {
       // Preserve previous mask data
       this.dualMaskBuffer.copySourceToDest(encoder);
 
+      let debugStart = 0;
+      if (!this.debugFirstSecondaryDispatch) {
+        this.debugFirstSecondaryDispatch = true;
+        debugStart = performance.now();
+        console.log('[GPUStrokeAccumulator] Secondary dual mask first dispatch start');
+      }
+
       const success = this.computeDualMaskPipeline.dispatch(
         encoder,
         this.dualMaskBuffer.source,
         this.dualMaskBuffer.dest,
         dabs
       );
+
+      if (debugStart > 0) {
+        console.log(
+          `[GPUStrokeAccumulator] Secondary dual mask first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
+        );
+      }
 
       if (!success) {
         this.requestCpuFallback('GPU dual mask compute failed');
@@ -1352,6 +1526,13 @@ export class GPUStrokeAccumulator {
 
       this.dualMaskBuffer.copySourceToDest(encoder);
 
+      let debugStart = 0;
+      if (!this.debugFirstSecondaryDispatch) {
+        this.debugFirstSecondaryDispatch = true;
+        debugStart = performance.now();
+        console.log('[GPUStrokeAccumulator] Secondary dual texture mask first dispatch start');
+      }
+
       const success = this.computeDualTextureMaskPipeline.dispatch(
         encoder,
         this.dualMaskBuffer.source,
@@ -1359,6 +1540,12 @@ export class GPUStrokeAccumulator {
         currentTexture.texture,
         dabs
       );
+
+      if (debugStart > 0) {
+        console.log(
+          `[GPUStrokeAccumulator] Secondary dual texture mask first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
+        );
+      }
 
       if (!success) {
         this.requestCpuFallback('GPU dual texture mask compute failed');
@@ -1383,6 +1570,13 @@ export class GPUStrokeAccumulator {
       return;
     }
 
+    let debugStart = 0;
+    if (!this.debugFirstDualBlend) {
+      this.debugFirstDualBlend = true;
+      debugStart = performance.now();
+      console.log('[GPUStrokeAccumulator] Dual blend first dispatch start');
+    }
+
     const encoder = this.device.createCommandEncoder({
       label: 'Dual Blend Encoder',
     });
@@ -1397,7 +1591,14 @@ export class GPUStrokeAccumulator {
       this.currentRenderScale
     );
 
+    if (debugStart > 0) {
+      console.log(
+        `[GPUStrokeAccumulator] Dual blend first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
+      );
+    }
+
     if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+      const wetDebug = this.beginWetEdgeDebug('dual');
       const hardness = this.strokeMode === 'texture' ? 0.0 : this.wetEdgeHardness;
       this.wetEdgePipeline.dispatch(
         encoder,
@@ -1408,6 +1609,7 @@ export class GPUStrokeAccumulator {
         this.wetEdgeStrength,
         this.currentRenderScale
       );
+      this.endWetEdgeDebug('dual', wetDebug.start, wetDebug.label);
     }
 
     this.device.queue.submit([encoder.finish()]);
@@ -1537,7 +1739,34 @@ export class GPUStrokeAccumulator {
     this.previewNeedsUpdate = false;
 
     // Store the promise for concurrent access
+    let debugLabel: string | null = null;
+    if (this.debugNextPreviewReadback) {
+      debugLabel = this.debugNextPreviewLabel ?? 'next';
+      this.debugNextPreviewReadback = false;
+      this.debugNextPreviewLabel = null;
+    } else if (!this.debugFirstPreviewReadback) {
+      this.debugFirstPreviewReadback = true;
+      debugLabel = 'first';
+    }
+
+    const debugStart = debugLabel ? performance.now() : 0;
+    if (debugLabel) {
+      const presentable =
+        this.wetEdgeEnabled && this.wetEdgeStrength > 0.01
+          ? 'wetedge'
+          : this.dualMaskActive
+            ? 'dual'
+            : 'raw';
+      console.log(
+        `[GPUStrokeAccumulator] Preview readback ${debugLabel} start (presentable=${presentable})`
+      );
+    }
+
     this.currentPreviewPromise = (async () => {
+      let mapStart = 0;
+      let mapEnd = 0;
+      let cpuEnd = 0;
+      let putEnd = 0;
       try {
         // Copy current texture to preview readback buffer
         const encoder = this.device.createCommandEncoder();
@@ -1552,7 +1781,13 @@ export class GPUStrokeAccumulator {
         this.device.queue.submit([encoder.finish()]);
 
         // Wait for GPU and map buffer
+        if (debugLabel) {
+          mapStart = performance.now();
+        }
         await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ);
+        if (debugLabel) {
+          mapEnd = performance.now();
+        }
         const gpuData = new Float32Array(this.previewReadbackBuffer!.getMappedRange());
 
         // Get dirty rect bounds (in logical/canvas coordinates) - use integers
@@ -1616,13 +1851,33 @@ export class GPUStrokeAccumulator {
             }
           }
 
+          if (debugLabel) {
+            cpuEnd = performance.now();
+          }
+
           this.previewCtx.putImageData(imageData, rect.left, rect.top);
+          if (debugLabel) {
+            putEnd = performance.now();
+          }
+        } else if (debugLabel) {
+          cpuEnd = mapEnd;
+          putEnd = mapEnd;
         }
 
         this.previewReadbackBuffer!.unmap();
       } catch (e) {
         console.error('[GPUStrokeAccumulator] Preview update failed:', e);
       } finally {
+        if (debugStart > 0) {
+          const total = performance.now() - debugStart;
+          const mapMs = mapEnd > mapStart ? mapEnd - mapStart : 0;
+          const cpuMs = cpuEnd > mapEnd ? cpuEnd - mapEnd : 0;
+          const putMs = putEnd > cpuEnd ? putEnd - cpuEnd : 0;
+          const label = debugLabel ?? 'debug';
+          console.log(
+            `[GPUStrokeAccumulator] Preview readback ${label} end: total=${total.toFixed(2)}ms map=${mapMs.toFixed(2)}ms cpu=${cpuMs.toFixed(2)}ms put=${putMs.toFixed(2)}ms`
+          );
+        }
         this.currentPreviewPromise = null;
         this.previewUpdatePending = false;
         // If more updates were requested while we were updating, do another round

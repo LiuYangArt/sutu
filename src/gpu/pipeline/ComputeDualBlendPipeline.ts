@@ -13,6 +13,7 @@ export class ComputeDualBlendPipeline {
   private uniformBuffer: GPUBuffer;
 
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
+  private debugFirstBindGroup: boolean = false;
 
   private canvasWidth: number = 0;
   private canvasHeight: number = 0;
@@ -127,6 +128,12 @@ export class ComputeDualBlendPipeline {
 
     let bindGroup = this.cachedBindGroups.get(key);
     if (!bindGroup) {
+      let debugStart = 0;
+      if (!this.debugFirstBindGroup) {
+        this.debugFirstBindGroup = true;
+        debugStart = performance.now();
+        console.log('[ComputeDualBlendPipeline] First bind group create start');
+      }
       bindGroup = this.device.createBindGroup({
         label: `Compute Dual Blend BindGroup (${key})`,
         layout: this.bindGroupLayout,
@@ -137,6 +144,11 @@ export class ComputeDualBlendPipeline {
           { binding: 3, resource: outputTexture.createView() },
         ],
       });
+      if (debugStart > 0) {
+        console.log(
+          `[ComputeDualBlendPipeline] First bind group create end: ${(performance.now() - debugStart).toFixed(2)}ms`
+        );
+      }
       this.cachedBindGroups.set(key, bindGroup);
     }
 
