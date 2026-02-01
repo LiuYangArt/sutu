@@ -18,9 +18,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { MaskCache, type MaskCacheParams } from './maskCache';
 import { TextureMaskCache } from './textureMaskCache';
-import type { BrushTexture } from '@/stores/tool';
+import type { BrushTexture, DualBrushSettings, DualBlendMode } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { patternManager, type PatternData } from './patternManager';
+import { applyScatter } from './scatterDynamics';
 
 export type MaskType = 'gaussian' | 'default';
 
@@ -42,6 +43,13 @@ export interface DabParams {
   flipY?: boolean; // Flip vertically
   // Wet Edge: hollow center effect (Photoshop-compatible)
   wetEdge?: number; // Wet edge strength (0-1), 0 = off
+  // Dual Brush
+  dualBrush?: DualBrushSettings & {
+    brushTexture?: BrushTexture; // Secondary brush texture
+  };
+  // Context for relative scaling
+  baseSize?: number; // Main brush base size (slider value)
+  spacing?: number; // Main brush spacing (0-10, fraction of tip short edge)
 }
 
 export interface Rect {
@@ -50,6 +58,10 @@ export interface Rect {
   right: number;
   bottom: number;
 }
+
+const HARD_BRUSH_THRESHOLD = 0.99;
+const ROUNDNESS_HARD_PATH_THRESHOLD = 0.999;
+const ROUNDNESS_AA_HARDNESS_CLAMP = 0.98;
 
 /**
  * Parse hex color to RGB components (0-255)
@@ -64,6 +76,36 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     g: parseInt(result[2]!, 16),
     b: parseInt(result[3]!, 16),
   };
+}
+
+/**
+ * Blend function for Dual Brush (Photoshop Dual Brush panel compatible)
+ * 8 modes supported: Multiply, Darken, Overlay, Color Dodge, Color Burn, Linear Burn, Hard Mix, Linear Height
+ */
+function blendDual(primary: number, secondary: number, mode: DualBlendMode): number {
+  const s = Math.max(0, Math.min(1, secondary));
+  const p = Math.max(0, Math.min(1, primary));
+
+  switch (mode) {
+    case 'multiply':
+      return p * s;
+    case 'darken':
+      return Math.min(p, s);
+    case 'overlay':
+      return p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
+    case 'colorDodge':
+      return s >= 1.0 ? 1.0 : Math.min(1.0, p / (1.0 - s));
+    case 'colorBurn':
+      return s <= 0 ? 0 : Math.max(0, 1.0 - (1.0 - p) / s);
+    case 'linearBurn':
+      return Math.max(0, p + s - 1.0);
+    case 'hardMix':
+      return p + s >= 1.0 ? 1.0 : 0.0;
+    case 'linearHeight':
+      return p * (0.5 + s * 0.5);
+    default:
+      return p * s;
+  }
 }
 
 /**
@@ -88,9 +130,24 @@ export class StrokeAccumulator {
   // Texture mask cache for sampled brushes (from ABR import)
   private textureMaskCache: TextureMaskCache = new TextureMaskCache();
 
+  // Dual Brush support
+  // Secondary caches (independent state for secondary brush)
+  private secondaryMaskCache: MaskCache = new MaskCache();
+  private secondaryTextureMaskCache: TextureMaskCache = new TextureMaskCache();
+
+  // Stroke-level Dual Mask Accumulators for PS-compatible layer blending
+  // Both brushes render to independent alpha buffers, then blend globally
+  private primaryMaskAccumulator: Float32Array | null = null;
+  private dualMaskAccumulator: Float32Array | null = null;
+  private dualMaskAccumulatorDirty: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
+
+  // Dual brush settings for stroke-level blending
+  private dualBrushMode: import('@/stores/tool').DualBlendMode | null = null;
+  private dualBrushEnabled: boolean = false;
+
   // Canvas sync throttling - sync every N dabs instead of every dab
   private syncCounter: number = 0;
-  private static readonly SYNC_INTERVAL = 4; // Sync every 4 dabs (reduced from 2)
+  private static readonly SYNC_INTERVAL = 1; // Sync every dab for correct CPU preview
 
   // Accumulated dirty rect for batched syncing
   private pendingDirtyRect: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
@@ -110,7 +167,6 @@ export class StrokeAccumulator {
   private wetEdgeHardness: number = 0; // Current brush hardness for adaptive wet edge
 
   // Wet Edge effect buffer - stores the processed result for preview
-  private wetEdgeBuffer: Uint8ClampedArray | null = null;
 
   // Wet Edge LUT - precomputed alpha mapping for performance (v4 optimization)
   private wetEdgeLut: Uint8Array = new Uint8Array(256);
@@ -162,7 +218,6 @@ export class StrokeAccumulator {
 
     // Initialize wet edge buffer if enabled
     if (this.wetEdgeEnabled) {
-      this.wetEdgeBuffer = new Uint8ClampedArray(this.width * this.height * 4);
       // Build LUT for this stroke's hardness/strength combination
       this.buildWetEdgeLut(hardness, wetEdge);
     }
@@ -252,8 +307,21 @@ export class StrokeAccumulator {
     this.wetEdgeEnabled = false;
     this.wetEdgeStrength = 1.0;
     this.wetEdgeHardness = 0;
-    this.wetEdgeBuffer = null;
+
     this.wetEdgeLutValid = false;
+
+    // Clear stroke-level dual mask accumulators
+    this.primaryMaskAccumulator = null;
+    this.dualMaskAccumulator = null;
+    this.dualMaskAccumulatorDirty = {
+      left: this.width,
+      top: this.height,
+      right: 0,
+      bottom: 0,
+    };
+    this.dualBrushEnabled = false;
+    this.dualBrushMode = null;
+
     // Don't clear syncImageData - it can be reused across strokes
   }
 
@@ -361,6 +429,9 @@ export class StrokeAccumulator {
     if (!this.bufferData) return;
 
     const rgb = hexToRgb(params.color);
+    const roundness = params.roundness ?? 1;
+    const isHardBrush = params.hardness >= HARD_BRUSH_THRESHOLD;
+    const isSquashedRoundness = roundness < ROUNDNESS_HARD_PATH_THRESHOLD;
 
     // Resolve pattern if enabled
     let pattern: PatternData | undefined;
@@ -368,18 +439,215 @@ export class StrokeAccumulator {
       pattern = patternManager.getPattern(params.textureSettings.patternId);
     }
 
+    // Initialize stroke-level dual brush state if enabled
+    if (params.dualBrush?.enabled && !this.dualBrushEnabled) {
+      this.dualBrushEnabled = true;
+      this.dualBrushMode = params.dualBrush.mode;
+      // Lazy-init primary accumulator
+      if (!this.primaryMaskAccumulator) {
+        this.primaryMaskAccumulator = new Float32Array(this.width * this.height);
+      }
+    }
+
     let dabDirtyRect: Rect;
 
     if (params.texture) {
       dabDirtyRect = this.stampTextureBrush(params, rgb, pattern);
-    } else if (params.hardness >= 0.99) {
+    } else if (isHardBrush && !isSquashedRoundness) {
       dabDirtyRect = this.stampHardBrush(params, rgb, pattern);
     } else {
-      dabDirtyRect = this.stampSoftBrush(params, rgb, pattern);
+      const hardnessOverride =
+        isHardBrush && isSquashedRoundness
+          ? Math.min(params.hardness, ROUNDNESS_AA_HARDNESS_CLAMP)
+          : undefined;
+      dabDirtyRect = this.stampSoftBrush(params, rgb, pattern, hardnessOverride);
+    }
+
+    // When dual brush is enabled, also write primary alpha to accumulator
+    if (this.dualBrushEnabled && this.primaryMaskAccumulator) {
+      this.stampToPrimaryAccumulator(params, dabDirtyRect);
     }
 
     this.accumulateDirtyRect(dabDirtyRect);
     this.checkAutoSync();
+  }
+
+  /**
+   * Write primary brush alpha to stroke-level accumulator (for dual brush blending)
+   */
+  private stampToPrimaryAccumulator(_params: DabParams, dirtyRect: Rect): void {
+    if (!this.primaryMaskAccumulator || !this.bufferData) return;
+
+    const left = Math.max(0, dirtyRect.left);
+    const top = Math.max(0, dirtyRect.top);
+    const right = Math.min(this.width, dirtyRect.right);
+    const bottom = Math.min(this.height, dirtyRect.bottom);
+
+    // Copy alpha from RGBA buffer to primary mask accumulator (max blend)
+    for (let y = top; y < bottom; y++) {
+      for (let x = left; x < right; x++) {
+        const idx = y * this.width + x;
+        const alphaIdx = idx * 4 + 3;
+        const alphaValue = this.bufferData[alphaIdx]! / 255;
+        // Max blending - keep strongest alpha
+        if (alphaValue > this.primaryMaskAccumulator[idx]!) {
+          this.primaryMaskAccumulator[idx] = alphaValue;
+        }
+      }
+    }
+  }
+
+  /**
+   * Stamp a secondary brush dab to the stroke-level dual mask accumulator.
+   * This is called independently from primary dabs - secondary brush has its own spacing/path.
+   *
+   * The accumulator covers the entire canvas and secondary dabs are stamped at their
+   * absolute canvas coordinates. When primary dabs render, they sample from this accumulator.
+   *
+   * @param x - Canvas X coordinate
+   * @param y - Canvas Y coordinate
+   * @param size - Secondary brush size (already scaled by caller)
+   * @param dualBrush - Dual brush settings (for texture, scatter, etc.)
+   */
+  stampSecondaryDab(
+    x: number,
+    y: number,
+    size: number,
+    dualBrush: DualBrushSettings & { brushTexture?: BrushTexture },
+    strokeAngle: number = 0
+  ): void {
+    // Lazy initialize accumulator to canvas size
+    const accumulatorSize = this.width * this.height;
+    if (!this.dualMaskAccumulator) {
+      this.dualMaskAccumulator = new Float32Array(accumulatorSize);
+      this.dualMaskAccumulatorDirty = {
+        left: this.width,
+        top: this.height,
+        right: 0,
+        bottom: 0,
+      };
+    }
+
+    // Calculate effective size and scatter
+    const effectiveSize = Math.max(1, size);
+    const roundness = Math.max(0.01, Math.min(1, (dualBrush.roundness ?? 100) / 100));
+    const isSquashedRoundness = roundness < ROUNDNESS_HARD_PATH_THRESHOLD;
+
+    // Handle potential string values for scatter
+    let scatterVal = dualBrush.scatter ?? 0;
+    if (typeof scatterVal !== 'number') {
+      const parsed = parseFloat(String(scatterVal));
+      scatterVal = isNaN(parsed) ? 0 : parsed;
+    }
+
+    const count = Math.max(1, dualBrush.count || 1);
+    const scatterSettings = {
+      scatter: scatterVal,
+      scatterControl: 'off' as const,
+      bothAxes: dualBrush.bothAxes,
+      count,
+      countControl: 'off' as const,
+      countJitter: 0,
+    };
+    const scatteredPositions = applyScatter(
+      {
+        x,
+        y,
+        strokeAngle,
+        diameter: effectiveSize,
+        dynamics: {
+          pressure: 1,
+          tiltX: 0,
+          tiltY: 0,
+          rotation: 0,
+          direction: 0,
+          initialDirection: 0,
+          fadeProgress: 0,
+        },
+      },
+      scatterSettings
+    );
+
+    // Setup secondary cache
+    let useTexture = false;
+    if (dualBrush.brushTexture) {
+      useTexture = true;
+      if (!this.secondaryTextureMaskCache.setTextureSync(dualBrush.brushTexture)) {
+        void this.secondaryTextureMaskCache.setTexture(dualBrush.brushTexture);
+        return; // Texture not ready yet
+      }
+      // Note: mask generation moved inside loop for per-dab angle jitter
+    }
+    // Note: for non-texture brushes, mask generation is also inside loop
+
+    // Stamp loop (for count > 1)
+    for (const pos of scatteredPositions) {
+      const stampX = pos.x;
+      const stampY = pos.y;
+
+      // Apply angle jitter (PS behavior: each secondary tip has random rotation)
+      const randomAngle = Math.random() * 360;
+
+      // Stamp to accumulator with rotation
+      if (useTexture) {
+        // Update mask with new angle for this dab
+        const texParams = {
+          size: effectiveSize,
+          roundness,
+          angle: randomAngle,
+        };
+        if (this.secondaryTextureMaskCache.needsUpdate(texParams)) {
+          this.secondaryTextureMaskCache.generateMask(texParams);
+        }
+        this.secondaryTextureMaskCache.stampToMask(
+          this.dualMaskAccumulator,
+          this.width,
+          this.height,
+          stampX,
+          stampY,
+          1.0
+        );
+      } else {
+        // Update mask with new angle for this dab
+        const maskParams = {
+          size: effectiveSize,
+          hardness: isSquashedRoundness ? ROUNDNESS_AA_HARDNESS_CLAMP : 1.0,
+          roundness,
+          angle: randomAngle,
+          maskType: 'gaussian' as const,
+        };
+        if (this.secondaryMaskCache.needsUpdate(maskParams)) {
+          this.secondaryMaskCache.generateMask(maskParams);
+        }
+        this.secondaryMaskCache.stampToMask(
+          this.dualMaskAccumulator,
+          this.width,
+          this.height,
+          stampX,
+          stampY,
+          1.0
+        );
+      }
+
+      // Expand dirty rect
+      const radius = effectiveSize / 2;
+      this.dualMaskAccumulatorDirty.left = Math.min(
+        this.dualMaskAccumulatorDirty.left,
+        Math.floor(stampX - radius)
+      );
+      this.dualMaskAccumulatorDirty.top = Math.min(
+        this.dualMaskAccumulatorDirty.top,
+        Math.floor(stampY - radius)
+      );
+      this.dualMaskAccumulatorDirty.right = Math.max(
+        this.dualMaskAccumulatorDirty.right,
+        Math.ceil(stampX + radius)
+      );
+      this.dualMaskAccumulatorDirty.bottom = Math.max(
+        this.dualMaskAccumulatorDirty.bottom,
+        Math.ceil(stampY + radius)
+      );
+    }
   }
 
   /**
@@ -398,7 +666,6 @@ export class StrokeAccumulator {
       flow,
       dabOpacity = 1.0,
       textureSettings,
-      wetEdge = 0,
     } = params;
 
     if (!texture) return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -425,6 +692,9 @@ export class StrokeAccumulator {
       this.textureMaskCache.generateMask(textureParams);
     }
 
+    // NOTE: Dual brush blend is now applied at stroke-level in applyDualBrushBlend()
+    // This fixes the clipping issue where secondary dabs were cut by primary mask bounds
+
     return this.textureMaskCache.stampToBuffer(
       this.bufferData!,
       this.width,
@@ -436,9 +706,10 @@ export class StrokeAccumulator {
       rgb.r,
       rgb.g,
       rgb.b,
-      wetEdge,
       textureSettings,
-      pattern
+      pattern,
+      null, // dualMask - now handled at stroke level
+      undefined // dualMode
     );
   }
 
@@ -450,13 +721,17 @@ export class StrokeAccumulator {
     rgb: { r: number; g: number; b: number },
     pattern?: PatternData
   ): Rect {
+    const radius = params.size / 2;
+
+    // NOTE: Dual brush blend is now applied at stroke-level in applyDualBrushBlend()
+
     return this.maskCache.stampHardBrush(
       this.bufferData!,
       this.width,
       this.height,
       params.x,
       params.y,
-      params.size / 2, // radius
+      radius,
       params.roundness ?? 1,
       params.angle ?? 0,
       params.flow,
@@ -466,7 +741,9 @@ export class StrokeAccumulator {
       rgb.b,
       params.wetEdge ?? 0,
       params.textureSettings,
-      pattern
+      pattern,
+      null, // dualMask - now handled at stroke level
+      undefined // dualMode
     );
   }
 
@@ -476,12 +753,14 @@ export class StrokeAccumulator {
   private stampSoftBrush(
     params: DabParams,
     rgb: { r: number; g: number; b: number },
-    pattern?: PatternData
+    pattern?: PatternData,
+    hardnessOverride?: number
   ): Rect {
     // Soft brushes use cached mask
+    const hardness = hardnessOverride ?? params.hardness;
     const cacheParams: MaskCacheParams = {
       size: params.size,
-      hardness: params.hardness,
+      hardness,
       roundness: params.roundness ?? 1,
       angle: params.angle ?? 0,
       maskType: params.maskType ?? 'gaussian',
@@ -491,6 +770,8 @@ export class StrokeAccumulator {
     if (this.maskCache.needsUpdate(cacheParams)) {
       this.maskCache.generateMask(cacheParams);
     }
+
+    // NOTE: Dual brush blend is now applied at stroke-level in applyDualBrushBlend()
 
     // Use cached mask for fast blending
     return this.maskCache.stampToBuffer(
@@ -506,7 +787,9 @@ export class StrokeAccumulator {
       rgb.b,
       params.wetEdge ?? 0,
       params.textureSettings,
-      pattern
+      pattern,
+      null, // dualMask - now handled at stroke level
+      undefined // dualMode
     );
   }
 
@@ -546,10 +829,33 @@ export class StrokeAccumulator {
   private syncPendingToCanvas(): void {
     if (!this.bufferData) return;
 
-    const left = Math.max(0, this.pendingDirtyRect.left);
-    const top = Math.max(0, this.pendingDirtyRect.top);
-    const right = Math.min(this.width, this.pendingDirtyRect.right);
-    const bottom = Math.min(this.height, this.pendingDirtyRect.bottom);
+    const hasPending =
+      this.pendingDirtyRect.right > this.pendingDirtyRect.left &&
+      this.pendingDirtyRect.bottom > this.pendingDirtyRect.top;
+    const hasDualDirty =
+      this.dualBrushEnabled &&
+      this.dualMaskAccumulator &&
+      this.dualMaskAccumulatorDirty.right > this.dualMaskAccumulatorDirty.left &&
+      this.dualMaskAccumulatorDirty.bottom > this.dualMaskAccumulatorDirty.top;
+
+    if (!hasPending && !hasDualDirty) return;
+
+    let left = hasPending ? this.pendingDirtyRect.left : this.dualMaskAccumulatorDirty.left;
+    let top = hasPending ? this.pendingDirtyRect.top : this.dualMaskAccumulatorDirty.top;
+    let right = hasPending ? this.pendingDirtyRect.right : this.dualMaskAccumulatorDirty.right;
+    let bottom = hasPending ? this.pendingDirtyRect.bottom : this.dualMaskAccumulatorDirty.bottom;
+
+    if (hasPending && hasDualDirty) {
+      left = Math.min(left, this.dualMaskAccumulatorDirty.left);
+      top = Math.min(top, this.dualMaskAccumulatorDirty.top);
+      right = Math.max(right, this.dualMaskAccumulatorDirty.right);
+      bottom = Math.max(bottom, this.dualMaskAccumulatorDirty.bottom);
+    }
+
+    left = Math.max(0, left);
+    top = Math.max(0, top);
+    right = Math.min(this.width, right);
+    bottom = Math.min(this.height, bottom);
 
     const width = right - left;
     const height = bottom - top;
@@ -567,29 +873,25 @@ export class StrokeAccumulator {
       this.syncImageDataHeight = height;
     }
 
-    // Apply wet edge effect if enabled
-    if (this.wetEdgeEnabled && this.wetEdgeBuffer) {
-      // Apply wet edge to the entire stroke dirty region (not just pending)
-      this.applyWetEdgeEffect();
-
-      // Extract from wet edge buffer instead of raw buffer
-      const regionData = this.syncImageData;
-      for (let py = 0; py < height; py++) {
-        const srcStart = ((top + py) * this.width + left) * 4;
-        const dstStart = py * width * 4;
-        regionData.data.set(this.wetEdgeBuffer.subarray(srcStart, srcStart + width * 4), dstStart);
-      }
-      this.ctx.putImageData(regionData, left, top);
-    } else {
-      // Extract region from persistent buffer and sync to canvas
-      const regionData = this.syncImageData;
-      for (let py = 0; py < height; py++) {
-        const srcStart = ((top + py) * this.width + left) * 4;
-        const dstStart = py * width * 4;
-        regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
-      }
-      this.ctx.putImageData(regionData, left, top);
+    // Extract region from persistent buffer and sync to canvas
+    const regionData = this.syncImageData;
+    for (let py = 0; py < height; py++) {
+      const srcStart = ((top + py) * this.width + left) * 4;
+      const dstStart = py * width * 4;
+      regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
     }
+
+    // Apply dual brush blend on the preview region (do not mutate bufferData)
+    if (this.dualBrushEnabled) {
+      this.applyDualBrushBlend(regionData, left, top, width, height);
+    }
+
+    // Apply wet edge effect after dual blend (preview-only)
+    if (this.wetEdgeEnabled) {
+      this.applyWetEdgeEffect(regionData);
+    }
+
+    this.ctx.putImageData(regionData, left, top);
 
     // Reset pending dirty rect
     this.pendingDirtyRect = {
@@ -598,6 +900,71 @@ export class StrokeAccumulator {
       right: 0,
       bottom: 0,
     };
+
+    if (hasDualDirty) {
+      this.dualMaskAccumulatorDirty = {
+        left: this.width,
+        top: this.height,
+        right: 0,
+        bottom: 0,
+      };
+    }
+  }
+
+  /**
+   * Apply Dual Brush blend at stroke-level (PS-compatible layer blending)
+   *
+   * This method blends primaryMaskAccumulator with dualMaskAccumulator using the
+   * selected blend mode, then modulates preview alpha only.
+   *
+   * Key insight: This is called PER-SYNC, not per-dab, allowing secondary brush
+   * patterns to extend beyond primary brush boundaries (fixing the clipping issue).
+   */
+  private applyDualBrushBlend(
+    regionData: ImageData,
+    left: number,
+    top: number,
+    width: number,
+    height: number
+  ): void {
+    if (!this.primaryMaskAccumulator || !this.dualMaskAccumulator || !this.dualBrushMode) {
+      return;
+    }
+
+    const mode = this.dualBrushMode;
+
+    const data = regionData.data;
+
+    for (let py = 0; py < height; py++) {
+      const y = top + py;
+      const rowStart = y * this.width + left;
+      const dataRowStart = py * width * 4;
+      for (let px = 0; px < width; px++) {
+        const idx = rowStart + px;
+        const alphaIdx = dataRowStart + px * 4 + 3;
+
+        const primaryVal = this.primaryMaskAccumulator[idx] ?? 0;
+        const secondaryVal = this.dualMaskAccumulator[idx] ?? 0;
+
+        // Skip if neither brush has coverage here
+        if (primaryVal < 0.001 && secondaryVal < 0.001) continue;
+
+        // Apply blend mode
+        const blendedAlpha = blendDual(primaryVal, secondaryVal, mode);
+
+        // Modulate preview alpha with the blended result
+        // The key fix: we scale the existing alpha (which includes primary brush shape)
+        // by the ratio of (blended / primary) to preserve color but change opacity
+        if (primaryVal > 0.001) {
+          const scale = blendedAlpha / primaryVal;
+          const currentAlpha = data[alphaIdx]!;
+          data[alphaIdx] = Math.round(Math.min(255, currentAlpha * scale));
+        } else if (secondaryVal > 0.001) {
+          // Primary is zero but secondary is not - this shouldn't happen in normal blending
+          // since we're blending primary's shapes with secondary, not adding secondary alone
+        }
+      }
+    }
   }
 
   /**
@@ -611,39 +978,26 @@ export class StrokeAccumulator {
    * This eliminates the "black halo" aliasing on hard brushes while
    * preserving the wet edge effect on soft brushes.
    */
-  private applyWetEdgeEffect(): void {
-    if (!this.bufferData || !this.wetEdgeBuffer || !this.wetEdgeLutValid) return;
+  private applyWetEdgeEffect(regionData: ImageData): void {
+    if (!this.wetEdgeLutValid) return;
 
     const lut = this.wetEdgeLut;
+    const data = regionData.data;
 
-    const left = Math.max(0, this.dirtyRect.left);
-    const top = Math.max(0, this.dirtyRect.top);
-    const right = Math.min(this.width, this.dirtyRect.right);
-    const bottom = Math.min(this.height, this.dirtyRect.bottom);
+    for (let i = 0; i < data.length; i += 4) {
+      const originalAlpha = data[i + 3]!;
 
-    for (let y = top; y < bottom; y++) {
-      for (let x = left; x < right; x++) {
-        const idx = (y * this.width + x) * 4;
-        const originalAlpha = this.bufferData[idx + 3]!;
-
-        if (originalAlpha < 1) {
-          // Fully transparent - copy as-is
-          this.wetEdgeBuffer[idx] = 0;
-          this.wetEdgeBuffer[idx + 1] = 0;
-          this.wetEdgeBuffer[idx + 2] = 0;
-          this.wetEdgeBuffer[idx + 3] = 0;
-          continue;
-        }
-
-        // LUT lookup: precomputed alpha mapping with hardness-adaptive edgeBoost
-        const newAlpha = lut[originalAlpha]!;
-
-        // Copy color, apply modified alpha
-        this.wetEdgeBuffer[idx] = this.bufferData[idx]!;
-        this.wetEdgeBuffer[idx + 1] = this.bufferData[idx + 1]!;
-        this.wetEdgeBuffer[idx + 2] = this.bufferData[idx + 2]!;
-        this.wetEdgeBuffer[idx + 3] = newAlpha;
+      if (originalAlpha < 1) {
+        // Fully transparent
+        data[i] = 0;
+        data[i + 1] = 0;
+        data[i + 2] = 0;
+        data[i + 3] = 0;
+        continue;
       }
+
+      // LUT lookup: precomputed alpha mapping with hardness-adaptive edgeBoost
+      data[i + 3] = lut[originalAlpha]!;
     }
   }
 
@@ -829,8 +1183,7 @@ export class BrushStamper {
     x: number,
     y: number,
     pressure: number,
-    size: number,
-    spacing: number
+    spacingPx: number
   ): Array<{ x: number; y: number; pressure: number }> {
     const dabs: Array<{ x: number; y: number; pressure: number }> = [];
 
@@ -885,15 +1238,15 @@ export class BrushStamper {
 
     // Check for rapid pressure change - reduce spacing for smoother transition
     const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
-    let effectiveSpacing = spacing;
+    let effectiveSpacing = spacingPx;
     if (pressureChange > BrushStamper.PRESSURE_CHANGE_THRESHOLD) {
       // Reduce spacing when pressure is changing rapidly
       // This adds more dabs during transitions for smoother appearance
-      effectiveSpacing = spacing * 0.5;
+      effectiveSpacing = spacingPx * 0.5;
     }
 
-    // Spacing threshold based on current size (not pressure-scaled to avoid inconsistent spacing)
-    const threshold = Math.max(size * effectiveSpacing, 1);
+    // Spacing threshold based on precomputed tip size
+    const threshold = Math.max(effectiveSpacing, 1);
 
     this.accumulatedDistance += distance;
 

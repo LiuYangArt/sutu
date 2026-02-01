@@ -10,7 +10,7 @@
  * Performance target: Match parametric brush compute shader (~8-12ms for 64 dabs)
  */
 
-import type { TextureDabInstanceData, BoundingBox } from '../types';
+import type { TextureDabInstanceData, BoundingBox, GPUPatternSettings } from '../types';
 import type { GPUBrushTexture } from '../resources/TextureAtlas';
 import type { ColorBlendMode } from '@/stores/settings';
 
@@ -25,15 +25,25 @@ const MAX_DABS_PER_BATCH = 128;
 const DAB_DATA_SIZE = 48;
 const DAB_DATA_FLOATS = 12;
 
+// Uniform buffer size (expanded for pattern settings)
+// Block 0: bbox_offset(8) + bbox_size(8) = 16
+// Block 1: canvas_size(8) + dab_count(4) + blend_mode(4) = 16
+// Block 2: pattern_enabled(4) + invert(4) + mode(4) + scale(4) = 16
+// Block 3: brightness(4) + contrast(4) + depth(4) + padding(4) = 16
+// Block 4: pattern_size(8) + padding(8) = 16
+// Total = 80 bytes
+const UNIFORM_BUFFER_SIZE = 80;
+
 export class ComputeTextureBrushPipeline {
   private device: GPUDevice;
   private pipeline!: GPUComputePipeline;
   private bindGroupLayout!: GPUBindGroupLayout;
   private uniformBuffer: GPUBuffer;
   private dabBuffer: GPUBuffer;
+  private dummyPatternTexture: GPUTexture;
 
   // BindGroup cache (reduce GC pressure)
-  // Key format: "inputLabel_outputLabel_brushTextureLabel"
+  // Key format: "inputLabel_outputLabel_brushTextureLabel_patternTextureLabel"
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
 
   private maxDabs = 256;
@@ -46,10 +56,10 @@ export class ComputeTextureBrushPipeline {
   constructor(device: GPUDevice) {
     this.device = device;
 
-    // Uniform buffer: bbox_offset(8) + bbox_size(8) + canvas_size(8) + dab_count(4) + blend_mode(4) = 32 bytes
+    // Uniform buffer
     this.uniformBuffer = device.createBuffer({
       label: 'Compute Texture Brush Uniforms',
-      size: 32,
+      size: UNIFORM_BUFFER_SIZE,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -59,6 +69,22 @@ export class ComputeTextureBrushPipeline {
       size: this.maxDabs * DAB_DATA_SIZE,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
+    // Create dummy 1x1 white texture for bind group validity when no pattern is used
+    this.dummyPatternTexture = device.createTexture({
+      label: 'Dummy Pattern Texture',
+      size: { width: 1, height: 1 },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+
+    // Initialize dummy texture with white pixel
+    device.queue.writeTexture(
+      { texture: this.dummyPatternTexture },
+      new Uint8Array([255, 255, 255, 255]),
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
 
     this.initPipeline();
   }
@@ -92,6 +118,11 @@ export class ComputeTextureBrushPipeline {
           binding: 4,
           visibility: GPUShaderStage.COMPUTE,
           texture: { sampleType: 'float' }, // Brush texture (rgba8unorm, filterable)
+        },
+        {
+          binding: 5,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: 'float' }, // Pattern texture
         },
       ],
     });
@@ -129,6 +160,36 @@ export class ComputeTextureBrushPipeline {
   }
 
   /**
+   * Convert blend mode string to integer ID
+   */
+  private getBlendModeId(mode: string): number {
+    switch (mode) {
+      case 'multiply':
+        return 0;
+      case 'subtract':
+        return 1;
+      case 'darken':
+        return 2;
+      case 'overlay':
+        return 3;
+      case 'colorDodge':
+        return 4;
+      case 'colorBurn':
+        return 5;
+      case 'linearBurn':
+        return 6;
+      case 'hardMix':
+        return 7;
+      case 'linearHeight':
+        return 8;
+      case 'height':
+        return 9;
+      default:
+        return 0; // Default to multiply
+    }
+  }
+
+  /**
    * Execute batch rendering
    * @returns true if compute path was used, false if fallback needed
    */
@@ -137,13 +198,23 @@ export class ComputeTextureBrushPipeline {
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
     brushTexture: GPUBrushTexture,
-    dabs: TextureDabInstanceData[]
+    dabs: TextureDabInstanceData[],
+    patternTexture: GPUTexture | null = null,
+    patternSettings: GPUPatternSettings | null = null
   ): boolean {
     if (dabs.length === 0) return true;
 
     // Check if batch split needed (too many dabs)
     if (dabs.length > MAX_DABS_PER_BATCH) {
-      return this.dispatchInBatches(encoder, inputTexture, outputTexture, brushTexture, dabs);
+      return this.dispatchInBatches(
+        encoder,
+        inputTexture,
+        outputTexture,
+        brushTexture,
+        dabs,
+        patternTexture,
+        patternSettings
+      );
     }
 
     // Calculate precise bounding box
@@ -153,7 +224,15 @@ export class ComputeTextureBrushPipeline {
     // Check bbox pixel limit (prevent diagonal stroke issue)
     const bboxPixels = bbox.width * bbox.height;
     if (bboxPixels > MAX_PIXELS_PER_BATCH) {
-      return this.dispatchInBatches(encoder, inputTexture, outputTexture, brushTexture, dabs);
+      return this.dispatchInBatches(
+        encoder,
+        inputTexture,
+        outputTexture,
+        brushTexture,
+        dabs,
+        patternTexture,
+        patternSettings
+      );
     }
 
     // Ensure dab buffer is large enough
@@ -161,17 +240,49 @@ export class ComputeTextureBrushPipeline {
       this.growDabBuffer(dabs.length);
     }
 
+    const usePattern =
+      patternTexture !== null && patternSettings !== null && patternSettings.patternId !== null;
+    const activePatternTexture = usePattern ? patternTexture! : this.dummyPatternTexture;
+
     // Upload uniforms
-    const uniformData = new Uint32Array([
-      bbox.x,
-      bbox.y, // bbox_offset
-      bbox.width,
-      bbox.height, // bbox_size
-      this.canvasWidth,
-      this.canvasHeight, // canvas_size
-      dabs.length, // dab_count
-      this.colorBlendMode, // color_blend_mode
-    ]);
+    const uniformData = new Uint32Array(UNIFORM_BUFFER_SIZE / 4);
+
+    // Block 0
+    uniformData[0] = bbox.x;
+    uniformData[1] = bbox.y;
+    uniformData[2] = bbox.width;
+    uniformData[3] = bbox.height;
+
+    // Block 1
+    uniformData[4] = this.canvasWidth;
+    uniformData[5] = this.canvasHeight;
+    uniformData[6] = dabs.length;
+    uniformData[7] = this.colorBlendMode;
+
+    // Pattern uniforms
+    if (usePattern && patternSettings) {
+      // Block 2
+      uniformData[8] = 1; // pattern_enabled
+      uniformData[9] = patternSettings.invert ? 1 : 0;
+      uniformData[10] = this.getBlendModeId(patternSettings.mode);
+      // f32 view for floats
+      const floats = new Float32Array(uniformData.buffer);
+      floats[11] = patternSettings.scale;
+
+      // Block 3
+      floats[12] = patternSettings.brightness;
+      floats[13] = patternSettings.contrast;
+      floats[14] = patternSettings.depth;
+      uniformData[15] = 0; // padding
+
+      // Block 4
+      floats[16] = activePatternTexture.width;
+      floats[17] = activePatternTexture.height;
+    } else {
+      uniformData[8] = 0; // pattern_enabled
+      // padding...
+    }
+
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
     // Upload dab data
@@ -179,7 +290,12 @@ export class ComputeTextureBrushPipeline {
     this.device.queue.writeBuffer(this.dabBuffer, 0, dabData.buffer);
 
     // Get or create BindGroup
-    const bindGroup = this.getOrCreateBindGroup(inputTexture, outputTexture, brushTexture);
+    const bindGroup = this.getOrCreateBindGroup(
+      inputTexture,
+      outputTexture,
+      brushTexture,
+      activePatternTexture
+    );
 
     // Dispatch
     const pass = encoder.beginComputePass({ label: 'Compute Texture Brush Pass' });
@@ -198,17 +314,15 @@ export class ComputeTextureBrushPipeline {
 
   /**
    * Split dispatch when dab count or bbox is too large
-   *
-   * IMPORTANT: Uses proper ping-pong swapping between batches.
-   * Each batch reads from currentInput and writes to currentOutput,
-   * then we swap for the next batch to ensure sequential accumulation.
    */
   private dispatchInBatches(
     encoder: GPUCommandEncoder,
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
     brushTexture: GPUBrushTexture,
-    dabs: TextureDabInstanceData[]
+    dabs: TextureDabInstanceData[],
+    patternTexture: GPUTexture | null,
+    patternSettings: GPUPatternSettings | null
   ): boolean {
     const batchSize = MAX_DABS_PER_BATCH;
 
@@ -221,13 +335,20 @@ export class ComputeTextureBrushPipeline {
 
     for (let i = 0; i < dabs.length; i += batchSize) {
       const batch = dabs.slice(i, i + batchSize);
-      const success = this.dispatch(encoder, currentInput, currentOutput, brushTexture, batch);
+      const success = this.dispatch(
+        encoder,
+        currentInput,
+        currentOutput,
+        brushTexture,
+        batch,
+        patternTexture,
+        patternSettings
+      );
       if (!success) return false;
 
       // Swap for next batch (proper ping-pong)
       if (i + batchSize < dabs.length) {
         // Copy the entire affected region from output to input for next batch
-        // This ensures the next batch sees the accumulated result of previous batches
         if (allDabsBbox.width > 0 && allDabsBbox.height > 0) {
           encoder.copyTextureToTexture(
             { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
@@ -243,14 +364,9 @@ export class ComputeTextureBrushPipeline {
       }
     }
 
-    // If we did an odd number of batches, the final result is in the original outputTexture
-    // If even number of batches (and > 1), we need to ensure result is in outputTexture
-    // The caller (GPUStrokeAccumulator.flushTextureBatch) expects result in outputTexture (dest)
-    // and will call swap() after. So we need to ensure the last dispatch wrote to outputTexture.
+    // Final result copy back logic (same as before)
     const batchCount = Math.ceil(dabs.length / batchSize);
     if (batchCount > 1 && batchCount % 2 === 0) {
-      // Final result is in inputTexture (original outputTexture after swaps)
-      // Copy back to outputTexture
       if (allDabsBbox.width > 0 && allDabsBbox.height > 0) {
         encoder.copyTextureToTexture(
           { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
@@ -269,10 +385,12 @@ export class ComputeTextureBrushPipeline {
   private getOrCreateBindGroup(
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
-    brushTexture: GPUBrushTexture
+    brushTexture: GPUBrushTexture,
+    patternTexture: GPUTexture
   ): GPUBindGroup {
     const brushLabel = brushTexture.texture.label || 'brush';
-    const key = `${inputTexture.label || 'input'}_${outputTexture.label || 'output'}_${brushLabel}`;
+    const patternLabel = patternTexture.label || 'none';
+    const key = `${inputTexture.label || 'inp'}_${outputTexture.label || 'out'}_${brushLabel}_${patternLabel}`;
 
     let bindGroup = this.cachedBindGroups.get(key);
     if (!bindGroup) {
@@ -285,6 +403,7 @@ export class ComputeTextureBrushPipeline {
           { binding: 2, resource: inputTexture.createView() },
           { binding: 3, resource: outputTexture.createView() },
           { binding: 4, resource: brushTexture.view },
+          { binding: 5, resource: patternTexture.createView() },
         ],
       });
       this.cachedBindGroups.set(key, bindGroup);
@@ -295,7 +414,6 @@ export class ComputeTextureBrushPipeline {
 
   /**
    * Calculate precise bounding box for texture dabs
-   * Must account for rotation (diagonal is longest extent)
    */
   private computePreciseBoundingBox(dabs: TextureDabInstanceData[]): BoundingBox {
     let minX = Infinity,
@@ -398,6 +516,7 @@ export class ComputeTextureBrushPipeline {
   destroy(): void {
     this.uniformBuffer.destroy();
     this.dabBuffer.destroy();
+    this.dummyPatternTexture.destroy();
     this.cachedBindGroups.clear();
   }
 }

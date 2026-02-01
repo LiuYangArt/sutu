@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-**PaintBoard** 是一个专业绘画软件，追求低延迟数位板输入体验。
+**PaintBoard** 是一个专业绘画软件，追求低延迟数位板输入体验。目标平台 windows x86
 这是一个纯AI vibe-coding项目，所有开发方案以ai native优先。
 
 | 技术栈   | 说明                         |
@@ -11,6 +11,10 @@
 | 图标     | lucide-react                 |
 
 **目标**: Wacom 数位板输入延迟 < 12ms
+
+## 笔刷系统
+当前支持typescript cpu和compute shader gpu 笔刷。 cpu笔刷用于快速开发和debug提供ground truth 为gpu提供效果参考。用户最后使用gpu笔刷以获得最优性能。
+笔刷系统目标是对齐photoshop的效果。
 
 ## 常用命令
 

@@ -10,6 +10,7 @@ import { useSettingsStore, initializeSettings } from './stores/settings';
 import { useFileStore } from './stores/file';
 import { LeftToolbar, RightPanel } from './components/SidePanel';
 import { PanelLayer } from './components/UI/PanelLayer';
+import { ToastLayer } from './components/UI/ToastLayer';
 import { usePanelStore } from './stores/panel';
 
 // Lazy load DebugPanel (only used in dev mode)
@@ -233,7 +234,7 @@ function App() {
     // Only Brush Panel uses FloatingPanel now
     registerPanel({
       id: 'brush-panel',
-      title: 'Brush',
+      title: 'Brush Settings',
       defaultGeometry: { x: window.innerWidth - 300, y: 420, width: 280, height: 440 },
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 320, offsetY: 80 },
       minWidth: 240,
@@ -263,6 +264,8 @@ function App() {
       <RightPanel />
       {/* Floating panels (only Brush panel now) */}
       <PanelLayer />
+      {/* Toast notifications */}
+      <ToastLayer />
       {/* Settings Panel */}
       <SettingsPanel />
       {/* Pattern Library Panel */}

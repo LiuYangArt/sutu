@@ -172,6 +172,25 @@ fn main() {
                             print_descriptor_values(pd, "    ");
                         }
 
+                        // 分析 dualBrush 子对象 (Dual Brush)
+                        if let Some(DescriptorValue::Descriptor(dual)) = brush_desc.get("dualBrush")
+                        {
+                            println!("\n  ★★★ [dualBrush] Dual Brush 参数 ★★★:");
+                            print_descriptor_values(dual, "    ");
+                            // 深度打印所有键
+                            println!("\n  [dualBrush] 完整键列表:");
+                            for (k, v) in dual {
+                                print_value_deep(k, v, "    ");
+                            }
+                        }
+
+                        // 检查 useDualBrush 布尔值
+                        if let Some(DescriptorValue::Boolean(use_dual)) =
+                            brush_desc.get("useDualBrush")
+                        {
+                            println!("\n  useDualBrush: {}", use_dual);
+                        }
+
                         // sampledData UUID
                         if let Some(DescriptorValue::Descriptor(brsh_inner)) =
                             brush_desc.get("Brsh")
@@ -298,6 +317,67 @@ fn print_descriptor_values(desc: &indexmap::IndexMap<String, DescriptorValue>, i
             _ => {
                 println!("{}{}: [other type]", indent, key);
             }
+        }
+    }
+}
+
+/// 深度递归打印描述符值，支持多级嵌套
+fn print_value_deep(key: &str, value: &DescriptorValue, indent: &str) {
+    match value {
+        DescriptorValue::String(s) => {
+            println!("{}{}: \"{}\"", indent, key, s.trim_end_matches('\0'));
+        }
+        DescriptorValue::Boolean(b) => {
+            println!("{}{}: {}", indent, key, b);
+        }
+        DescriptorValue::Integer(i) => {
+            println!("{}{}: {}", indent, key, i);
+        }
+        DescriptorValue::LargeInteger(i) => {
+            println!("{}{}: {} (i64)", indent, key, i);
+        }
+        DescriptorValue::Double(d) => {
+            println!("{}{}: {:.4}", indent, key, d);
+        }
+        DescriptorValue::UnitFloat { unit, value } => {
+            println!("{}{}: {:.4} ({})", indent, key, value, unit);
+        }
+        DescriptorValue::Enum { type_id, value: v } => {
+            println!("{}{}: {}::{}", indent, key, type_id, v);
+        }
+        DescriptorValue::Descriptor(inner) => {
+            println!("{}{}: {{", indent, key);
+            let new_indent = format!("{}  ", indent);
+            for (k, v) in inner {
+                print_value_deep(k, v, &new_indent);
+            }
+            println!("{}}}", indent);
+        }
+        DescriptorValue::List(items) => {
+            println!("{}{}: [", indent, key);
+            let new_indent = format!("{}  ", indent);
+            for (i, item) in items.iter().enumerate() {
+                print_value_deep(&format!("[{}]", i), item, &new_indent);
+            }
+            println!("{}]", indent);
+        }
+        DescriptorValue::RawData(data) => {
+            println!("{}{}: [RawData {} bytes]", indent, key, data.len());
+        }
+        DescriptorValue::Class { name, class_id } => {
+            println!("{}{}: Class({}, {})", indent, key, name, class_id);
+        }
+        DescriptorValue::Alias(s) => {
+            println!("{}{}: Alias({})", indent, key, s);
+        }
+        DescriptorValue::Object { type_id, value } => {
+            println!("{}{}: Object({}) {{", indent, key, type_id);
+            let new_indent = format!("{}  ", indent);
+            print_value_deep("value", value, &new_indent);
+            println!("{}}}", indent);
+        }
+        DescriptorValue::Reference => {
+            println!("{}{}: [Reference]", indent, key);
         }
     }
 }

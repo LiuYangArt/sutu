@@ -57,8 +57,9 @@ export function applyScatter(
 
   // 1. Calculate effective scatter amount
   // Scatter is a percentage of brush diameter (0-1000%)
+  // Photoshop uses radius for 100% scatter, so scale by 0.5.
   const scatterControl = getControlValue(settings.scatterControl, dynamics);
-  const scatterAmount = (settings.scatter / 100) * diameter * scatterControl;
+  const scatterAmount = (settings.scatter / 100) * diameter * 0.5 * scatterControl;
 
   // 2. Calculate effective count
   const countControl = getControlValue(settings.countControl, dynamics);

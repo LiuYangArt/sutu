@@ -6,6 +6,7 @@
 
 import type { Rect } from '@/utils/strokeBuffer';
 import type { BrushTexture } from '@/stores/tool';
+import type { TextureSettings, TextureBlendMode } from '@/components/BrushPanel/types';
 
 /**
  * Dab instance data for GPU instancing
@@ -106,6 +107,21 @@ export interface GPUDabParams {
   angle?: number;
   /** Texture for sampled brushes (from ABR import) */
   texture?: BrushTexture;
+  /** Texture settings for pattern modulation */
+  textureSettings?: TextureSettings | null;
+}
+
+/**
+ * GPU-compatible pattern settings (subset of TextureSettings)
+ */
+export interface GPUPatternSettings {
+  patternId: string | null;
+  scale: number;
+  brightness: number;
+  contrast: number;
+  depth: number;
+  invert: boolean;
+  mode: TextureBlendMode;
 }
 
 /**

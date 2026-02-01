@@ -709,6 +709,9 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
     }
 
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
+    // Track usage of IDs to ensure uniqueness within this import batch
+    // Map ID -> count (how many times seen so far)
+    let mut id_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for mut brush in abr_file.brushes {
         // Debug connection between brush and pattern
@@ -750,26 +753,40 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
                 tracing::warn!("[ABR Warning] Brush '{}' has texture enabled but pattern could not be resolved.", brush.name);
             }
         }
-        // Generate ID first (before moving brush)
-        let id = brush.uuid.clone().unwrap_or_else(|| {
-            // Generate simple UUID
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default();
-            format!("{:x}{:x}", now.as_secs(), now.subsec_nanos())
-        });
+        // Generate base ID (from UUID or random)
+        let base_id = brush.uuid.clone().unwrap_or_else(uuid_simple);
 
-        // Cache texture if present
-        if let Some(ref tip) = brush.tip_image {
-            raw_bytes += tip.data.len();
-            cache_brush_gray(
-                id.clone(),
-                tip.data.clone(),
-                tip.width,
-                tip.height,
-                brush.name.clone(),
+        // Ensure uniqueness
+        let count = id_counts.entry(base_id.clone()).or_insert(0);
+        let id = if *count == 0 {
+            base_id.clone()
+        } else {
+            // Append suffix for duplicates: uuid-1, uuid-2, etc.
+            format!("{}-{}", base_id, count)
+        };
+        *count += 1;
+
+        if id != base_id {
+            tracing::info!(
+                "[ABR Import] resolved duplicate ID for brush '{}': {} -> {}",
+                brush.name,
+                base_id,
+                id
             );
+        }
+
+        // Cache texture if present (skip computed brushes - render procedurally)
+        if let Some(ref tip) = brush.tip_image {
+            if !brush.is_computed {
+                raw_bytes += tip.data.len();
+                cache_brush_gray(
+                    id.clone(),
+                    tip.data.clone(),
+                    tip.width,
+                    tip.height,
+                    brush.name.clone(),
+                );
+            }
         }
 
         // Build preset with the ID we generated
@@ -841,6 +858,8 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         })
         .unwrap_or((None, None));
 
+    let has_texture = brush.tip_image.is_some() && !brush.is_computed;
+
     BrushPreset {
         id,
         name: brush.name,
@@ -849,14 +868,23 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         hardness: brush.hardness.unwrap_or(100.0),
         angle: brush.angle,
         roundness: brush.roundness * 100.0,
-        has_texture: brush.tip_image.is_some(),
-        texture_width: brush.tip_image.as_ref().map(|img| img.width),
-        texture_height: brush.tip_image.as_ref().map(|img| img.height),
+        has_texture,
+        texture_width: if has_texture {
+            brush.tip_image.as_ref().map(|img| img.width)
+        } else {
+            None
+        },
+        texture_height: if has_texture {
+            brush.tip_image.as_ref().map(|img| img.height)
+        } else {
+            None
+        },
         size_pressure: dynamics.map(|d| d.size_control == 2).unwrap_or(false),
         opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
         cursor_path,
         cursor_bounds,
         texture_settings: brush.texture_settings,
+        dual_brush_settings: brush.dual_brush_settings,
     }
 }
 
@@ -1055,6 +1083,7 @@ mod tests {
             dynamics: None,
             is_computed: false,
             texture_settings: Some(texture_settings),
+            dual_brush_settings: None,
         };
 
         let preset = build_preset_with_id(brush, "preset-id".to_string());

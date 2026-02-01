@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 /** Pressure toggle button component */
 interface PressureToggleProps {
   enabled: boolean;
@@ -72,6 +73,69 @@ interface SliderRowProps {
 }
 
 /** Slider row component for brush parameters */
+interface EditableValueProps {
+  value: number;
+  displayValue: string;
+  min: number;
+  max: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}
+
+function EditableValue({ value, displayValue, min, max, disabled, onChange }: EditableValueProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [inputValue, setInputValue] = useState(value.toString());
+
+  useEffect(() => {
+    if (!isEditing) setInputValue(value.toString());
+  }, [value, isEditing]);
+
+  const commitEdit = () => {
+    let num = parseFloat(inputValue);
+    if (isNaN(num)) {
+      num = value;
+    } else {
+      num = Math.max(min, Math.min(max, num));
+    }
+    onChange(num);
+    setIsEditing(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') commitEdit();
+    else if (e.key === 'Escape') {
+      setIsEditing(false);
+      setInputValue(value.toString());
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <input
+        type="text"
+        className="brush-setting-value-input"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        onBlur={commitEdit}
+        onKeyDown={handleKeyDown}
+        autoFocus
+      />
+    );
+  }
+
+  return (
+    <span
+      className="brush-setting-value"
+      onClick={() => !disabled && setIsEditing(true)}
+      style={{ cursor: disabled ? 'default' : 'text' }}
+      title={disabled ? undefined : 'Click to edit'}
+    >
+      {displayValue}
+    </span>
+  );
+}
+
+/** Slider row component for brush parameters */
 export function SliderRow({
   label,
   value,
@@ -104,7 +168,14 @@ export function SliderRow({
         onChange={(e) => onChange(Number(e.target.value))}
         disabled={disabled}
       />
-      <span className="brush-setting-value">{displayValue}</span>
+      <EditableValue
+        value={value}
+        displayValue={displayValue}
+        min={min}
+        max={max}
+        disabled={disabled}
+        onChange={onChange}
+      />
     </div>
   );
 }

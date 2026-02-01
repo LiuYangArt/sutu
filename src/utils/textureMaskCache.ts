@@ -19,6 +19,37 @@ import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUti
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
 import { calculateTextureInfluence } from './textureRendering';
+import type { DualBlendMode } from '@/stores/tool';
+
+// PS Dual Brush blend modes (only 8 supported)
+function blendDual(primary: number, secondary: number, mode: DualBlendMode): number {
+  const s = Math.max(0, Math.min(1, secondary));
+  const p = Math.max(0, Math.min(1, primary));
+
+  switch (mode) {
+    case 'multiply':
+      return p * s;
+    case 'darken':
+      return Math.min(p, s);
+    case 'overlay':
+      return p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
+    case 'colorDodge':
+      return s >= 1.0 ? 1.0 : Math.min(1.0, p / (1.0 - s));
+    case 'colorBurn':
+      return s <= 0 ? 0 : Math.max(0, 1.0 - (1.0 - p) / s);
+    case 'linearBurn':
+      return Math.max(0, p + s - 1.0);
+    case 'hardMix':
+      // Hard Mix: result is 0 or 1 based on linear light threshold
+      return p + s >= 1.0 ? 1.0 : 0.0;
+    case 'linearHeight':
+      // Linear Height: similar to height/emboss effect
+      // Treats secondary as height map, scales primary
+      return p * (0.5 + s * 0.5);
+    default:
+      return p * s;
+  }
+}
 
 interface TextureMaskParams {
   /** Current brush size (diameter in pixels) */
@@ -51,18 +82,53 @@ export class TextureMaskCache {
   private centerX: number = 0;
   private centerY: number = 0;
 
+  private static sampleBilinear(
+    data: Float32Array,
+    width: number,
+    height: number,
+    x: number,
+    y: number
+  ): number {
+    if (x < 0 || y < 0 || x > width - 1 || y > height - 1) return 0;
+
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = x0 + 1;
+    const y1 = y0 + 1;
+    const fx = x - x0;
+    const fy = y - y0;
+
+    const idx00 = y0 * width + x0;
+    const v00 = data[idx00] ?? 0;
+    const v10 = x1 < width ? (data[idx00 + 1] ?? 0) : 0;
+    const v01 = y1 < height ? (data[idx00 + width] ?? 0) : 0;
+    const v11 = x1 < width && y1 < height ? (data[idx00 + width + 1] ?? 0) : 0;
+
+    const v0 = v00 + (v10 - v00) * fx;
+    const v1 = v01 + (v11 - v01) * fx;
+    return v0 + (v1 - v0) * fy;
+  }
+
   /**
    * Helper: Check if texture is already current or has cached ImageData
    */
+  getScaledWidth(): number {
+    return this.scaledWidth;
+  }
+
+  getScaledHeight(): number {
+    return this.scaledHeight;
+  }
+
   private tryUseCachedTexture(texture: BrushTexture): boolean {
     const textureId = texture.id;
 
-    // Check if same texture is already active
+    // Fast path: same texture ID and data already loaded
     if (textureId === this.currentTextureId && this.sourceImageData) {
       return true;
     }
 
-    // Check if texture object has cached ImageData
+    // Check if texture object itself has cached ImageData
     if (texture.imageData) {
       this.sourceImageData = texture.imageData;
       this.currentTextureId = textureId;
@@ -82,10 +148,10 @@ export class TextureMaskCache {
 
     const textureId = texture.id;
 
-    // Try to load via protocol first (new optimized path)
+    // 1. Try protocol load (optimized)
     let imageData = await loadBrushTexture(textureId, texture.width, texture.height);
 
-    // Fallback to Base64 if protocol fails and data is available
+    // 2. Fallback to Base64 if needed
     if (!imageData && texture.data) {
       imageData = await decodeBase64ToImageData(texture.data, texture.width, texture.height);
     }
@@ -95,9 +161,8 @@ export class TextureMaskCache {
       return;
     }
 
-    // Cache in the texture object for future use
+    // Cache result
     texture.imageData = imageData;
-
     this.sourceImageData = imageData;
     this.currentTextureId = textureId;
     this.invalidateCache();
@@ -109,7 +174,7 @@ export class TextureMaskCache {
   setTextureSync(texture: BrushTexture): boolean {
     if (this.tryUseCachedTexture(texture)) return true;
 
-    // Try Base64 fallback for sync path
+    // Try synchronous Base64 fallback
     if (texture.data) {
       const imageData = decodeBase64ToImageDataSync(texture.data, texture.width, texture.height);
       if (imageData) {
@@ -121,9 +186,9 @@ export class TextureMaskCache {
       }
     }
 
-    // Need async loading - trigger it in background
+    // Trigger async load in background
     this.setTexture(texture).catch(() => {
-      // Silent fail - will retry on next paint
+      // Silent fail - will be handled by next repaint
     });
 
     return false;
@@ -169,24 +234,22 @@ export class TextureMaskCache {
     const srcH = this.sourceImageData.height;
     const srcData = this.sourceImageData.data;
 
-    // Calculate target size maintaining aspect ratio
+    // Maintain aspect ratio, then apply roundness (squeeze vertically)
     const aspectRatio = srcW / srcH;
-    let targetW: number, targetH: number;
+    const roundnessScale = Math.max(0.01, Math.min(1, roundness));
+    let baseW: number;
+    let baseH: number;
 
-    if (roundness >= 0.99) {
-      // Use original aspect ratio
-      if (aspectRatio >= 1) {
-        targetW = size;
-        targetH = size / aspectRatio;
-      } else {
-        targetH = size;
-        targetW = size * aspectRatio;
-      }
+    if (aspectRatio >= 1) {
+      baseW = size;
+      baseH = size / aspectRatio;
     } else {
-      // Apply roundness (squeeze vertically)
-      targetW = size;
-      targetH = size * roundness;
+      baseH = size;
+      baseW = size * aspectRatio;
     }
+
+    const targetW = baseW;
+    const targetH = baseH * roundnessScale;
 
     // Add margin for rotation
     const diagonal = Math.sqrt(targetW * targetW + targetH * targetH);
@@ -200,12 +263,10 @@ export class TextureMaskCache {
     // Allocate mask buffer
     this.scaledMask = new Float32Array(this.scaledWidth * this.scaledHeight);
 
-    // Pre-calculate rotation
+    // Pre-calculate rotation matrices
     const angleRad = (angle * Math.PI) / 180;
     const cosA = Math.cos(-angleRad);
     const sinA = Math.sin(-angleRad);
-
-    // Scale factors
     const scaleX = srcW / targetW;
     const scaleY = srcH / targetH;
 
@@ -238,24 +299,15 @@ export class TextureMaskCache {
         const fx = srcX - x0;
         const fy = srcY - y0;
 
-        // Sample alpha channel (grayscale texture uses all channels equally)
-        // For grayscale PNG, we use the first channel (R) as the mask value
-        const getAlpha = (x: number, y: number): number => {
-          const idx = (y * srcW + x) * 4;
-          // Use the grayscale value (R channel) as alpha
-          // ABR textures are grayscale: 0 = transparent, 255 = opaque
-          return srcData[idx]! / 255;
-        };
+        // Optimized alpha channel sampling helper
+        // Use R channel (index 0) since ABR textures are grayscale
+        const v00 = srcData[(y0 * srcW + x0) * 4]! / 255;
+        const v10 = srcData[(y0 * srcW + x1) * 4]! / 255;
+        const v01 = srcData[(y1 * srcW + x0) * 4]! / 255;
+        const v11 = srcData[(y1 * srcW + x1) * 4]! / 255;
 
-        const v00 = getAlpha(x0, y0);
-        const v10 = getAlpha(x1, y0);
-        const v01 = getAlpha(x0, y1);
-        const v11 = getAlpha(x1, y1);
-
-        const value =
+        this.scaledMask[py * this.scaledWidth + px] =
           v00 * (1 - fx) * (1 - fy) + v10 * fx * (1 - fy) + v01 * (1 - fx) * fy + v11 * fx * fy;
-
-        this.scaledMask[py * this.scaledWidth + px] = value;
       }
     }
 
@@ -265,8 +317,6 @@ export class TextureMaskCache {
   /**
    * Stamp the texture mask to buffer using Alpha Darken blending
    * Same blending logic as MaskCache for consistency
-   *
-   * @param wetEdge - Wet edge strength (0-1), creates hollow center effect
    */
   stampToBuffer(
     buffer: Uint8ClampedArray,
@@ -279,9 +329,10 @@ export class TextureMaskCache {
     r: number,
     g: number,
     b: number,
-    _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
     textureSettings?: TextureSettings | null,
-    pattern?: PatternData
+    pattern?: PatternData,
+    dualMask?: Float32Array | null,
+    dualMode?: DualBlendMode
   ): Rect {
     if (!this.scaledMask) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
@@ -292,6 +343,11 @@ export class TextureMaskCache {
     const halfHeight = this.scaledHeight / 2;
     const bufferLeft = Math.round(cx - halfWidth);
     const bufferTop = Math.round(cy - halfHeight);
+    const offsetX = cx - (bufferLeft + halfWidth);
+    const offsetY = cy - (bufferTop + halfHeight);
+    const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
+    const hasTexturePattern = Boolean(textureSettings && pattern);
+    const textureDepth = textureSettings ? textureSettings.depth / 100.0 : 0;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -310,48 +366,129 @@ export class TextureMaskCache {
     const dirtyBottom = bufferTop + endY;
 
     // Blending loop
-    for (let my = startY; my < endY; my++) {
-      const bufferRowStart = (bufferTop + my) * bufferWidth;
-      const maskRowStart = my * this.scaledWidth;
+    if (!useSubpixel) {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+        const maskRowStart = my * this.scaledWidth;
 
-      for (let mx = startX; mx < endX; mx++) {
-        const maskValue = this.scaledMask[maskRowStart + mx]!;
-        if (maskValue < 0.001) continue;
+        for (let mx = startX; mx < endX; mx++) {
+          const maskValue = this.scaledMask[maskRowStart + mx]!;
+          if (maskValue < 0.001) continue;
 
-        const idx = (bufferRowStart + bufferLeft + mx) * 4;
+          const bufferX = bufferLeft + mx;
+          const bufferY = bufferTop + my;
+          const idx = (bufferRowStart + bufferX) * 4;
 
-        // Texture modulation
-        let textureMod = 1.0;
-        if (textureSettings && pattern) {
-          const depth = textureSettings.depth / 100.0;
-          textureMod = calculateTextureInfluence(
-            bufferLeft + mx,
-            bufferTop + my,
-            textureSettings,
-            pattern,
-            depth
-          );
+          // Texture modulation
+          let textureMod = 1.0;
+          if (hasTexturePattern) {
+            textureMod = calculateTextureInfluence(
+              bufferX,
+              bufferY,
+              textureSettings!,
+              pattern!,
+              textureDepth
+            );
+          }
+
+          // Standard Alpha Darken blend
+          const srcAlpha = maskValue * flow;
+
+          // Apply Dual Brush Mask if present
+          // Dual brush modifies OPACITY (like texture), not flow
+          let dualMod = 1.0;
+          if (dualMask && dualMode) {
+            const dualVal = dualMask[maskRowStart + mx]!;
+            // Use maskValue as the primary to preserve brush shape; dualVal modulates density
+            dualMod = blendDual(maskValue, dualVal, dualMode);
+          }
+
+          const dstR = buffer[idx]!;
+          const dstG = buffer[idx + 1]!;
+          const dstB = buffer[idx + 2]!;
+          const dstA = buffer[idx + 3]! / 255;
+
+          // Alpha Darken blending - dual brush affects opacity ceiling, not flow
+          const effectiveOpacity = dabOpacity * textureMod * dualMod;
+          const outA =
+            dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
+
+          if (outA > 0.001) {
+            const hasColor = dstA > 0.001;
+            buffer[idx] = (hasColor ? dstR + (r - dstR) * srcAlpha : r) + 0.5;
+            buffer[idx + 1] = (hasColor ? dstG + (g - dstG) * srcAlpha : g) + 0.5;
+            buffer[idx + 2] = (hasColor ? dstB + (b - dstB) * srcAlpha : b) + 0.5;
+            buffer[idx + 3] = outA * 255 + 0.5;
+          }
         }
+      }
+    } else {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
 
-        // Standard Alpha Darken blend
-        const srcAlpha = maskValue * flow;
+        for (let mx = startX; mx < endX; mx++) {
+          const sampleX = mx - offsetX;
+          const sampleY = my - offsetY;
+          const maskValue = TextureMaskCache.sampleBilinear(
+            this.scaledMask,
+            this.scaledWidth,
+            this.scaledHeight,
+            sampleX,
+            sampleY
+          );
+          if (maskValue < 0.001) continue;
 
-        const dstR = buffer[idx]!;
-        const dstG = buffer[idx + 1]!;
-        const dstB = buffer[idx + 2]!;
-        const dstA = buffer[idx + 3]! / 255;
+          const bufferX = bufferLeft + mx;
+          const bufferY = bufferTop + my;
+          const idx = (bufferRowStart + bufferX) * 4;
 
-        // Alpha Darken blending
-        const effectiveOpacity = dabOpacity * textureMod;
-        const outA =
-          dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
+          // Texture modulation
+          let textureMod = 1.0;
+          if (hasTexturePattern) {
+            textureMod = calculateTextureInfluence(
+              bufferX,
+              bufferY,
+              textureSettings!,
+              pattern!,
+              textureDepth
+            );
+          }
 
-        if (outA > 0.001) {
-          const hasColor = dstA > 0.001;
-          buffer[idx] = (hasColor ? dstR + (r - dstR) * srcAlpha : r) + 0.5;
-          buffer[idx + 1] = (hasColor ? dstG + (g - dstG) * srcAlpha : g) + 0.5;
-          buffer[idx + 2] = (hasColor ? dstB + (b - dstB) * srcAlpha : b) + 0.5;
-          buffer[idx + 3] = outA * 255 + 0.5;
+          // Standard Alpha Darken blend
+          const srcAlpha = maskValue * flow;
+
+          // Apply Dual Brush Mask if present
+          // Dual brush modifies OPACITY (like texture), not flow
+          let dualMod = 1.0;
+          if (dualMask && dualMode) {
+            const dualVal = TextureMaskCache.sampleBilinear(
+              dualMask,
+              this.scaledWidth,
+              this.scaledHeight,
+              sampleX,
+              sampleY
+            );
+            // Use maskValue as the primary to preserve brush shape; dualVal modulates density
+            dualMod = blendDual(maskValue, dualVal, dualMode);
+          }
+
+          const dstR = buffer[idx]!;
+          const dstG = buffer[idx + 1]!;
+          const dstB = buffer[idx + 2]!;
+          const dstA = buffer[idx + 3]! / 255;
+
+          // Alpha Darken blending - dual brush affects opacity ceiling, not flow
+          const effectiveOpacity = dabOpacity * textureMod * dualMod;
+          const outA =
+            dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
+
+          if (outA > 0.001) {
+            const hasColor = dstA > 0.001;
+            buffer[idx] = (hasColor ? dstR + (r - dstR) * srcAlpha : r) + 0.5;
+            buffer[idx + 1] = (hasColor ? dstG + (g - dstG) * srcAlpha : g) + 0.5;
+            buffer[idx + 2] = (hasColor ? dstB + (b - dstB) * srcAlpha : b) + 0.5;
+            buffer[idx + 3] = outA * 255 + 0.5;
+          }
         }
       }
     }
@@ -369,6 +506,80 @@ export class TextureMaskCache {
    */
   getDimensions(): { width: number; height: number } {
     return { width: this.scaledWidth, height: this.scaledHeight };
+  }
+
+  /**
+   * Stamp the texture mask into a float alpha buffer (for Dual Brush mask generation)
+   */
+  stampToMask(
+    buffer: Float32Array,
+    bufferWidth: number,
+    bufferHeight: number,
+    cx: number,
+    cy: number,
+    opacity: number
+  ): void {
+    if (!this.scaledMask) return;
+    const dabOpacity = Math.max(0, Math.min(1, opacity));
+
+    // Calculate buffer position
+    const halfWidth = this.scaledWidth / 2;
+    const halfHeight = this.scaledHeight / 2;
+    const bufferLeft = Math.round(cx - halfWidth);
+    const bufferTop = Math.round(cy - halfHeight);
+    const offsetX = cx - (bufferLeft + halfWidth);
+    const offsetY = cy - (bufferTop + halfHeight);
+    const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
+
+    // Clipping
+    const startX = Math.max(0, -bufferLeft);
+    const startY = Math.max(0, -bufferTop);
+    const endX = Math.min(this.scaledWidth, bufferWidth - bufferLeft);
+    const endY = Math.min(this.scaledHeight, bufferHeight - bufferTop);
+
+    if (startX >= endX || startY >= endY) return;
+
+    // Blending loop - Alpha Darken style accumulation (flow fixed to 1.0 by caller)
+    if (!useSubpixel) {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+        const maskRowStart = my * this.scaledWidth;
+
+        for (let mx = startX; mx < endX; mx++) {
+          const maskValue = this.scaledMask[maskRowStart + mx]!;
+          if (maskValue < 0.001) continue;
+
+          const idx = bufferRowStart + bufferLeft + mx;
+
+          const dst = buffer[idx] ?? 0;
+          const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+          buffer[idx] = out;
+        }
+      }
+    } else {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+
+        for (let mx = startX; mx < endX; mx++) {
+          const sampleX = mx - offsetX;
+          const sampleY = my - offsetY;
+          const maskValue = TextureMaskCache.sampleBilinear(
+            this.scaledMask,
+            this.scaledWidth,
+            this.scaledHeight,
+            sampleX,
+            sampleY
+          );
+          if (maskValue < 0.001) continue;
+
+          const idx = bufferRowStart + bufferLeft + mx;
+
+          const dst = buffer[idx] ?? 0;
+          const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+          buffer[idx] = out;
+        }
+      }
+    }
   }
 
   /**

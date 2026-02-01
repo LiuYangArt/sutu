@@ -350,3 +350,9 @@
   font-size: 12px;
   padding: 6px 10px;
 }
+
+.menu-item .shortcut {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}

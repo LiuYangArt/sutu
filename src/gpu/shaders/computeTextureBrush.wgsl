@@ -7,6 +7,7 @@
 // - Shared memory optimization for dab data
 // - Manual bilinear interpolation (textureSampleLevel not available in compute)
 // - Supports rotation, roundness, and aspect ratio transforms
+// - Supports Pattern Texture modulation (Canvas Space) with Blend Modes
 //
 // Performance target: Match parametric brush compute shader (~8-12ms for 64 dabs)
 // ============================================================================
@@ -34,11 +35,30 @@ struct TextureDabData {
 };
 
 struct Uniforms {
+  // Block 0
   bbox_offset: vec2<u32>, // Bounding box top-left offset
   bbox_size: vec2<u32>,   // Bounding box size
+
+  // Block 1
   canvas_size: vec2<u32>, // Canvas actual size (for bounds protection)
   dab_count: u32,
   color_blend_mode: u32,  // 0 = sRGB (8-bit quantize), 1 = linear
+
+  // Block 2: Pattern Settings
+  pattern_enabled: u32,
+  pattern_invert: u32,
+  pattern_mode: u32,
+  pattern_scale: f32,
+
+  // Block 3
+  pattern_brightness: f32,
+  pattern_contrast: f32,
+  pattern_depth: f32,
+  pattern_padding: u32,
+
+  // Block 4
+  pattern_size: vec2<f32>,
+  padding2: vec2<u32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -46,6 +66,7 @@ struct Uniforms {
 @group(0) @binding(2) var input_tex: texture_2d<f32>;   // Read source (Ping)
 @group(0) @binding(3) var output_tex: texture_storage_2d<rgba32float, write>; // Write target (Pong)
 @group(0) @binding(4) var brush_texture: texture_2d<f32>;  // Brush tip texture
+@group(0) @binding(5) var pattern_texture: texture_2d<f32>; // Pattern texture
 
 // ============================================================================
 // Shared Memory Optimization: Cache Dab Data to Workgroup Shared Memory
@@ -96,7 +117,7 @@ fn sample_texture_bilinear(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
   let texel_floor = floor(texel_coord);
   let frac = texel_coord - texel_floor;
 
-  // Clamp to valid range
+  // Clamp to valid range (Clamp to Edge)
   let x0 = i32(clamp(texel_floor.x, 0.0, tex_dims.x - 1.0));
   let y0 = i32(clamp(texel_floor.y, 0.0, tex_dims.y - 1.0));
   let x1 = i32(clamp(texel_floor.x + 1.0, 0.0, tex_dims.x - 1.0));
@@ -112,6 +133,126 @@ fn sample_texture_bilinear(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
   let top = mix(s00, s10, frac.x);
   let bottom = mix(s01, s11, frac.x);
   return mix(top, bottom, frac.y);
+}
+
+// ============================================================================
+// Pattern Sampling with Tiling (Repeat)
+// ============================================================================
+fn sample_pattern_tiled(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
+  let tex_dims = vec2<f32>(textureDimensions(tex));
+
+  // Wrap UV (Repeat)
+  let wrapped_uv = fract(uv);
+
+  // Reuse bilinear sampling logic but with wrapped UVs handled by fract()
+  // Note: Standard bilinear needs neighbors. Manual wrap:
+  let texel_coord = wrapped_uv * tex_dims - 0.5;
+  let texel_floor = floor(texel_coord);
+  let frac = texel_coord - texel_floor;
+
+  // Custom wrap logic for neighbor sampling
+  let w = i32(tex_dims.x);
+  let h = i32(tex_dims.y);
+
+  let x0 = (i32(texel_floor.x) % w + w) % w;
+  let y0 = (i32(texel_floor.y) % h + h) % h;
+  let x1 = (x0 + 1) % w;
+  let y1 = (y0 + 1) % h;
+
+  let s00 = textureLoad(tex, vec2<i32>(x0, y0), 0).r;
+  let s10 = textureLoad(tex, vec2<i32>(x1, y0), 0).r;
+  let s01 = textureLoad(tex, vec2<i32>(x0, y1), 0).r;
+  let s11 = textureLoad(tex, vec2<i32>(x1, y1), 0).r;
+
+  let top = mix(s00, s10, frac.x);
+  let bottom = mix(s01, s11, frac.x);
+  return mix(top, bottom, frac.y);
+}
+
+// ============================================================================
+// Apply Blend Mode (Standard Photoshop Modes)
+// Base: Brush Ceiling (dab_opacity)
+// Blend: Pattern Texture Value
+// ============================================================================
+fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
+  switch (mode) {
+    case 0u: { // Multiply
+      return base * blend;
+    }
+    case 1u: { // Subtract
+      return max(0.0, base - blend);
+    }
+    case 2u: { // Darken
+      return min(base, blend);
+    }
+    case 3u: { // Overlay
+      if (base < 0.5) {
+        return 2.0 * base * blend;
+      }
+      return 1.0 - 2.0 * (1.0 - base) * (1.0 - blend);
+    }
+    case 4u: { // Color Dodge
+      if (blend >= 1.0) { return 1.0; }
+      return min(1.0, base / (1.0 - blend));
+    }
+    case 5u: { // Color Burn
+      if (blend <= 0.0) { return 0.0; }
+      return 1.0 - min(1.0, (1.0 - base) / blend);
+    }
+    case 6u: { // Linear Burn
+      return max(0.0, base + blend - 1.0);
+    }
+    case 7u: { // Hard Mix
+      if (base + blend >= 1.0) { return 1.0; }
+      return 0.0;
+    }
+    default: { // Default / Multiply
+      return base * blend;
+    }
+  }
+}
+
+// ============================================================================
+// Calculate Pattern Ceiling Modulation (Modifies Alpha Darken Ceiling)
+// ============================================================================
+fn calculate_pattern_ceiling(
+  pixel: vec2<f32>,
+  base_ceiling: f32
+) -> f32 {
+  // 1. Calculate Canvas Space UV
+  let scale = max(0.1, uniforms.pattern_scale);
+  let scale_factor = uniforms.pattern_size * (scale / 100.0);
+  let uv = pixel / scale_factor;
+
+  // 2. Sample Pattern (Tiled)
+  var tex_val = sample_pattern_tiled(pattern_texture, uv);
+
+  // 3. Apply Adjustments
+  if (uniforms.pattern_invert > 0u) {
+    tex_val = 1.0 - tex_val;
+  }
+
+  // Brightness
+  if (abs(uniforms.pattern_brightness) > 0.001) {
+    tex_val = tex_val - uniforms.pattern_brightness / 255.0;
+  }
+
+  // Contrast
+  if (abs(uniforms.pattern_contrast) > 0.001) {
+    let contrast_factor = pow((uniforms.pattern_contrast + 100.0) / 100.0, 2.0);
+    tex_val = (tex_val - 0.5) * contrast_factor + 0.5;
+  }
+
+  tex_val = clamp(tex_val, 0.0, 1.0);
+
+  // 4. Apply Blend Mode
+  // Base is the current ceiling (dab_opacity)
+  let blended_ceiling = apply_blend_mode(base_ceiling, tex_val, uniforms.pattern_mode);
+
+  // 5. Apply Depth (Strength)
+  let depth = clamp(uniforms.pattern_depth / 100.0, 0.0, 1.0);
+
+  return mix(base_ceiling, blended_ceiling, depth);
 }
 
 // ============================================================================
@@ -155,40 +296,25 @@ fn compute_texture_mask(pixel: vec2<f32>, dab: TextureDabData) -> f32 {
   // SMALL BRUSH OPTIMIZATION (applies to ALL hardness levels)
   // =========================================================================
   // For very small brushes (size < 6px, radius < 3px), use Gaussian spot model
-  // This prevents the "broken line" effect caused by insufficient sampling
-  // Reference: docs/design/gpu-optimization-plan/debug_review.md
   let SMALL_BRUSH_THRESHOLD = 3.0;
 
   if (radius < SMALL_BRUSH_THRESHOLD) {
-    // Calculate distance from center in local space
-    // Account for roundness by scaling Y
     let scaled_offset = vec2<f32>(rotated.x, rotated.y / max(dab.roundness, 0.01));
     let dist = length(scaled_offset);
 
-    // Use Gaussian distribution: exp(-dist² / (2 * sigma²))
-    // Sigma is based on the smaller dimension to ensure proper coverage
     let min_half_dim = min(half_dims.x, half_dims.y);
     let base_sigma = max(min_half_dim, 0.5);
-
-    // For texture brushes, we always want some softness at small sizes
-    // to ensure visual continuity
-    let sigma = base_sigma * 1.2;  // Slightly wider than parametric
+    let sigma = base_sigma * 1.2;
 
     var alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
 
-    // For larger small brushes (1.5-3px), blend with texture sample
-    // This makes the transition to full texture rendering less abrupt
     if (radius >= 1.5) {
-      // Normalize to UV space: [-1, 1] -> [0, 1]
       let normalized = rotated / half_dims;
       let uv = (normalized + 1.0) / 2.0;
 
-      // Bounds check
       if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
         let tex_mask = sample_texture_bilinear(brush_texture, uv);
-
-        // Blend: more Gaussian at small size, more texture at larger size
-        let blend = (radius - 1.5) / 1.5;  // 0 at 1.5px, 1 at 3px
+        let blend = (radius - 1.5) / 1.5;
         alpha = mix(alpha, tex_mask, blend);
       }
     }
@@ -199,11 +325,9 @@ fn compute_texture_mask(pixel: vec2<f32>, dab: TextureDabData) -> f32 {
   // =========================================================================
   // NORMAL SIZE BRUSHES (radius >= 3px) - Full texture sampling
   // =========================================================================
-  // Normalize to UV space: [-1, 1] -> [0, 1]
   let normalized = rotated / half_dims;
   let uv = (normalized + 1.0) / 2.0;
 
-  // Bounds check
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
     return 0.0;
   }
@@ -288,10 +412,16 @@ fn main(
       continue;
     }
 
-    // Compute texture mask (with rotation/roundness/aspect transforms)
-    let mask = compute_texture_mask(pixel, dab);
+    // A. Compute Tip Mask (Tip Shape)
+    var mask = compute_texture_mask(pixel, dab);
     if (mask < 0.001) {
       continue;
+    }
+
+    // B. Calculate Dynamic Ceiling (Pattern Modulation)
+    var ceiling = dab.dab_opacity;
+    if (uniforms.pattern_enabled != 0u) {
+       ceiling = calculate_pattern_ceiling(pixel, ceiling);
     }
 
     // Reconstruct color vec3 from individual f32 fields
@@ -299,7 +429,7 @@ fn main(
     let src_alpha = mask * dab.flow;
 
     // Alpha Darken blend
-    color = alpha_darken_blend(color, dab_color, src_alpha, dab.dab_opacity);
+    color = alpha_darken_blend(color, dab_color, src_alpha, ceiling);
   }
 
   // -------------------------------------------------------------------------

@@ -100,9 +100,9 @@ export function BrushPresets({
     }
 
     // Apply texture settings from preset (Photoshop Texture panel)
-    // Enable texture only if preset explicitly has texture settings enabled
+    // Enable texture only if preset has textureSettings with a patternId
     // Note: hasTexture indicates sampled brush (tip image), NOT Texture Tab
-    const shouldEnableTexture = preset.textureSettings?.enabled === true;
+    const shouldEnableTexture = !!preset.textureSettings?.patternId;
 
     if (preset.textureSettings) {
       // Use preset's texture settings if available
@@ -136,9 +136,9 @@ export function BrushPresets({
         </button>
 
         {/* Imported presets - using BrushThumbnail for texture display */}
-        {importedPresets.map((preset) => (
+        {importedPresets.map((preset, index) => (
           <button
-            key={preset.id}
+            key={`${preset.id}-${index}`}
             className={`abr-preset-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
             onClick={() => applyPreset(preset)}
             title={`${preset.name}\n${preset.diameter}px, ${preset.hardness}% hardness`}

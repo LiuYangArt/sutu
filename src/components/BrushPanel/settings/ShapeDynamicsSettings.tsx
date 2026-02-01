@@ -28,19 +28,15 @@ const ANGLE_CONTROL_OPTIONS: SelectOption[] = [
 ];
 
 export function ShapeDynamicsSettings(): JSX.Element {
-  const { shapeDynamics, setShapeDynamics, shapeDynamicsEnabled, toggleShapeDynamics } =
-    useToolStore();
+  const { shapeDynamics, setShapeDynamics, shapeDynamicsEnabled } = useToolStore();
 
   const disabled = !shapeDynamicsEnabled;
 
   return (
     <div className="brush-panel-section">
-      {/* Section header with enable checkbox */}
+      {/* Section header */}
       <div className="section-header-row">
-        <label className="section-checkbox-label">
-          <input type="checkbox" checked={shapeDynamicsEnabled} onChange={toggleShapeDynamics} />
-          <h4>Shape Dynamics</h4>
-        </label>
+        <h4>Shape Dynamics</h4>
       </div>
 
       {/* Size Jitter Group */}

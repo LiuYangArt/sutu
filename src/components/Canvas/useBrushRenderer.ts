@@ -19,6 +19,8 @@ import {
   ScatterSettings,
   ColorDynamicsSettings,
   TransferSettings,
+  DualBrushSettings,
+  useToolStore,
 } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { RenderMode } from '@/stores/settings';
@@ -34,12 +36,62 @@ import {
   computeDabShape,
   calculateDirection,
   isShapeDynamicsActive,
+  computeControlledSize,
   type DynamicsInput,
 } from '@/utils/shapeDynamics';
 import { applyScatter, isScatterActive } from '@/utils/scatterDynamics';
 import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
 import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { useSelectionStore } from '@/stores/selection';
+import { useToastStore } from '@/stores/toast';
+
+const MIN_ROUNDNESS = 0.01;
+
+function clampRoundness(roundness: number): number {
+  return Math.max(MIN_ROUNDNESS, Math.min(1, roundness));
+}
+
+function computeTipDimensions(
+  size: number,
+  roundness: number,
+  texture?: BrushTexture | null
+): { width: number; height: number } {
+  const safeSize = Math.max(1, size);
+  const roundnessScale = clampRoundness(roundness);
+
+  if (texture?.width && texture?.height) {
+    const aspect = texture.width / texture.height;
+    let baseW = safeSize;
+    let baseH = safeSize;
+
+    if (aspect >= 1) {
+      baseW = safeSize;
+      baseH = safeSize / aspect;
+    } else {
+      baseH = safeSize;
+      baseW = safeSize * aspect;
+    }
+
+    return {
+      width: baseW,
+      height: baseH * roundnessScale,
+    };
+  }
+
+  return {
+    width: safeSize,
+    height: safeSize * roundnessScale,
+  };
+}
+
+function computeSpacingBasePx(
+  size: number,
+  roundness: number,
+  texture?: BrushTexture | null
+): number {
+  const { width, height } = computeTipDimensions(size, roundness, texture);
+  return Math.min(width, height);
+}
 
 export interface BrushRenderConfig {
   size: number;
@@ -47,7 +99,7 @@ export interface BrushRenderConfig {
   opacity: number;
   hardness: number;
   maskType: MaskType; // Mask type: 'gaussian' or 'default'
-  spacing: number;
+  spacing: number; // Fraction of tip short edge (0-10)
   roundness: number; // 0-100 (100 = circle, <100 = ellipse)
   angle: number; // 0-360 degrees
   color: string;
@@ -75,6 +127,9 @@ export interface BrushRenderConfig {
   // Texture settings (Photoshop-compatible pattern texture)
   textureEnabled: boolean;
   textureSettings?: TextureSettings | null;
+  // Dual Brush settings (Photoshop-compatible)
+  dualBrushEnabled: boolean;
+  dualBrush?: DualBrushSettings;
 }
 
 export interface UseBrushRendererProps {
@@ -114,6 +169,9 @@ export function useBrushRenderer({
   benchmarkProfiler,
 }: UseBrushRendererProps): UseBrushRendererResult {
   const [gpuAvailable, setGpuAvailable] = useState(false);
+  const [forceCpu, setForceCpu] = useState(false);
+  const pushToast = useToastStore((s) => s.pushToast);
+  const dualBrush = useToolStore((s) => s.dualBrush);
 
   // CPU backend (Canvas 2D)
   const cpuBufferRef = useRef<StrokeAccumulator | null>(null);
@@ -124,13 +182,19 @@ export function useBrushRenderer({
   // Shared stamper (generates dab positions)
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
 
+  // Secondary brush stamper (independent path for Dual Brush)
+  const secondaryStamperRef = useRef<BrushStamper>(new BrushStamper());
+
   // Optimization 7: Finishing lock to prevent "tailgating" race condition
   // When stroke 2 starts during stroke 1's await prepareEndStroke(),
   // stroke 2's clear() would wipe stroke 1's previewCanvas before composite.
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
+  const strokeCancelledRef = useRef(false);
+  const dualBrushTextureIdRef = useRef<string | null>(null);
 
   // Shape Dynamics: Track previous dab position for direction calculation
   const prevDabPosRef = useRef<{ x: number; y: number } | null>(null);
+  const prevSecondaryDabPosRef = useRef<{ x: number; y: number } | null>(null);
   // Shape Dynamics: Capture initial direction at stroke start
   const initialDirectionRef = useRef<number>(0);
 
@@ -148,6 +212,8 @@ export function useBrushRenderer({
 
         if (supported && ctx.device) {
           gpuBufferRef.current = new GPUStrokeAccumulator(ctx.device, width, height);
+          const initialDualBrush = useToolStore.getState().dualBrush;
+          await gpuBufferRef.current.prewarmDualStroke(initialDualBrush);
           setGpuAvailable(true);
           benchmarkProfiler?.setDevice(ctx.device);
         } else {
@@ -175,9 +241,28 @@ export function useBrushRenderer({
     }
   }, [width, height, gpuAvailable]);
 
+  useEffect(() => {
+    if (!gpuAvailable || !gpuBufferRef.current) {
+      return;
+    }
+
+    if (!dualBrush?.texture) {
+      dualBrushTextureIdRef.current = null;
+      return;
+    }
+
+    const textureId = dualBrush.texture.id;
+    if (dualBrushTextureIdRef.current === textureId) {
+      return;
+    }
+
+    dualBrushTextureIdRef.current = textureId;
+    gpuBufferRef.current.prewarmDualBrushTexture(dualBrush.texture);
+  }, [gpuAvailable, dualBrush?.texture?.id]);
+
   // Determine actual backend based on renderMode and GPU availability
   const backend: RenderBackend =
-    gpuAvailable && gpuBufferRef.current && renderMode === 'gpu' ? 'gpu' : 'canvas2d';
+    gpuAvailable && gpuBufferRef.current && renderMode === 'gpu' && !forceCpu ? 'gpu' : 'canvas2d';
 
   // Ensure CPU buffer exists (for fallback or canvas2d mode)
   const ensureCPUBuffer = useCallback(() => {
@@ -204,10 +289,13 @@ export function useBrushRenderer({
         await finishingPromiseRef.current;
       }
 
+      strokeCancelledRef.current = false;
       stamperRef.current.beginStroke();
+      secondaryStamperRef.current.beginStroke();
 
       // Shape Dynamics: Reset direction tracking for new stroke
       prevDabPosRef.current = null;
+      prevSecondaryDabPosRef.current = null;
       initialDirectionRef.current = 0;
 
       if (backend === 'gpu' && gpuBufferRef.current) {
@@ -231,6 +319,10 @@ export function useBrushRenderer({
       config: BrushRenderConfig,
       pointIndex?: number
     ): void => {
+      if (strokeCancelledRef.current) {
+        return;
+      }
+
       // Start CPU encode timing
       if (pointIndex !== undefined) {
         benchmarkProfiler?.markCpuEncodeStart();
@@ -241,11 +333,103 @@ export function useBrushRenderer({
       // Apply pressure curve
       const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
 
-      // Calculate dynamic size for stamper spacing calculation
+      // Calculate base size (pressure toggle)
       const size = config.pressureSizeEnabled ? config.size * adjustedPressure : config.size;
 
+      // Shape Dynamics size control should affect spacing (jitter does not)
+      let spacingSize = size;
+      if (config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off') {
+        const spacingInput: DynamicsInput = {
+          pressure: adjustedPressure,
+          tiltX: 0,
+          tiltY: 0,
+          rotation: 0,
+          direction: 0,
+          initialDirection: 0,
+          fadeProgress: 0,
+        };
+        spacingSize = computeControlledSize(size, config.shapeDynamics!, spacingInput);
+      }
+
       // Get dab positions from stamper
-      const dabs = stamper.processPoint(x, y, pressure, size, config.spacing);
+      const spacingBase = computeSpacingBasePx(spacingSize, config.roundness / 100, config.texture);
+      const spacingPx = spacingBase * config.spacing;
+      const dabs = stamper.processPoint(x, y, pressure, spacingPx);
+
+      // ===== Dual Brush: Generate secondary dabs independently =====
+      // Secondary brush has its own spacing and path, separate from primary brush
+      const dualBrush = config.dualBrush ?? null;
+      const dualEnabled = config.dualBrushEnabled && Boolean(dualBrush);
+
+      if (backend === 'gpu' && gpuBufferRef.current) {
+        gpuBufferRef.current.setDualBrushState(
+          dualEnabled,
+          dualBrush?.mode ?? null,
+          dualBrush?.texture ?? null
+        );
+      }
+
+      if (dualEnabled && dualBrush) {
+        const secondaryStamper = secondaryStamperRef.current;
+
+        // Calculate secondary brush size (scale with main brush like PS)
+        // Use the same scaling logic as before: relative to native size
+        let nativeSize = 200;
+        if (config.texture) {
+          nativeSize = Math.max(config.texture.width, config.texture.height);
+        }
+        const scaleFactor = size / nativeSize;
+        const secondarySize = dualBrush.size * scaleFactor;
+
+        // Use secondary brush's own spacing (this was the missing part!)
+        const secondarySpacing = dualBrush.spacing ?? 0.1;
+        const secondaryRoundness = (dualBrush.roundness ?? 100) / 100;
+        const secondarySpacingBase = computeSpacingBasePx(
+          secondarySize,
+          secondaryRoundness,
+          dualBrush.texture
+        );
+        const secondarySpacingPx = secondarySpacingBase * secondarySpacing;
+
+        // Generate secondary dabs at this point
+        const secondaryDabs = secondaryStamper.processPoint(x, y, pressure, secondarySpacingPx);
+
+        // Stamp each secondary dab to the stroke-level accumulator
+        for (const secDab of secondaryDabs) {
+          let secondaryDirection = 0;
+          if (prevSecondaryDabPosRef.current) {
+            secondaryDirection = calculateDirection(
+              prevSecondaryDabPosRef.current.x,
+              prevSecondaryDabPosRef.current.y,
+              secDab.x,
+              secDab.y
+            );
+          }
+          prevSecondaryDabPosRef.current = { x: secDab.x, y: secDab.y };
+
+          if (backend === 'gpu' && gpuBufferRef.current) {
+            gpuBufferRef.current.stampSecondaryDab(
+              secDab.x,
+              secDab.y,
+              secondarySize,
+              dualBrush,
+              (secondaryDirection * Math.PI) / 180
+            );
+          } else {
+            const cpuBuffer = ensureCPUBuffer();
+            cpuBuffer.stampSecondaryDab(
+              secDab.x,
+              secDab.y,
+              secondarySize,
+              {
+                ...dualBrush,
+                brushTexture: dualBrush.texture,
+              },
+              (secondaryDirection * Math.PI) / 180
+            );
+          }
+        }
+      }
 
       // Shape Dynamics: Check if we need to apply dynamics
       const useShapeDynamics =
@@ -379,6 +563,10 @@ export function useBrushRenderer({
             )
           : [{ x: dab.x, y: dab.y }];
 
+        if (config.dualBrushEnabled && config.dualBrush?.texture?.imageData) {
+          // console.log('[useBrushRenderer] DualBrush has imageData prepared');
+        }
+
         // Stamp dab at each scattered position
         for (const pos of scatteredPositions) {
           const dabParams: DabParams = {
@@ -397,6 +585,16 @@ export function useBrushRenderer({
             flipY: dabFlipY,
             wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
             textureSettings: config.textureEnabled ? config.textureSettings : undefined,
+            dualBrush:
+              config.dualBrushEnabled && config.dualBrush
+                ? {
+                    ...config.dualBrush,
+                    enabled: config.dualBrushEnabled, // Sync enabled state
+                    brushTexture: config.dualBrush.texture,
+                  }
+                : undefined,
+            baseSize: config.size,
+            spacing: config.spacing,
           };
 
           if (backend === 'gpu' && gpuBufferRef.current) {
@@ -429,7 +627,7 @@ export function useBrushRenderer({
         void benchmarkProfiler.markRenderSubmit(pointIndex);
       }
     },
-    [backend, benchmarkProfiler]
+    [backend, benchmarkProfiler, ensureCPUBuffer]
   );
 
   /**
@@ -445,6 +643,11 @@ export function useBrushRenderer({
   const endStroke = useCallback(
     async (layerCtx: CanvasRenderingContext2D): Promise<void> => {
       stamperRef.current.finishStroke(0);
+
+      if (strokeCancelledRef.current) {
+        strokeCancelledRef.current = false;
+        return;
+      }
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         const gpuBuffer = gpuBufferRef.current;
@@ -505,9 +708,20 @@ export function useBrushRenderer({
   const flushPending = useCallback(() => {
     if (backend === 'gpu' && gpuBufferRef.current) {
       gpuBufferRef.current.flush();
+
+      const fallbackReason = gpuBufferRef.current.consumeFallbackRequest();
+      if (fallbackReason && !forceCpu) {
+        setForceCpu(true);
+        strokeCancelledRef.current = true;
+        gpuBufferRef.current.abortStroke();
+        reportGPUFallback(fallbackReason);
+        pushToast('GPU dual brush compute unavailable. Falling back to CPU.', {
+          variant: 'error',
+        });
+      }
     }
     // CPU path doesn't need explicit flush - it renders immediately
-  }, [backend]);
+  }, [backend, forceCpu, pushToast]);
 
   return {
     beginStroke,

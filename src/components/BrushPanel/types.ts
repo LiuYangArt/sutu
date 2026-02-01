@@ -63,8 +63,7 @@ export type TextureBlendMode =
 
 /** Texture settings for brush (Photoshop Texture panel compatible) */
 export interface TextureSettings {
-  /** Is texture feature enabled */
-  enabled: boolean;
+  // Note: 'enabled' is NOT stored here - use `textureEnabled` from useToolStore
   /** Pattern ID (references a pattern in the library) */
   patternId: string | null;
   /** Scale percentage (10-200) */
@@ -91,7 +90,6 @@ export interface TextureSettings {
 
 /** Default texture settings */
 export const DEFAULT_TEXTURE_SETTINGS: TextureSettings = {
-  enabled: false,
   patternId: null,
   scale: 100,
   brightness: 0,

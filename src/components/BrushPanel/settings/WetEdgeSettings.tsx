@@ -1,7 +1,7 @@
-import { useToolStore } from '@/stores/tool';
+// import { useToolStore } from '@/stores/tool';
 
 export function WetEdgeSettings(): JSX.Element {
-  const { wetEdgeEnabled, toggleWetEdge } = useToolStore();
+  // const { wetEdgeEnabled, toggleWetEdge } = useToolStore();
 
   return (
     <div className="brush-panel-section">
@@ -9,7 +9,6 @@ export function WetEdgeSettings(): JSX.Element {
 
       <div className="setting-row">
         <label className="checkbox-label">
-          <input type="checkbox" checked={wetEdgeEnabled} onChange={toggleWetEdge} />
           <span>Enable Wet Edges</span>
         </label>
       </div>

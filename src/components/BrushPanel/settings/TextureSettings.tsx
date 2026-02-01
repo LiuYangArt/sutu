@@ -42,7 +42,7 @@ function sourceToDepthControl(source: ControlSource): number {
 }
 
 export function TextureSettings(): JSX.Element {
-  const { textureEnabled, textureSettings, setTextureSettings, toggleTexture } = useToolStore();
+  const { textureEnabled, textureSettings, setTextureSettings } = useToolStore();
   const [showPreview, setShowPreview] = useState(false);
   const patternId = textureSettings?.patternId;
   // Fix for Windows Tauri v2 custom protocol
@@ -60,12 +60,11 @@ export function TextureSettings(): JSX.Element {
 
   return (
     <div className="brush-panel-section">
-      {/* Section header with enable checkbox */}
+      {/* Section header */}
       <div className="section-header-row">
-        <label className="section-checkbox-label">
-          <input type="checkbox" checked={textureEnabled} onChange={toggleTexture} />
+        <div className="section-checkbox-label">
           <h4>Texture</h4>
-        </label>
+        </div>
 
         {/* Pattern Preview with hover popup */}
         <div
