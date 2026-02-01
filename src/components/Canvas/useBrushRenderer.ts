@@ -42,6 +42,7 @@ import { applyScatter, isScatterActive } from '@/utils/scatterDynamics';
 import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
 import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { useSelectionStore } from '@/stores/selection';
+import { useToastStore } from '@/stores/toast';
 
 const MIN_ROUNDNESS = 0.01;
 
@@ -167,6 +168,8 @@ export function useBrushRenderer({
   benchmarkProfiler,
 }: UseBrushRendererProps): UseBrushRendererResult {
   const [gpuAvailable, setGpuAvailable] = useState(false);
+  const [forceCpu, setForceCpu] = useState(false);
+  const pushToast = useToastStore((s) => s.pushToast);
 
   // CPU backend (Canvas 2D)
   const cpuBufferRef = useRef<StrokeAccumulator | null>(null);
@@ -184,6 +187,7 @@ export function useBrushRenderer({
   // When stroke 2 starts during stroke 1's await prepareEndStroke(),
   // stroke 2's clear() would wipe stroke 1's previewCanvas before composite.
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
+  const strokeCancelledRef = useRef(false);
 
   // Shape Dynamics: Track previous dab position for direction calculation
   const prevDabPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -234,7 +238,7 @@ export function useBrushRenderer({
 
   // Determine actual backend based on renderMode and GPU availability
   const backend: RenderBackend =
-    gpuAvailable && gpuBufferRef.current && renderMode === 'gpu' ? 'gpu' : 'canvas2d';
+    gpuAvailable && gpuBufferRef.current && renderMode === 'gpu' && !forceCpu ? 'gpu' : 'canvas2d';
 
   // Ensure CPU buffer exists (for fallback or canvas2d mode)
   const ensureCPUBuffer = useCallback(() => {
@@ -261,6 +265,7 @@ export function useBrushRenderer({
         await finishingPromiseRef.current;
       }
 
+      strokeCancelledRef.current = false;
       stamperRef.current.beginStroke();
       secondaryStamperRef.current.beginStroke();
 
@@ -290,6 +295,10 @@ export function useBrushRenderer({
       config: BrushRenderConfig,
       pointIndex?: number
     ): void => {
+      if (strokeCancelledRef.current) {
+        return;
+      }
+
       // Start CPU encode timing
       if (pointIndex !== undefined) {
         benchmarkProfiler?.markCpuEncodeStart();
@@ -325,8 +334,14 @@ export function useBrushRenderer({
 
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush
-      if (config.dualBrushEnabled && config.dualBrush && cpuBufferRef.current) {
-        const dualBrush = config.dualBrush;
+      const dualBrush = config.dualBrush ?? null;
+      const dualEnabled = config.dualBrushEnabled && Boolean(dualBrush);
+
+      if (backend === 'gpu' && gpuBufferRef.current) {
+        gpuBufferRef.current.setDualBrushState(dualEnabled, dualBrush?.mode ?? null);
+      }
+
+      if (dualEnabled && dualBrush) {
         const secondaryStamper = secondaryStamperRef.current;
 
         // Calculate secondary brush size (scale with main brush like PS)
@@ -364,16 +379,27 @@ export function useBrushRenderer({
           }
           prevSecondaryDabPosRef.current = { x: secDab.x, y: secDab.y };
 
-          cpuBufferRef.current.stampSecondaryDab(
-            secDab.x,
-            secDab.y,
-            secondarySize,
-            {
-              ...dualBrush,
-              brushTexture: dualBrush.texture,
-            },
-            (secondaryDirection * Math.PI) / 180
-          );
+          if (backend === 'gpu' && gpuBufferRef.current) {
+            gpuBufferRef.current.stampSecondaryDab(
+              secDab.x,
+              secDab.y,
+              secondarySize,
+              dualBrush,
+              (secondaryDirection * Math.PI) / 180
+            );
+          } else {
+            const cpuBuffer = ensureCPUBuffer();
+            cpuBuffer.stampSecondaryDab(
+              secDab.x,
+              secDab.y,
+              secondarySize,
+              {
+                ...dualBrush,
+                brushTexture: dualBrush.texture,
+              },
+              (secondaryDirection * Math.PI) / 180
+            );
+          }
         }
       }
 
@@ -573,7 +599,7 @@ export function useBrushRenderer({
         void benchmarkProfiler.markRenderSubmit(pointIndex);
       }
     },
-    [backend, benchmarkProfiler]
+    [backend, benchmarkProfiler, ensureCPUBuffer]
   );
 
   /**
@@ -589,6 +615,11 @@ export function useBrushRenderer({
   const endStroke = useCallback(
     async (layerCtx: CanvasRenderingContext2D): Promise<void> => {
       stamperRef.current.finishStroke(0);
+
+      if (strokeCancelledRef.current) {
+        strokeCancelledRef.current = false;
+        return;
+      }
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         const gpuBuffer = gpuBufferRef.current;
@@ -649,9 +680,20 @@ export function useBrushRenderer({
   const flushPending = useCallback(() => {
     if (backend === 'gpu' && gpuBufferRef.current) {
       gpuBufferRef.current.flush();
+
+      const fallbackReason = gpuBufferRef.current.consumeFallbackRequest();
+      if (fallbackReason && !forceCpu) {
+        setForceCpu(true);
+        strokeCancelledRef.current = true;
+        gpuBufferRef.current.abortStroke();
+        reportGPUFallback(fallbackReason);
+        pushToast('GPU dual brush compute unavailable. Falling back to CPU.', {
+          variant: 'error',
+        });
+      }
     }
     // CPU path doesn't need explicit flush - it renders immediately
-  }, [backend]);
+  }, [backend, forceCpu, pushToast]);
 
   return {
     beginStroke,

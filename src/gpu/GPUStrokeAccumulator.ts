@@ -23,12 +23,17 @@ import { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
 import { ComputeBrushPipeline } from './pipeline/ComputeBrushPipeline';
 import { ComputeTextureBrushPipeline } from './pipeline/ComputeTextureBrushPipeline';
 import { ComputeWetEdgePipeline } from './pipeline/ComputeWetEdgePipeline';
+import { ComputeDualMaskPipeline } from './pipeline/ComputeDualMaskPipeline';
+import { ComputeDualTextureMaskPipeline } from './pipeline/ComputeDualTextureMaskPipeline';
+import { ComputeDualBlendPipeline } from './pipeline/ComputeDualBlendPipeline';
 import { GPUPatternCache } from './resources/GPUPatternCache';
 import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore } from '@/stores/tool';
+import type { DualBlendMode, DualBrushSettings } from '@/stores/tool';
 import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/settings';
 import { patternManager } from '@/utils/patternManager';
+import { applyScatter } from '@/utils/scatterDynamics';
 
 export class GPUStrokeAccumulator {
   private device: GPUDevice;
@@ -46,6 +51,24 @@ export class GPUStrokeAccumulator {
   private textureAtlas: TextureAtlas;
   private patternCache: GPUPatternCache;
   private useTextureComputeShader: boolean = true; // Enable compute shader for texture brush
+
+  // Dual brush resources (secondary mask + stroke-level blend)
+  private secondaryInstanceBuffer: InstanceBuffer;
+  private secondaryTextureInstanceBuffer: TextureInstanceBuffer;
+  private dualMaskBuffer: PingPongBuffer;
+  private dualBlendTexture: GPUTexture;
+  private dualTextureAtlas: TextureAtlas;
+  private computeDualMaskPipeline: ComputeDualMaskPipeline;
+  private computeDualTextureMaskPipeline: ComputeDualTextureMaskPipeline;
+  private computeDualBlendPipeline: ComputeDualBlendPipeline;
+
+  private dualBrushEnabled: boolean = false;
+  private dualMaskActive: boolean = false;
+  private dualBrushMode: DualBlendMode | null = null;
+  private dualDirtyRect: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
+  private dualPostPending: boolean = false;
+
+  private fallbackRequest: string | null = null;
 
   // Current stroke mode: 'parametric' or 'texture'
   private strokeMode: 'parametric' | 'texture' = 'parametric';
@@ -125,6 +148,28 @@ export class GPUStrokeAccumulator {
     this.textureAtlas = new TextureAtlas(device);
     this.patternCache = new GPUPatternCache(device);
 
+    // Initialize dual brush resources
+    this.secondaryInstanceBuffer = new InstanceBuffer(device);
+    this.secondaryTextureInstanceBuffer = new TextureInstanceBuffer(device);
+    this.dualMaskBuffer = new PingPongBuffer(device, width, height);
+    this.dualTextureAtlas = new TextureAtlas(device);
+    this.computeDualMaskPipeline = new ComputeDualMaskPipeline(device);
+    this.computeDualMaskPipeline.updateCanvasSize(
+      this.dualMaskBuffer.textureWidth,
+      this.dualMaskBuffer.textureHeight
+    );
+    this.computeDualTextureMaskPipeline = new ComputeDualTextureMaskPipeline(device);
+    this.computeDualTextureMaskPipeline.updateCanvasSize(
+      this.dualMaskBuffer.textureWidth,
+      this.dualMaskBuffer.textureHeight
+    );
+    this.computeDualBlendPipeline = new ComputeDualBlendPipeline(device);
+    this.computeDualBlendPipeline.updateCanvasSize(
+      this.pingPongBuffer.textureWidth,
+      this.pingPongBuffer.textureHeight
+    );
+    this.dualBlendTexture = this.createDualBlendTexture();
+
     // Initialize wet edge post-processing pipeline
     this.wetEdgePipeline = new ComputeWetEdgePipeline(device);
     this.wetEdgePipeline.updateCanvasSize(width, height);
@@ -150,6 +195,23 @@ export class GPUStrokeAccumulator {
       console.warn('[GPUStrokeAccumulator] GPU device lost:', info.message);
       this.deviceLost = true;
     });
+  }
+
+  private createDualBlendTexture(): GPUTexture {
+    return this.device.createTexture({
+      label: 'Dual Blend Texture',
+      size: [this.pingPongBuffer.textureWidth, this.pingPongBuffer.textureHeight],
+      format: 'rgba32float',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.STORAGE_BINDING |
+        GPUTextureUsage.COPY_SRC,
+    });
+  }
+
+  private recreateDualBlendTexture(): void {
+    this.dualBlendTexture.destroy();
+    this.dualBlendTexture = this.createDualBlendTexture();
   }
 
   private createReadbackBuffer(): void {
@@ -216,6 +278,20 @@ export class GPUStrokeAccumulator {
       this.pingPongBuffer.textureWidth,
       this.pingPongBuffer.textureHeight
     );
+    this.dualMaskBuffer.resize(width, height, this.currentRenderScale);
+    this.computeDualMaskPipeline.updateCanvasSize(
+      this.dualMaskBuffer.textureWidth,
+      this.dualMaskBuffer.textureHeight
+    );
+    this.computeDualTextureMaskPipeline.updateCanvasSize(
+      this.dualMaskBuffer.textureWidth,
+      this.dualMaskBuffer.textureHeight
+    );
+    this.computeDualBlendPipeline.updateCanvasSize(
+      this.pingPongBuffer.textureWidth,
+      this.pingPongBuffer.textureHeight
+    );
+    this.recreateDualBlendTexture();
 
     this.previewCanvas.width = width;
     this.previewCanvas.height = height;
@@ -309,6 +385,20 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.textureWidth,
         this.pingPongBuffer.textureHeight
       );
+      this.dualMaskBuffer.setRenderScale(targetScale);
+      this.computeDualMaskPipeline.updateCanvasSize(
+        this.dualMaskBuffer.textureWidth,
+        this.dualMaskBuffer.textureHeight
+      );
+      this.computeDualTextureMaskPipeline.updateCanvasSize(
+        this.dualMaskBuffer.textureWidth,
+        this.dualMaskBuffer.textureHeight
+      );
+      this.computeDualBlendPipeline.updateCanvasSize(
+        this.pingPongBuffer.textureWidth,
+        this.pingPongBuffer.textureHeight
+      );
+      this.recreateDualBlendTexture();
       this.recreateReadbackBuffers();
     }
   }
@@ -320,8 +410,16 @@ export class GPUStrokeAccumulator {
     this.active = false;
     this.instanceBuffer.clear();
     this.textureInstanceBuffer.clear();
+    this.secondaryInstanceBuffer.clear();
+    this.secondaryTextureInstanceBuffer.clear();
     this.strokeMode = 'parametric';
     this.dirtyRect = {
+      left: this.width,
+      top: this.height,
+      right: 0,
+      bottom: 0,
+    };
+    this.dualDirtyRect = {
       left: this.width,
       top: this.height,
       right: 0,
@@ -332,6 +430,12 @@ export class GPUStrokeAccumulator {
     this.dabsSinceLastFlush = 0;
     this.currentPatternSettings = null;
     this.patternCache.update(null);
+    this.dualBrushEnabled = false;
+    this.dualMaskActive = false;
+    this.dualBrushMode = null;
+    this.dualPostPending = false;
+    this.fallbackRequest = null;
+    this.dualMaskBuffer.clear(this.device);
   }
 
   /**
@@ -339,6 +443,139 @@ export class GPUStrokeAccumulator {
    */
   isActive(): boolean {
     return this.active;
+  }
+
+  setDualBrushState(enabled: boolean, mode?: DualBlendMode | null): void {
+    this.dualBrushEnabled = enabled;
+    if (!enabled) {
+      this.dualBrushMode = null;
+      this.dualMaskActive = false;
+      this.dualPostPending = false;
+      return;
+    }
+    if (mode) {
+      this.dualBrushMode = mode;
+    }
+  }
+
+  consumeFallbackRequest(): string | null {
+    const reason = this.fallbackRequest;
+    this.fallbackRequest = null;
+    return reason;
+  }
+
+  abortStroke(): void {
+    this.clear();
+  }
+
+  /**
+   * Stamp a secondary (dual brush) dab to the dual mask accumulator.
+   */
+  stampSecondaryDab(
+    x: number,
+    y: number,
+    size: number,
+    dualBrush: DualBrushSettings,
+    strokeAngle: number = 0
+  ): void {
+    if (!this.active) return;
+
+    this.dualBrushEnabled = true;
+    this.dualBrushMode = dualBrush.mode;
+
+    const effectiveSize = Math.max(1, size);
+    const roundness = Math.max(0.01, Math.min(1, (dualBrush.roundness ?? 100) / 100));
+    const isSquashedRoundness = roundness < 0.999;
+
+    let scatterVal = dualBrush.scatter ?? 0;
+    if (typeof scatterVal !== 'number') {
+      const parsed = parseFloat(String(scatterVal));
+      scatterVal = Number.isNaN(parsed) ? 0 : parsed;
+    }
+
+    const count = Math.max(1, dualBrush.count || 1);
+    const scatterSettings = {
+      scatter: scatterVal,
+      scatterControl: 'off' as const,
+      bothAxes: dualBrush.bothAxes,
+      count,
+      countControl: 'off' as const,
+      countJitter: 0,
+    };
+
+    const scatteredPositions = applyScatter(
+      {
+        x,
+        y,
+        strokeAngle,
+        diameter: effectiveSize,
+        dynamics: {
+          pressure: 1,
+          tiltX: 0,
+          tiltY: 0,
+          rotation: 0,
+          direction: 0,
+          initialDirection: 0,
+          fadeProgress: 0,
+        },
+      },
+      scatterSettings
+    );
+
+    const scale = this.currentRenderScale;
+    const useTexture = Boolean(dualBrush.texture);
+
+    if (useTexture && dualBrush.texture) {
+      if (!this.dualTextureAtlas.setTextureSync(dualBrush.texture)) {
+        void this.dualTextureAtlas.setTexture(dualBrush.texture);
+        return;
+      }
+    }
+
+    for (const pos of scatteredPositions) {
+      const randomAngle = Math.random() * 360;
+      const angleRad = (randomAngle * Math.PI) / 180;
+
+      if (useTexture && dualBrush.texture) {
+        const textureDab: TextureDabInstanceData = {
+          x: pos.x * scale,
+          y: pos.y * scale,
+          size: effectiveSize * scale,
+          roundness,
+          angle: angleRad,
+          r: 1,
+          g: 1,
+          b: 1,
+          dabOpacity: 1,
+          flow: 1,
+          texWidth: dualBrush.texture.width,
+          texHeight: dualBrush.texture.height,
+        };
+        this.secondaryTextureInstanceBuffer.push(textureDab);
+        this.dualMaskActive = true;
+      } else {
+        const radius = effectiveSize / 2;
+        const dabData: DabInstanceData = {
+          x: pos.x * scale,
+          y: pos.y * scale,
+          size: radius * scale,
+          hardness: isSquashedRoundness ? 0.98 : 1.0,
+          r: 1,
+          g: 1,
+          b: 1,
+          dabOpacity: 1,
+          flow: 1,
+          roundness,
+          angleCos: Math.cos(angleRad),
+          angleSin: Math.sin(angleRad),
+        };
+        this.secondaryInstanceBuffer.push(dabData);
+        this.dualMaskActive = true;
+      }
+
+      const radius = effectiveSize / 2;
+      this.expandDualDirtyRect(pos.x, pos.y, radius);
+    }
   }
 
   stampDab(params: GPUDabParams): void {
@@ -367,7 +604,7 @@ export class GPUStrokeAccumulator {
       const newPatternSettings = this.extractPatternSettings(params.textureSettings);
 
       if (this.hasPatternSettingsChanged(newPatternSettings)) {
-        this.flushTextureBatch();
+        this.flushTextureBatch(this.dualMaskActive);
         this.dabsSinceLastFlush = 0; // Reset counter after flush
       }
 
@@ -406,7 +643,7 @@ export class GPUStrokeAccumulator {
       // Auto-flush when batch is full to avoid triggering dispatchInBatches
       // which has ping-pong bugs causing stroke discontinuity
       if (this.textureInstanceBuffer.count >= GPUStrokeAccumulator.MAX_SAFE_BATCH_SIZE) {
-        this.flushTextureBatch();
+        this.flushTextureBatch(this.dualMaskActive);
       }
 
       return;
@@ -417,8 +654,8 @@ export class GPUStrokeAccumulator {
     const newPatternSettings = this.extractPatternSettings(params.textureSettings);
 
     if (this.hasPatternSettingsChanged(newPatternSettings)) {
-      this.flushTextureBatch(); // Flush texture batch too to be safe (shared state)
-      this.flushBatch();
+      this.flushTextureBatch(this.dualMaskActive); // Flush texture batch too to be safe (shared state)
+      this.flushBatch(this.dualMaskActive);
       this.dabsSinceLastFlush = 0;
     }
 
@@ -462,7 +699,7 @@ export class GPUStrokeAccumulator {
     // Auto-flush when batch is full to avoid triggering dispatchInBatches
     // which has ping-pong bugs causing stroke discontinuity
     if (this.instanceBuffer.count >= GPUStrokeAccumulator.MAX_SAFE_BATCH_SIZE) {
-      this.flushBatch();
+      this.flushBatch(this.dualMaskActive);
     }
   }
 
@@ -489,14 +726,66 @@ export class GPUStrokeAccumulator {
     );
   }
 
+  private expandDualDirtyRect(x: number, y: number, radius: number): void {
+    const margin = 2;
+    this.dualDirtyRect.left = Math.min(this.dualDirtyRect.left, Math.floor(x - radius - margin));
+    this.dualDirtyRect.top = Math.min(this.dualDirtyRect.top, Math.floor(y - radius - margin));
+    this.dualDirtyRect.right = Math.max(this.dualDirtyRect.right, Math.ceil(x + radius + margin));
+    this.dualDirtyRect.bottom = Math.max(this.dualDirtyRect.bottom, Math.ceil(y + radius + margin));
+  }
+
+  private hasDirtyRect(rect: Rect): boolean {
+    return rect.right > rect.left && rect.bottom > rect.top;
+  }
+
+  private getCombinedDirtyRect(): Rect {
+    const primaryValid = this.hasDirtyRect(this.dirtyRect);
+    const dualValid = this.dualMaskActive && this.hasDirtyRect(this.dualDirtyRect);
+
+    if (!primaryValid && dualValid) {
+      return { ...this.dualDirtyRect };
+    }
+    if (!dualValid) {
+      return { ...this.dirtyRect };
+    }
+
+    return {
+      left: Math.min(this.dirtyRect.left, this.dualDirtyRect.left),
+      top: Math.min(this.dirtyRect.top, this.dualDirtyRect.top),
+      right: Math.max(this.dirtyRect.right, this.dualDirtyRect.right),
+      bottom: Math.max(this.dirtyRect.bottom, this.dualDirtyRect.bottom),
+    };
+  }
+
   /**
    * Force flush pending dabs to GPU (used for benchmarking)
    */
   flush(): void {
-    if (this.strokeMode === 'texture') {
-      this.flushTextureBatch();
-    } else {
-      this.flushBatch();
+    if (this.deviceLost && this.dualBrushEnabled) {
+      this.requestCpuFallback('GPU device lost');
+      return;
+    }
+
+    const deferPost = this.dualMaskActive;
+
+    const primaryDidFlush =
+      this.strokeMode === 'texture'
+        ? this.flushTextureBatch(deferPost)
+        : this.flushBatch(deferPost);
+
+    if (this.fallbackRequest) {
+      return;
+    }
+
+    const secondaryDidFlush = this.flushSecondaryBatches();
+
+    if (this.fallbackRequest) {
+      return;
+    }
+
+    if (this.dualMaskActive && (primaryDidFlush || secondaryDidFlush || this.dualPostPending)) {
+      this.applyDualBlend();
+      this.dualPostPending = false;
     }
   }
 
@@ -504,9 +793,9 @@ export class GPUStrokeAccumulator {
    * Flush pending dabs to GPU using Compute Shader (optimized path)
    * or per-dab Render Pipeline (fallback path).
    */
-  private flushBatch(): void {
+  private flushBatch(deferPost: boolean = false): boolean {
     if (this.instanceBuffer.count === 0) {
-      return;
+      return false;
     }
 
     this.cpuTimer.start();
@@ -543,20 +832,24 @@ export class GPUStrokeAccumulator {
         // Swap so next flushBatch reads from the updated texture
         this.pingPongBuffer.swap();
 
-        // Apply wet edge post-processing if enabled
-        // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
-        // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
-        if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
-          this.wetEdgePipeline.dispatch(
-            encoder,
-            this.pingPongBuffer.source, // Raw buffer (input, read-only)
-            this.pingPongBuffer.display, // Display buffer (output)
-            this.dirtyRect,
-            this.wetEdgeHardness,
-            this.wetEdgeStrength,
-            this.currentRenderScale
-          );
-          // Note: No swap here - display buffer is separate from ping-pong
+        if (!deferPost) {
+          // Apply wet edge post-processing if enabled
+          // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
+          // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
+          if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+            this.wetEdgePipeline.dispatch(
+              encoder,
+              this.pingPongBuffer.source, // Raw buffer (input, read-only)
+              this.pingPongBuffer.display, // Display buffer (output)
+              this.dirtyRect,
+              this.wetEdgeHardness,
+              this.wetEdgeStrength,
+              this.currentRenderScale
+            );
+            // Note: No swap here - display buffer is separate from ping-pong
+          }
+        } else {
+          this.dualPostPending = true;
         }
 
         void this.profiler.resolveTimestamps(encoder);
@@ -568,19 +861,31 @@ export class GPUStrokeAccumulator {
           cpuTimeMs: cpuTime,
         });
 
-        this.previewNeedsUpdate = true;
-        if (!this.previewUpdatePending) {
-          void this.updatePreview();
+        if (!deferPost) {
+          this.previewNeedsUpdate = true;
+          if (!this.previewUpdatePending) {
+            void this.updatePreview();
+          }
         }
-        return;
+        return true;
       }
 
       // Compute shader failed, fall through to render pipeline
       console.warn('[GPUStrokeAccumulator] Compute shader failed, falling back to render pipeline');
+      if (this.dualBrushEnabled || this.dualMaskActive) {
+        this.requestCpuFallback('GPU compute unavailable for dual brush (primary)');
+        return false;
+      }
+    }
+
+    if (!this.useComputeShader && (this.dualBrushEnabled || this.dualMaskActive)) {
+      this.requestCpuFallback('GPU compute disabled for dual brush (primary)');
+      return false;
     }
 
     // Fallback: per-dab render pipeline
     this.flushBatchLegacy(dabs, gpuBatchBuffer, bbox, encoder);
+    return true;
   }
 
   /**
@@ -676,14 +981,14 @@ export class GPUStrokeAccumulator {
    * Flush pending texture dabs to GPU using Compute Shader (optimized path)
    * or per-dab Render Pipeline (fallback path).
    */
-  private flushTextureBatch(): void {
-    if (this.textureInstanceBuffer.count === 0) return;
+  private flushTextureBatch(deferPost: boolean = false): boolean {
+    if (this.textureInstanceBuffer.count === 0) return false;
 
     const currentTexture = this.textureAtlas.getCurrentTexture();
     if (!currentTexture) {
       console.warn('[GPUStrokeAccumulator] No texture available for texture brush');
       this.textureInstanceBuffer.clear();
-      return;
+      return false;
     }
 
     this.cpuTimer.start();
@@ -724,20 +1029,24 @@ export class GPUStrokeAccumulator {
         // Swap so next flushBatch reads from the updated texture
         this.pingPongBuffer.swap();
 
-        // Apply wet edge post-processing if enabled
-        // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
-        // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
-        if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
-          this.wetEdgePipeline.dispatch(
-            encoder,
-            this.pingPongBuffer.source, // Raw buffer (input, read-only)
-            this.pingPongBuffer.display, // Display buffer (output)
-            this.dirtyRect,
-            0.0, // Texture brushes: always treat as soft to enable full wet edge effect
-            this.wetEdgeStrength,
-            this.currentRenderScale
-          );
-          // Note: No swap here - display buffer is separate from ping-pong
+        if (!deferPost) {
+          // Apply wet edge post-processing if enabled
+          // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
+          // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
+          if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+            this.wetEdgePipeline.dispatch(
+              encoder,
+              this.pingPongBuffer.source, // Raw buffer (input, read-only)
+              this.pingPongBuffer.display, // Display buffer (output)
+              this.dirtyRect,
+              0.0, // Texture brushes: always treat as soft to enable full wet edge effect
+              this.wetEdgeStrength,
+              this.currentRenderScale
+            );
+            // Note: No swap here - display buffer is separate from ping-pong
+          }
+        } else {
+          this.dualPostPending = true;
         }
 
         void this.profiler.resolveTimestamps(encoder);
@@ -749,21 +1058,33 @@ export class GPUStrokeAccumulator {
           cpuTimeMs: cpuTime,
         });
 
-        this.previewNeedsUpdate = true;
-        if (!this.previewUpdatePending) {
-          void this.updatePreview();
+        if (!deferPost) {
+          this.previewNeedsUpdate = true;
+          if (!this.previewUpdatePending) {
+            void this.updatePreview();
+          }
         }
-        return;
+        return true;
       }
 
       // Compute shader failed, fall through to render pipeline
       console.warn(
         '[GPUStrokeAccumulator] Texture compute shader failed, falling back to render pipeline'
       );
+      if (this.dualBrushEnabled || this.dualMaskActive) {
+        this.requestCpuFallback('GPU compute unavailable for dual brush (texture)');
+        return false;
+      }
+    }
+
+    if (!this.useTextureComputeShader && (this.dualBrushEnabled || this.dualMaskActive)) {
+      this.requestCpuFallback('GPU compute disabled for dual brush (texture)');
+      return false;
     }
 
     // Fallback: per-dab render pipeline
     this.flushTextureBatchLegacy(dabs, gpuBatchBuffer, bbox, encoder, currentTexture);
+    return true;
   }
 
   /**
@@ -852,6 +1173,160 @@ export class GPUStrokeAccumulator {
     if (!this.previewUpdatePending) {
       void this.updatePreview();
     }
+  }
+
+  private flushSecondaryBatches(): boolean {
+    let didFlush = false;
+
+    if (this.secondaryInstanceBuffer.count > 0) {
+      if (!this.useComputeShader) {
+        this.requestCpuFallback('GPU compute disabled for dual brush (secondary)');
+        this.secondaryInstanceBuffer.clear();
+        return false;
+      }
+
+      const dabs = this.secondaryInstanceBuffer.getDabsData();
+      this.secondaryInstanceBuffer.clear();
+
+      const encoder = this.device.createCommandEncoder({
+        label: 'Dual Mask Batch Encoder',
+      });
+
+      // Preserve previous mask data
+      this.dualMaskBuffer.copySourceToDest(encoder);
+
+      const success = this.computeDualMaskPipeline.dispatch(
+        encoder,
+        this.dualMaskBuffer.source,
+        this.dualMaskBuffer.dest,
+        dabs
+      );
+
+      if (!success) {
+        this.requestCpuFallback('GPU dual mask compute failed');
+        return false;
+      }
+
+      this.dualMaskBuffer.swap();
+      this.device.queue.submit([encoder.finish()]);
+      didFlush = true;
+    }
+
+    if (this.secondaryTextureInstanceBuffer.count > 0) {
+      if (!this.useTextureComputeShader) {
+        this.requestCpuFallback('GPU compute disabled for dual brush (secondary texture)');
+        this.secondaryTextureInstanceBuffer.clear();
+        return false;
+      }
+
+      const currentTexture = this.dualTextureAtlas.getCurrentTexture();
+      if (!currentTexture) {
+        console.warn('[GPUStrokeAccumulator] No texture available for dual brush');
+        this.secondaryTextureInstanceBuffer.clear();
+        return didFlush;
+      }
+
+      const dabs = this.secondaryTextureInstanceBuffer.getDabsData();
+      this.secondaryTextureInstanceBuffer.clear();
+
+      const encoder = this.device.createCommandEncoder({
+        label: 'Dual Texture Mask Batch Encoder',
+      });
+
+      this.dualMaskBuffer.copySourceToDest(encoder);
+
+      const success = this.computeDualTextureMaskPipeline.dispatch(
+        encoder,
+        this.dualMaskBuffer.source,
+        this.dualMaskBuffer.dest,
+        currentTexture.texture,
+        dabs
+      );
+
+      if (!success) {
+        this.requestCpuFallback('GPU dual texture mask compute failed');
+        return false;
+      }
+
+      this.dualMaskBuffer.swap();
+      this.device.queue.submit([encoder.finish()]);
+      didFlush = true;
+    }
+
+    return didFlush;
+  }
+
+  private applyDualBlend(): void {
+    if (!this.dualBrushMode || !this.dualMaskActive) {
+      return;
+    }
+
+    const rect = this.getCombinedDirtyRect();
+    if (!this.hasDirtyRect(rect)) {
+      return;
+    }
+
+    const encoder = this.device.createCommandEncoder({
+      label: 'Dual Blend Encoder',
+    });
+
+    this.computeDualBlendPipeline.dispatch(
+      encoder,
+      this.pingPongBuffer.source,
+      this.dualMaskBuffer.source,
+      this.dualBlendTexture,
+      rect,
+      this.mapDualBlendMode(this.dualBrushMode),
+      this.currentRenderScale
+    );
+
+    if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+      const hardness = this.strokeMode === 'texture' ? 0.0 : this.wetEdgeHardness;
+      this.wetEdgePipeline.dispatch(
+        encoder,
+        this.dualBlendTexture,
+        this.pingPongBuffer.display,
+        rect,
+        hardness,
+        this.wetEdgeStrength,
+        this.currentRenderScale
+      );
+    }
+
+    this.device.queue.submit([encoder.finish()]);
+
+    this.previewNeedsUpdate = true;
+    if (!this.previewUpdatePending) {
+      void this.updatePreview();
+    }
+  }
+
+  private mapDualBlendMode(mode: DualBlendMode): number {
+    switch (mode) {
+      case 'multiply':
+        return 0;
+      case 'darken':
+        return 1;
+      case 'overlay':
+        return 2;
+      case 'colorDodge':
+        return 3;
+      case 'colorBurn':
+        return 4;
+      case 'linearBurn':
+        return 5;
+      case 'hardMix':
+        return 6;
+      case 'linearHeight':
+        return 7;
+      default:
+        return 0;
+    }
+  }
+
+  private requestCpuFallback(reason: string): void {
+    if (this.fallbackRequest) return;
+    this.fallbackRequest = reason;
   }
 
   /**
@@ -964,11 +1439,12 @@ export class GPUStrokeAccumulator {
         const gpuData = new Float32Array(this.previewReadbackBuffer!.getMappedRange());
 
         // Get dirty rect bounds (in logical/canvas coordinates) - use integers
+        const combinedRect = this.getCombinedDirtyRect();
         const rect = {
-          left: Math.floor(Math.max(0, this.dirtyRect.left)),
-          top: Math.floor(Math.max(0, this.dirtyRect.top)),
-          right: Math.ceil(Math.min(this.width, this.dirtyRect.right)),
-          bottom: Math.ceil(Math.min(this.height, this.dirtyRect.bottom)),
+          left: Math.floor(Math.max(0, combinedRect.left)),
+          top: Math.floor(Math.max(0, combinedRect.top)),
+          right: Math.ceil(Math.min(this.width, combinedRect.right)),
+          bottom: Math.ceil(Math.min(this.height, combinedRect.bottom)),
         };
 
         const rectWidth = rect.right - rect.left;
@@ -1063,18 +1539,18 @@ export class GPUStrokeAccumulator {
       return;
     }
 
+    if (this.fallbackRequest) {
+      return;
+    }
+
     // Optimization 3: Context Lost defense
     if (this.deviceLost) {
       console.warn('[GPUStrokeAccumulator] GPU device lost during prepareEndStroke');
       return;
     }
 
-    // Flush any remaining dabs (texture or parametric based on stroke mode)
-    if (this.strokeMode === 'texture') {
-      this.flushTextureBatch();
-    } else {
-      this.flushBatch();
-    }
+    // Flush any remaining dabs (including dual brush if active)
+    this.flush();
 
     // Wait for GPU to complete all submitted work
     await this.device.queue.onSubmittedWorkDone();
@@ -1245,6 +1721,9 @@ export class GPUStrokeAccumulator {
     if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
       return this.pingPongBuffer.display; // Wet edge applied texture
     }
+    if (this.dualMaskActive) {
+      return this.dualBlendTexture;
+    }
     return this.pingPongBuffer.source; // Raw accumulator texture
   }
 
@@ -1275,6 +1754,14 @@ export class GPUStrokeAccumulator {
     this.textureBrushPipeline.destroy();
     this.computeTextureBrushPipeline.destroy();
     this.textureAtlas.destroy();
+    this.secondaryInstanceBuffer.destroy();
+    this.secondaryTextureInstanceBuffer.destroy();
+    this.dualMaskBuffer.destroy();
+    this.dualBlendTexture.destroy();
+    this.dualTextureAtlas.destroy();
+    this.computeDualMaskPipeline.destroy();
+    this.computeDualTextureMaskPipeline.destroy();
+    this.computeDualBlendPipeline.destroy();
     this.wetEdgePipeline.destroy();
     this.readbackBuffer?.destroy();
     this.previewReadbackBuffer?.destroy();

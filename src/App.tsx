@@ -10,6 +10,7 @@ import { useSettingsStore, initializeSettings } from './stores/settings';
 import { useFileStore } from './stores/file';
 import { LeftToolbar, RightPanel } from './components/SidePanel';
 import { PanelLayer } from './components/UI/PanelLayer';
+import { ToastLayer } from './components/UI/ToastLayer';
 import { usePanelStore } from './stores/panel';
 
 // Lazy load DebugPanel (only used in dev mode)
@@ -263,6 +264,8 @@ function App() {
       <RightPanel />
       {/* Floating panels (only Brush panel now) */}
       <PanelLayer />
+      {/* Toast notifications */}
+      <ToastLayer />
       {/* Settings Panel */}
       <SettingsPanel />
       {/* Pattern Library Panel */}
