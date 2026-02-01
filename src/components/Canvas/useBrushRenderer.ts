@@ -20,6 +20,7 @@ import {
   ColorDynamicsSettings,
   TransferSettings,
   DualBrushSettings,
+  useToolStore,
 } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { RenderMode } from '@/stores/settings';
@@ -170,6 +171,7 @@ export function useBrushRenderer({
   const [gpuAvailable, setGpuAvailable] = useState(false);
   const [forceCpu, setForceCpu] = useState(false);
   const pushToast = useToastStore((s) => s.pushToast);
+  const dualBrush = useToolStore((s) => s.dualBrush);
 
   // CPU backend (Canvas 2D)
   const cpuBufferRef = useRef<StrokeAccumulator | null>(null);
@@ -188,6 +190,7 @@ export function useBrushRenderer({
   // stroke 2's clear() would wipe stroke 1's previewCanvas before composite.
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
   const strokeCancelledRef = useRef(false);
+  const dualBrushTextureIdRef = useRef<string | null>(null);
 
   // Shape Dynamics: Track previous dab position for direction calculation
   const prevDabPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -209,6 +212,8 @@ export function useBrushRenderer({
 
         if (supported && ctx.device) {
           gpuBufferRef.current = new GPUStrokeAccumulator(ctx.device, width, height);
+          const initialDualBrush = useToolStore.getState().dualBrush;
+          await gpuBufferRef.current.prewarmDualStroke(initialDualBrush);
           setGpuAvailable(true);
           benchmarkProfiler?.setDevice(ctx.device);
         } else {
@@ -235,6 +240,25 @@ export function useBrushRenderer({
       gpuBufferRef.current.resize(width, height);
     }
   }, [width, height, gpuAvailable]);
+
+  useEffect(() => {
+    if (!gpuAvailable || !gpuBufferRef.current) {
+      return;
+    }
+
+    if (!dualBrush?.texture) {
+      dualBrushTextureIdRef.current = null;
+      return;
+    }
+
+    const textureId = dualBrush.texture.id;
+    if (dualBrushTextureIdRef.current === textureId) {
+      return;
+    }
+
+    dualBrushTextureIdRef.current = textureId;
+    gpuBufferRef.current.prewarmDualBrushTexture(dualBrush.texture);
+  }, [gpuAvailable, dualBrush?.texture?.id]);
 
   // Determine actual backend based on renderMode and GPU availability
   const backend: RenderBackend =
@@ -338,7 +362,11 @@ export function useBrushRenderer({
       const dualEnabled = config.dualBrushEnabled && Boolean(dualBrush);
 
       if (backend === 'gpu' && gpuBufferRef.current) {
-        gpuBufferRef.current.setDualBrushState(dualEnabled, dualBrush?.mode ?? null);
+        gpuBufferRef.current.setDualBrushState(
+          dualEnabled,
+          dualBrush?.mode ?? null,
+          dualBrush?.texture ?? null
+        );
       }
 
       if (dualEnabled && dualBrush) {

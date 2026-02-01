@@ -30,7 +30,7 @@ import { GPUPatternCache } from './resources/GPUPatternCache';
 import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore } from '@/stores/tool';
-import type { DualBlendMode, DualBrushSettings } from '@/stores/tool';
+import type { BrushTexture, DualBlendMode, DualBrushSettings } from '@/stores/tool';
 import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/settings';
 import { patternManager } from '@/utils/patternManager';
 import { applyScatter } from '@/utils/scatterDynamics';
@@ -67,20 +67,11 @@ export class GPUStrokeAccumulator {
   private dualBrushMode: DualBlendMode | null = null;
   private dualDirtyRect: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
   private dualPostPending: boolean = false;
+  private dualBrushTextureId: string | null = null;
+  private dualStrokePrewarmKey: string | null = null;
+  private dualStrokePrewarmPromise: Promise<void> | null = null;
 
   private fallbackRequest: string | null = null;
-
-  // Debug: first-dispatch profiling (one-time logs)
-  private debugFirstFlush: boolean = false;
-  private debugFirstPrimaryDispatch: boolean = false;
-  private debugFirstSecondaryDispatch: boolean = false;
-  private debugFirstDualBlend: boolean = false;
-  private debugFirstWetEdgeDispatch: boolean = false;
-  private debugFirstPreviewReadback: boolean = false;
-  private debugNextWetEdgeDispatch: boolean = false;
-  private debugNextWetEdgeLabel: string | null = null;
-  private debugNextPreviewReadback: boolean = false;
-  private debugNextPreviewLabel: string | null = null;
 
   // Current stroke mode: 'parametric' or 'texture'
   private strokeMode: 'parametric' | 'texture' = 'parametric';
@@ -387,8 +378,93 @@ export class GPUStrokeAccumulator {
       );
 
       this.device.queue.submit([encoder.finish()]);
+      this.prewarmDualMaskCompute();
+      this.prewarmDualReadback();
     } catch (error) {
       console.warn('[GPUStrokeAccumulator] Startup init failed:', error);
+    }
+  }
+
+  private prewarmDualMaskCompute(): void {
+    try {
+      const texW = this.dualMaskBuffer.textureWidth;
+      const texH = this.dualMaskBuffer.textureHeight;
+      if (texW <= 0 || texH <= 0) {
+        return;
+      }
+
+      const dummyDab: DabInstanceData = {
+        x: 1,
+        y: 1,
+        size: 1,
+        hardness: 1,
+        r: 1,
+        g: 1,
+        b: 1,
+        dabOpacity: 1,
+        flow: 1,
+        roundness: 1,
+        angleCos: 1,
+        angleSin: 0,
+      };
+
+      const encoder = this.device.createCommandEncoder({
+        label: 'Prewarm Dual Mask Encoder',
+      });
+
+      // Match the real dual-mask path to warm driver/pipeline on actual-sized textures.
+      this.dualMaskBuffer.copySourceToDest(encoder);
+      this.computeDualMaskPipeline.dispatch(
+        encoder,
+        this.dualMaskBuffer.source,
+        this.dualMaskBuffer.dest,
+        [dummyDab]
+      );
+
+      this.device.queue.submit([encoder.finish()]);
+    } catch (error) {
+      console.warn('[GPUStrokeAccumulator] Dual mask prewarm failed:', error);
+    }
+  }
+
+  private prewarmDualReadback(): void {
+    try {
+      const texW = this.pingPongBuffer.textureWidth;
+      const texH = this.pingPongBuffer.textureHeight;
+      const size = this.readbackBytesPerRow * texH;
+      if (texW <= 0 || texH <= 0 || size <= 0) {
+        return;
+      }
+
+      const buffer = this.device.createBuffer({
+        label: 'Prewarm Dual Readback Buffer',
+        size,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+
+      const encoder = this.device.createCommandEncoder({
+        label: 'Prewarm Dual Readback Encoder',
+      });
+      encoder.copyTextureToBuffer(
+        { texture: this.dualBlendTexture },
+        { buffer, bytesPerRow: this.readbackBytesPerRow },
+        [texW, texH]
+      );
+
+      this.device.queue.submit([encoder.finish()]);
+
+      void (async () => {
+        try {
+          await buffer.mapAsync(GPUMapMode.READ);
+          buffer.unmap();
+        } catch (error) {
+          console.warn('[GPUStrokeAccumulator] Dual readback prewarm failed:', error);
+        } finally {
+          buffer.destroy();
+        }
+      })();
+    } catch (error) {
+      console.warn('[GPUStrokeAccumulator] Dual readback prewarm failed:', error);
     }
   }
 
@@ -511,51 +587,21 @@ export class GPUStrokeAccumulator {
    */
   private syncWetEdgeSettings(): void {
     const { wetEdgeEnabled, wetEdge, brushHardness } = useToolStore.getState();
-    const prevEnabled = this.wetEdgeEnabled;
-    const nextEnabled = wetEdgeEnabled && wetEdge > 0;
-    this.wetEdgeEnabled = nextEnabled;
+    this.wetEdgeEnabled = wetEdgeEnabled && wetEdge > 0;
     this.wetEdgeStrength = wetEdge;
     // Convert hardness from 0-100 to 0-1 range
     this.wetEdgeHardness = brushHardness / 100;
-
-    if (!prevEnabled && nextEnabled) {
-      this.debugNextWetEdgeDispatch = true;
-      this.debugNextWetEdgeLabel = 'wetedge-enable';
-      this.debugNextPreviewReadback = true;
-      this.debugNextPreviewLabel = 'wetedge-enable';
-      console.log(
-        '[GPUStrokeAccumulator] WetEdge enabled: profile next dispatch + preview readback'
-      );
-    }
   }
 
   private beginWetEdgeDebug(context: string): { start: number; label: string | null } {
-    if (this.debugNextWetEdgeDispatch) {
-      this.debugNextWetEdgeDispatch = false;
-      const label = this.debugNextWetEdgeLabel ?? 'next';
-      this.debugNextWetEdgeLabel = null;
-      const start = performance.now();
-      console.log(`[GPUStrokeAccumulator] WetEdge ${context} dispatch (${label}) start`);
-      return { start, label };
-    }
-
-    if (!this.debugFirstWetEdgeDispatch) {
-      this.debugFirstWetEdgeDispatch = true;
-      const start = performance.now();
-      console.log(`[GPUStrokeAccumulator] WetEdge ${context} dispatch first start`);
-      return { start, label: 'first' };
-    }
-
+    void context;
     return { start: 0, label: null };
   }
 
   private endWetEdgeDebug(context: string, start: number, label: string | null): void {
-    if (start > 0) {
-      const suffix = label ? ` (${label})` : '';
-      console.log(
-        `[GPUStrokeAccumulator] WetEdge ${context} dispatch${suffix} end: ${(performance.now() - start).toFixed(2)}ms`
-      );
-    }
+    void context;
+    void start;
+    void label;
   }
 
   /**
@@ -664,8 +710,21 @@ export class GPUStrokeAccumulator {
     return this.active;
   }
 
-  setDualBrushState(enabled: boolean, mode?: DualBlendMode | null): void {
+  setDualBrushState(
+    enabled: boolean,
+    mode?: DualBlendMode | null,
+    texture?: BrushTexture | null
+  ): void {
     this.dualBrushEnabled = enabled;
+    if (enabled && texture) {
+      const textureId = texture.id;
+      if (this.dualBrushTextureId !== textureId) {
+        this.dualBrushTextureId = textureId;
+        this.prewarmDualBrushTexture(texture);
+      }
+    } else if (!enabled) {
+      this.dualBrushTextureId = null;
+    }
     if (!enabled) {
       this.dualBrushMode = null;
       this.dualMaskActive = false;
@@ -675,6 +734,69 @@ export class GPUStrokeAccumulator {
     if (mode) {
       this.dualBrushMode = mode;
     }
+  }
+
+  public prewarmDualBrushTexture(texture: BrushTexture): void {
+    if (this.dualTextureAtlas.setTextureSync(texture)) {
+      return;
+    }
+    void this.dualTextureAtlas.setTexture(texture);
+  }
+
+  private async prewarmDualBrushTextureAsync(texture: BrushTexture): Promise<void> {
+    if (this.dualTextureAtlas.setTextureSync(texture)) {
+      await this.device.queue.onSubmittedWorkDone();
+      return;
+    }
+    await this.dualTextureAtlas.setTexture(texture);
+    await this.device.queue.onSubmittedWorkDone();
+  }
+
+  public async prewarmDualStroke(dualBrush?: DualBrushSettings | null): Promise<void> {
+    if (!dualBrush) {
+      return;
+    }
+
+    const key = dualBrush.texture?.id ?? 'parametric';
+    if (this.dualStrokePrewarmKey === key) {
+      return;
+    }
+
+    if (this.dualStrokePrewarmPromise) {
+      await this.dualStrokePrewarmPromise;
+      if (this.dualStrokePrewarmKey === key) {
+        return;
+      }
+    }
+
+    this.dualStrokePrewarmPromise = (async () => {
+      if (dualBrush.texture) {
+        await this.prewarmDualBrushTextureAsync(dualBrush.texture);
+      }
+
+      if (this.active) {
+        return;
+      }
+
+      const prewarmBrush: DualBrushSettings = {
+        ...dualBrush,
+        scatter: 0,
+        bothAxes: false,
+        count: 1,
+      };
+
+      this.beginStroke();
+      this.stampSecondaryDab(1, 1, Math.max(1, prewarmBrush.size), prewarmBrush, 0);
+      this.flush();
+      await this.device.queue.onSubmittedWorkDone();
+      this.clear();
+
+      this.dualStrokePrewarmKey = key;
+    })().finally(() => {
+      this.dualStrokePrewarmPromise = null;
+    });
+
+    await this.dualStrokePrewarmPromise;
   }
 
   consumeFallbackRequest(): string | null {
@@ -985,14 +1107,6 @@ export class GPUStrokeAccumulator {
       return;
     }
 
-    const debugFirst = !this.debugFirstFlush;
-    let debugMark = 0;
-    if (debugFirst) {
-      this.debugFirstFlush = true;
-      debugMark = performance.now();
-      console.log('[GPUStrokeAccumulator] First flush start');
-    }
-
     const deferPost = this.dualMaskActive;
 
     const primaryDidFlush =
@@ -1000,25 +1114,11 @@ export class GPUStrokeAccumulator {
         ? this.flushTextureBatch(deferPost)
         : this.flushBatch(deferPost);
 
-    if (debugFirst) {
-      const now = performance.now();
-      console.log(`[GPUStrokeAccumulator] First flush primary: ${(now - debugMark).toFixed(2)}ms`);
-      debugMark = now;
-    }
-
     if (this.fallbackRequest) {
       return;
     }
 
     const secondaryDidFlush = this.flushSecondaryBatches();
-
-    if (debugFirst) {
-      const now = performance.now();
-      console.log(
-        `[GPUStrokeAccumulator] First flush secondary: ${(now - debugMark).toFixed(2)}ms`
-      );
-      debugMark = now;
-    }
 
     if (this.fallbackRequest) {
       return;
@@ -1027,13 +1127,6 @@ export class GPUStrokeAccumulator {
     if (this.dualMaskActive && (primaryDidFlush || secondaryDidFlush || this.dualPostPending)) {
       this.applyDualBlend();
       this.dualPostPending = false;
-      if (debugFirst) {
-        const now = performance.now();
-        console.log(
-          `[GPUStrokeAccumulator] First flush dual+wet: ${(now - debugMark).toFixed(2)}ms`
-        );
-        debugMark = now;
-      }
     }
   }
 
@@ -1066,13 +1159,6 @@ export class GPUStrokeAccumulator {
       // This ensures Compute Shader reads the accumulated result from previous flushes
       this.pingPongBuffer.copySourceToDest(encoder);
 
-      let debugStart = 0;
-      if (!this.debugFirstPrimaryDispatch) {
-        this.debugFirstPrimaryDispatch = true;
-        debugStart = performance.now();
-        console.log('[GPUStrokeAccumulator] Primary compute first dispatch start');
-      }
-
       // Single dispatch for all dabs
       const success = this.computeBrushPipeline.dispatch(
         encoder,
@@ -1082,12 +1168,6 @@ export class GPUStrokeAccumulator {
         this.patternCache.getTexture(),
         this.currentPatternSettings
       );
-
-      if (debugStart > 0) {
-        console.log(
-          `[GPUStrokeAccumulator] Primary compute first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
-        );
-      }
 
       if (success) {
         // Swap so next flushBatch reads from the updated texture
@@ -1277,13 +1357,6 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
       }
 
-      let debugStart = 0;
-      if (!this.debugFirstPrimaryDispatch) {
-        this.debugFirstPrimaryDispatch = true;
-        debugStart = performance.now();
-        console.log('[GPUStrokeAccumulator] Primary texture compute first dispatch start');
-      }
-
       // Single dispatch for all dabs
       const success = this.computeTextureBrushPipeline.dispatch(
         encoder,
@@ -1294,12 +1367,6 @@ export class GPUStrokeAccumulator {
         this.patternCache.getTexture(),
         this.currentPatternSettings
       );
-
-      if (debugStart > 0) {
-        console.log(
-          `[GPUStrokeAccumulator] Primary texture compute first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
-        );
-      }
 
       if (success) {
         // Swap so next flushBatch reads from the updated texture
@@ -1473,25 +1540,12 @@ export class GPUStrokeAccumulator {
       // Preserve previous mask data
       this.dualMaskBuffer.copySourceToDest(encoder);
 
-      let debugStart = 0;
-      if (!this.debugFirstSecondaryDispatch) {
-        this.debugFirstSecondaryDispatch = true;
-        debugStart = performance.now();
-        console.log('[GPUStrokeAccumulator] Secondary dual mask first dispatch start');
-      }
-
       const success = this.computeDualMaskPipeline.dispatch(
         encoder,
         this.dualMaskBuffer.source,
         this.dualMaskBuffer.dest,
         dabs
       );
-
-      if (debugStart > 0) {
-        console.log(
-          `[GPUStrokeAccumulator] Secondary dual mask first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
-        );
-      }
 
       if (!success) {
         this.requestCpuFallback('GPU dual mask compute failed');
@@ -1526,13 +1580,6 @@ export class GPUStrokeAccumulator {
 
       this.dualMaskBuffer.copySourceToDest(encoder);
 
-      let debugStart = 0;
-      if (!this.debugFirstSecondaryDispatch) {
-        this.debugFirstSecondaryDispatch = true;
-        debugStart = performance.now();
-        console.log('[GPUStrokeAccumulator] Secondary dual texture mask first dispatch start');
-      }
-
       const success = this.computeDualTextureMaskPipeline.dispatch(
         encoder,
         this.dualMaskBuffer.source,
@@ -1540,12 +1587,6 @@ export class GPUStrokeAccumulator {
         currentTexture.texture,
         dabs
       );
-
-      if (debugStart > 0) {
-        console.log(
-          `[GPUStrokeAccumulator] Secondary dual texture mask first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
-        );
-      }
 
       if (!success) {
         this.requestCpuFallback('GPU dual texture mask compute failed');
@@ -1570,13 +1611,6 @@ export class GPUStrokeAccumulator {
       return;
     }
 
-    let debugStart = 0;
-    if (!this.debugFirstDualBlend) {
-      this.debugFirstDualBlend = true;
-      debugStart = performance.now();
-      console.log('[GPUStrokeAccumulator] Dual blend first dispatch start');
-    }
-
     const encoder = this.device.createCommandEncoder({
       label: 'Dual Blend Encoder',
     });
@@ -1590,12 +1624,6 @@ export class GPUStrokeAccumulator {
       this.mapDualBlendMode(this.dualBrushMode),
       this.currentRenderScale
     );
-
-    if (debugStart > 0) {
-      console.log(
-        `[GPUStrokeAccumulator] Dual blend first dispatch end: ${(performance.now() - debugStart).toFixed(2)}ms`
-      );
-    }
 
     if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
       const wetDebug = this.beginWetEdgeDebug('dual');
@@ -1739,34 +1767,8 @@ export class GPUStrokeAccumulator {
     this.previewNeedsUpdate = false;
 
     // Store the promise for concurrent access
-    let debugLabel: string | null = null;
-    if (this.debugNextPreviewReadback) {
-      debugLabel = this.debugNextPreviewLabel ?? 'next';
-      this.debugNextPreviewReadback = false;
-      this.debugNextPreviewLabel = null;
-    } else if (!this.debugFirstPreviewReadback) {
-      this.debugFirstPreviewReadback = true;
-      debugLabel = 'first';
-    }
-
-    const debugStart = debugLabel ? performance.now() : 0;
-    if (debugLabel) {
-      const presentable =
-        this.wetEdgeEnabled && this.wetEdgeStrength > 0.01
-          ? 'wetedge'
-          : this.dualMaskActive
-            ? 'dual'
-            : 'raw';
-      console.log(
-        `[GPUStrokeAccumulator] Preview readback ${debugLabel} start (presentable=${presentable})`
-      );
-    }
 
     this.currentPreviewPromise = (async () => {
-      let mapStart = 0;
-      let mapEnd = 0;
-      let cpuEnd = 0;
-      let putEnd = 0;
       try {
         // Copy current texture to preview readback buffer
         const encoder = this.device.createCommandEncoder();
@@ -1781,13 +1783,7 @@ export class GPUStrokeAccumulator {
         this.device.queue.submit([encoder.finish()]);
 
         // Wait for GPU and map buffer
-        if (debugLabel) {
-          mapStart = performance.now();
-        }
         await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ);
-        if (debugLabel) {
-          mapEnd = performance.now();
-        }
         const gpuData = new Float32Array(this.previewReadbackBuffer!.getMappedRange());
 
         // Get dirty rect bounds (in logical/canvas coordinates) - use integers
@@ -1851,33 +1847,13 @@ export class GPUStrokeAccumulator {
             }
           }
 
-          if (debugLabel) {
-            cpuEnd = performance.now();
-          }
-
           this.previewCtx.putImageData(imageData, rect.left, rect.top);
-          if (debugLabel) {
-            putEnd = performance.now();
-          }
-        } else if (debugLabel) {
-          cpuEnd = mapEnd;
-          putEnd = mapEnd;
         }
 
         this.previewReadbackBuffer!.unmap();
       } catch (e) {
         console.error('[GPUStrokeAccumulator] Preview update failed:', e);
       } finally {
-        if (debugStart > 0) {
-          const total = performance.now() - debugStart;
-          const mapMs = mapEnd > mapStart ? mapEnd - mapStart : 0;
-          const cpuMs = cpuEnd > mapEnd ? cpuEnd - mapEnd : 0;
-          const putMs = putEnd > cpuEnd ? putEnd - cpuEnd : 0;
-          const label = debugLabel ?? 'debug';
-          console.log(
-            `[GPUStrokeAccumulator] Preview readback ${label} end: total=${total.toFixed(2)}ms map=${mapMs.toFixed(2)}ms cpu=${cpuMs.toFixed(2)}ms put=${putMs.toFixed(2)}ms`
-          );
-        }
         this.currentPreviewPromise = null;
         this.previewUpdatePending = false;
         // If more updates were requested while we were updating, do another round

@@ -17,7 +17,6 @@ export class ComputeDualTextureMaskPipeline {
   private dabBuffer: GPUBuffer;
 
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
-  private debugFirstBindGroup: boolean = false;
 
   private maxDabs = 256;
   private canvasWidth: number = 0;
@@ -188,12 +187,6 @@ export class ComputeDualTextureMaskPipeline {
 
     let bindGroup = this.cachedBindGroups.get(key);
     if (!bindGroup) {
-      let debugStart = 0;
-      if (!this.debugFirstBindGroup) {
-        this.debugFirstBindGroup = true;
-        debugStart = performance.now();
-        console.log('[ComputeDualTextureMaskPipeline] First bind group create start');
-      }
       bindGroup = this.device.createBindGroup({
         label: `Compute Dual Texture Mask BindGroup (${key})`,
         layout: this.bindGroupLayout,
@@ -205,11 +198,6 @@ export class ComputeDualTextureMaskPipeline {
           { binding: 4, resource: brushTexture.createView() },
         ],
       });
-      if (debugStart > 0) {
-        console.log(
-          `[ComputeDualTextureMaskPipeline] First bind group create end: ${(performance.now() - debugStart).toFixed(2)}ms`
-        );
-      }
       this.cachedBindGroups.set(key, bindGroup);
     }
 
