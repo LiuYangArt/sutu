@@ -537,6 +537,7 @@ export class MaskCache {
     opacity: number
   ): void {
     if (!this.mask) return;
+    const dabOpacity = Math.max(0, Math.min(1, opacity));
 
     // Calculate buffer position (top-left of mask in buffer coordinates)
     const halfWidth = this.maskWidth / 2;
@@ -552,7 +553,7 @@ export class MaskCache {
 
     if (startX >= endX || startY >= endY) return;
 
-    // Blending loop - Max blending (keep strongest alpha)
+    // Blending loop - Alpha Darken style accumulation (flow fixed to 1.0 by caller)
     for (let my = startY; my < endY; my++) {
       const bufferRowStart = (bufferTop + my) * bufferWidth;
       const maskRowStart = my * this.maskWidth;
@@ -563,11 +564,9 @@ export class MaskCache {
 
         const idx = bufferRowStart + bufferLeft + mx;
 
-        // Simple Max blending
-        const newVal = maskValue * opacity;
-        if (newVal > buffer[idx]!) {
-          buffer[idx] = newVal;
-        }
+        const dst = buffer[idx] ?? 0;
+        const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+        buffer[idx] = out;
       }
     }
   }

@@ -417,6 +417,7 @@ export class TextureMaskCache {
     opacity: number
   ): void {
     if (!this.scaledMask) return;
+    const dabOpacity = Math.max(0, Math.min(1, opacity));
 
     // Calculate buffer position
     const halfWidth = this.scaledWidth / 2;
@@ -432,7 +433,7 @@ export class TextureMaskCache {
 
     if (startX >= endX || startY >= endY) return;
 
-    // Blending loop - Max blending (keep strongest alpha)
+    // Blending loop - Alpha Darken style accumulation (flow fixed to 1.0 by caller)
     for (let my = startY; my < endY; my++) {
       const bufferRowStart = (bufferTop + my) * bufferWidth;
       const maskRowStart = my * this.scaledWidth;
@@ -443,11 +444,9 @@ export class TextureMaskCache {
 
         const idx = bufferRowStart + bufferLeft + mx;
 
-        // Simple Max blending
-        const newVal = maskValue * opacity;
-        if (newVal > buffer[idx]!) {
-          buffer[idx] = newVal;
-        }
+        const dst = buffer[idx] ?? 0;
+        const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+        buffer[idx] = out;
       }
     }
   }
