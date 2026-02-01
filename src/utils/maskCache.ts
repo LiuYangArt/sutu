@@ -132,6 +132,33 @@ export class MaskCache {
     return 1.0 - (physicalDist - aaStart);
   }
 
+  private static sampleBilinear(
+    data: Float32Array,
+    width: number,
+    height: number,
+    x: number,
+    y: number
+  ): number {
+    if (x < 0 || y < 0 || x > width - 1 || y > height - 1) return 0;
+
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = x0 + 1;
+    const y1 = y0 + 1;
+    const fx = x - x0;
+    const fy = y - y0;
+
+    const idx00 = y0 * width + x0;
+    const v00 = data[idx00] ?? 0;
+    const v10 = x1 < width ? (data[idx00 + 1] ?? 0) : 0;
+    const v01 = y1 < height ? (data[idx00 + width] ?? 0) : 0;
+    const v11 = x1 < width && y1 < height ? (data[idx00 + width + 1] ?? 0) : 0;
+
+    const v0 = v00 + (v10 - v00) * fx;
+    const v1 = v01 + (v11 - v01) * fx;
+    return v0 + (v1 - v0) * fy;
+  }
+
   /**
    * Alpha Darken blend a single pixel
    * Shared by stampToBuffer and stampHardBrush to avoid duplication
@@ -188,6 +215,7 @@ export class MaskCache {
    */
   generateMask(params: MaskCacheParams): void {
     const { size, hardness, roundness, angle, maskType } = params;
+    const useEllipticalDistance = Math.abs(roundness - 1) > 1e-3;
 
     const radiusX = size / 2;
     const radiusY = radiusX * roundness;
@@ -242,30 +270,42 @@ export class MaskCache {
         const normX = localX / radiusX;
         const normY = localY / radiusY;
         const normDist = Math.sqrt(normX * normX + normY * normY);
+        let boundaryRadius = radiusX;
+        let physicalDist = normDist * radiusX;
+        let distfactorLocal = distfactor;
+
+        if (useEllipticalDistance) {
+          const dist = Math.hypot(localX, localY);
+          if (normDist > 1e-6) {
+            boundaryRadius = dist / normDist;
+          }
+          physicalDist = dist;
+          distfactorLocal =
+            (SQRT_2 * 12500.0) / (6761.0 * safeFade * Math.max(1e-3, boundaryRadius));
+        }
 
         // Calculate mask shape
         let maskValue: number;
 
         if (hardness >= 0.99) {
           // Inner Mode (Krita-style): AA band at [radiusX-1.0, radiusX]
-          maskValue = MaskCache.calcHardEdgeAA(normDist * radiusX, radiusX);
+          maskValue = MaskCache.calcHardEdgeAA(physicalDist, boundaryRadius);
         } else if (maskType === 'gaussian') {
           // Krita-style Gaussian (erf-based) mask
-          const physicalDist = normDist * radiusX;
-          const aaStart = radiusX - 1.0;
+          const aaStart = boundaryRadius - 1.0;
 
           if (hardness > 0.5 && physicalDist > aaStart) {
-            if (physicalDist > radiusX) {
+            if (physicalDist > boundaryRadius) {
               maskValue = 0;
             } else {
-              const distAtStart = aaStart * distfactor;
+              const distAtStart = aaStart * distfactorLocal;
               const valAtStart =
                 alphafactor * (erfFast(distAtStart + center) - erfFast(distAtStart - center));
               const baseAlphaAtStart = Math.max(0, Math.min(1, valAtStart / 255.0));
               maskValue = baseAlphaAtStart * (1.0 - (physicalDist - aaStart));
             }
           } else {
-            const scaledDist = physicalDist * distfactor;
+            const scaledDist = physicalDist * distfactorLocal;
             const val = alphafactor * (erfFast(scaledDist + center) - erfFast(scaledDist - center));
             maskValue = Math.max(0, Math.min(1, val / 255.0));
           }
@@ -323,6 +363,9 @@ export class MaskCache {
     const halfHeight = this.maskHeight / 2;
     const bufferLeft = Math.round(cx - halfWidth);
     const bufferTop = Math.round(cy - halfHeight);
+    const offsetX = cx - (bufferLeft + halfWidth);
+    const offsetY = cy - (bufferTop + halfHeight);
+    const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -341,45 +384,102 @@ export class MaskCache {
     const dirtyBottom = bufferTop + endY;
 
     // Fast blending loop
-    for (let my = startY; my < endY; my++) {
-      const bufferRowStart = (bufferTop + my) * bufferWidth;
-      const maskRowStart = my * this.maskWidth;
+    if (!useSubpixel) {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+        const maskRowStart = my * this.maskWidth;
 
-      for (let mx = startX; mx < endX; mx++) {
-        const maskValue = this.mask[maskRowStart + mx]!;
-        if (maskValue < 0.001) continue;
+        for (let mx = startX; mx < endX; mx++) {
+          const maskValue = this.mask[maskRowStart + mx]!;
+          if (maskValue < 0.001) continue;
 
-        const idx = (bufferRowStart + bufferLeft + mx) * 4;
+          const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-        // Texture modulation
-        let textureMod = 1.0;
-        if (textureSettings && pattern) {
-          // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
-          // TextureSettings.depth is 0-100
-          const depth = textureSettings.depth / 100.0;
-          textureMod = calculateTextureInfluence(
-            bufferLeft + mx,
-            bufferTop + my,
-            textureSettings,
-            pattern,
-            depth
+          // Texture modulation
+          let textureMod = 1.0;
+          if (textureSettings && pattern) {
+            // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
+            // TextureSettings.depth is 0-100
+            const depth = textureSettings.depth / 100.0;
+            textureMod = calculateTextureInfluence(
+              bufferLeft + mx,
+              bufferTop + my,
+              textureSettings,
+              pattern,
+              depth
+            );
+          }
+
+          // Standard Alpha Darken blend
+          let srcAlpha = maskValue;
+
+          // Apply Dual Brush Mask if present
+          let dualMod = 1.0;
+          if (dualMask && dualMode) {
+            const dualVal = dualMask[maskRowStart + mx]!;
+            // Apply to Opacity: Calculate density based on full coverage (1.0)
+            // This ensures Dual Brush acts as a ceiling/texture rather than flow modifier
+            dualMod = blendDual(1.0, dualVal, dualMode);
+          }
+
+          srcAlpha *= flow;
+          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
+        }
+      }
+    } else {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+
+        for (let mx = startX; mx < endX; mx++) {
+          const sampleX = mx - offsetX;
+          const sampleY = my - offsetY;
+          const maskValue = MaskCache.sampleBilinear(
+            this.mask,
+            this.maskWidth,
+            this.maskHeight,
+            sampleX,
+            sampleY
           );
+          if (maskValue < 0.001) continue;
+
+          const idx = (bufferRowStart + bufferLeft + mx) * 4;
+
+          // Texture modulation
+          let textureMod = 1.0;
+          if (textureSettings && pattern) {
+            // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
+            // TextureSettings.depth is 0-100
+            const depth = textureSettings.depth / 100.0;
+            textureMod = calculateTextureInfluence(
+              bufferLeft + mx,
+              bufferTop + my,
+              textureSettings,
+              pattern,
+              depth
+            );
+          }
+
+          // Standard Alpha Darken blend
+          let srcAlpha = maskValue;
+
+          // Apply Dual Brush Mask if present
+          let dualMod = 1.0;
+          if (dualMask && dualMode) {
+            const dualVal = MaskCache.sampleBilinear(
+              dualMask,
+              this.maskWidth,
+              this.maskHeight,
+              sampleX,
+              sampleY
+            );
+            // Apply to Opacity: Calculate density based on full coverage (1.0)
+            // This ensures Dual Brush acts as a ceiling/texture rather than flow modifier
+            dualMod = blendDual(1.0, dualVal, dualMode);
+          }
+
+          srcAlpha *= flow;
+          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
         }
-
-        // Standard Alpha Darken blend
-        let srcAlpha = maskValue;
-
-        // Apply Dual Brush Mask if present
-        let dualMod = 1.0;
-        if (dualMask && dualMode) {
-          const dualVal = dualMask[maskRowStart + mx]!;
-          // Apply to Opacity: Calculate density based on full coverage (1.0)
-          // This ensures Dual Brush acts as a ceiling/texture rather than flow modifier
-          dualMod = blendDual(1.0, dualVal, dualMode);
-        }
-
-        srcAlpha *= flow;
-        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
       }
     }
 
@@ -544,6 +644,9 @@ export class MaskCache {
     const halfHeight = this.maskHeight / 2;
     const bufferLeft = Math.round(cx - halfWidth);
     const bufferTop = Math.round(cy - halfHeight);
+    const offsetX = cx - (bufferLeft + halfWidth);
+    const offsetY = cy - (bufferTop + halfHeight);
+    const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -554,19 +657,44 @@ export class MaskCache {
     if (startX >= endX || startY >= endY) return;
 
     // Blending loop - Alpha Darken style accumulation (flow fixed to 1.0 by caller)
-    for (let my = startY; my < endY; my++) {
-      const bufferRowStart = (bufferTop + my) * bufferWidth;
-      const maskRowStart = my * this.maskWidth;
+    if (!useSubpixel) {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+        const maskRowStart = my * this.maskWidth;
 
-      for (let mx = startX; mx < endX; mx++) {
-        const maskValue = this.mask[maskRowStart + mx]!;
-        if (maskValue < 0.001) continue;
+        for (let mx = startX; mx < endX; mx++) {
+          const maskValue = this.mask[maskRowStart + mx]!;
+          if (maskValue < 0.001) continue;
 
-        const idx = bufferRowStart + bufferLeft + mx;
+          const idx = bufferRowStart + bufferLeft + mx;
 
-        const dst = buffer[idx] ?? 0;
-        const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
-        buffer[idx] = out;
+          const dst = buffer[idx] ?? 0;
+          const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+          buffer[idx] = out;
+        }
+      }
+    } else {
+      for (let my = startY; my < endY; my++) {
+        const bufferRowStart = (bufferTop + my) * bufferWidth;
+
+        for (let mx = startX; mx < endX; mx++) {
+          const sampleX = mx - offsetX;
+          const sampleY = my - offsetY;
+          const maskValue = MaskCache.sampleBilinear(
+            this.mask,
+            this.maskWidth,
+            this.maskHeight,
+            sampleX,
+            sampleY
+          );
+          if (maskValue < 0.001) continue;
+
+          const idx = bufferRowStart + bufferLeft + mx;
+
+          const dst = buffer[idx] ?? 0;
+          const out = dst >= dabOpacity - 0.001 ? dst : dst + (dabOpacity - dst) * maskValue;
+          buffer[idx] = out;
+        }
       }
     }
   }

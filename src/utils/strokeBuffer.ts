@@ -59,6 +59,10 @@ export interface Rect {
   bottom: number;
 }
 
+const HARD_BRUSH_THRESHOLD = 0.99;
+const ROUNDNESS_HARD_PATH_THRESHOLD = 0.999;
+const ROUNDNESS_AA_HARDNESS_CLAMP = 0.98;
+
 /**
  * Parse hex color to RGB components (0-255)
  */
@@ -427,6 +431,9 @@ export class StrokeAccumulator {
     if (!this.bufferData) return;
 
     const rgb = hexToRgb(params.color);
+    const roundness = params.roundness ?? 1;
+    const isHardBrush = params.hardness >= HARD_BRUSH_THRESHOLD;
+    const isSquashedRoundness = roundness < ROUNDNESS_HARD_PATH_THRESHOLD;
 
     // Resolve pattern if enabled
     let pattern: PatternData | undefined;
@@ -448,10 +455,14 @@ export class StrokeAccumulator {
 
     if (params.texture) {
       dabDirtyRect = this.stampTextureBrush(params, rgb, pattern);
-    } else if (params.hardness >= 0.99) {
+    } else if (isHardBrush && !isSquashedRoundness) {
       dabDirtyRect = this.stampHardBrush(params, rgb, pattern);
     } else {
-      dabDirtyRect = this.stampSoftBrush(params, rgb, pattern);
+      const hardnessOverride =
+        isHardBrush && isSquashedRoundness
+          ? Math.min(params.hardness, ROUNDNESS_AA_HARDNESS_CLAMP)
+          : undefined;
+      dabDirtyRect = this.stampSoftBrush(params, rgb, pattern, hardnessOverride);
     }
 
     // When dual brush is enabled, also write primary alpha to accumulator
@@ -522,6 +533,7 @@ export class StrokeAccumulator {
     // Calculate effective size and scatter
     const effectiveSize = Math.max(1, size);
     const roundness = Math.max(0.01, Math.min(1, (dualBrush.roundness ?? 100) / 100));
+    const isSquashedRoundness = roundness < ROUNDNESS_HARD_PATH_THRESHOLD;
 
     // Handle potential string values for scatter
     let scatterVal = dualBrush.scatter ?? 0;
@@ -601,7 +613,7 @@ export class StrokeAccumulator {
         // Update mask with new angle for this dab
         const maskParams = {
           size: effectiveSize,
-          hardness: 1.0,
+          hardness: isSquashedRoundness ? ROUNDNESS_AA_HARDNESS_CLAMP : 1.0,
           roundness,
           angle: randomAngle,
           maskType: 'gaussian' as const,
@@ -743,12 +755,14 @@ export class StrokeAccumulator {
   private stampSoftBrush(
     params: DabParams,
     rgb: { r: number; g: number; b: number },
-    pattern?: PatternData
+    pattern?: PatternData,
+    hardnessOverride?: number
   ): Rect {
     // Soft brushes use cached mask
+    const hardness = hardnessOverride ?? params.hardness;
     const cacheParams: MaskCacheParams = {
       size: params.size,
-      hardness: params.hardness,
+      hardness,
       roundness: params.roundness ?? 1,
       angle: params.angle ?? 0,
       maskType: params.maskType ?? 'gaussian',
