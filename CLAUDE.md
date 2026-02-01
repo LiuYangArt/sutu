@@ -12,6 +12,9 @@
 
 **目标**: Wacom 数位板输入延迟 < 12ms
 
+## 笔刷系统
+当前支持typescript cpu和compute shader gpu 笔刷。 cpu笔刷用于快速开发和debug提供ground truth 为gpu提供效果参考。用户最后使用gpu笔刷以获得最优性能。 
+
 ## 常用命令
 
 ```bash
