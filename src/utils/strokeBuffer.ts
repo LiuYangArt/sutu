@@ -143,7 +143,7 @@ export class StrokeAccumulator {
 
   // Canvas sync throttling - sync every N dabs instead of every dab
   private syncCounter: number = 0;
-  private static readonly SYNC_INTERVAL = 4; // Sync every 4 dabs (reduced from 2)
+  private static readonly SYNC_INTERVAL = 1; // Sync every dab for correct CPU preview
 
   // Accumulated dirty rect for batched syncing
   private pendingDirtyRect: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
@@ -817,10 +817,33 @@ export class StrokeAccumulator {
   private syncPendingToCanvas(): void {
     if (!this.bufferData) return;
 
-    const left = Math.max(0, this.pendingDirtyRect.left);
-    const top = Math.max(0, this.pendingDirtyRect.top);
-    const right = Math.min(this.width, this.pendingDirtyRect.right);
-    const bottom = Math.min(this.height, this.pendingDirtyRect.bottom);
+    const hasPending =
+      this.pendingDirtyRect.right > this.pendingDirtyRect.left &&
+      this.pendingDirtyRect.bottom > this.pendingDirtyRect.top;
+    const hasDualDirty =
+      this.dualBrushEnabled &&
+      this.dualMaskAccumulator &&
+      this.dualMaskAccumulatorDirty.right > this.dualMaskAccumulatorDirty.left &&
+      this.dualMaskAccumulatorDirty.bottom > this.dualMaskAccumulatorDirty.top;
+
+    if (!hasPending && !hasDualDirty) return;
+
+    let left = hasPending ? this.pendingDirtyRect.left : this.dualMaskAccumulatorDirty.left;
+    let top = hasPending ? this.pendingDirtyRect.top : this.dualMaskAccumulatorDirty.top;
+    let right = hasPending ? this.pendingDirtyRect.right : this.dualMaskAccumulatorDirty.right;
+    let bottom = hasPending ? this.pendingDirtyRect.bottom : this.dualMaskAccumulatorDirty.bottom;
+
+    if (hasPending && hasDualDirty) {
+      left = Math.min(left, this.dualMaskAccumulatorDirty.left);
+      top = Math.min(top, this.dualMaskAccumulatorDirty.top);
+      right = Math.max(right, this.dualMaskAccumulatorDirty.right);
+      bottom = Math.max(bottom, this.dualMaskAccumulatorDirty.bottom);
+    }
+
+    left = Math.max(0, left);
+    top = Math.max(0, top);
+    right = Math.min(this.width, right);
+    bottom = Math.min(this.height, bottom);
 
     const width = right - left;
     const height = bottom - top;
@@ -838,34 +861,25 @@ export class StrokeAccumulator {
       this.syncImageDataHeight = height;
     }
 
-    // Apply dual brush blend before extracting the region (stroke-level blend)
+    // Extract region from persistent buffer and sync to canvas
+    const regionData = this.syncImageData;
+    for (let py = 0; py < height; py++) {
+      const srcStart = ((top + py) * this.width + left) * 4;
+      const dstStart = py * width * 4;
+      regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
+    }
+
+    // Apply dual brush blend on the preview region (do not mutate bufferData)
     if (this.dualBrushEnabled) {
-      this.applyDualBrushBlend(left, top, right, bottom);
+      this.applyDualBrushBlend(regionData, left, top, width, height);
     }
 
-    // Apply wet edge effect if enabled
-    if (this.wetEdgeEnabled && this.wetEdgeBuffer) {
-      // Apply wet edge to the entire stroke dirty region (not just pending)
-      this.applyWetEdgeEffect();
-
-      // Extract from wet edge buffer instead of raw buffer
-      const regionData = this.syncImageData;
-      for (let py = 0; py < height; py++) {
-        const srcStart = ((top + py) * this.width + left) * 4;
-        const dstStart = py * width * 4;
-        regionData.data.set(this.wetEdgeBuffer.subarray(srcStart, srcStart + width * 4), dstStart);
-      }
-      this.ctx.putImageData(regionData, left, top);
-    } else {
-      // Extract region from persistent buffer and sync to canvas
-      const regionData = this.syncImageData;
-      for (let py = 0; py < height; py++) {
-        const srcStart = ((top + py) * this.width + left) * 4;
-        const dstStart = py * width * 4;
-        regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
-      }
-      this.ctx.putImageData(regionData, left, top);
+    // Apply wet edge effect after dual blend (preview-only)
+    if (this.wetEdgeEnabled) {
+      this.applyWetEdgeEffect(regionData);
     }
+
+    this.ctx.putImageData(regionData, left, top);
 
     // Reset pending dirty rect
     this.pendingDirtyRect = {
@@ -874,33 +888,48 @@ export class StrokeAccumulator {
       right: 0,
       bottom: 0,
     };
+
+    if (hasDualDirty) {
+      this.dualMaskAccumulatorDirty = {
+        left: this.width,
+        top: this.height,
+        right: 0,
+        bottom: 0,
+      };
+    }
   }
 
   /**
    * Apply Dual Brush blend at stroke-level (PS-compatible layer blending)
    *
    * This method blends primaryMaskAccumulator with dualMaskAccumulator using the
-   * selected blend mode, then modulates bufferData's alpha channel.
+   * selected blend mode, then modulates preview alpha only.
    *
    * Key insight: This is called PER-SYNC, not per-dab, allowing secondary brush
    * patterns to extend beyond primary brush boundaries (fixing the clipping issue).
    */
-  private applyDualBrushBlend(left: number, top: number, right: number, bottom: number): void {
-    if (
-      !this.bufferData ||
-      !this.primaryMaskAccumulator ||
-      !this.dualMaskAccumulator ||
-      !this.dualBrushMode
-    ) {
+  private applyDualBrushBlend(
+    regionData: ImageData,
+    left: number,
+    top: number,
+    width: number,
+    height: number
+  ): void {
+    if (!this.primaryMaskAccumulator || !this.dualMaskAccumulator || !this.dualBrushMode) {
       return;
     }
 
     const mode = this.dualBrushMode;
 
-    for (let y = top; y < bottom; y++) {
-      for (let x = left; x < right; x++) {
-        const idx = y * this.width + x;
-        const alphaIdx = idx * 4 + 3;
+    const data = regionData.data;
+
+    for (let py = 0; py < height; py++) {
+      const y = top + py;
+      const rowStart = y * this.width + left;
+      const dataRowStart = py * width * 4;
+      for (let px = 0; px < width; px++) {
+        const idx = rowStart + px;
+        const alphaIdx = dataRowStart + px * 4 + 3;
 
         const primaryVal = this.primaryMaskAccumulator[idx] ?? 0;
         const secondaryVal = this.dualMaskAccumulator[idx] ?? 0;
@@ -911,13 +940,13 @@ export class StrokeAccumulator {
         // Apply blend mode
         const blendedAlpha = blendDual(primaryVal, secondaryVal, mode);
 
-        // Modulate the RGBA buffer's alpha with the blended result
+        // Modulate preview alpha with the blended result
         // The key fix: we scale the existing alpha (which includes primary brush shape)
         // by the ratio of (blended / primary) to preserve color but change opacity
         if (primaryVal > 0.001) {
           const scale = blendedAlpha / primaryVal;
-          const currentAlpha = this.bufferData[alphaIdx]!;
-          this.bufferData[alphaIdx] = Math.round(Math.min(255, currentAlpha * scale));
+          const currentAlpha = data[alphaIdx]!;
+          data[alphaIdx] = Math.round(Math.min(255, currentAlpha * scale));
         } else if (secondaryVal > 0.001) {
           // Primary is zero but secondary is not - this shouldn't happen in normal blending
           // since we're blending primary's shapes with secondary, not adding secondary alone
@@ -937,39 +966,26 @@ export class StrokeAccumulator {
    * This eliminates the "black halo" aliasing on hard brushes while
    * preserving the wet edge effect on soft brushes.
    */
-  private applyWetEdgeEffect(): void {
-    if (!this.bufferData || !this.wetEdgeBuffer || !this.wetEdgeLutValid) return;
+  private applyWetEdgeEffect(regionData: ImageData): void {
+    if (!this.wetEdgeLutValid) return;
 
     const lut = this.wetEdgeLut;
+    const data = regionData.data;
 
-    const left = Math.max(0, this.dirtyRect.left);
-    const top = Math.max(0, this.dirtyRect.top);
-    const right = Math.min(this.width, this.dirtyRect.right);
-    const bottom = Math.min(this.height, this.dirtyRect.bottom);
+    for (let i = 0; i < data.length; i += 4) {
+      const originalAlpha = data[i + 3]!;
 
-    for (let y = top; y < bottom; y++) {
-      for (let x = left; x < right; x++) {
-        const idx = (y * this.width + x) * 4;
-        const originalAlpha = this.bufferData[idx + 3]!;
-
-        if (originalAlpha < 1) {
-          // Fully transparent - copy as-is
-          this.wetEdgeBuffer[idx] = 0;
-          this.wetEdgeBuffer[idx + 1] = 0;
-          this.wetEdgeBuffer[idx + 2] = 0;
-          this.wetEdgeBuffer[idx + 3] = 0;
-          continue;
-        }
-
-        // LUT lookup: precomputed alpha mapping with hardness-adaptive edgeBoost
-        const newAlpha = lut[originalAlpha]!;
-
-        // Copy color, apply modified alpha
-        this.wetEdgeBuffer[idx] = this.bufferData[idx]!;
-        this.wetEdgeBuffer[idx + 1] = this.bufferData[idx + 1]!;
-        this.wetEdgeBuffer[idx + 2] = this.bufferData[idx + 2]!;
-        this.wetEdgeBuffer[idx + 3] = newAlpha;
+      if (originalAlpha < 1) {
+        // Fully transparent
+        data[i] = 0;
+        data[i + 1] = 0;
+        data[i + 2] = 0;
+        data[i + 3] = 0;
+        continue;
       }
+
+      // LUT lookup: precomputed alpha mapping with hardness-adaptive edgeBoost
+      data[i + 3] = lut[originalAlpha]!;
     }
   }
 
