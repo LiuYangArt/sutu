@@ -87,7 +87,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
 
   return (
     <div className="brush-panel-section">
-      {/* Section header with enable checkbox */}
+      {/* Section header */}
       <div className="section-header-row">
         <h4>Dual Brush</h4>
       </div>

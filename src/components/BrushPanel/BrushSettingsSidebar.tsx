@@ -55,26 +55,17 @@ export function BrushSettingsSidebar({
     }))
   );
 
-  const getToggleState = (id: string) => {
-    switch (id) {
-      case 'shape_dynamics':
-        return { checked: shapeDynamicsEnabled, onChange: toggleShapeDynamics };
-      case 'scattering':
-        return { checked: scatterEnabled, onChange: toggleScatter };
-      case 'texture':
-        return { checked: textureEnabled, onChange: toggleTexture };
-      case 'dual_brush':
-        return { checked: dualBrushEnabled, onChange: toggleDualBrush };
-      case 'color_dynamics':
-        return { checked: colorDynamicsEnabled, onChange: toggleColorDynamics };
-      case 'transfer':
-        return { checked: transferEnabled, onChange: toggleTransfer };
-      case 'wet_edges':
-        return { checked: wetEdgeEnabled, onChange: toggleWetEdge };
-      default:
-        return null;
-    }
+  const toggleMap: Record<string, { checked: boolean; onChange: () => void }> = {
+    shape_dynamics: { checked: shapeDynamicsEnabled, onChange: toggleShapeDynamics },
+    scattering: { checked: scatterEnabled, onChange: toggleScatter },
+    texture: { checked: textureEnabled, onChange: toggleTexture },
+    dual_brush: { checked: dualBrushEnabled, onChange: toggleDualBrush },
+    color_dynamics: { checked: colorDynamicsEnabled, onChange: toggleColorDynamics },
+    transfer: { checked: transferEnabled, onChange: toggleTransfer },
+    wet_edges: { checked: wetEdgeEnabled, onChange: toggleWetEdge },
   };
+
+  const getToggleState = (id: string) => toggleMap[id] || null;
 
   return (
     <div className="brush-sidebar">

@@ -34,7 +34,7 @@ export function ShapeDynamicsSettings(): JSX.Element {
 
   return (
     <div className="brush-panel-section">
-      {/* Section header with enable checkbox */}
+      {/* Section header */}
       <div className="section-header-row">
         <h4>Shape Dynamics</h4>
       </div>

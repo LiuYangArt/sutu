@@ -26,7 +26,7 @@ export function ScatterSettings(): JSX.Element {
 
   return (
     <div className="brush-panel-section">
-      {/* Section header with enable checkbox */}
+      {/* Section header */}
       <div className="section-header-row">
         <h4>Scattering</h4>
       </div>

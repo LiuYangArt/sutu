@@ -60,7 +60,7 @@ export function TextureSettings(): JSX.Element {
 
   return (
     <div className="brush-panel-section">
-      {/* Section header with enable checkbox */}
+      {/* Section header */}
       <div className="section-header-row">
         <div className="section-checkbox-label">
           <h4>Texture</h4>
