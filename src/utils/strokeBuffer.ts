@@ -21,6 +21,7 @@ import { TextureMaskCache } from './textureMaskCache';
 import type { BrushTexture, DualBrushSettings, DualBlendMode } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { patternManager, type PatternData } from './patternManager';
+import { applyScatter } from './scatterDynamics';
 
 export type MaskType = 'gaussian' | 'default';
 
@@ -503,7 +504,8 @@ export class StrokeAccumulator {
     x: number,
     y: number,
     size: number,
-    dualBrush: DualBrushSettings & { brushTexture?: BrushTexture }
+    dualBrush: DualBrushSettings & { brushTexture?: BrushTexture },
+    strokeAngle: number = 0
   ): void {
     // Lazy initialize accumulator to canvas size
     const accumulatorSize = this.width * this.height;
@@ -528,8 +530,33 @@ export class StrokeAccumulator {
       scatterVal = isNaN(parsed) ? 0 : parsed;
     }
 
-    const scatterAmount = (scatterVal / 100.0) * effectiveSize * 0.5;
     const count = Math.max(1, dualBrush.count || 1);
+    const scatterSettings = {
+      scatter: scatterVal,
+      scatterControl: 'off' as const,
+      bothAxes: dualBrush.bothAxes,
+      count,
+      countControl: 'off' as const,
+      countJitter: 0,
+    };
+    const scatteredPositions = applyScatter(
+      {
+        x,
+        y,
+        strokeAngle,
+        diameter: effectiveSize,
+        dynamics: {
+          pressure: 1,
+          tiltX: 0,
+          tiltY: 0,
+          rotation: 0,
+          direction: 0,
+          initialDirection: 0,
+          fadeProgress: 0,
+        },
+      },
+      scatterSettings
+    );
 
     // Setup secondary cache
     let useTexture = false;
@@ -544,21 +571,9 @@ export class StrokeAccumulator {
     // Note: for non-texture brushes, mask generation is also inside loop
 
     // Stamp loop (for count > 1)
-    for (let i = 0; i < count; i++) {
-      // Apply scatter
-      let dx = 0;
-      let dy = 0;
-      if (scatterAmount > 0) {
-        dx = (Math.random() * 2 - 1) * scatterAmount;
-        dy = (Math.random() * 2 - 1) * scatterAmount;
-        // NOTE: bothAxes logic requires stroke direction info which we don't have here
-        // PS "single axis" scatter is perpendicular to stroke direction
-        // For now, always scatter on both axes to avoid direction-dependent artifacts
-        // TODO: Pass stroke direction to enable proper single-axis scatter
-      }
-
-      const stampX = x + dx;
-      const stampY = y + dy;
+    for (const pos of scatteredPositions) {
+      const stampX = pos.x;
+      const stampY = pos.y;
 
       // Apply angle jitter (PS behavior: each secondary tip has random rotation)
       const randomAngle = Math.random() * 360;

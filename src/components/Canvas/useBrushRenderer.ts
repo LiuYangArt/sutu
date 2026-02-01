@@ -187,6 +187,7 @@ export function useBrushRenderer({
 
   // Shape Dynamics: Track previous dab position for direction calculation
   const prevDabPosRef = useRef<{ x: number; y: number } | null>(null);
+  const prevSecondaryDabPosRef = useRef<{ x: number; y: number } | null>(null);
   // Shape Dynamics: Capture initial direction at stroke start
   const initialDirectionRef = useRef<number>(0);
 
@@ -265,6 +266,7 @@ export function useBrushRenderer({
 
       // Shape Dynamics: Reset direction tracking for new stroke
       prevDabPosRef.current = null;
+      prevSecondaryDabPosRef.current = null;
       initialDirectionRef.current = 0;
 
       if (backend === 'gpu' && gpuBufferRef.current) {
@@ -351,10 +353,27 @@ export function useBrushRenderer({
 
         // Stamp each secondary dab to the stroke-level accumulator
         for (const secDab of secondaryDabs) {
-          cpuBufferRef.current.stampSecondaryDab(secDab.x, secDab.y, secondarySize, {
-            ...dualBrush,
-            brushTexture: dualBrush.texture,
-          });
+          let secondaryDirection = 0;
+          if (prevSecondaryDabPosRef.current) {
+            secondaryDirection = calculateDirection(
+              prevSecondaryDabPosRef.current.x,
+              prevSecondaryDabPosRef.current.y,
+              secDab.x,
+              secDab.y
+            );
+          }
+          prevSecondaryDabPosRef.current = { x: secDab.x, y: secDab.y };
+
+          cpuBufferRef.current.stampSecondaryDab(
+            secDab.x,
+            secDab.y,
+            secondarySize,
+            {
+              ...dualBrush,
+              brushTexture: dualBrush.texture,
+            },
+            (secondaryDirection * Math.PI) / 180
+          );
         }
       }
 
