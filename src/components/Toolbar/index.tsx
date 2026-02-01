@@ -12,10 +12,9 @@ import {
   FolderOpen,
   LogOut,
   ChevronRight,
-  Eye,
-  EyeOff,
   SlidersHorizontal,
-  Stamp,
+  Paintbrush,
+  Grid3x3,
 } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
@@ -158,8 +157,9 @@ function AppMenu() {
             {panelsSubmenuOpen && (
               <div className="submenu">
                 <button className="menu-item" onClick={handleToggleBrushPanel}>
-                  {brushPanel?.isOpen ? <Eye size={14} /> : <EyeOff size={14} />}
-                  <span>Brush</span>
+                  <Paintbrush size={14} />
+                  <span>Brush Settings</span>
+                  <span className="shortcut">F5</span>
                 </button>
                 <button
                   className="menu-item"
@@ -169,7 +169,7 @@ function AppMenu() {
                     setIsOpen(false);
                   }}
                 >
-                  <Stamp size={14} />
+                  <Grid3x3 size={14} />
                   <span>Pattern Library</span>
                   <span className="shortcut">F6</span>
                 </button>

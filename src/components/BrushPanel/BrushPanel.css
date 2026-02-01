@@ -73,6 +73,21 @@
   text-overflow: ellipsis;
 }
 
+.sidebar-checkbox {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+.sidebar-checkbox-spacer {
+  width: 14px;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
 /* Content Area */
 .brush-content {
   flex: 1;

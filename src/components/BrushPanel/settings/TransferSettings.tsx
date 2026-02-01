@@ -78,7 +78,6 @@ export function TransferSettings(): JSX.Element {
     transfer,
     setTransfer,
     transferEnabled,
-    toggleTransfer,
   } = useToolStore();
 
   const disabled = !transferEnabled;
@@ -87,10 +86,7 @@ export function TransferSettings(): JSX.Element {
     <div className="brush-panel-section">
       {/* Section header with enable checkbox */}
       <div className="section-header-row">
-        <label className="section-checkbox-label">
-          <input type="checkbox" checked={transferEnabled} onChange={toggleTransfer} />
-          <h4>Transfer</h4>
-        </label>
+        <h4>Transfer</h4>
       </div>
 
       {/* Base Flow/Opacity sliders (always visible) */}

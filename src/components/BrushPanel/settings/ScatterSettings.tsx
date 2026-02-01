@@ -20,7 +20,7 @@ const SCATTER_CONTROL_OPTIONS: SelectOption[] = [
 ];
 
 export function ScatterSettings(): JSX.Element {
-  const { scatter, setScatter, scatterEnabled, toggleScatter } = useToolStore();
+  const { scatter, setScatter, scatterEnabled } = useToolStore();
 
   const disabled = !scatterEnabled;
 
@@ -28,10 +28,7 @@ export function ScatterSettings(): JSX.Element {
     <div className="brush-panel-section">
       {/* Section header with enable checkbox */}
       <div className="section-header-row">
-        <label className="section-checkbox-label">
-          <input type="checkbox" checked={scatterEnabled} onChange={toggleScatter} />
-          <h4>Scattering</h4>
-        </label>
+        <h4>Scattering</h4>
       </div>
 
       {/* Scatter Group */}

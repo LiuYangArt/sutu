@@ -20,8 +20,7 @@ const FB_CONTROL_OPTIONS: SelectOption[] = [
 ];
 
 export function ColorDynamicsSettings(): JSX.Element {
-  const { colorDynamics, setColorDynamics, colorDynamicsEnabled, toggleColorDynamics } =
-    useToolStore();
+  const { colorDynamics, setColorDynamics, colorDynamicsEnabled } = useToolStore();
 
   const disabled = !colorDynamicsEnabled;
 
@@ -29,10 +28,7 @@ export function ColorDynamicsSettings(): JSX.Element {
     <div className="brush-panel-section">
       {/* Section header with enable checkbox */}
       <div className="section-header-row">
-        <label className="section-checkbox-label">
-          <input type="checkbox" checked={colorDynamicsEnabled} onChange={toggleColorDynamics} />
-          <h4>Color Dynamics</h4>
-        </label>
+        <h4>Color Dynamics</h4>
       </div>
 
       {/* Foreground/Background Jitter Group */}

@@ -313,7 +313,7 @@ export function useBrushRenderer({
           initialDirection: 0,
           fadeProgress: 0,
         };
-        spacingSize = computeControlledSize(size, config.shapeDynamics, spacingInput);
+        spacingSize = computeControlledSize(size, config.shapeDynamics!, spacingInput);
       }
 
       // Get dab positions from stamper

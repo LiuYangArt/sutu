@@ -33,7 +33,7 @@ const BLEND_MODE_OPTIONS: SelectOption[] = [
 // Helper removed - using shared brushLoader
 
 export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): JSX.Element {
-  const { dualBrush, setDualBrush, dualBrushEnabled, toggleDualBrush } = useToolStore();
+  const { dualBrush, setDualBrush, dualBrushEnabled } = useToolStore();
 
   const disabled = !dualBrushEnabled;
 
@@ -89,10 +89,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
     <div className="brush-panel-section">
       {/* Section header with enable checkbox */}
       <div className="section-header-row">
-        <label className="section-checkbox-label">
-          <input type="checkbox" checked={dualBrushEnabled} onChange={toggleDualBrush} />
-          <h4>Dual Brush</h4>
-        </label>
+        <h4>Dual Brush</h4>
       </div>
 
       {/* Mode & Flip */}
