@@ -35,6 +35,12 @@ import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '
 import { patternManager } from '@/utils/patternManager';
 import { applyScatter } from '@/utils/scatterDynamics';
 
+interface DebugRect {
+  rect: Rect;
+  label: string;
+  color: string;
+}
+
 export class GPUStrokeAccumulator {
   private device: GPUDevice;
   private pingPongBuffer: PingPongBuffer;
@@ -83,6 +89,10 @@ export class GPUStrokeAccumulator {
   private height: number;
   private active: boolean = false;
   private dirtyRect: Rect = { left: 0, top: 0, right: 0, bottom: 0 };
+  private lastPrimaryBatchRect: Rect | null = null;
+  private lastPrimaryBatchLabel: string | null = null;
+  private lastDualBatchRect: Rect | null = null;
+  private lastDualBatchLabel: string | null = null;
 
   // Preview canvas for compatibility with existing rendering system
   private previewCanvas: HTMLCanvasElement;
@@ -688,6 +698,10 @@ export class GPUStrokeAccumulator {
       right: 0,
       bottom: 0,
     };
+    this.lastPrimaryBatchRect = null;
+    this.lastPrimaryBatchLabel = null;
+    this.lastDualBatchRect = null;
+    this.lastDualBatchLabel = null;
     this.dualDirtyRect = {
       left: this.width,
       top: this.height,
@@ -1102,6 +1116,97 @@ export class GPUStrokeAccumulator {
     };
   }
 
+  private rectFromBbox(
+    bbox: { x: number; y: number; width: number; height: number },
+    scale: number
+  ): Rect {
+    const invScale = scale > 0 ? 1 / scale : 1;
+    return {
+      left: bbox.x * invScale,
+      top: bbox.y * invScale,
+      right: (bbox.x + bbox.width) * invScale,
+      bottom: (bbox.y + bbox.height) * invScale,
+    };
+  }
+
+  private computeDabsBoundingBox(
+    dabs: DabInstanceData[],
+    canvasWidth: number,
+    canvasHeight: number
+  ): { x: number; y: number; width: number; height: number } {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const dab of dabs) {
+      const effectiveRadius = calculateEffectiveRadius(dab.size, dab.hardness);
+      minX = Math.min(minX, dab.x - effectiveRadius);
+      minY = Math.min(minY, dab.y - effectiveRadius);
+      maxX = Math.max(maxX, dab.x + effectiveRadius);
+      maxY = Math.max(maxY, dab.y + effectiveRadius);
+    }
+
+    const margin = 2;
+    const x = Math.max(0, Math.floor(minX) - margin);
+    const y = Math.max(0, Math.floor(minY) - margin);
+    const right = Math.min(canvasWidth, Math.ceil(maxX) + margin);
+    const bottom = Math.min(canvasHeight, Math.ceil(maxY) + margin);
+
+    return {
+      x,
+      y,
+      width: Math.max(0, right - x),
+      height: Math.max(0, bottom - y),
+    };
+  }
+
+  private computeTextureDabsBoundingBox(
+    dabs: TextureDabInstanceData[],
+    canvasWidth: number,
+    canvasHeight: number
+  ): { x: number; y: number; width: number; height: number } {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const dab of dabs) {
+      const texAspect = dab.texWidth / dab.texHeight;
+      let halfWidth: number;
+      let halfHeight: number;
+
+      if (texAspect >= 1.0) {
+        halfWidth = dab.size / 2;
+        halfHeight = halfWidth / texAspect;
+      } else {
+        halfHeight = dab.size / 2;
+        halfWidth = halfHeight * texAspect;
+      }
+
+      halfHeight = halfHeight * dab.roundness;
+
+      const effectiveRadius = Math.sqrt(halfWidth * halfWidth + halfHeight * halfHeight);
+      minX = Math.min(minX, dab.x - effectiveRadius);
+      minY = Math.min(minY, dab.y - effectiveRadius);
+      maxX = Math.max(maxX, dab.x + effectiveRadius);
+      maxY = Math.max(maxY, dab.y + effectiveRadius);
+    }
+
+    const margin = 2;
+    const x = Math.max(0, Math.floor(minX) - margin);
+    const y = Math.max(0, Math.floor(minY) - margin);
+    const right = Math.min(canvasWidth, Math.ceil(maxX) + margin);
+    const bottom = Math.min(canvasHeight, Math.ceil(maxY) + margin);
+
+    return {
+      x,
+      y,
+      width: Math.max(0, right - x),
+      height: Math.max(0, bottom - y),
+    };
+  }
+
   /**
    * Force flush pending dabs to GPU (used for benchmarking)
    */
@@ -1148,6 +1253,8 @@ export class GPUStrokeAccumulator {
     // 1. Get data and upload to GPU
     const dabs = this.instanceBuffer.getDabsData();
     const bbox = this.instanceBuffer.getBoundingBox();
+    this.lastPrimaryBatchRect = this.rectFromBbox(bbox, this.currentRenderScale);
+    this.lastPrimaryBatchLabel = 'primary-batch';
 
     // Flush uploads to GPU and resets the pending/bbox counters
     const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();
@@ -1343,6 +1450,13 @@ export class GPUStrokeAccumulator {
     // 1. Get data and upload to GPU
     const dabs = this.textureInstanceBuffer.getDabsData();
     const bbox = this.textureInstanceBuffer.getBoundingBox();
+    const textureBbox = this.computeTextureDabsBoundingBox(
+      dabs,
+      this.pingPongBuffer.textureWidth,
+      this.pingPongBuffer.textureHeight
+    );
+    this.lastPrimaryBatchRect = this.rectFromBbox(textureBbox, this.currentRenderScale);
+    this.lastPrimaryBatchLabel = 'primary-texture-batch';
     const { buffer: gpuBatchBuffer } = this.textureInstanceBuffer.flush();
 
     const encoder = this.device.createCommandEncoder({
@@ -1535,6 +1649,13 @@ export class GPUStrokeAccumulator {
       }
 
       const dabs = this.secondaryInstanceBuffer.getDabsData();
+      const dualBbox = this.computeDabsBoundingBox(
+        dabs,
+        this.dualMaskBuffer.textureWidth,
+        this.dualMaskBuffer.textureHeight
+      );
+      this.lastDualBatchRect = this.rectFromBbox(dualBbox, this.currentRenderScale);
+      this.lastDualBatchLabel = 'dual-batch';
       this.secondaryInstanceBuffer.clear();
 
       const encoder = this.device.createCommandEncoder({
@@ -1576,6 +1697,13 @@ export class GPUStrokeAccumulator {
       }
 
       const dabs = this.secondaryTextureInstanceBuffer.getDabsData();
+      const dualTextureBbox = this.computeTextureDabsBoundingBox(
+        dabs,
+        this.dualMaskBuffer.textureWidth,
+        this.dualMaskBuffer.textureHeight
+      );
+      this.lastDualBatchRect = this.rectFromBbox(dualTextureBbox, this.currentRenderScale);
+      this.lastDualBatchLabel = 'dual-texture-batch';
       this.secondaryTextureInstanceBuffer.clear();
 
       const encoder = this.device.createCommandEncoder({
@@ -2048,6 +2176,33 @@ export class GPUStrokeAccumulator {
    */
   getDirtyRect(): Rect {
     return { ...this.dirtyRect };
+  }
+
+  getDebugRects(): DebugRect[] {
+    const rects: DebugRect[] = [];
+
+    const combined = this.getCombinedDirtyRect();
+    if (this.hasDirtyRect(combined)) {
+      rects.push({ rect: combined, label: 'combined-dirty', color: '#34c759' });
+    }
+
+    if (this.lastPrimaryBatchRect) {
+      rects.push({
+        rect: this.lastPrimaryBatchRect,
+        label: this.lastPrimaryBatchLabel ?? 'primary-batch',
+        color: '#ff3b30',
+      });
+    }
+
+    if (this.lastDualBatchRect) {
+      rects.push({
+        rect: this.lastDualBatchRect,
+        label: this.lastDualBatchLabel ?? 'dual-batch',
+        color: '#0a84ff',
+      });
+    }
+
+    return rects;
   }
 
   /**

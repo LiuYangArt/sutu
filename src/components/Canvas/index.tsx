@@ -39,6 +39,7 @@ declare global {
       layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>,
       benchmarkSessionId?: string
     ) => Promise<void>;
+    __gpuBrushDebugRects?: boolean;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;
@@ -76,6 +77,44 @@ function fillWithMask(
 
   // Draw the result onto the active layer
   ctx.drawImage(maskCanvas, 0, 0);
+}
+
+function drawDebugRects(
+  ctx: CanvasRenderingContext2D,
+  rects: Array<{
+    rect: { left: number; top: number; right: number; bottom: number };
+    label: string;
+    color: string;
+  }>
+): void {
+  if (rects.length === 0) return;
+
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 2]);
+  ctx.font = '12px monospace';
+  ctx.textBaseline = 'top';
+
+  const canvasWidth = ctx.canvas.width;
+  const canvasHeight = ctx.canvas.height;
+
+  for (const { rect, label, color } of rects) {
+    const left = Math.max(0, Math.floor(rect.left));
+    const top = Math.max(0, Math.floor(rect.top));
+    const right = Math.min(canvasWidth, Math.ceil(rect.right));
+    const bottom = Math.min(canvasHeight, Math.ceil(rect.bottom));
+    const width = right - left;
+    const height = bottom - top;
+
+    if (width <= 0 || height <= 0) continue;
+
+    ctx.strokeStyle = color;
+    ctx.strokeRect(left + 0.5, top + 0.5, width, height);
+    ctx.fillStyle = color;
+    ctx.fillText(label, left + 2, top + 2);
+  }
+
+  ctx.restore();
 }
 
 export function Canvas() {
@@ -227,6 +266,7 @@ export function Canvas() {
     getPreviewCanvas,
     getPreviewOpacity,
     isStrokeActive,
+    getDebugRects,
     flushPending,
     backend: _activeBackend,
     gpuAvailable: _gpuAvailable,
@@ -974,7 +1014,22 @@ export function Canvas() {
     const compositeCanvas = renderer.composite(preview);
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(compositeCanvas, 0, 0);
-  }, [width, height, isStrokeActive, getPreviewCanvas, getPreviewOpacity, activeLayerId]);
+
+    if (window.__gpuBrushDebugRects) {
+      const rects = getDebugRects();
+      if (rects && rects.length > 0) {
+        drawDebugRects(ctx, rects);
+      }
+    }
+  }, [
+    width,
+    height,
+    isStrokeActive,
+    getPreviewCanvas,
+    getPreviewOpacity,
+    getDebugRects,
+    activeLayerId,
+  ]);
 
   // Process a single point through the brush renderer WITHOUT triggering composite
   // Used by batch processing loop in RAF

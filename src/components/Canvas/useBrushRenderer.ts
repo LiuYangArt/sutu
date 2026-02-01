@@ -10,7 +10,13 @@
  */
 
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { StrokeAccumulator, BrushStamper, DabParams, MaskType } from '@/utils/strokeBuffer';
+import {
+  StrokeAccumulator,
+  BrushStamper,
+  DabParams,
+  MaskType,
+  type Rect,
+} from '@/utils/strokeBuffer';
 import {
   applyPressureCurve,
   PressureCurve,
@@ -160,6 +166,7 @@ export interface UseBrushRendererResult {
   backend: RenderBackend;
   /** Whether GPU is available */
   gpuAvailable: boolean;
+  getDebugRects: () => Array<{ rect: Rect; label: string; color: string }> | null;
 }
 
 export function useBrushRenderer({
@@ -701,6 +708,13 @@ export function useBrushRenderer({
     return cpuBufferRef.current?.isActive() ?? false;
   }, [backend]);
 
+  const getDebugRects = useCallback(() => {
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      return gpuBufferRef.current.getDebugRects();
+    }
+    return null;
+  }, [backend]);
+
   /**
    * Flush pending dabs to GPU (called once per frame by RAF loop)
    * This ensures all dabs accumulated during the frame are rendered together
@@ -730,6 +744,7 @@ export function useBrushRenderer({
     getPreviewCanvas,
     getPreviewOpacity,
     isStrokeActive,
+    getDebugRects,
     flushPending,
     backend,
     gpuAvailable,
