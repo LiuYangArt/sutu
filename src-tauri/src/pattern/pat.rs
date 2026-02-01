@@ -500,7 +500,7 @@ mod tests {
     fn test_parse_test_patterns() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
-            .unwrap()
+            .expect("Failed to get parent directory of CARGO_MANIFEST_DIR")
             .join("abr/test_patterns.pat");
 
         if !path.exists() {
