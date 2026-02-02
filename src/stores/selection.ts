@@ -297,13 +297,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }),
 
   selectAll: (width, height) => {
-    // All corners must be marked as 'polygonal' to prevent pathToMask from applying smoothing
-    const path: SelectionPoint[] = [
-      { x: 0, y: 0, type: 'polygonal' },
-      { x: width, y: 0, type: 'polygonal' },
-      { x: width, y: height, type: 'polygonal' },
-      { x: 0, y: height, type: 'polygonal' },
-    ];
+    const path = createRectPath({ x: 0, y: 0 }, { x: width, y: height });
     const mask = pathToMask(path, width, height);
 
     set({
