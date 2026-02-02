@@ -57,6 +57,7 @@ describe('StrokeAccumulator preview sync', () => {
     // @ts-expect-error - Overloading getContext for testing causes TS issues with disjoint union types
     getContextSpy = vi
       .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .mockImplementation(() => mockCtx as any);
   });
 

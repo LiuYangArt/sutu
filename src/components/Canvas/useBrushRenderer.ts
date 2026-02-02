@@ -265,7 +265,7 @@ export function useBrushRenderer({
 
     dualBrushTextureIdRef.current = textureId;
     gpuBufferRef.current.prewarmDualBrushTexture(dualBrush.texture);
-  }, [gpuAvailable, dualBrush?.texture?.id]);
+  }, [gpuAvailable, dualBrush?.texture]);
 
   // Determine actual backend based on renderMode and GPU availability
   const backend: RenderBackend =
