@@ -152,3 +152,64 @@ const isAltMode = altPressedRef.current;
 ## 相关文档
 
 - [m4-selection-lasso.md](./m4-selection-lasso.md) - Lasso 工具的 Alt 键处理经验
+
+---
+
+## 后续修复：Alt 切换时应用当前笔划
+
+**日期**: 2026-02-02
+**问题**: 画笔绘制中途按 Alt 取色，当前 stroke 被丢弃而非应用
+
+### 根因
+
+`useAltEyedropper` hook 在切换工具时，没有调用 `finishCurrentStroke()` 来完成进行中的笔划。
+
+### 修复方案
+
+为 `useAltEyedropper` 添加 `onBeforeSwitch` 回调参数，在切换到取色工具前调用 `finishCurrentStroke()`：
+
+```diff
+-export function useAltEyedropper(previousToolRef: ...): void
++export function useAltEyedropper(
++  previousToolRef: ...,
++  onBeforeSwitch?: () => void | Promise<void>
++): void
+```
+
+调用时传入回调：
+
+```typescript
+useAltEyedropper(previousToolRef, finishCurrentStroke);
+```
+
+### 修改文件
+
+- `src/components/Canvas/useAltEyedropper.ts`: 添加 `onBeforeSwitch` 回调参数
+- `src/components/Canvas/index.tsx`: 传入 `finishCurrentStroke`
+- `src/components/Canvas/__tests__/useAltEyedropper.test.ts`: 新增 `onBeforeSwitch` 测试用例
+
+### 测试
+
+| 测试用例                                                    | 验证点               |
+| ----------------------------------------------------------- | -------------------- |
+| `should call onBeforeSwitch before switching to eyedropper` | 回调在工具切换前调用 |
+
+---
+
+## 后续修复：Alt 切换时 GPU 笔刷残留 dab
+
+**日期**: 2026-02-02
+**问题**: GPU 笔刷绘制中按 Alt 切换 eyedropper 时，偶发在切换点留下短小 dab；CPU 笔刷无此问题
+
+### 根因
+
+- `useAltEyedropper` 在 keydown 时触发 `finishCurrentStroke()` 后立刻切换到 eyedropper，GPU 结束笔划是异步的，存在窗口期
+- `handlePointerMove` 在 `currentTool !== 'brush'` 时会走 legacy 绘制分支；当工具已变成 eyedropper 且 `isDrawingRef` 仍为 true，会继续绘制一小段
+
+### 修复方案
+
+在 `handlePointerMove` 中增加 guard：当工具不是 brush/eraser 时直接 return，避免 eyedropper 进入 legacy 绘制路径。
+
+### 修改文件
+
+- `src/components/Canvas/index.tsx`

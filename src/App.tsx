@@ -4,6 +4,7 @@ import { Toolbar } from './components/Toolbar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { PatternLibraryPanel } from './components/PatternLibrary';
 import { useDocumentStore } from './stores/document';
+import { useSelectionStore } from './stores/selection';
 import { useTabletStore } from './stores/tablet';
 import { useToolStore } from './stores/tool';
 import { useSettingsStore, initializeSettings } from './stores/settings';
@@ -21,6 +22,8 @@ declare global {
   interface Window {
     __openPatternLibrary?: () => void;
     __canvasFillLayer?: (color: string) => void;
+    __canvasClearSelection?: () => void;
+    __canvasRemoveLayer?: (id: string) => void;
   }
 }
 
@@ -139,6 +142,28 @@ function App() {
         e.preventDefault();
         const brushColor = useToolStore.getState().brushColor;
         window.__canvasFillLayer?.(brushColor);
+        return;
+      }
+
+      // Delete: clear selection or remove active layer
+      if (e.key === 'Delete' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+
+        const { hasSelection } = useSelectionStore.getState();
+        if (hasSelection) {
+          window.__canvasClearSelection?.();
+          return;
+        }
+
+        const { activeLayerId, layers } = useDocumentStore.getState();
+        if (!activeLayerId) return;
+
+        const activeLayer = layers.find((l) => l.id === activeLayerId);
+
+        // Prevent deleting background layer
+        if (activeLayer && !activeLayer.isBackground) {
+          window.__canvasRemoveLayer?.(activeLayerId);
+        }
         return;
       }
     },

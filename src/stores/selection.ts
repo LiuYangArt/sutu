@@ -297,12 +297,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }),
 
   selectAll: (width, height) => {
-    const path = [
-      { x: 0, y: 0 },
-      { x: width, y: 0 },
-      { x: width, y: height },
-      { x: 0, y: height },
-    ];
+    const path = createRectPath({ x: 0, y: 0 }, { x: width, y: height });
     const mask = pathToMask(path, width, height);
 
     set({

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { NonLinearSliderConfig } from '@/utils/sliderScales';
 import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
 /** Pressure toggle button component */
@@ -160,6 +160,37 @@ export function SliderRow({
     step,
     nonLinearConfig,
   });
+  const rafIdRef = useRef<number | null>(null);
+  const latestValueRef = useRef<number>(value);
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    latestValueRef.current = value;
+  }, [value]);
+
+  useEffect(
+    () => () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    },
+    []
+  );
+
+  const emitChange = useCallback((nextValue: number) => {
+    latestValueRef.current = nextValue;
+    if (rafIdRef.current !== null) return;
+
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      onChangeRef.current(latestValueRef.current);
+    });
+  }, []);
 
   return (
     <div className={`brush-setting-row ${disabled ? 'disabled' : ''}`}>
@@ -177,7 +208,7 @@ export function SliderRow({
         max={internalMax}
         step={1} // Internal step is always 1 (fine-grained control)
         value={sliderPosition}
-        onChange={(e) => onChange(calculateValue(Number(e.target.value)))}
+        onChange={(e) => emitChange(calculateValue(Number(e.target.value)))}
         disabled={disabled}
       />
       <EditableValue
@@ -186,7 +217,7 @@ export function SliderRow({
         min={min}
         max={max}
         disabled={disabled}
-        onChange={onChange}
+        onChange={emitChange}
       />
     </div>
   );
