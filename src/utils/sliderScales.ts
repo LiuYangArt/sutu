@@ -12,6 +12,14 @@ export interface NonLinearSliderConfig {
   midValue: number;
   /** The normalized position (0.0 to 1.0) where midValue should be placed. Defaults to 0.5 */
   midPositionRatio?: number;
+  /**
+   * For the second segment (midValue -> max), controls how values are distributed.
+   * - 1.0: Linear (standard)
+   * - > 1.0: Compressed towards start (values increase slowly then fast)
+   * - < 1.0: Compressed towards end (values increase fast then slowly)
+   * A value of ~2.6 approximates 250 being at 75% point between 100 and 1000.
+   */
+  secondHalfExponent?: number;
 }
 
 /**
@@ -48,9 +56,18 @@ export function countToSliderProgress(
     return relativeProgress * midPositionRatio;
   } else {
     // Second segment: midValue -> max maps to midPositionRatio -> 1.0
+    // If exponent is defined, apply inverse power curve (root)
     const segmentRange = max - midValue;
     if (segmentRange === 0) return 1;
-    const relativeProgress = (clamped - midValue) / segmentRange;
+    let relativeProgress = (clamped - midValue) / segmentRange;
+
+    // Apply inverse curve (Value -> Slider Position)
+    // If Value = t^k, then Slider Position t = Value^(1/k)
+    const { secondHalfExponent = 1 } = config;
+    if (secondHalfExponent !== 1) {
+      relativeProgress = Math.pow(relativeProgress, 1 / secondHalfExponent);
+    }
+
     return midPositionRatio + relativeProgress * (1 - midPositionRatio);
   }
 }
@@ -87,8 +104,15 @@ export function sliderProgressToValue(
       result = min + normalizedSegmentProgress * (midValue - min);
     } else {
       // Second segment
-      const normalizedSegmentProgress =
-        (clampedProgress - midPositionRatio) / (1 - midPositionRatio);
+      let normalizedSegmentProgress = (clampedProgress - midPositionRatio) / (1 - midPositionRatio);
+
+      // Apply power curve (Slider Position -> Value)
+      // Value = t^k
+      const { secondHalfExponent = 1 } = config;
+      if (secondHalfExponent !== 1) {
+        normalizedSegmentProgress = Math.pow(normalizedSegmentProgress, secondHalfExponent);
+      }
+
       result = midValue + normalizedSegmentProgress * (max - midValue);
     }
   }

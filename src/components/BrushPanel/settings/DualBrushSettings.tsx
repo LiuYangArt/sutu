@@ -188,7 +188,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           displayValue={`${Math.round(dualBrush.size)} px`}
           onChange={(v) => setDualBrush({ size: v })}
           disabled={disabled}
-          nonLinearConfig={{ midValue: 100 }}
+          nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
         />
         <SliderRow
           label="Spacing"
@@ -198,7 +198,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           displayValue={`${Math.round(dualBrush.spacing * 100)}%`}
           onChange={(v) => setDualBrush({ spacing: v / 100 })}
           disabled={disabled}
-          nonLinearConfig={{ midValue: 100 }}
+          nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
         />
       </div>
 

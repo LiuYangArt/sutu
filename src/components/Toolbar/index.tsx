@@ -263,13 +263,17 @@ export function Toolbar() {
             step={1}
             // Transform value -> slider position
             value={Math.round(
-              countToSliderProgress(currentSize, 1, 1000, { midValue: 100 }) * 10000
+              countToSliderProgress(currentSize, 1, 1000, {
+                midValue: 100,
+                secondHalfExponent: 2.5,
+              }) * 10000
             )}
             // Transform slider position -> value
             onChange={(e) => {
               const progress = Number(e.target.value) / 10000;
               const newValue = sliderProgressToValue(progress, 1, 1000, 1, {
                 midValue: 100,
+                secondHalfExponent: 2.5,
               });
               setCurrentSize(newValue);
             }}

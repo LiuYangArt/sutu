@@ -33,7 +33,7 @@ export function BrushTipShape(): JSX.Element {
         pressureEnabled={pressureSizeEnabled}
         onPressureToggle={togglePressureSize}
         pressureTitle="Pressure affects size"
-        nonLinearConfig={{ midValue: 100 }}
+        nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
       />
 
       <SliderRow
@@ -82,7 +82,7 @@ export function BrushTipShape(): JSX.Element {
         max={1000}
         displayValue={`${Math.round(brushSpacing * 100)}%`}
         onChange={(v) => setBrushSpacing(v / 100)}
-        nonLinearConfig={{ midValue: 100 }}
+        nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
       />
     </div>
   );
