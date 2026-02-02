@@ -1,9 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
-import {
-  countToSliderProgress,
-  sliderProgressToValue,
-  NonLinearSliderConfig,
-} from '@/utils/sliderScales';
+import { useState, useEffect } from 'react';
+import { NonLinearSliderConfig } from '@/utils/sliderScales';
+import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
 /** Pressure toggle button component */
 interface PressureToggleProps {
   enabled: boolean;
@@ -156,21 +153,13 @@ export function SliderRow({
   disabled = false,
   nonLinearConfig,
 }: SliderRowProps): JSX.Element {
-  // We use a high internal resolution for the slider input to ensure smooth movement
-  // even in compressed ranges.
-  const INTERNAL_MAX = 10000;
-
-  // Calculate the current slider position (0-INTERNAL_MAX) based on external value
-  const sliderPosition = useMemo(() => {
-    const progress = countToSliderProgress(value, min, max, nonLinearConfig);
-    return Math.round(progress * INTERNAL_MAX);
-  }, [value, min, max, nonLinearConfig]);
-
-  const handleSliderChange = (newPosition: number) => {
-    const progress = newPosition / INTERNAL_MAX;
-    const newValue = sliderProgressToValue(progress, min, max, step, nonLinearConfig);
-    onChange(newValue);
-  };
+  const { sliderPosition, internalMax, calculateValue } = useNonLinearSlider({
+    value,
+    min,
+    max,
+    step,
+    nonLinearConfig,
+  });
 
   return (
     <div className={`brush-setting-row ${disabled ? 'disabled' : ''}`}>
@@ -185,10 +174,10 @@ export function SliderRow({
       <input
         type="range"
         min={0}
-        max={INTERNAL_MAX}
+        max={internalMax}
         step={1} // Internal step is always 1 (fine-grained control)
         value={sliderPosition}
-        onChange={(e) => handleSliderChange(Number(e.target.value))}
+        onChange={(e) => onChange(calculateValue(Number(e.target.value)))}
         disabled={disabled}
       />
       <EditableValue
