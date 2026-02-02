@@ -34,6 +34,9 @@ const DAB_DATA_FLOATS = 12;
 // Total = 80 bytes
 const UNIFORM_BUFFER_SIZE = 80;
 
+const alignTo = (value: number, alignment: number): number =>
+  Math.ceil(value / alignment) * alignment;
+
 export class ComputeTextureBrushPipeline {
   private device: GPUDevice;
   private pipeline!: GPUComputePipeline;
@@ -41,12 +44,15 @@ export class ComputeTextureBrushPipeline {
   private uniformBuffer: GPUBuffer;
   private dabBuffer: GPUBuffer;
   private dummyPatternTexture: GPUTexture;
+  private uniformStride: number;
+  private uniformCapacity = 1;
+  private dabStride: number;
+  private dabBatchCapacity = 1;
 
   // BindGroup cache (reduce GC pressure)
   // Key format: "inputLabel_outputLabel_brushTextureLabel_patternTextureLabel"
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
 
-  private maxDabs = 256;
   private canvasWidth: number = 0;
   private canvasHeight: number = 0;
 
@@ -57,16 +63,24 @@ export class ComputeTextureBrushPipeline {
     this.device = device;
 
     // Uniform buffer
+    this.uniformStride = alignTo(
+      UNIFORM_BUFFER_SIZE,
+      device.limits.minUniformBufferOffsetAlignment
+    );
     this.uniformBuffer = device.createBuffer({
       label: 'Compute Texture Brush Uniforms',
-      size: UNIFORM_BUFFER_SIZE,
+      size: this.uniformStride,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     // Dab storage buffer (48 bytes per dab)
+    this.dabStride = alignTo(
+      MAX_DABS_PER_BATCH * DAB_DATA_SIZE,
+      device.limits.minStorageBufferOffsetAlignment
+    );
     this.dabBuffer = device.createBuffer({
       label: 'Compute Texture Brush Dabs',
-      size: this.maxDabs * DAB_DATA_SIZE,
+      size: this.dabStride,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
@@ -97,12 +111,12 @@ export class ComputeTextureBrushPipeline {
         {
           binding: 0,
           visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: 'uniform' },
+          buffer: { type: 'uniform', hasDynamicOffset: true },
         },
         {
           binding: 1,
           visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: 'read-only-storage' },
+          buffer: { type: 'read-only-storage', hasDynamicOffset: true },
         },
         {
           binding: 2,
@@ -159,6 +173,100 @@ export class ComputeTextureBrushPipeline {
     this.colorBlendMode = mode === 'linear' ? 1 : 0;
   }
 
+  private ensureUniformCapacity(required: number): void {
+    if (required <= this.uniformCapacity) {
+      return;
+    }
+    this.uniformCapacity = Math.max(required, this.uniformCapacity * 2);
+    this.uniformBuffer.destroy();
+    this.uniformBuffer = this.device.createBuffer({
+      label: 'Compute Texture Brush Uniforms',
+      size: this.uniformCapacity * this.uniformStride,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.cachedBindGroups.clear();
+  }
+
+  private ensureDabCapacity(requiredBatches: number): void {
+    if (requiredBatches <= this.dabBatchCapacity) {
+      return;
+    }
+    this.dabBatchCapacity = Math.max(requiredBatches, this.dabBatchCapacity * 2);
+    this.dabBuffer.destroy();
+    this.dabBuffer = this.device.createBuffer({
+      label: 'Compute Texture Brush Dabs',
+      size: this.dabBatchCapacity * this.dabStride,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.cachedBindGroups.clear();
+  }
+
+  private buildTiles(bbox: BoundingBox): BoundingBox[] {
+    const bboxPixels = bbox.width * bbox.height;
+    if (bboxPixels <= MAX_PIXELS_PER_BATCH) {
+      return [bbox];
+    }
+
+    const tileSize = Math.max(1, Math.floor(Math.sqrt(MAX_PIXELS_PER_BATCH)));
+    const tiles: BoundingBox[] = [];
+    const maxX = bbox.x + bbox.width;
+    const maxY = bbox.y + bbox.height;
+
+    for (let y = bbox.y; y < maxY; y += tileSize) {
+      const height = Math.min(tileSize, maxY - y);
+      for (let x = bbox.x; x < maxX; x += tileSize) {
+        const width = Math.min(tileSize, maxX - x);
+        if (width > 0 && height > 0) {
+          tiles.push({ x, y, width, height });
+        }
+      }
+    }
+
+    return tiles;
+  }
+
+  private writeUniformData(
+    view: DataView,
+    byteOffset: number,
+    bbox: BoundingBox,
+    dabCount: number,
+    usePattern: boolean,
+    patternTexture: GPUTexture | null,
+    patternSettings: GPUPatternSettings | null
+  ): void {
+    // Block 0
+    view.setUint32(byteOffset + 0, bbox.x, true);
+    view.setUint32(byteOffset + 4, bbox.y, true);
+    view.setUint32(byteOffset + 8, bbox.width, true);
+    view.setUint32(byteOffset + 12, bbox.height, true);
+
+    // Block 1
+    view.setUint32(byteOffset + 16, this.canvasWidth, true);
+    view.setUint32(byteOffset + 20, this.canvasHeight, true);
+    view.setUint32(byteOffset + 24, dabCount, true);
+    view.setUint32(byteOffset + 28, this.colorBlendMode, true);
+
+    if (usePattern && patternSettings && patternTexture) {
+      // Block 2
+      view.setUint32(byteOffset + 32, 1, true); // pattern_enabled
+      view.setUint32(byteOffset + 36, patternSettings.invert ? 1 : 0, true);
+      view.setUint32(byteOffset + 40, this.getBlendModeId(patternSettings.mode), true);
+      view.setFloat32(byteOffset + 44, patternSettings.scale, true);
+
+      // Block 3
+      view.setFloat32(byteOffset + 48, patternSettings.brightness, true);
+      view.setFloat32(byteOffset + 52, patternSettings.contrast, true);
+      view.setFloat32(byteOffset + 56, patternSettings.depth, true);
+      view.setUint32(byteOffset + 60, 0, true); // padding
+
+      // Block 4
+      view.setFloat32(byteOffset + 64, patternTexture.width, true);
+      view.setFloat32(byteOffset + 68, patternTexture.height, true);
+    } else {
+      view.setUint32(byteOffset + 32, 0, true);
+    }
+  }
+
   /**
    * Convert blend mode string to integer ID
    */
@@ -204,168 +312,113 @@ export class ComputeTextureBrushPipeline {
   ): boolean {
     if (dabs.length === 0) return true;
 
-    // Check if batch split needed (too many dabs)
-    if (dabs.length > MAX_DABS_PER_BATCH) {
-      return this.dispatchInBatches(
-        encoder,
-        inputTexture,
-        outputTexture,
-        brushTexture,
-        dabs,
-        patternTexture,
-        patternSettings
-      );
+    const batchSize = MAX_DABS_PER_BATCH;
+    const batchCount = Math.ceil(dabs.length / batchSize);
+    const batches: TextureDabInstanceData[][] = [];
+
+    for (let i = 0; i < dabs.length; i += batchSize) {
+      batches.push(dabs.slice(i, i + batchSize));
     }
 
-    // Calculate precise bounding box
-    const bbox = this.computePreciseBoundingBox(dabs);
-    if (bbox.width <= 0 || bbox.height <= 0) return true;
+    const allDabsBbox = this.computePreciseBoundingBox(dabs);
+    const tilesPerBatch: BoundingBox[][] = [];
+    let dispatchCount = 0;
 
-    // Check bbox pixel limit (prevent diagonal stroke issue)
-    const bboxPixels = bbox.width * bbox.height;
-    if (bboxPixels > MAX_PIXELS_PER_BATCH) {
-      return this.dispatchInBatches(
-        encoder,
-        inputTexture,
-        outputTexture,
-        brushTexture,
-        dabs,
-        patternTexture,
-        patternSettings
-      );
+    for (const batch of batches) {
+      const bbox = this.computePreciseBoundingBox(batch);
+      if (bbox.width <= 0 || bbox.height <= 0) {
+        tilesPerBatch.push([]);
+        continue;
+      }
+      const tiles = this.buildTiles(bbox);
+      tilesPerBatch.push(tiles);
+      dispatchCount += tiles.length;
     }
 
-    // Ensure dab buffer is large enough
-    if (dabs.length > this.maxDabs) {
-      this.growDabBuffer(dabs.length);
+    if (dispatchCount === 0) {
+      return true;
     }
+
+    this.ensureUniformCapacity(dispatchCount);
+    this.ensureDabCapacity(batchCount);
+
+    const dabData = new ArrayBuffer(this.dabStride * batchCount);
+    const dabView = new Float32Array(dabData);
+    for (let i = 0; i < batches.length; i++) {
+      const offset = (this.dabStride / 4) * i;
+      this.packDabDataInto(batches[i]!, dabView, offset);
+    }
+    this.device.queue.writeBuffer(this.dabBuffer, 0, dabData);
 
     const usePattern =
       patternTexture !== null && patternSettings !== null && patternSettings.patternId !== null;
     const activePatternTexture = usePattern ? patternTexture! : this.dummyPatternTexture;
 
-    // Upload uniforms
-    const uniformData = new Uint32Array(UNIFORM_BUFFER_SIZE / 4);
+    const uniformData = new ArrayBuffer(this.uniformStride * dispatchCount);
+    const uniformView = new DataView(uniformData);
+    let dispatchIndex = 0;
 
-    // Block 0
-    uniformData[0] = bbox.x;
-    uniformData[1] = bbox.y;
-    uniformData[2] = bbox.width;
-    uniformData[3] = bbox.height;
-
-    // Block 1
-    uniformData[4] = this.canvasWidth;
-    uniformData[5] = this.canvasHeight;
-    uniformData[6] = dabs.length;
-    uniformData[7] = this.colorBlendMode;
-
-    // Pattern uniforms
-    if (usePattern && patternSettings) {
-      // Block 2
-      uniformData[8] = 1; // pattern_enabled
-      uniformData[9] = patternSettings.invert ? 1 : 0;
-      uniformData[10] = this.getBlendModeId(patternSettings.mode);
-      // f32 view for floats
-      const floats = new Float32Array(uniformData.buffer);
-      floats[11] = patternSettings.scale;
-
-      // Block 3
-      floats[12] = patternSettings.brightness;
-      floats[13] = patternSettings.contrast;
-      floats[14] = patternSettings.depth;
-      uniformData[15] = 0; // padding
-
-      // Block 4
-      floats[16] = activePatternTexture.width;
-      floats[17] = activePatternTexture.height;
-    } else {
-      uniformData[8] = 0; // pattern_enabled
-      // padding...
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i]!;
+      const tiles = tilesPerBatch[i]!;
+      for (const tile of tiles) {
+        this.writeUniformData(
+          uniformView,
+          dispatchIndex * this.uniformStride,
+          tile,
+          batch.length,
+          usePattern,
+          patternTexture,
+          patternSettings
+        );
+        dispatchIndex++;
+      }
     }
-
     this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
-    // Upload dab data
-    const dabData = this.packDabData(dabs);
-    this.device.queue.writeBuffer(this.dabBuffer, 0, dabData.buffer);
-
-    // Get or create BindGroup
-    const bindGroup = this.getOrCreateBindGroup(
-      inputTexture,
-      outputTexture,
-      brushTexture,
-      activePatternTexture
-    );
-
-    // Dispatch
-    const pass = encoder.beginComputePass({ label: 'Compute Texture Brush Pass' });
-
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bindGroup);
-
-    const workgroupsX = Math.ceil(bbox.width / 8);
-    const workgroupsY = Math.ceil(bbox.height / 8);
-    pass.dispatchWorkgroups(workgroupsX, workgroupsY);
-
-    pass.end();
-
-    return true;
-  }
-
-  /**
-   * Split dispatch when dab count or bbox is too large
-   */
-  private dispatchInBatches(
-    encoder: GPUCommandEncoder,
-    inputTexture: GPUTexture,
-    outputTexture: GPUTexture,
-    brushTexture: GPUBrushTexture,
-    dabs: TextureDabInstanceData[],
-    patternTexture: GPUTexture | null,
-    patternSettings: GPUPatternSettings | null
-  ): boolean {
-    const batchSize = MAX_DABS_PER_BATCH;
-
-    // Compute bounding box for ALL dabs (needed for proper copy between batches)
-    const allDabsBbox = this.computePreciseBoundingBox(dabs);
-
-    // Mutable references for ping-pong swapping
     let currentInput = inputTexture;
     let currentOutput = outputTexture;
+    let dispatchBase = 0;
 
-    for (let i = 0; i < dabs.length; i += batchSize) {
-      const batch = dabs.slice(i, i + batchSize);
-      const success = this.dispatch(
-        encoder,
+    for (let i = 0; i < batches.length; i++) {
+      const tiles = tilesPerBatch[i]!;
+      if (tiles.length === 0) {
+        continue;
+      }
+
+      const bindGroup = this.getOrCreateBindGroup(
         currentInput,
         currentOutput,
         brushTexture,
-        batch,
-        patternTexture,
-        patternSettings
+        activePatternTexture
       );
-      if (!success) return false;
+      const pass = encoder.beginComputePass({ label: 'Compute Texture Brush Pass' });
+      pass.setPipeline(this.pipeline);
 
-      // Swap for next batch (proper ping-pong)
-      if (i + batchSize < dabs.length) {
-        // Copy the entire affected region from output to input for next batch
-        if (allDabsBbox.width > 0 && allDabsBbox.height > 0) {
-          encoder.copyTextureToTexture(
-            { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
-            { texture: currentInput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
-            [allDabsBbox.width, allDabsBbox.height]
-          );
-        }
+      for (let t = 0; t < tiles.length; t++) {
+        const tile = tiles[t]!;
+        const uniformOffset = (dispatchBase + t) * this.uniformStride;
+        const dabOffset = i * this.dabStride;
+        pass.setBindGroup(0, bindGroup, [uniformOffset, dabOffset]);
+        pass.dispatchWorkgroups(Math.ceil(tile.width / 8), Math.ceil(tile.height / 8));
+      }
 
-        // Swap input/output for next iteration
+      pass.end();
+      dispatchBase += tiles.length;
+
+      if (i + 1 < batches.length && allDabsBbox.width > 0 && allDabsBbox.height > 0) {
+        encoder.copyTextureToTexture(
+          { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
+          { texture: currentInput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
+          [allDabsBbox.width, allDabsBbox.height]
+        );
+
         const temp = currentInput;
         currentInput = currentOutput;
         currentOutput = temp;
       }
     }
 
-    // Final result copy back logic (same as before)
-    const batchCount = Math.ceil(dabs.length / batchSize);
     if (batchCount > 1 && batchCount % 2 === 0) {
       if (allDabsBbox.width > 0 && allDabsBbox.height > 0) {
         encoder.copyTextureToTexture(
@@ -464,43 +517,27 @@ export class ComputeTextureBrushPipeline {
   /**
    * Pack Dab data (48 bytes per dab, aligned to 16 bytes)
    */
-  private packDabData(dabs: TextureDabInstanceData[]): Float32Array {
-    const data = new Float32Array(dabs.length * DAB_DATA_FLOATS);
-
+  private packDabDataInto(
+    dabs: TextureDabInstanceData[],
+    target: Float32Array,
+    startIndex: number
+  ): void {
     for (let i = 0; i < dabs.length; i++) {
       const dab = dabs[i]!;
-      const offset = i * DAB_DATA_FLOATS;
-      data[offset + 0] = dab.x;
-      data[offset + 1] = dab.y;
-      data[offset + 2] = dab.size; // diameter
-      data[offset + 3] = dab.roundness;
-      data[offset + 4] = dab.angle;
-      data[offset + 5] = dab.r;
-      data[offset + 6] = dab.g;
-      data[offset + 7] = dab.b;
-      data[offset + 8] = dab.dabOpacity;
-      data[offset + 9] = dab.flow;
-      data[offset + 10] = dab.texWidth;
-      data[offset + 11] = dab.texHeight;
+      const offset = startIndex + i * DAB_DATA_FLOATS;
+      target[offset + 0] = dab.x;
+      target[offset + 1] = dab.y;
+      target[offset + 2] = dab.size; // diameter
+      target[offset + 3] = dab.roundness;
+      target[offset + 4] = dab.angle;
+      target[offset + 5] = dab.r;
+      target[offset + 6] = dab.g;
+      target[offset + 7] = dab.b;
+      target[offset + 8] = dab.dabOpacity;
+      target[offset + 9] = dab.flow;
+      target[offset + 10] = dab.texWidth;
+      target[offset + 11] = dab.texHeight;
     }
-
-    return data;
-  }
-
-  /**
-   * Grow dab buffer when needed
-   */
-  private growDabBuffer(minCapacity: number): void {
-    const newCapacity = Math.max(this.maxDabs * 2, minCapacity);
-    this.dabBuffer.destroy();
-    this.dabBuffer = this.device.createBuffer({
-      label: 'Compute Texture Brush Dabs',
-      size: newCapacity * DAB_DATA_SIZE,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-    this.maxDabs = newCapacity;
-    // Clear cached bind groups (buffer changed)
-    this.cachedBindGroups.clear();
   }
 
   /**

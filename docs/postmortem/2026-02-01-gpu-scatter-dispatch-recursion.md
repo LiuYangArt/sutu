@@ -50,4 +50,4 @@ RangeError: Maximum call stack size exceeded
 
 ## 状态
 
-记录问题，暂不修复（用户要求先不修）。
+已修复（2026-02-02）：Compute 侧按 bbox 分块 dispatch，避免递归与栈溢出；Dual/Texture 同步处理。
