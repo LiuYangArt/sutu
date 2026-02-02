@@ -1638,6 +1638,12 @@ export function Canvas() {
         return;
       }
 
+      // Skip tool shortcuts if focus is on input elements (e.g., search boxes)
+      // Allow Ctrl/Meta combos (handled above) and ESC to work normally
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
       // ESC: Cancel selection move or creation
       if (e.code === 'Escape') {
         const selState = useSelectionStore.getState();
