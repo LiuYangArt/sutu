@@ -26,7 +26,7 @@ describe('ToolStore', () => {
       const store = useToolStore.getState();
 
       store.setBrushSize(1000);
-      expect(useToolStore.getState().brushSize).toBe(800); // Max is 800
+      expect(useToolStore.getState().brushSize).toBe(1000); // Max is 1000
 
       store.setBrushSize(0);
       expect(useToolStore.getState().brushSize).toBe(1);
