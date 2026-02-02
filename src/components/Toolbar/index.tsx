@@ -16,6 +16,7 @@ import {
   Paintbrush,
   Grid3x3,
 } from 'lucide-react';
+import { countToSliderProgress, sliderProgressToValue } from '@/utils/sliderScales';
 import { useToolStore } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
@@ -257,10 +258,21 @@ export function Toolbar() {
           />
           <input
             type="range"
-            min="1"
-            max="800"
-            value={currentSize}
-            onChange={(e) => setCurrentSize(Number(e.target.value))}
+            min={0}
+            max={10000} // Internal high resolution
+            step={1}
+            // Transform value -> slider position
+            value={Math.round(
+              countToSliderProgress(currentSize, 1, 1000, { midValue: 100 }) * 10000
+            )}
+            // Transform slider position -> value
+            onChange={(e) => {
+              const progress = Number(e.target.value) / 10000;
+              const newValue = sliderProgressToValue(progress, 1, 1000, 1, {
+                midValue: 100,
+              });
+              setCurrentSize(newValue);
+            }}
           />
           <span className="setting-value">{currentSize}px</span>
         </label>
