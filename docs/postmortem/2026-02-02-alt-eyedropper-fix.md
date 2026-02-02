@@ -129,7 +129,25 @@ const isAltMode = altPressedRef.current;
 
 ## 修改文件
 
-- `src/components/Canvas/index.tsx`: 将 Alt 吸色切换逻辑移至第一个 useEffect，删除第二个 useEffect 中的重复代码
+- `src/components/Canvas/index.tsx`: 将 Alt 吸色切换逻辑移至独立 hook
+- `src/components/Canvas/useAltEyedropper.ts`: **NEW** - 封装 Alt 吸色切换逻辑
+- `src/components/Canvas/__tests__/useAltEyedropper.test.ts`: **NEW** - 8 个单元测试
+- `src/gpu/GPUStrokeAccumulator.ts`: 删除未使用的 `_getLastBatchUnionRect` 方法
+
+## 防止 Regression：单元测试
+
+新增 `useAltEyedropper.test.ts` 覆盖以下场景：
+
+| 测试用例               | 验证点                   |
+| ---------------------- | ------------------------ |
+| brush 工具按 Alt       | 应切换到 eyedropper      |
+| eraser 工具按 Alt      | 应切换到 eyedropper      |
+| lasso 工具按 Alt       | 应**不**切换（保持原样） |
+| 松开 Alt               | 应恢复原工具             |
+| e.repeat: true         | 应忽略重复事件           |
+| AltRight 支持          | 左右 Alt 均有效          |
+| 手动切换工具后松开 Alt | 不应恢复                 |
+| unmount 时             | 应清理事件监听器         |
 
 ## 相关文档
 

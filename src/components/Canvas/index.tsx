@@ -10,6 +10,7 @@ import { useSelectionHandler } from './useSelectionHandler';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { useRawPointerInput } from './useRawPointerInput';
+import { useAltEyedropper } from './useAltEyedropper';
 import { SelectionOverlay } from './SelectionOverlay';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
@@ -202,34 +203,17 @@ export function Canvas() {
   // Local state
   const [spacePressed, setSpacePressed] = useState(false);
 
-  // Alt eyedropper switching: must be in this effect to capture first keydown (repeat: false)
+  // Alt eyedropper switching (extracted to separate hook for testability)
+  useAltEyedropper(previousToolRef);
+
+  // Space key for panning
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) setSpacePressed(true);
-
-      // Alt key: switch to eyedropper for brush/eraser tools
-      if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) {
-        const store = useToolStore.getState();
-        if (store.currentTool === 'brush' || store.currentTool === 'eraser') {
-          e.preventDefault();
-          previousToolRef.current = store.currentTool;
-          store.setTool('eyedropper');
-        }
-      }
     };
-
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') setSpacePressed(false);
-
-      if (e.code === 'AltLeft' || e.code === 'AltRight') {
-        const store = useToolStore.getState();
-        if (previousToolRef.current && store.currentTool === 'eyedropper') {
-          store.setTool(previousToolRef.current);
-          previousToolRef.current = null;
-        }
-      }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     return () => {
