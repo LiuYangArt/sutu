@@ -703,7 +703,7 @@ export function Canvas() {
   const pickColorAt = useCallback(
     (canvasX: number, canvasY: number) => {
       const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
+      const ctx = canvas?.getContext('2d', { willReadFrequently: true });
       if (!canvas || !ctx) return;
 
       const x = Math.floor(canvasX);
