@@ -201,18 +201,39 @@ export function Canvas() {
 
   // Local state
   const [spacePressed, setSpacePressed] = useState(false);
-  const [altPressed, setAltPressed] = useState(false);
+  const [_altPressed, setAltPressed] = useState(false);
 
-  // Keyboard event listeners for modifiers
+  // Keyboard event listeners for modifiers (Space/Alt press state tracking)
+  // NOTE: This effect is registered first, so it receives the first keydown event
+  // Alt eyedropper switching MUST be handled here, not in the later effect
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) setSpacePressed(true);
-      if (e.key === 'Alt' && !e.repeat) setAltPressed(true);
+
+      // Alt key: switch to eyedropper for brush/eraser tools
+      if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) {
+        const tool = useToolStore.getState().currentTool;
+        if (tool === 'brush' || tool === 'eraser') {
+          e.preventDefault();
+          setAltPressed(true);
+          previousToolRef.current = tool;
+          useToolStore.getState().setTool('eyedropper');
+        }
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') setSpacePressed(false);
-      if (e.key === 'Alt') setAltPressed(false);
+
+      // Release Alt: restore previous tool
+      if (e.code === 'AltLeft' || e.code === 'AltRight') {
+        setAltPressed(false);
+        const tool = useToolStore.getState().currentTool;
+        if (previousToolRef.current && tool === 'eyedropper') {
+          useToolStore.getState().setTool(previousToolRef.current);
+          previousToolRef.current = null;
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -1660,19 +1681,8 @@ export function Canvas() {
           setSpacePressed(true);
           break;
 
-        case 'AltLeft':
-        case 'AltRight':
-          // Alt 键切换吸色工具仅对画笔和橡皮擦工具生效
-          if (!altPressed && (currentTool === 'brush' || currentTool === 'eraser')) {
-            // 如果正在绘制，先强制结束当前笔触
-            if (isDrawingRef.current) finishCurrentStroke();
-
-            e.preventDefault();
-            setAltPressed(true);
-            previousToolRef.current = currentTool;
-            setTool('eyedropper');
-          }
-          break;
+        // Alt key handling is now in the first useEffect (see lines 206-240)
+        // to ensure it captures the first keydown event (repeat: false)
 
         case 'KeyZ':
           if (!e.altKey) {
@@ -1727,17 +1737,7 @@ export function Canvas() {
         setIsPanning(false);
         panStartRef.current = null;
       }
-
-      // Release Alt: restore previous tool (only for brush/eraser eyedropper mode)
-      if (e.code === 'AltLeft' || e.code === 'AltRight') {
-        setAltPressed(false);
-        // Only restore if current tool is eyedropper (Alt was used for color picking)
-        // Don't interfere with lasso tool's Alt handling
-        if (previousToolRef.current && currentTool === 'eyedropper') {
-          setTool(previousToolRef.current as ToolType);
-          previousToolRef.current = null;
-        }
-      }
+      // Alt key release is handled in the first useEffect (see lines 206-240)
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -1751,7 +1751,6 @@ export function Canvas() {
     setIsPanning,
     handleUndo,
     handleRedo,
-    altPressed,
     currentTool,
     setTool,
     currentSize,
