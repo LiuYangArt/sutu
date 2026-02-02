@@ -1217,7 +1217,6 @@ export class GPUStrokeAccumulator {
     this.addPendingPreviewRect(rect);
     this.previewNeedsUpdate = true;
     if (!this.previewUpdatePending) {
-      this.previewUpdatePending = true;
       void this.updatePreview();
     }
   }

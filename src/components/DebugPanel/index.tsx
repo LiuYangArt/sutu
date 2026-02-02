@@ -284,22 +284,23 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     return () => diagnosticsRef.current?.cleanup();
   }, []);
 
-  useEffect(() => {
-    setDebugRectsEnabled(readDebugRectsFlag());
-    setBatchUnionEnabled(readBatchUnionFlag());
-  }, []);
+  const toggleDebugRects = useCallback(
+    function toggleDebugRects(): void {
+      const next = !debugRectsEnabled;
+      window.__gpuBrushDebugRects = next;
+      setDebugRectsEnabled(next);
+    },
+    [debugRectsEnabled]
+  );
 
-  const toggleDebugRects = useCallback(() => {
-    const next = !debugRectsEnabled;
-    window.__gpuBrushDebugRects = next;
-    setDebugRectsEnabled(next);
-  }, [debugRectsEnabled]);
-
-  const toggleBatchUnion = useCallback(() => {
-    const next = !batchUnionEnabled;
-    window.__gpuBrushUseBatchUnionRect = next;
-    setBatchUnionEnabled(next);
-  }, [batchUnionEnabled]);
+  const toggleBatchUnion = useCallback(
+    function toggleBatchUnion(): void {
+      const next = !batchUnionEnabled;
+      window.__gpuBrushUseBatchUnionRect = next;
+      setBatchUnionEnabled(next);
+    },
+    [batchUnionEnabled]
+  );
 
   const addResult = useCallback((name: string, status: TestStatus, report?: string) => {
     setResults((prev) => [{ name, status, report, timestamp: new Date() }, ...prev.slice(0, 9)]);
