@@ -149,24 +149,20 @@ function App() {
       if (e.key === 'Delete' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         e.preventDefault();
 
-        // Check for active selection
         const { hasSelection } = useSelectionStore.getState();
         if (hasSelection) {
           window.__canvasClearSelection?.();
-        } else {
-          // No selection - try to remove active layer
-          const { activeLayerId, layers } = useDocumentStore.getState();
-          if (!activeLayerId) return;
+          return;
+        }
 
-          const activeLayer = layers.find((l) => l.id === activeLayerId);
-          // Prevent deleting background layer
-          // Note: check if isBackground property exists, if not assume safe to delete unless it's the only one (handled by LayerPanel logic usually, but strict check here doesn't hurt)
-          // Based on previous file reads, layer struct has isBackground?
-          // Let's check Canvas/index.tsx again: 686: isBackground: entry.layerMeta.isBackground
-          // Yes, it likely has it.
-          if (activeLayer && !activeLayer.isBackground) {
-            window.__canvasRemoveLayer?.(activeLayerId);
-          }
+        const { activeLayerId, layers } = useDocumentStore.getState();
+        if (!activeLayerId) return;
+
+        const activeLayer = layers.find((l) => l.id === activeLayerId);
+
+        // Prevent deleting background layer
+        if (activeLayer && !activeLayer.isBackground) {
+          window.__canvasRemoveLayer?.(activeLayerId);
         }
         return;
       }
