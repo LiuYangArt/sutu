@@ -15,8 +15,6 @@ export function BrushTipShape(): JSX.Element {
     setBrushAngle,
     brushSpacing,
     setBrushSpacing,
-    pressureSizeEnabled,
-    togglePressureSize,
   } = useToolStore();
 
   return (
@@ -30,9 +28,6 @@ export function BrushTipShape(): JSX.Element {
         max={1000}
         displayValue={`${brushSize}px`}
         onChange={setBrushSize}
-        pressureEnabled={pressureSizeEnabled}
-        onPressureToggle={togglePressureSize}
-        pressureTitle="Pressure affects size"
         nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
       />
 
