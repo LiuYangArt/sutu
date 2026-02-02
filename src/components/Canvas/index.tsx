@@ -201,23 +201,19 @@ export function Canvas() {
 
   // Local state
   const [spacePressed, setSpacePressed] = useState(false);
-  const [_altPressed, setAltPressed] = useState(false);
 
-  // Keyboard event listeners for modifiers (Space/Alt press state tracking)
-  // NOTE: This effect is registered first, so it receives the first keydown event
-  // Alt eyedropper switching MUST be handled here, not in the later effect
+  // Alt eyedropper switching: must be in this effect to capture first keydown (repeat: false)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) setSpacePressed(true);
 
       // Alt key: switch to eyedropper for brush/eraser tools
       if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) {
-        const tool = useToolStore.getState().currentTool;
-        if (tool === 'brush' || tool === 'eraser') {
+        const store = useToolStore.getState();
+        if (store.currentTool === 'brush' || store.currentTool === 'eraser') {
           e.preventDefault();
-          setAltPressed(true);
-          previousToolRef.current = tool;
-          useToolStore.getState().setTool('eyedropper');
+          previousToolRef.current = store.currentTool;
+          store.setTool('eyedropper');
         }
       }
     };
@@ -225,12 +221,10 @@ export function Canvas() {
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') setSpacePressed(false);
 
-      // Release Alt: restore previous tool
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
-        setAltPressed(false);
-        const tool = useToolStore.getState().currentTool;
-        if (previousToolRef.current && tool === 'eyedropper') {
-          useToolStore.getState().setTool(previousToolRef.current);
+        const store = useToolStore.getState();
+        if (previousToolRef.current && store.currentTool === 'eyedropper') {
+          store.setTool(previousToolRef.current);
           previousToolRef.current = null;
         }
       }

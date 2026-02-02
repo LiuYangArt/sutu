@@ -1145,22 +1145,6 @@ export class GPUStrokeAccumulator {
     };
   }
 
-  private getLastBatchUnionRect(): Rect | null {
-    const primary = this.lastPrimaryBatchRect;
-    const dual = this.lastDualBatchRect;
-    if (primary && dual) {
-      return {
-        left: Math.min(primary.left, dual.left),
-        top: Math.min(primary.top, dual.top),
-        right: Math.max(primary.right, dual.right),
-        bottom: Math.max(primary.bottom, dual.bottom),
-      };
-    }
-    if (primary) return { ...primary };
-    if (dual) return { ...dual };
-    return null;
-  }
-
   private shouldUseBatchUnionRectForPreview(): boolean {
     if (typeof window === 'undefined') return false;
     const flag = (window as unknown as { __gpuBrushUseBatchUnionRect?: boolean })
