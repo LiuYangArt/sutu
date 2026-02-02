@@ -204,9 +204,6 @@ export function Canvas() {
   // Local state
   const [spacePressed, setSpacePressed] = useState(false);
 
-  // Alt eyedropper switching (extracted to separate hook for testability)
-  useAltEyedropper(previousToolRef);
-
   // Space key for panning
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1303,6 +1300,9 @@ export function Canvas() {
 
     // Case 3: 'idle' or 'finishing' - ignore (already handled or never started)
   }, [finalizeStroke]);
+
+  // Alt eyedropper switching - must be after finishCurrentStroke to avoid TDZ
+  useAltEyedropper(previousToolRef, finishCurrentStroke);
 
   /**
    * Initialize brush stroke asynchronously.

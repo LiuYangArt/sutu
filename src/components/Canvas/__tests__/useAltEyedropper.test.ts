@@ -126,4 +126,29 @@ describe('useAltEyedropper', () => {
     expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
     expect(removeEventListenerSpy).toHaveBeenCalledWith('keyup', expect.any(Function));
   });
+
+  it('should call onBeforeSwitch before switching to eyedropper', () => {
+    useToolStore.setState({ currentTool: 'brush' });
+    const onBeforeSwitch = vi.fn();
+    const switchOrder: string[] = [];
+
+    // Track call order
+    onBeforeSwitch.mockImplementation(() => {
+      switchOrder.push('onBeforeSwitch');
+    });
+    const originalSetTool = useToolStore.getState().setTool;
+    vi.spyOn(useToolStore.getState(), 'setTool').mockImplementation((tool) => {
+      switchOrder.push(`setTool:${tool}`);
+      originalSetTool(tool);
+    });
+
+    renderHook(() =>
+      useAltEyedropper(previousToolRef as React.RefObject<ToolType | null>, onBeforeSwitch)
+    );
+
+    window.dispatchEvent(createAltKeyEvent('keydown'));
+
+    expect(onBeforeSwitch).toHaveBeenCalledTimes(1);
+    expect(switchOrder).toEqual(['onBeforeSwitch', 'setTool:eyedropper']);
+  });
 });
