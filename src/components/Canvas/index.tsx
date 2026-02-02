@@ -1524,6 +1524,8 @@ export function Canvas() {
       // 绘画模式
       if (!isDrawingRef.current) return;
 
+      if (currentTool !== 'brush' && currentTool !== 'eraser') return;
+
       // Q1 Optimization: Skip brush input if pointerrawupdate is handling it
       // pointerrawupdate provides lower-latency input (1-3ms improvement)
       if (currentTool === 'brush' && usingRawInput.current) {
