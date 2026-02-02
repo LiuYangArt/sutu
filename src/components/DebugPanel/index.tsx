@@ -190,6 +190,17 @@ function StatRow({
   );
 }
 
+function readDebugRectsFlag(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean(window.__gpuBrushDebugRects);
+}
+
+function readBatchUnionFlag(): boolean {
+  if (typeof window === 'undefined') return true;
+  const flag = window.__gpuBrushUseBatchUnionRect;
+  return typeof flag === 'boolean' ? flag : true;
+}
+
 function ActionGrid({
   onRunTest,
   isRunning,
@@ -231,6 +242,8 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [expandedResult, setExpandedResult] = useState<number | null>(null);
   const [benchmarkStats, setBenchmarkStats] = useState<BenchmarkStatsData | null>(null);
   const [lastReport, setLastReport] = useState<BenchmarkReport | null>(null);
+  const [debugRectsEnabled, setDebugRectsEnabled] = useState(readDebugRectsFlag);
+  const [batchUnionEnabled, setBatchUnionEnabled] = useState(readBatchUnionFlag);
 
   const diagnosticsRef = useRef<DiagnosticHooks | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -270,6 +283,23 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     diagnosticsRef.current = installDiagnosticHooks();
     return () => diagnosticsRef.current?.cleanup();
   }, []);
+
+  useEffect(() => {
+    setDebugRectsEnabled(readDebugRectsFlag());
+    setBatchUnionEnabled(readBatchUnionFlag());
+  }, []);
+
+  const toggleDebugRects = useCallback(() => {
+    const next = !debugRectsEnabled;
+    window.__gpuBrushDebugRects = next;
+    setDebugRectsEnabled(next);
+  }, [debugRectsEnabled]);
+
+  const toggleBatchUnion = useCallback(() => {
+    const next = !batchUnionEnabled;
+    window.__gpuBrushUseBatchUnionRect = next;
+    setBatchUnionEnabled(next);
+  }, [batchUnionEnabled]);
 
   const addResult = useCallback((name: string, status: TestStatus, report?: string) => {
     setResults((prev) => [{ name, status, report, timestamp: new Date() }, ...prev.slice(0, 9)]);
@@ -453,6 +483,27 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         <div className="debug-section">
           <h3>Stroke Tests</h3>
           <ActionGrid onRunTest={handleRunTest} isRunning={!!runningTest} />
+        </div>
+
+        <div className="debug-section">
+          <h3>GPU Brush</h3>
+          <div className="debug-button-row">
+            <button
+              className={`debug-btn secondary ${debugRectsEnabled ? 'active' : ''}`}
+              onClick={toggleDebugRects}
+              title="window.__gpuBrushDebugRects"
+            >
+              <span>Debug Rects</span>
+            </button>
+            <button
+              className={`debug-btn secondary ${batchUnionEnabled ? 'active' : ''}`}
+              onClick={toggleBatchUnion}
+              title="window.__gpuBrushUseBatchUnionRect"
+            >
+              <span>Batch-Union Preview</span>
+            </button>
+          </div>
+          <div className="debug-note">No console commands needed for these toggles.</div>
         </div>
 
         {runningTest && (

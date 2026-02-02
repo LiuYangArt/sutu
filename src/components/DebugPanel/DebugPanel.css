@@ -140,6 +140,17 @@
   min-height: auto;
 }
 
+.debug-btn.active {
+  background: #45475a;
+  border-color: #89b4fa;
+  color: #f5c2e7;
+}
+
+.debug-note {
+  font-size: 11px;
+  color: #6c7086;
+}
+
 /* Progress */
 .debug-progress {
   margin: 4px 0 12px 0;

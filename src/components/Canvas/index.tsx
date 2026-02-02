@@ -40,6 +40,7 @@ declare global {
       benchmarkSessionId?: string
     ) => Promise<void>;
     __gpuBrushDebugRects?: boolean;
+    __gpuBrushUseBatchUnionRect?: boolean;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;

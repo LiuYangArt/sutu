@@ -93,6 +93,12 @@ export class GPUStrokeAccumulator {
   private lastPrimaryBatchLabel: string | null = null;
   private lastDualBatchRect: Rect | null = null;
   private lastDualBatchLabel: string | null = null;
+  private lastPreviewUpdateRect: Rect | null = null;
+  private lastPreviewUpdateSource: 'combined-dirty' | 'batch-union' | null = null;
+  private lastPreviewUpdateMs: number | null = null;
+  private previewUpdateCount: number = 0;
+  private previewUpdateSkipCount: number = 0;
+  private pendingPreviewRect: Rect | null = null;
 
   // Preview canvas for compatibility with existing rendering system
   private previewCanvas: HTMLCanvasElement;
@@ -702,6 +708,12 @@ export class GPUStrokeAccumulator {
     this.lastPrimaryBatchLabel = null;
     this.lastDualBatchRect = null;
     this.lastDualBatchLabel = null;
+    this.lastPreviewUpdateRect = null;
+    this.lastPreviewUpdateSource = null;
+    this.lastPreviewUpdateMs = null;
+    this.previewUpdateCount = 0;
+    this.previewUpdateSkipCount = 0;
+    this.pendingPreviewRect = null;
     this.dualDirtyRect = {
       left: this.width,
       top: this.height,
@@ -883,6 +895,15 @@ export class GPUStrokeAccumulator {
 
     const scale = this.currentRenderScale;
     const useTexture = Boolean(dualBrush.texture);
+    const dualEffectiveRadius =
+      useTexture && dualBrush.texture
+        ? this.computeTextureEffectiveRadius(
+            effectiveSize,
+            roundness,
+            dualBrush.texture.width,
+            dualBrush.texture.height
+          )
+        : effectiveSize / 2;
 
     if (useTexture && dualBrush.texture) {
       if (!this.dualTextureAtlas.setTextureSync(dualBrush.texture)) {
@@ -932,8 +953,7 @@ export class GPUStrokeAccumulator {
         this.dualMaskActive = true;
       }
 
-      const radius = effectiveSize / 2;
-      this.expandDualDirtyRect(pos.x, pos.y, radius);
+      this.expandDualDirtyRect(pos.x, pos.y, dualEffectiveRadius);
     }
   }
 
@@ -995,8 +1015,13 @@ export class GPUStrokeAccumulator {
 
       this.textureInstanceBuffer.push(textureDabData);
       // Dirty rect calculation for texture brush
-      const halfSize = params.size / 2;
-      this.expandDirtyRectTexture(params.x, params.y, halfSize);
+      const effectiveRadius = this.computeTextureEffectiveRadius(
+        params.size,
+        params.roundness ?? 1.0,
+        params.texture.width,
+        params.texture.height
+      );
+      this.expandDirtyRectTexture(params.x, params.y, effectiveRadius);
       this.dabsSinceLastFlush++;
 
       // Auto-flush when batch is full to avoid triggering dispatchInBatches
@@ -1063,14 +1088,18 @@ export class GPUStrokeAccumulator {
   }
 
   /**
-   * Expand dirty rect for texture brush (simpler calculation)
+   * Expand dirty rect for texture brush.
+   * IMPORTANT: Must match computeTextureBrush.wgsl calculate_effective_radius (diagonal of half dims).
    */
-  private expandDirtyRectTexture(x: number, y: number, halfSize: number): void {
+  private expandDirtyRectTexture(x: number, y: number, effectiveRadius: number): void {
     const margin = 2;
-    this.dirtyRect.left = Math.min(this.dirtyRect.left, Math.floor(x - halfSize - margin));
-    this.dirtyRect.top = Math.min(this.dirtyRect.top, Math.floor(y - halfSize - margin));
-    this.dirtyRect.right = Math.max(this.dirtyRect.right, Math.ceil(x + halfSize + margin));
-    this.dirtyRect.bottom = Math.max(this.dirtyRect.bottom, Math.ceil(y + halfSize + margin));
+    this.dirtyRect.left = Math.min(this.dirtyRect.left, Math.floor(x - effectiveRadius - margin));
+    this.dirtyRect.top = Math.min(this.dirtyRect.top, Math.floor(y - effectiveRadius - margin));
+    this.dirtyRect.right = Math.max(this.dirtyRect.right, Math.ceil(x + effectiveRadius + margin));
+    this.dirtyRect.bottom = Math.max(
+      this.dirtyRect.bottom,
+      Math.ceil(y + effectiveRadius + margin)
+    );
   }
 
   private expandDirtyRect(x: number, y: number, radius: number, hardness: number): void {
@@ -1114,6 +1143,83 @@ export class GPUStrokeAccumulator {
       right: Math.max(this.dirtyRect.right, this.dualDirtyRect.right),
       bottom: Math.max(this.dirtyRect.bottom, this.dualDirtyRect.bottom),
     };
+  }
+
+  private getLastBatchUnionRect(): Rect | null {
+    const primary = this.lastPrimaryBatchRect;
+    const dual = this.lastDualBatchRect;
+    if (primary && dual) {
+      return {
+        left: Math.min(primary.left, dual.left),
+        top: Math.min(primary.top, dual.top),
+        right: Math.max(primary.right, dual.right),
+        bottom: Math.max(primary.bottom, dual.bottom),
+      };
+    }
+    if (primary) return { ...primary };
+    if (dual) return { ...dual };
+    return null;
+  }
+
+  private shouldUseBatchUnionRectForPreview(): boolean {
+    if (typeof window === 'undefined') return false;
+    const flag = (window as unknown as { __gpuBrushUseBatchUnionRect?: boolean })
+      .__gpuBrushUseBatchUnionRect;
+    if (typeof flag === 'boolean') {
+      return flag;
+    }
+    return true;
+  }
+
+  private getPreviewUpdateRect(): { rect: Rect; source: 'combined-dirty' | 'batch-union' } {
+    const combined = this.getCombinedDirtyRect();
+    if (!this.shouldUseBatchUnionRectForPreview()) {
+      return { rect: combined, source: 'combined-dirty' };
+    }
+
+    const pending = this.consumePendingPreviewRect();
+    if (pending && this.hasDirtyRect(pending)) {
+      return { rect: pending, source: 'batch-union' };
+    }
+
+    return { rect: combined, source: 'combined-dirty' };
+  }
+
+  private nowMs(): number {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      return performance.now();
+    }
+    return Date.now();
+  }
+
+  private addPendingPreviewRect(rect: Rect | null): void {
+    if (!rect || !this.hasDirtyRect(rect)) return;
+    if (!this.pendingPreviewRect) {
+      this.pendingPreviewRect = { ...rect };
+      return;
+    }
+    this.pendingPreviewRect = {
+      left: Math.min(this.pendingPreviewRect.left, rect.left),
+      top: Math.min(this.pendingPreviewRect.top, rect.top),
+      right: Math.max(this.pendingPreviewRect.right, rect.right),
+      bottom: Math.max(this.pendingPreviewRect.bottom, rect.bottom),
+    };
+  }
+
+  private consumePendingPreviewRect(): Rect | null {
+    if (!this.pendingPreviewRect) return null;
+    const rect = { ...this.pendingPreviewRect };
+    this.pendingPreviewRect = null;
+    return rect;
+  }
+
+  private requestPreviewUpdate(rect: Rect | null): void {
+    this.addPendingPreviewRect(rect);
+    this.previewNeedsUpdate = true;
+    if (!this.previewUpdatePending) {
+      this.previewUpdatePending = true;
+      void this.updatePreview();
+    }
   }
 
   private rectFromBbox(
@@ -1205,6 +1311,31 @@ export class GPUStrokeAccumulator {
       width: Math.max(0, right - x),
       height: Math.max(0, bottom - y),
     };
+  }
+
+  private computeTextureEffectiveRadius(
+    diameter: number,
+    roundness: number,
+    texWidth: number,
+    texHeight: number
+  ): number {
+    const safeDiameter = Math.max(1, diameter);
+    const safeRoundness = Math.max(0.01, Math.min(1, roundness));
+    const texAspect = texHeight > 0 ? texWidth / texHeight : 1.0;
+
+    let halfWidth: number;
+    let halfHeight: number;
+
+    if (texAspect >= 1.0) {
+      halfWidth = safeDiameter / 2;
+      halfHeight = halfWidth / texAspect;
+    } else {
+      halfHeight = safeDiameter / 2;
+      halfWidth = halfHeight * texAspect;
+    }
+
+    halfHeight = halfHeight * safeRoundness;
+    return Math.sqrt(halfWidth * halfWidth + halfHeight * halfHeight);
   }
 
   /**
@@ -1316,10 +1447,9 @@ export class GPUStrokeAccumulator {
         });
 
         if (!deferPost) {
-          this.previewNeedsUpdate = true;
-          if (!this.previewUpdatePending) {
-            void this.updatePreview();
-          }
+          this.requestPreviewUpdate(this.lastPrimaryBatchRect);
+        } else {
+          this.addPendingPreviewRect(this.lastPrimaryBatchRect);
         }
         return true;
       }
@@ -1425,10 +1555,7 @@ export class GPUStrokeAccumulator {
       cpuTimeMs: cpuTime,
     });
 
-    this.previewNeedsUpdate = true;
-    if (!this.previewUpdatePending) {
-      void this.updatePreview();
-    }
+    this.requestPreviewUpdate(this.lastPrimaryBatchRect);
   }
 
   /**
@@ -1522,10 +1649,9 @@ export class GPUStrokeAccumulator {
         });
 
         if (!deferPost) {
-          this.previewNeedsUpdate = true;
-          if (!this.previewUpdatePending) {
-            void this.updatePreview();
-          }
+          this.requestPreviewUpdate(this.lastPrimaryBatchRect);
+        } else {
+          this.addPendingPreviewRect(this.lastPrimaryBatchRect);
         }
         return true;
       }
@@ -1632,10 +1758,7 @@ export class GPUStrokeAccumulator {
       cpuTimeMs: cpuTime,
     });
 
-    this.previewNeedsUpdate = true;
-    if (!this.previewUpdatePending) {
-      void this.updatePreview();
-    }
+    this.requestPreviewUpdate(this.lastPrimaryBatchRect);
   }
 
   private flushSecondaryBatches(): boolean {
@@ -1656,6 +1779,7 @@ export class GPUStrokeAccumulator {
       );
       this.lastDualBatchRect = this.rectFromBbox(dualBbox, this.currentRenderScale);
       this.lastDualBatchLabel = 'dual-batch';
+      this.addPendingPreviewRect(this.lastDualBatchRect);
       this.secondaryInstanceBuffer.clear();
 
       const encoder = this.device.createCommandEncoder({
@@ -1704,6 +1828,7 @@ export class GPUStrokeAccumulator {
       );
       this.lastDualBatchRect = this.rectFromBbox(dualTextureBbox, this.currentRenderScale);
       this.lastDualBatchLabel = 'dual-texture-batch';
+      this.addPendingPreviewRect(this.lastDualBatchRect);
       this.secondaryTextureInstanceBuffer.clear();
 
       const encoder = this.device.createCommandEncoder({
@@ -1774,10 +1899,7 @@ export class GPUStrokeAccumulator {
 
     this.device.queue.submit([encoder.finish()]);
 
-    this.previewNeedsUpdate = true;
-    if (!this.previewUpdatePending) {
-      void this.updatePreview();
-    }
+    this.requestPreviewUpdate(null);
   }
 
   private mapDualBlendMode(mode: DualBlendMode): number {
@@ -1893,14 +2015,17 @@ export class GPUStrokeAccumulator {
     if (this.previewReadbackBuffer.mapState !== 'unmapped') {
       console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, will retry');
       this.previewNeedsUpdate = true; // Ensure next call will retry
+      this.previewUpdateSkipCount++;
       return;
     }
 
+    this.previewUpdatePending = true;
     this.previewNeedsUpdate = false;
 
     // Store the promise for concurrent access
 
     this.currentPreviewPromise = (async () => {
+      const updateStart = this.nowMs();
       try {
         // Copy current texture to preview readback buffer
         const encoder = this.device.createCommandEncoder();
@@ -1919,12 +2044,12 @@ export class GPUStrokeAccumulator {
         const gpuData = new Float32Array(this.previewReadbackBuffer!.getMappedRange());
 
         // Get dirty rect bounds (in logical/canvas coordinates) - use integers
-        const combinedRect = this.getCombinedDirtyRect();
+        const preferred = this.getPreviewUpdateRect();
         const rect = {
-          left: Math.floor(Math.max(0, combinedRect.left)),
-          top: Math.floor(Math.max(0, combinedRect.top)),
-          right: Math.ceil(Math.min(this.width, combinedRect.right)),
-          bottom: Math.ceil(Math.min(this.height, combinedRect.bottom)),
+          left: Math.floor(Math.max(0, preferred.rect.left)),
+          top: Math.floor(Math.max(0, preferred.rect.top)),
+          right: Math.ceil(Math.min(this.width, preferred.rect.right)),
+          bottom: Math.ceil(Math.min(this.height, preferred.rect.bottom)),
         };
 
         const rectWidth = rect.right - rect.left;
@@ -1980,6 +2105,10 @@ export class GPUStrokeAccumulator {
           }
 
           this.previewCtx.putImageData(imageData, rect.left, rect.top);
+          this.lastPreviewUpdateRect = rect;
+          this.lastPreviewUpdateSource = preferred.source;
+          this.previewUpdateCount += 1;
+          this.lastPreviewUpdateMs = this.nowMs() - updateStart;
         }
 
         this.previewReadbackBuffer!.unmap();
@@ -2184,6 +2313,27 @@ export class GPUStrokeAccumulator {
     const combined = this.getCombinedDirtyRect();
     if (this.hasDirtyRect(combined)) {
       rects.push({ rect: combined, label: 'combined-dirty', color: '#34c759' });
+    }
+
+    if (this.lastPreviewUpdateRect) {
+      const parts: string[] = ['preview-update'];
+      if (this.lastPreviewUpdateSource) {
+        parts.push(`(${this.lastPreviewUpdateSource})`);
+      }
+      if (this.previewUpdateCount > 0) {
+        parts.push(`#${this.previewUpdateCount}`);
+      }
+      if (this.lastPreviewUpdateMs !== null) {
+        parts.push(`${Math.round(this.lastPreviewUpdateMs)}ms`);
+      }
+      if (this.previewUpdateSkipCount > 0) {
+        parts.push(`skip:${this.previewUpdateSkipCount}`);
+      }
+      rects.push({
+        rect: this.lastPreviewUpdateRect,
+        label: parts.join(' '),
+        color: '#ffd60a',
+      });
     }
 
     if (this.lastPrimaryBatchRect) {
