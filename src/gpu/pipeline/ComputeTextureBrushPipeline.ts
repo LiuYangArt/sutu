@@ -34,8 +34,9 @@ const DAB_DATA_FLOATS = 12;
 // Total = 80 bytes
 const UNIFORM_BUFFER_SIZE = 80;
 
-const alignTo = (value: number, alignment: number): number =>
-  Math.ceil(value / alignment) * alignment;
+function alignTo(value: number, alignment: number): number {
+  return Math.ceil(value / alignment) * alignment;
+}
 
 export class ComputeTextureBrushPipeline {
   private device: GPUDevice;

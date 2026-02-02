@@ -15,8 +15,9 @@ const DAB_DATA_FLOATS = 12;
 
 const UNIFORM_BUFFER_SIZE = 32;
 
-const alignTo = (value: number, alignment: number): number =>
-  Math.ceil(value / alignment) * alignment;
+function alignTo(value: number, alignment: number): number {
+  return Math.ceil(value / alignment) * alignment;
+}
 
 export class ComputeDualMaskPipeline {
   private device: GPUDevice;

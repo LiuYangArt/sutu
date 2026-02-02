@@ -51,3 +51,4 @@ RangeError: Maximum call stack size exceeded
 ## 状态
 
 已修复（2026-02-02）：Compute 侧按 bbox 分块 dispatch，避免递归与栈溢出；Dual/Texture 同步处理。
+补充修复（2026-02-02）：动态偏移绑定补齐 size/offset，解决大 scatter 场景下 GPUValidationError。
