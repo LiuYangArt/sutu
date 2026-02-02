@@ -451,8 +451,14 @@ export class ComputeTextureBrushPipeline {
         label: `Compute Texture Brush BindGroup (${key})`,
         layout: this.bindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: this.uniformBuffer } },
-          { binding: 1, resource: { buffer: this.dabBuffer } },
+          {
+            binding: 0,
+            resource: { buffer: this.uniformBuffer, offset: 0, size: this.uniformStride },
+          },
+          {
+            binding: 1,
+            resource: { buffer: this.dabBuffer, offset: 0, size: this.dabStride },
+          },
           { binding: 2, resource: inputTexture.createView() },
           { binding: 3, resource: outputTexture.createView() },
           { binding: 4, resource: brushTexture.view },
