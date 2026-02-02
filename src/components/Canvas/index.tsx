@@ -33,6 +33,7 @@ interface QueuedPoint {
 declare global {
   interface Window {
     __canvasFillLayer?: (color: string) => void;
+    __canvasClearSelection?: () => void;
     __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
     __getFlattenedImage?: () => Promise<string | undefined>;
     __getThumbnail?: () => Promise<string | undefined>;
@@ -377,13 +378,60 @@ export function Canvas() {
     [activeLayerId, layers, width, height, pushStroke, updateLayerThumbnail, compositeAndRender]
   );
 
+  // Clear selection content from active layer
+  const handleClearSelection = useCallback(() => {
+    const renderer = layerRendererRef.current;
+    if (!renderer || !activeLayerId) return;
+
+    // Check if layer is locked
+    const layerState = layers.find((l) => l.id === activeLayerId);
+    if (!layerState || layerState.locked) return;
+
+    const layer = renderer.getLayer(activeLayerId);
+    if (!layer) return;
+
+    // Check for active selection
+    const { hasSelection, selectionMask } = useSelectionStore.getState();
+    if (!hasSelection || !selectionMask) return;
+
+    // Capture before image for undo
+    const beforeImage = renderer.getLayerImageData(activeLayerId);
+    if (!beforeImage) return;
+
+    // Create temp canvas for the mask
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = width;
+    maskCanvas.height = height;
+    const maskCtx = maskCanvas.getContext('2d');
+    if (!maskCtx) return;
+
+    // Put the mask data
+    maskCtx.putImageData(selectionMask, 0, 0);
+
+    // Composite: Destination-Out to erase where mask is defined
+    const ctx = layer.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.drawImage(maskCanvas, 0, 0);
+    ctx.restore();
+
+    // Save to history
+    pushStroke(activeLayerId, beforeImage);
+
+    // Update thumbnail and re-render
+    updateLayerThumbnail(activeLayerId, layer.canvas.toDataURL('image/png', 0.5));
+    compositeAndRender();
+  }, [activeLayerId, layers, width, height, pushStroke, updateLayerThumbnail, compositeAndRender]);
+
   // Expose fillActiveLayer to window for keyboard shortcut
   useEffect(() => {
     window.__canvasFillLayer = fillActiveLayer;
+    window.__canvasClearSelection = handleClearSelection;
     return () => {
       delete window.__canvasFillLayer;
+      delete window.__canvasClearSelection;
     };
-  }, [fillActiveLayer]);
+  }, [fillActiveLayer, handleClearSelection]);
 
   // Expose layer data export interfaces for file save/load
   useEffect(() => {
