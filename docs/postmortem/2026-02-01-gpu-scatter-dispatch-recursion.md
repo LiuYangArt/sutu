@@ -52,3 +52,31 @@ RangeError: Maximum call stack size exceeded
 
 已修复（2026-02-02）：Compute 侧按 bbox 分块 dispatch，避免递归与栈溢出；Dual/Texture 同步处理。
 补充修复（2026-02-02）：动态偏移绑定补齐 size/offset，解决大 scatter 场景下 GPUValidationError。
+
+---
+
+## 补充经验：Brush Tip Shape Size 快速拖动触发 React 警告
+
+### 现象
+
+- Dev 服务器、Downsample off 下，快速拖动 Brush Settings → Brush Tip Shape → Size
+- 控制台出现：`Warning: Maximum update depth exceeded`
+- CPU/GPU 均可复现
+
+### 复现条件（已知）
+
+- 快速连续拖动 Size 滑块（高频 onChange）
+
+### 根因分析
+
+- Slider onChange 高频触发（短时间内 30+ 次更新），导致 store 更新与渲染回压
+- Dev 模式下触发 React 的 nested update 保护警告（并非 useEffect 依赖问题）
+
+### 修复
+
+- 在 SliderRow 内对 onChange 做 `requestAnimationFrame` 合并：每帧只提交一次最新值
+- 保持交互流畅，同时降低更新频率，警告消失
+
+### 状态
+
+已修复（2026-02-02）：SliderRow rAF 合并更新，CPU/GPU 不再触发该警告。
