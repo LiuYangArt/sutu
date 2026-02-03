@@ -448,7 +448,8 @@ export class MaskCache {
               bufferTop + my,
               textureSettings,
               pattern,
-              depth
+              depth,
+              dabOpacity
             );
           }
 
@@ -508,7 +509,8 @@ export class MaskCache {
               bufferTop + my,
               textureSettings,
               pattern,
-              depth
+              depth,
+              dabOpacity
             );
           }
 
@@ -651,7 +653,14 @@ export class MaskCache {
         let textureMod = 1.0;
         if (textureSettings && pattern) {
           const depth = textureSettings.depth / 100.0;
-          textureMod *= calculateTextureInfluence(px, py, textureSettings, pattern, depth);
+          textureMod *= calculateTextureInfluence(
+            px,
+            py,
+            textureSettings,
+            pattern,
+            depth,
+            dabOpacity
+          );
         }
 
         // Dual Brush modulation

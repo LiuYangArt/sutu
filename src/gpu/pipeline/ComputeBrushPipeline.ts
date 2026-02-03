@@ -293,12 +293,12 @@ export class ComputeBrushPipeline {
       subtract: 1,
       darken: 2,
       overlay: 3,
-      'color-dodge': 4,
-      'color-burn': 5,
-      'linear-burn': 6,
-      'hard-mix': 7,
-      height: 0,
-      'linear-height': 0,
+      colorDodge: 4,
+      colorBurn: 5,
+      linearBurn: 6,
+      hardMix: 7,
+      linearHeight: 8,
+      height: 9,
     };
     const modeId = hasPattern ? (modeMap[patternSettings!.mode] ?? 0) : 0;
     view.setUint32(byteOffset + 40, modeId, true); // pattern_mode

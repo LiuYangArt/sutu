@@ -53,32 +53,61 @@ export function sampleTextureValue(
  * @param settings Texture settings
  * @param pattern Pattern data
  * @param depth Effective depth (0-1), already including pressure dynamics if applicable
- * @returns Alpha multiplier (0-1)
+ * @param baseCeiling Base opacity ceiling (0-1) before texture modulation (dabOpacity)
+ * @returns Alpha multiplier relative to baseCeiling (may exceed 1.0 for some modes)
  */
 export function calculateTextureInfluence(
   canvasX: number,
   canvasY: number,
   settings: TextureSettings,
   pattern: PatternData,
-  depth: number
+  depth: number,
+  baseCeiling: number
 ): number {
   if (depth <= 0.001) return 1.0;
 
   const textureValue = sampleTextureValue(canvasX, canvasY, settings, pattern);
 
-  // 4. Apply Blend Mode
-  // Calculate multiplier for brush alpha (1.0 = no change)
-  switch (settings.mode) {
-    case 'subtract':
-      // Subtract: White (1.0) subtracts max alpha, Black (0.0) preserves alpha.
-      // Mathematical equivalent: 1.0 - (depth * textureValue)
-      return 1.0 - depth * textureValue;
+  const base = Math.max(0, Math.min(1, baseCeiling));
+  if (base <= 0.001) return 0.0;
 
-    case 'multiply':
-    case 'height':
-    case 'linearHeight':
-    default:
-      // Multiply: Result = Alpha * mix(1.0, textureValue, depth)
-      return 1.0 * (1.0 - depth) + textureValue * depth;
-  }
+  const blend = Math.max(0, Math.min(1, textureValue));
+
+  // 4. Apply Blend Mode (match GPU apply_blend_mode)
+  // Base: current ceiling (dabOpacity)
+  // Blend: pattern texture value
+  const blendedCeiling = (() => {
+    switch (settings.mode) {
+      case 'multiply':
+      case 'height':
+        return base * blend;
+      case 'subtract':
+        return Math.max(0, base - blend);
+      case 'darken':
+        return Math.min(base, blend);
+      case 'overlay':
+        if (base < 0.5) return 2.0 * base * blend;
+        return 1.0 - 2.0 * (1.0 - base) * (1.0 - blend);
+      case 'colorDodge':
+        if (blend >= 1.0) return 1.0;
+        return Math.min(1.0, base / (1.0 - blend));
+      case 'colorBurn':
+        if (blend <= 0.0) return 0.0;
+        return 1.0 - Math.min(1.0, (1.0 - base) / blend);
+      case 'linearBurn':
+        return Math.max(0.0, base + blend - 1.0);
+      case 'hardMix':
+        return base + blend >= 1.0 ? 1.0 : 0.0;
+      case 'linearHeight':
+        return base * (0.5 + blend * 0.5);
+      default:
+        return base * blend;
+    }
+  })();
+
+  // 5. Apply Depth (Strength)
+  const finalCeiling = base * (1.0 - depth) + blendedCeiling * depth;
+
+  // Return alpha multiplier relative to base ceiling
+  return finalCeiling / base;
 }

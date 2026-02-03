@@ -424,7 +424,8 @@ export class TextureMaskCache {
               bufferY,
               textureSettings!,
               pattern!,
-              textureDepth
+              textureDepth,
+              dabOpacity
             );
           }
 
@@ -497,7 +498,8 @@ export class TextureMaskCache {
               bufferY,
               textureSettings!,
               pattern!,
-              textureDepth
+              textureDepth,
+              dabOpacity
             );
           }
 
