@@ -49,7 +49,7 @@ function copyPixel(data: Uint8Array, srcIdx: number, dstIdx: number): void {
  * Notes:
  * - Tileable: last row/column matches first row/column.
  * - Deterministic: fixed seed.
- * - Distribution: biased toward dark values (subtle when used with "subtract").
+ * - Distribution: Gaussian around 0.5 (overlay-neutral).
  */
 export function generateNoisePattern(size: number = DEFAULT_NOISE_SIZE): PatternData {
   const safeSize = Math.max(2, Math.floor(size));

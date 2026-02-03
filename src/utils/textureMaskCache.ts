@@ -22,6 +22,13 @@ import { calculateTextureInfluence, sampleTextureValue } from './textureRenderin
 import type { DualBlendMode } from '@/stores/tool';
 
 // PS Dual Brush blend modes (only 8 supported)
+function blendOverlay(primary: number, secondary: number): number {
+  if (primary < 0.5) {
+    return 2.0 * primary * secondary;
+  }
+  return 1.0 - 2.0 * (1.0 - primary) * (1.0 - secondary);
+}
+
 function blendDual(primary: number, secondary: number, mode: DualBlendMode): number {
   const s = Math.max(0, Math.min(1, secondary));
   const p = Math.max(0, Math.min(1, primary));
@@ -32,7 +39,7 @@ function blendDual(primary: number, secondary: number, mode: DualBlendMode): num
     case 'darken':
       return Math.min(p, s);
     case 'overlay':
-      return p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
+      return blendOverlay(p, s);
     case 'colorDodge':
       return s >= 1.0 ? 1.0 : Math.min(1.0, p / (1.0 - s));
     case 'colorBurn':
@@ -107,6 +114,23 @@ export class TextureMaskCache {
     const v0 = v00 + (v10 - v00) * fx;
     const v1 = v01 + (v11 - v01) * fx;
     return v0 + (v1 - v0) * fy;
+  }
+
+  private static applyNoiseOverlayToMaskAlpha(
+    maskAlpha: number,
+    canvasX: number,
+    canvasY: number,
+    strength: number,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData
+  ): number {
+    if (!noiseSettings || !noisePattern) return maskAlpha;
+    if (strength <= 0.001) return maskAlpha;
+    if (maskAlpha <= 0.001 || maskAlpha >= 0.999) return maskAlpha;
+
+    const noiseVal = sampleTextureValue(canvasX, canvasY, noiseSettings, noisePattern);
+    const over = blendOverlay(maskAlpha, noiseVal);
+    return maskAlpha + (over - maskAlpha) * strength;
   }
 
   /**
@@ -350,8 +374,7 @@ export class TextureMaskCache {
     const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
     const hasTexturePattern = Boolean(textureSettings && pattern);
     const textureDepth = textureSettings ? textureSettings.depth / 100.0 : 0;
-    const hasNoisePattern = Boolean(noiseSettings && noisePattern);
-    const noiseDepth = noiseSettings ? noiseSettings.depth / 100.0 : 0;
+    const noiseStrength = noiseSettings ? noiseSettings.depth / 100.0 : 0;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -384,14 +407,14 @@ export class TextureMaskCache {
           const idx = (bufferRowStart + bufferX) * 4;
 
           // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
-          if (hasNoisePattern && noiseDepth > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
-            const noiseVal = sampleTextureValue(bufferX, bufferY, noiseSettings!, noisePattern!);
-            const over =
-              maskValue < 0.5
-                ? 2.0 * maskValue * noiseVal
-                : 1.0 - 2.0 * (1.0 - maskValue) * (1.0 - noiseVal);
-            maskValue = maskValue + (over - maskValue) * noiseDepth;
-          }
+          maskValue = TextureMaskCache.applyNoiseOverlayToMaskAlpha(
+            maskValue,
+            bufferX,
+            bufferY,
+            noiseStrength,
+            noiseSettings,
+            noisePattern
+          );
 
           // Texture modulation (applied to opacity ceiling)
           let textureMod = 1.0;
@@ -457,14 +480,14 @@ export class TextureMaskCache {
           const idx = (bufferRowStart + bufferX) * 4;
 
           // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
-          if (hasNoisePattern && noiseDepth > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
-            const noiseVal = sampleTextureValue(bufferX, bufferY, noiseSettings!, noisePattern!);
-            const over =
-              maskValue < 0.5
-                ? 2.0 * maskValue * noiseVal
-                : 1.0 - 2.0 * (1.0 - maskValue) * (1.0 - noiseVal);
-            maskValue = maskValue + (over - maskValue) * noiseDepth;
-          }
+          maskValue = TextureMaskCache.applyNoiseOverlayToMaskAlpha(
+            maskValue,
+            bufferX,
+            bufferY,
+            noiseStrength,
+            noiseSettings,
+            noisePattern
+          );
 
           // Texture modulation (applied to opacity ceiling)
           let textureMod = 1.0;

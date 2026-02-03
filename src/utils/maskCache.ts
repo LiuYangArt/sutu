@@ -64,40 +64,6 @@ function erfFast(x: number): number {
 }
 
 /**
- * Blend Function for Dual Brush (Photoshop Dual Brush panel compatible)
- * Only 8 modes are supported: Multiply, Darken, Overlay,
- * Color Dodge, Color Burn, Linear Burn, Hard Mix, Linear Height
- */
-function blendDual(primary: number, secondary: number, mode: DualBlendMode): number {
-  const s = Math.max(0, Math.min(1, secondary));
-  const p = Math.max(0, Math.min(1, primary));
-
-  switch (mode) {
-    case 'multiply':
-      return p * s;
-    case 'darken':
-      return Math.min(p, s);
-    case 'overlay':
-      return p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s);
-    case 'colorDodge':
-      return s >= 1.0 ? 1.0 : Math.min(1.0, p / (1.0 - s));
-    case 'colorBurn':
-      return s <= 0 ? 0 : Math.max(0, 1.0 - (1.0 - p) / s);
-    case 'linearBurn':
-      return Math.max(0, p + s - 1.0);
-    case 'hardMix':
-      // Hard Mix: result is 0 or 1 based on linear light threshold
-      return p + s >= 1.0 ? 1.0 : 0.0;
-    case 'linearHeight':
-      // Linear Height: similar to height/emboss effect
-      // Treats secondary as height map, scales primary
-      return p * (0.5 + s * 0.5);
-    default:
-      return p * s;
-  }
-}
-
-/**
  * MaskCache class for pre-computed brush masks
  */
 export class MaskCache {
@@ -195,6 +161,59 @@ export class MaskCache {
     const s = Math.max(0, Math.min(1, blend));
     if (b < 0.5) return 2.0 * b * s;
     return 1.0 - 2.0 * (1.0 - b) * (1.0 - s);
+  }
+
+  /**
+   * Blend Function for Dual Brush (Photoshop Dual Brush panel compatible)
+   * Only 8 modes are supported: Multiply, Darken, Overlay,
+   * Color Dodge, Color Burn, Linear Burn, Hard Mix, Linear Height
+   */
+  private static blendDual(primary: number, secondary: number, mode: DualBlendMode): number {
+    const s = Math.max(0, Math.min(1, secondary));
+    const p = Math.max(0, Math.min(1, primary));
+
+    switch (mode) {
+      case 'multiply':
+        return p * s;
+      case 'darken':
+        return Math.min(p, s);
+      case 'overlay':
+        return MaskCache.blendOverlay(p, s);
+      case 'colorDodge':
+        return s >= 1.0 ? 1.0 : Math.min(1.0, p / (1.0 - s));
+      case 'colorBurn':
+        return s <= 0 ? 0 : Math.max(0, 1.0 - (1.0 - p) / s);
+      case 'linearBurn':
+        return Math.max(0, p + s - 1.0);
+      case 'hardMix':
+        // Hard Mix: result is 0 or 1 based on linear light threshold
+        return p + s >= 1.0 ? 1.0 : 0.0;
+      case 'linearHeight':
+        // Linear Height: similar to height/emboss effect
+        // Treats secondary as height map, scales primary
+        return p * (0.5 + s * 0.5);
+      default:
+        return p * s;
+    }
+  }
+
+  private static applyNoiseOverlayToMaskAlpha(
+    maskAlpha: number,
+    canvasX: number,
+    canvasY: number,
+    noiseStrength: number,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData
+  ): number {
+    if (!noiseSettings || !noisePattern) return maskAlpha;
+    if (noiseStrength <= 0.001) return maskAlpha;
+
+    // PS-like: only meaningful on soft edge (0<alpha<1)
+    if (maskAlpha <= 0.001 || maskAlpha >= 0.999) return maskAlpha;
+
+    const noiseVal = sampleTextureValue(canvasX, canvasY, noiseSettings, noisePattern);
+    const over = MaskCache.blendOverlay(maskAlpha, noiseVal);
+    return maskAlpha + (over - maskAlpha) * noiseStrength;
   }
 
   /**
@@ -405,13 +424,15 @@ export class MaskCache {
           let maskValue = this.mask[maskRowStart + mx]!;
           if (maskValue < 0.001) continue;
 
-          // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
-          if (hasNoise && noiseStrength > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
-            const px = bufferLeft + mx;
-            const py = bufferTop + my;
-            const noiseVal = sampleTextureValue(px, py, noiseSettings!, noisePattern!);
-            const over = MaskCache.blendOverlay(maskValue, noiseVal);
-            maskValue = maskValue + (over - maskValue) * noiseStrength;
+          if (hasNoise) {
+            maskValue = MaskCache.applyNoiseOverlayToMaskAlpha(
+              maskValue,
+              bufferLeft + mx,
+              bufferTop + my,
+              noiseStrength,
+              noiseSettings,
+              noisePattern
+            );
           }
 
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
@@ -440,7 +461,7 @@ export class MaskCache {
             const dualVal = dualMask[maskRowStart + mx]!;
             // Apply to Opacity: Calculate density based on full coverage (1.0)
             // This ensures Dual Brush acts as a ceiling/texture rather than flow modifier
-            dualMod = blendDual(1.0, dualVal, dualMode);
+            dualMod = MaskCache.blendDual(1.0, dualVal, dualMode);
           }
 
           srcAlpha *= flow;
@@ -463,13 +484,15 @@ export class MaskCache {
           );
           if (maskValue < 0.001) continue;
 
-          // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
-          if (hasNoise && noiseStrength > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
-            const px = bufferLeft + mx;
-            const py = bufferTop + my;
-            const noiseVal = sampleTextureValue(px, py, noiseSettings!, noisePattern!);
-            const over = MaskCache.blendOverlay(maskValue, noiseVal);
-            maskValue = maskValue + (over - maskValue) * noiseStrength;
+          if (hasNoise) {
+            maskValue = MaskCache.applyNoiseOverlayToMaskAlpha(
+              maskValue,
+              bufferLeft + mx,
+              bufferTop + my,
+              noiseStrength,
+              noiseSettings,
+              noisePattern
+            );
           }
 
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
@@ -504,7 +527,7 @@ export class MaskCache {
             );
             // Apply to Opacity: Calculate density based on full coverage (1.0)
             // This ensures Dual Brush acts as a ceiling/texture rather than flow modifier
-            dualMod = blendDual(1.0, dualVal, dualMode);
+            dualMod = MaskCache.blendDual(1.0, dualVal, dualMode);
           }
 
           srcAlpha *= flow;
@@ -613,11 +636,15 @@ export class MaskCache {
 
         const idx = (rowStart + px) * 4;
 
-        // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
-        if (hasNoise && noiseStrength > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
-          const noiseVal = sampleTextureValue(px, py, noiseSettings!, noisePattern!);
-          const over = MaskCache.blendOverlay(maskValue, noiseVal);
-          maskValue = maskValue + (over - maskValue) * noiseStrength;
+        if (hasNoise) {
+          maskValue = MaskCache.applyNoiseOverlayToMaskAlpha(
+            maskValue,
+            px,
+            py,
+            noiseStrength,
+            noiseSettings,
+            noisePattern
+          );
         }
 
         // Texture modulation (applied to opacity ceiling)
@@ -642,7 +669,7 @@ export class MaskCache {
           const my = Math.floor(myFloat);
           if (mx >= 0 && mx < maskWidth && my >= 0 && my < maskHeight) {
             const dualVal = dualMask[my * maskWidth + mx] ?? 0;
-            dualMod = blendDual(1.0, dualVal, dualMode);
+            dualMod = MaskCache.blendDual(1.0, dualVal, dualMode);
           }
         }
 

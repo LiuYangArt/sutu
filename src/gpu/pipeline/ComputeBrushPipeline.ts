@@ -35,6 +35,26 @@ function alignTo(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
 }
 
+function createSolidTexture1x1(
+  device: GPUDevice,
+  label: string,
+  rgba: [number, number, number, number]
+): GPUTexture {
+  const texture = device.createTexture({
+    label,
+    size: [1, 1],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+  });
+  device.queue.writeTexture(
+    { texture },
+    new Uint8Array(rgba),
+    { bytesPerRow: 4 },
+    { width: 1, height: 1 }
+  );
+  return texture;
+}
+
 export class ComputeBrushPipeline {
   private device: GPUDevice;
   private pipeline!: GPUComputePipeline;
@@ -97,32 +117,17 @@ export class ComputeBrushPipeline {
     device.queue.writeBuffer(this.gaussianBuffer, 0, erfLUT.buffer);
 
     // Initialize dummy pattern texture (1x1 white)
-    this.dummyPatternTexture = device.createTexture({
-      label: 'Compute Brush Dummy Pattern',
-      size: [1, 1],
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-    // Upload white pixel
-    device.queue.writeTexture(
-      { texture: this.dummyPatternTexture },
-      new Uint8Array([255, 255, 255, 255]),
-      { bytesPerRow: 4 },
-      { width: 1, height: 1 }
+    this.dummyPatternTexture = createSolidTexture1x1(
+      device,
+      'Compute Brush Dummy Pattern',
+      [255, 255, 255, 255]
     );
 
     // Initialize dummy noise texture (1x1 mid-gray; overlay(., 0.5) is neutral)
-    this.dummyNoiseTexture = device.createTexture({
-      label: 'Compute Brush Dummy Noise',
-      size: [1, 1],
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-    device.queue.writeTexture(
-      { texture: this.dummyNoiseTexture },
-      new Uint8Array([128, 128, 128, 255]),
-      { bytesPerRow: 4 },
-      { width: 1, height: 1 }
+    this.dummyNoiseTexture = createSolidTexture1x1(
+      device,
+      'Compute Brush Dummy Noise',
+      [128, 128, 128, 255]
     );
 
     this.initPipeline();

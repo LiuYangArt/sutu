@@ -38,6 +38,26 @@ function alignTo(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
 }
 
+function createSolidTexture1x1(
+  device: GPUDevice,
+  label: string,
+  rgba: [number, number, number, number]
+): GPUTexture {
+  const texture = device.createTexture({
+    label,
+    size: [1, 1],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+  });
+  device.queue.writeTexture(
+    { texture },
+    new Uint8Array(rgba),
+    { bytesPerRow: 4 },
+    { width: 1, height: 1 }
+  );
+  return texture;
+}
+
 export class ComputeTextureBrushPipeline {
   private device: GPUDevice;
   private pipeline!: GPUComputePipeline;
@@ -87,33 +107,17 @@ export class ComputeTextureBrushPipeline {
     });
 
     // Create dummy 1x1 white texture for bind group validity when no pattern is used
-    this.dummyPatternTexture = device.createTexture({
-      label: 'Dummy Pattern Texture',
-      size: { width: 1, height: 1 },
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-
-    // Initialize dummy texture with white pixel
-    device.queue.writeTexture(
-      { texture: this.dummyPatternTexture },
-      new Uint8Array([255, 255, 255, 255]),
-      { bytesPerRow: 4 },
-      { width: 1, height: 1 }
+    this.dummyPatternTexture = createSolidTexture1x1(
+      device,
+      'Dummy Pattern Texture',
+      [255, 255, 255, 255]
     );
 
     // Initialize dummy noise texture (1x1 mid-gray; overlay(., 0.5) is neutral)
-    this.dummyNoiseTexture = device.createTexture({
-      label: 'Dummy Noise Texture',
-      size: { width: 1, height: 1 },
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-    device.queue.writeTexture(
-      { texture: this.dummyNoiseTexture },
-      new Uint8Array([128, 128, 128, 255]),
-      { bytesPerRow: 4 },
-      { width: 1, height: 1 }
+    this.dummyNoiseTexture = createSolidTexture1x1(
+      device,
+      'Dummy Noise Texture',
+      [128, 128, 128, 255]
     );
 
     this.initPipeline();
