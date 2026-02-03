@@ -1,12 +1,16 @@
-import { useCallback, useEffect, type RefObject, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
 import { applyPressureCurve, PressureCurve, ToolType } from '@/stores/tool';
-import { clearPointBuffer, type RawInputPoint } from '@/stores/tablet';
+import { clearPointBuffer, useTabletStore, type RawInputPoint } from '@/stores/tablet';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
+import type { RenderBackend } from '@/gpu';
 
 const MAX_POINTS_PER_FRAME = 80;
+const TARGET_BUILDUP_DABS_PER_SEC = 60;
+const BUILDUP_INTERVAL_MS = 1000 / TARGET_BUILDUP_DABS_PER_SEC;
+const MAX_BUILDUP_DABS_PER_FRAME = 4;
 
 interface QueuedPoint {
   x: number;
@@ -36,6 +40,7 @@ interface UseStrokeProcessorParams {
   brushHardness: number;
   wetEdge: number;
   wetEdgeEnabled: boolean;
+  brushBackend: RenderBackend;
   getBrushConfig: () => BrushRenderConfig;
   getShiftLineGuide: () => {
     start: { x: number; y: number };
@@ -128,6 +133,7 @@ export function useStrokeProcessor({
   brushHardness,
   wetEdge,
   wetEdgeEnabled,
+  brushBackend,
   getBrushConfig,
   getShiftLineGuide,
   constrainShiftLinePoint,
@@ -163,6 +169,10 @@ export function useStrokeProcessor({
     const layer = layerRendererRef.current.getLayer(activeLayerId);
     return layer?.ctx ?? null;
   }, [activeLayerId, layerRendererRef]);
+
+  const lastPressureRef = useRef(0.5);
+  const buildupAccMsRef = useRef(0);
+  const rafPrevTimeRef = useRef<number | null>(null);
 
   // Check if active layer is a background layer
   const isActiveLayerBackground = useCallback(() => {
@@ -260,6 +270,7 @@ export function useStrokeProcessor({
       // Track last rendered position for Visual Lag measurement
       lastRenderedPosRef.current = { x: constrained.x, y: constrained.y };
       lastInputPosRef.current = { x: constrained.x, y: constrained.y };
+      lastPressureRef.current = pressure;
     },
     [
       getBrushConfig,
@@ -287,13 +298,23 @@ export function useStrokeProcessor({
     const fpsCounter = fpsCounterRef.current;
     fpsCounter.start();
 
+    buildupAccMsRef.current = 0;
+    rafPrevTimeRef.current = null;
+
     let id: number;
-    const loop = () => {
+    const loop = (time: number) => {
       fpsCounter.tick();
+
+      const prev = rafPrevTimeRef.current;
+      const dtMs = prev === null ? 0 : time - prev;
+      rafPrevTimeRef.current = time;
+
+      let processedAnyPoints = false;
 
       // Batch process all queued points (with soft limit)
       const queue = inputQueueRef.current;
       if (queue.length > 0) {
+        processedAnyPoints = true;
         // Visual Lag: measure distance from last queued point (newest input)
         // to last rendered point (before this batch)
         const lastQueuedPoint = queue[queue.length - 1]!;
@@ -318,6 +339,50 @@ export function useStrokeProcessor({
         needsRenderRef.current = true;
       }
 
+      // Build-up tick: CPU-only, stationary hold behavior
+      const canBuildupTick =
+        brushBackend === 'canvas2d' &&
+        currentTool === 'brush' &&
+        isDrawingRef.current &&
+        strokeStateRef.current === 'active';
+
+      if (canBuildupTick) {
+        const config = getBrushConfig();
+        if (config.buildupEnabled && !processedAnyPoints) {
+          buildupAccMsRef.current += dtMs;
+
+          let steps = 0;
+          while (
+            buildupAccMsRef.current >= BUILDUP_INTERVAL_MS &&
+            steps < MAX_BUILDUP_DABS_PER_FRAME
+          ) {
+            buildupAccMsRef.current -= BUILDUP_INTERVAL_MS;
+
+            const pos = lastInputPosRef.current ?? lastRenderedPosRef.current;
+            if (!pos) break;
+
+            let pressure = lastPressureRef.current;
+            const tabletState = useTabletStore.getState();
+            const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
+            if (isWinTabActive && tabletState.currentPoint) {
+              pressure = tabletState.currentPoint.pressure;
+            }
+
+            processBrushPointWithConfig(pos.x, pos.y, pressure);
+            steps++;
+          }
+
+          if (steps > 0) {
+            flushPending();
+            needsRenderRef.current = true;
+          }
+        } else {
+          buildupAccMsRef.current = 0;
+        }
+      } else {
+        buildupAccMsRef.current = 0;
+      }
+
       // Composite once per frame if needed
       if (needsRenderRef.current) {
         compositeAndRenderWithPreview();
@@ -331,17 +396,26 @@ export function useStrokeProcessor({
     return () => {
       fpsCounter.stop();
       cancelAnimationFrame(id);
+      buildupAccMsRef.current = 0;
+      rafPrevTimeRef.current = null;
     };
   }, [
     compositeAndRenderWithPreview,
     processSinglePoint,
+    processBrushPointWithConfig,
     flushPending,
     inputQueueRef,
     lastRenderedPosRef,
+    lastInputPosRef,
+    brushBackend,
+    currentTool,
+    getBrushConfig,
     lagometerRef,
     needsRenderRef,
     fpsCounterRef,
     latencyProfilerRef,
+    isDrawingRef,
+    strokeStateRef,
   ]);
 
   // 绘制插值后的点序列 (used for eraser, legacy fallback)

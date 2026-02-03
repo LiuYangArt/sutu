@@ -11,6 +11,7 @@ import { ColorDynamicsSettings } from './settings/ColorDynamicsSettings';
 import { WetEdgeSettings } from './settings/WetEdgeSettings';
 import { TextureSettings } from './settings/TextureSettings';
 import { DualBrushSettings } from './settings/DualBrushSettings';
+import { BuildupSettings } from './settings/BuildupSettings';
 
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
@@ -29,7 +30,7 @@ export function BrushPanel(): JSX.Element {
     { id: 'brush_pose', label: 'Brush Pose', disabled: true },
     { id: 'noise', label: 'Noise', disabled: true },
     { id: 'wet_edges', label: 'Wet Edges' },
-    { id: 'build_up', label: 'Build-up', disabled: true },
+    { id: 'build_up', label: 'Build-up' },
     { id: 'smoothing', label: 'Smoothing', disabled: true },
     { id: 'protect_texture', label: 'Protect Texture', disabled: true },
   ];
@@ -54,6 +55,8 @@ export function BrushPanel(): JSX.Element {
         return <ColorDynamicsSettings />;
       case 'wet_edges':
         return <WetEdgeSettings />;
+      case 'build_up':
+        return <BuildupSettings />;
       case 'transfer':
         return <TransferSettings />;
       default:

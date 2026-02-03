@@ -1,14 +1,14 @@
-# Buildup 功能设计
+# Buildup 功能设计（v1 / CPU Ground Truth）
 
-复刻 Photoshop 笔刷的 **Buildup (Airbrush Style Build-up)** 效果。
+复刻 Photoshop 笔刷的 **Build-up (Airbrush Style Build-up)** 效果（v1 先做 CPU 路径，作为 GPU 对齐的 ground truth）。
 
 ## 需求理解
 
-Buildup 是一种 airbrush 喷枪风格的效果：即使笔刷在原地持续输入（相同位置、相同压感），也会持续"扩展"覆盖区域。
+Buildup 是一种 airbrush 喷枪风格的效果：即使笔刷在原地持续输入（相同位置、相同压感），也会持续“喷涂/累积”，表现为软边逐步填满。
 
 ### 核心行为
 
-| 对比项       | 关闭 Buildup (当前) | 开启 Buildup                |
+| 对比项       | 关闭 Build-up (当前) | 开启 Build-up               |
 | ------------ | ------------------- | --------------------------- |
 | 同位置持续戳 | 无变化 (max blend)  | 边缘 alpha 累积             |
 | 中心 alpha   | 保持不变            | 保持不变 (不超过 flow 上限) |
@@ -25,26 +25,36 @@ Buildup 是一种 airbrush 喷枪风格的效果：即使笔刷在原地持续�
 
 ---
 
-## 技术方案
+## 技术方案（v1）
 
-### 问题分析
+### 核心判断
 
-当前 `maskCache.ts` 中的 `blendPixel` 方法使用 **Alpha Darken** 混合：
+当前 CPU 笔刷的 alpha 混合是 **Alpha Darken / 向 ceiling 指数趋近**：
 
-```typescript
-// 当前逻辑：lerp toward ceiling, 但 ceiling 是 dabOpacity
-const outA = dstA >= dabOpacity - 0.001 ? dstA : dstA + (dabOpacity - dstA) * srcAlpha;
+```ts
+// outA = dstA + (ceiling - dstA) * srcAlpha
+// srcAlpha = maskValue * flow
 ```
 
-**问题**：当前 `BrushStamper.processPoint` 会过滤掉"没有足够移动"的 pointer 事件，所以即使 Buildup 开启，原地戳也不会生成新的 dab。
+这个公式本身就具备 build-up 的“中心快速饱和、边缘缓慢填满”的特性：**只要能在原地持续产生新的 dab**，边缘就会逐渐累积到 ceiling。
 
-### 解决方案
+因此 v1 不引入 additive 线性累积曲线，也不修改 `maskCache.ts` / `textureMaskCache.ts` 的 blending 公式；只解决“原地不出新 dab”的问题。
 
-Buildup 开启时，需要确保：
+### 问题根因
 
-1. **每个 pointer 事件都生成 dab**（即使位置相同）
-2. **Alpha 累积使用 additive blend**（而非 max blend）
-3. **Alpha 不超过 flow 上限**（保持 opacity 不叠加）
+1. `BrushStamper.processPoint` 为了解决“起笔大头/压力堆积”问题，会在起笔阶段卡住：
+   - 首点不出 dab
+   - 未达到 `MIN_MOVEMENT_DISTANCE` 前不出 dab
+2. 即使绕过最小位移，如果输入事件不再产生（笔尖静止），也没有机制“按时间持续喷涂”。
+
+### 解决思路（v1）
+
+两层修复（都只在 `buildupEnabled` 时生效）：
+
+1. **BrushStamper**：允许首点产 dab + 0 位移也产 dab，并跳过 `MIN_MOVEMENT_DISTANCE` gate。
+2. **StrokeProcessor**：CPU backend（`RenderMode=cpu` / `backend=canvas2d`）下，在 RAF loop 里按时间补点（默认 60Hz），仅当本帧没有真实输入点时触发（避免改变移动笔触的 spacing 手感）。
+
+> v1 仅 CPU 生效：GPU 路径不做同步。
 
 ---
 
@@ -52,9 +62,9 @@ Buildup 开启时，需要确保：
 
 ### 1. State Management
 
-#### [MODIFY] [tool.ts](file:///f:/CodeProjects/PaintBoard/src/stores/tool.ts)
+#### [MODIFY] `src/stores/tool.ts`
 
-添加 Buildup 状态和 action：
+添加 `buildupEnabled` 状态与 action，并加入 `persist.partialize`：
 
 ```diff
 interface ToolState {
@@ -73,52 +83,55 @@ interface ToolState {
 
 ### 2. UI Component
 
-#### [NEW] [BuildupSettings.tsx](file:///f:/CodeProjects/PaintBoard/src/components/BrushPanel/settings/BuildupSettings.tsx)
+#### [MODIFY] `src/components/BrushPanel/BrushSettingsSidebar.tsx`
 
-类似 `WetEdgeSettings.tsx` 的简单 toggle 开关。
+Sidebar checkbox 里加入 `build_up` 的 toggle。
 
----
+#### [MODIFY] `src/components/BrushPanel/index.tsx`
 
-### 3. Brush Stamper 修改
+启用 `build_up` tab，并渲染 `BuildupSettings`。
 
-#### [MODIFY] [strokeBuffer.ts](file:///f:/CodeProjects/PaintBoard/src/utils/strokeBuffer.ts)
+#### [NEW] `src/components/BrushPanel/settings/BuildupSettings.tsx`
 
-修改 `BrushStamper.processPoint`，Buildup 开启时跳过"minimum movement"检查并持续生成 dab。
-
----
-
-### 4. Alpha Blending 修改
-
-#### [MODIFY] [maskCache.ts](file:///f:/CodeProjects/PaintBoard/src/utils/maskCache.ts)
-
-Buildup 模式使用 additive blend：
-
-```diff
-+ if (buildupMode) {
-+   // Buildup: additive blend, ceiling = opacity (not flow)
-+   // - flow controls per-dab contribution
-+   // - opacity is the maximum alpha ceiling
-+   outA = Math.min(opacity, dstA + srcAlpha * flow);
-+ } else {
-+   outA = dstA >= dabOpacity - 0.001 ? dstA : dstA + (dabOpacity - dstA) * srcAlpha;
-+ }
-```
-
-> [!IMPORTANT]
-> **Opacity vs Flow 的作用**：
->
-> - `100% opacity, 50% flow` → 慢慢累积，最终可达完全不透明
-> - `50% opacity, 100% flow` → 快速累积，但最多只能到 50% 透明度
->
-> 公式：`outA = min(opacity, dstA + srcAlpha * flow)`
+说明文案 + CPU-only 提示（v1）。
 
 ---
 
-### 5. 传递 Buildup 参数
+### 3. 参数透传（BrushRenderConfig）
 
-- [useBrushRenderer.ts](file:///f:/CodeProjects/PaintBoard/src/hooks/useBrushRenderer.ts)：从 store 读取 `buildupEnabled`
-- [strokeBuffer.ts](file:///f:/CodeProjects/PaintBoard/src/utils/strokeBuffer.ts)：`stamp()` 添加 `buildup` 参数
-- [textureMaskCache.ts](file:///f:/CodeProjects/PaintBoard/src/utils/textureMaskCache.ts)：同样添加支持
+#### [MODIFY] `src/components/Canvas/index.tsx`
+
+`getBrushConfig()` 增加 `buildupEnabled`。
+
+#### [MODIFY] `src/components/Canvas/useBrushRenderer.ts`
+
+`BrushRenderConfig` 增加 `buildupEnabled`，并在调用 `stamper.processPoint(...)` / `secondaryStamper.processPoint(...)` 时传入。
+
+---
+
+### 4. CPU Build-up Tick（RAF 补点）
+
+#### [MODIFY] `src/components/Canvas/useStrokeProcessor.ts`
+
+在 RAF loop 里增加 build-up tick：
+
+- 条件：`backend === 'canvas2d' && buildupEnabled && strokeState==='active'`
+- 频率：`TARGET_BUILDUP_DABS_PER_SEC = 60`（`MAX_BUILDUP_DABS_PER_FRAME = 4`）
+- 位置：`lastInputPosRef ?? lastRenderedPosRef`
+- 压力：优先 WinTab `currentPoint.pressure`，否则用 `lastPressureRef`
+- 调用：`processBrushPointWithConfig(...)` + `flushPending()`
+
+---
+
+### 5. BrushStamper 修改（允许原地出 dab）
+
+#### [MODIFY] `src/utils/strokeBuffer.ts`
+
+- `processPoint(...)` 增加参数 `buildupEnabled?: boolean`
+- 行为（仅 buildupEnabled=true）：
+  - 首点立即产 1 个 dab
+  - 跳过 `MIN_MOVEMENT_DISTANCE` gate
+  - 当 `distance ~ 0` 时也产 dab（避免“原地没输出”）
 
 ---
 
@@ -126,21 +139,21 @@ Buildup 模式使用 additive blend：
 
 ### 单元测试
 
-#### [NEW] [maskCache.test.ts](file:///f:/CodeProjects/PaintBoard/src/utils/__tests__/maskCache.test.ts)
+#### [NEW] `src/utils/__tests__/brushStamper.buildup.test.ts`
 
 ```typescript
-describe('MaskCache blendPixel', () => {
-  it('should accumulate alpha in buildup mode');
-  it('should clamp alpha to dabOpacity ceiling');
-  it('should use max blend in non-buildup mode');
+describe('BrushStamper build-up', () => {
+  it('does not emit dabs while stationary when buildup disabled');
+  it('emits dabs while stationary when buildup enabled');
 });
 ```
 
 ### 手动验证
 
-1. 软边笔刷 + 50% opacity
-2. **关闭 Buildup**：戳住不动 → 无变化
-3. **开启 Buildup**：戳住不动 → 边缘填满，中心颜色不变深
+1. Render Mode 切到 `cpu`
+2. 软边笔刷 + 50% opacity（flow 任意）
+3. **关闭 Build-up**：戳住不动 ≥ 1s → 基本无变化
+4. **开启 Build-up**：戳住不动 ≥ 1s → 边缘逐步填满（中心不继续变深）
 
 ---
 

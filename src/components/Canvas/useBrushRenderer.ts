@@ -127,6 +127,8 @@ export interface BrushRenderConfig {
   // Wet Edge settings (Photoshop-compatible)
   wetEdgeEnabled: boolean;
   wetEdge: number; // Wet edge strength (0-1)
+  // Build-up settings (Photoshop-compatible)
+  buildupEnabled: boolean;
   // Transfer settings (Photoshop-compatible)
   transferEnabled: boolean;
   transfer?: TransferSettings;
@@ -364,7 +366,8 @@ export function useBrushRenderer({
       // Get dab positions from stamper
       const spacingBase = computeSpacingBasePx(spacingSize, config.roundness / 100, config.texture);
       const spacingPx = spacingBase * config.spacing;
-      const dabs = stamper.processPoint(x, y, pressure, spacingPx);
+      const buildupMode = backend === 'canvas2d' && config.buildupEnabled;
+      const dabs = stamper.processPoint(x, y, pressure, spacingPx, buildupMode);
 
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush
@@ -402,7 +405,13 @@ export function useBrushRenderer({
         const secondarySpacingPx = secondarySpacingBase * secondarySpacing;
 
         // Generate secondary dabs at this point
-        const secondaryDabs = secondaryStamper.processPoint(x, y, pressure, secondarySpacingPx);
+        const secondaryDabs = secondaryStamper.processPoint(
+          x,
+          y,
+          pressure,
+          secondarySpacingPx,
+          buildupMode
+        );
 
         // Stamp each secondary dab to the stroke-level accumulator
         for (const secDab of secondaryDabs) {

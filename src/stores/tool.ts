@@ -299,6 +299,9 @@ interface ToolState {
   wetEdgeEnabled: boolean;
   wetEdge: number; // Wet edge strength (0-1)
 
+  // Build-up settings (Photoshop-compatible)
+  buildupEnabled: boolean;
+
   // Transfer settings (Photoshop-compatible)
   transferEnabled: boolean;
   transfer: TransferSettings;
@@ -371,6 +374,10 @@ interface ToolState {
   toggleWetEdge: () => void;
   setWetEdge: (value: number) => void;
 
+  // Build-up actions
+  setBuildupEnabled: (enabled: boolean) => void;
+  toggleBuildup: () => void;
+
   // Transfer actions
   setTransferEnabled: (enabled: boolean) => void;
   toggleTransfer: () => void;
@@ -422,6 +429,9 @@ export const useToolStore = create<ToolState>()(
       // Wet Edge (default: disabled, full strength when enabled)
       wetEdgeEnabled: false,
       wetEdge: 1.0,
+
+      // Build-up (default: disabled)
+      buildupEnabled: false,
 
       // Transfer (default: disabled with all jitter at 0)
       transferEnabled: false,
@@ -573,6 +583,11 @@ export const useToolStore = create<ToolState>()(
 
       setWetEdge: (value) => set({ wetEdge: Math.max(0, Math.min(1, value)) }),
 
+      // Build-up actions
+      setBuildupEnabled: (enabled) => set({ buildupEnabled: enabled }),
+
+      toggleBuildup: () => set((state) => ({ buildupEnabled: !state.buildupEnabled })),
+
       // Transfer actions
       setTransferEnabled: (enabled) => set({ transferEnabled: enabled }),
 
@@ -624,6 +639,7 @@ export const useToolStore = create<ToolState>()(
         colorDynamics: state.colorDynamics,
         wetEdgeEnabled: state.wetEdgeEnabled,
         wetEdge: state.wetEdge,
+        buildupEnabled: state.buildupEnabled,
         transferEnabled: state.transferEnabled,
         transfer: state.transfer,
         dualBrushEnabled: state.dualBrushEnabled,

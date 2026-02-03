@@ -36,6 +36,8 @@ export function BrushSettingsSidebar({
     toggleTransfer,
     wetEdgeEnabled,
     toggleWetEdge,
+    buildupEnabled,
+    toggleBuildup,
   } = useToolStore(
     useShallow((s) => ({
       shapeDynamicsEnabled: s.shapeDynamicsEnabled,
@@ -52,6 +54,8 @@ export function BrushSettingsSidebar({
       toggleTransfer: s.toggleTransfer,
       wetEdgeEnabled: s.wetEdgeEnabled,
       toggleWetEdge: s.toggleWetEdge,
+      buildupEnabled: s.buildupEnabled,
+      toggleBuildup: s.toggleBuildup,
     }))
   );
 
@@ -63,6 +67,7 @@ export function BrushSettingsSidebar({
     color_dynamics: { checked: colorDynamicsEnabled, onChange: toggleColorDynamics },
     transfer: { checked: transferEnabled, onChange: toggleTransfer },
     wet_edges: { checked: wetEdgeEnabled, onChange: toggleWetEdge },
+    build_up: { checked: buildupEnabled, onChange: toggleBuildup },
   };
 
   const getToggleState = (id: string) => toggleMap[id] || null;

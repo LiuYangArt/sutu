@@ -1183,7 +1183,8 @@ export class BrushStamper {
     x: number,
     y: number,
     pressure: number,
-    spacingPx: number
+    spacingPx: number,
+    buildupEnabled: boolean = false
   ): Array<{ x: number; y: number; pressure: number }> {
     const dabs: Array<{ x: number; y: number; pressure: number }> = [];
 
@@ -1192,20 +1193,41 @@ export class BrushStamper {
     if (this.isStrokeStart) {
       this.isStrokeStart = false;
       this.strokeStartPoint = { x, y };
-      this.lastPoint = { x, y, pressure: 0 }; // Start with 0 pressure
-      this.smoothedPressure = 0; // Reset EMA
-      // Don't emit first dab - wait for movement
+      if (buildupEnabled) {
+        // Build-up: allow stationary accumulation from stroke start
+        this.hasMovedEnough = true;
+        this.smoothedPressure = pressure;
+        this.lastPoint = { x, y, pressure };
+        dabs.push({ x, y, pressure });
+      } else {
+        this.lastPoint = { x, y, pressure: 0 }; // Start with 0 pressure
+        this.smoothedPressure = 0; // Reset EMA
+      }
       return dabs;
     }
 
     if (!this.lastPoint || !this.strokeStartPoint) {
-      this.lastPoint = { x, y, pressure: 0 };
+      this.lastPoint = { x, y, pressure: buildupEnabled ? pressure : 0 };
       this.strokeStartPoint = { x, y };
+      if (buildupEnabled) {
+        this.hasMovedEnough = true;
+        this.smoothedPressure = pressure;
+        dabs.push({ x, y, pressure });
+      }
       return dabs;
     }
 
     // Check if we've moved enough from stroke start
     if (!this.hasMovedEnough) {
+      if (buildupEnabled) {
+        // Build-up: skip the minimum movement gate entirely
+        this.hasMovedEnough = true;
+        this.smoothedPressure = pressure;
+        this.lastPoint = { x, y, pressure };
+        dabs.push({ x, y, pressure });
+        return dabs;
+      }
+
       const dxFromStart = x - this.strokeStartPoint.x;
       const dyFromStart = y - this.strokeStartPoint.y;
       const distFromStart = Math.sqrt(dxFromStart * dxFromStart + dyFromStart * dyFromStart);
@@ -1235,6 +1257,15 @@ export class BrushStamper {
     const dx = x - this.lastPoint.x;
     const dy = y - this.lastPoint.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
+
+    // Stationary input: optionally emit a dab for Build-up mode
+    if (distance < 1e-6) {
+      if (buildupEnabled) {
+        dabs.push({ x, y, pressure: smoothedPressure });
+      }
+      this.lastPoint = { x, y, pressure: smoothedPressure };
+      return dabs;
+    }
 
     // Check for rapid pressure change - reduce spacing for smoother transition
     const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
