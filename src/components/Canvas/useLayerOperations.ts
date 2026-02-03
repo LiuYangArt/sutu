@@ -43,6 +43,19 @@ function fillWithMask(
   ctx.drawImage(maskCanvas, 0, 0);
 }
 
+function snapshotLayers(
+  renderer: LayerRenderer,
+  layers: Array<{ id: string }>
+): Array<{ layerId: string; imageData: ImageData }> | null {
+  const snapshots: Array<{ layerId: string; imageData: ImageData }> = [];
+  for (const layer of layers) {
+    const imageData = renderer.getLayerImageData(layer.id);
+    if (!imageData) return null;
+    snapshots.push({ layerId: layer.id, imageData });
+  }
+  return snapshots;
+}
+
 export function useLayerOperations({
   layerRendererRef,
   activeLayerId,
@@ -120,12 +133,8 @@ export function useLayerOperations({
 
       if (options.width === beforeWidth && options.height === beforeHeight) return;
 
-      const beforeLayers: Array<{ layerId: string; imageData: ImageData }> = [];
-      for (const layer of docState.layers) {
-        const imageData = renderer.getLayerImageData(layer.id);
-        if (!imageData) return;
-        beforeLayers.push({ layerId: layer.id, imageData });
-      }
+      const beforeLayers = snapshotLayers(renderer, docState.layers);
+      if (!beforeLayers) return;
 
       pushResizeCanvas(beforeWidth, beforeHeight, beforeLayers);
       useSelectionStore.getState().deselectAll();
@@ -277,12 +286,8 @@ export function useLayerOperations({
         const afterWidth = docState.width;
         const afterHeight = docState.height;
 
-        const afterLayers: Array<{ layerId: string; imageData: ImageData }> = [];
-        for (const layer of docState.layers) {
-          const imageData = renderer.getLayerImageData(layer.id);
-          if (!imageData) return;
-          afterLayers.push({ layerId: layer.id, imageData });
-        }
+        const afterLayers = snapshotLayers(renderer, docState.layers);
+        if (!afterLayers) return;
 
         entry.after = { width: afterWidth, height: afterHeight, layers: afterLayers };
 
@@ -476,7 +481,6 @@ export function useLayerOperations({
 
   return {
     updateThumbnail,
-    updateThumbnailWithSize,
     captureBeforeImage,
     saveStrokeToHistory,
     fillActiveLayer,

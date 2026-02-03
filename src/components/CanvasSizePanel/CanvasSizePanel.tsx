@@ -61,7 +61,10 @@ export function CanvasSizePanel({
   onClose,
   onApply,
 }: CanvasSizePanelProps): JSX.Element | null {
-  const { width: currentWidth, height: currentHeight } = useDocumentStore();
+  const { width: currentWidth, height: currentHeight } = useDocumentStore((s) => ({
+    width: s.width,
+    height: s.height,
+  }));
   const backgroundColor = useToolStore((s) => s.backgroundColor);
 
   const [newWidth, setNewWidth] = useState(String(currentWidth));
@@ -88,15 +91,18 @@ export function CanvasSizePanel({
     lastEditedRef.current = 'width';
   }, [isOpen, currentWidth, currentHeight]);
 
-  const canApply = useMemo(() => {
-    const w = parsePositiveInt(newWidth);
-    const h = parsePositiveInt(newHeight);
-    return w !== null && h !== null;
+  const parsedSize = useMemo(() => {
+    return {
+      width: parsePositiveInt(newWidth),
+      height: parsePositiveInt(newHeight),
+    };
   }, [newWidth, newHeight]);
 
+  const canApply = parsedSize.width !== null && parsedSize.height !== null;
+
   const updateAspectRatioFromCurrentInputs = () => {
-    const w = parsePositiveInt(newWidth);
-    const h = parsePositiveInt(newHeight);
+    const w = parsedSize.width;
+    const h = parsedSize.height;
     if (w && h) {
       aspectRatioRef.current = w / h;
     } else {
@@ -109,8 +115,8 @@ export function CanvasSizePanel({
     setKeepAspectRatio(next);
     if (next) {
       updateAspectRatioFromCurrentInputs();
-      const w = parsePositiveInt(newWidth);
-      const h = parsePositiveInt(newHeight);
+      const w = parsedSize.width;
+      const h = parsedSize.height;
       if (w && aspectRatioRef.current > 0) {
         if (lastEditedRef.current === 'width') {
           setNewHeight(String(Math.max(1, Math.round(w / aspectRatioRef.current))));
@@ -144,8 +150,8 @@ export function CanvasSizePanel({
   };
 
   const handleApply = () => {
-    const w = parsePositiveInt(newWidth);
-    const h = parsePositiveInt(newHeight);
+    const w = parsedSize.width;
+    const h = parsedSize.height;
     if (!w || !h) return;
 
     const options: ResizeCanvasOptions = {

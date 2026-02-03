@@ -39,6 +39,65 @@ function getCompositeOperation(blendMode: BlendMode): GlobalCompositeOperation {
   return BLEND_MODE_MAPPING[blendMode] ?? 'source-over';
 }
 
+function getAnchorOffset(
+  anchor: ResizeCanvasOptions['anchor'],
+  deltaX: number,
+  deltaY: number
+): { x: number; y: number } {
+  let x: number;
+  switch (anchor) {
+    case 'top-left':
+    case 'left':
+    case 'bottom-left':
+      x = 0;
+      break;
+    case 'top-right':
+    case 'right':
+    case 'bottom-right':
+      x = deltaX;
+      break;
+    case 'top':
+    case 'center':
+    case 'bottom':
+      x = Math.floor(deltaX / 2);
+      break;
+  }
+
+  let y: number;
+  switch (anchor) {
+    case 'top-left':
+    case 'top':
+    case 'top-right':
+      y = 0;
+      break;
+    case 'bottom-left':
+    case 'bottom':
+    case 'bottom-right':
+      y = deltaY;
+      break;
+    case 'left':
+    case 'center':
+    case 'right':
+      y = Math.floor(deltaY / 2);
+      break;
+  }
+
+  return { x, y };
+}
+
+function configureResample(
+  ctx: CanvasRenderingContext2D,
+  mode: ResizeCanvasOptions['resampleMode']
+): void {
+  if (mode === 'nearest') {
+    ctx.imageSmoothingEnabled = false;
+    return;
+  }
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = mode === 'bilinear' ? 'medium' : 'high';
+}
+
 /**
  * LayerRenderer manages multiple canvas layers and composites them
  */
@@ -250,45 +309,7 @@ export class LayerRenderer {
 
     const deltaX = newWidth - oldWidth;
     const deltaY = newHeight - oldHeight;
-
-    const horizontal = (() => {
-      switch (options.anchor) {
-        case 'top-left':
-        case 'left':
-        case 'bottom-left':
-          return 'left';
-        case 'top-right':
-        case 'right':
-        case 'bottom-right':
-          return 'right';
-        case 'top':
-        case 'center':
-        case 'bottom':
-          return 'center';
-      }
-    })();
-
-    const vertical = (() => {
-      switch (options.anchor) {
-        case 'top-left':
-        case 'top':
-        case 'top-right':
-          return 'top';
-        case 'bottom-left':
-        case 'bottom':
-        case 'bottom-right':
-          return 'bottom';
-        case 'left':
-        case 'center':
-        case 'right':
-          return 'center';
-      }
-    })();
-
-    const offsetX =
-      horizontal === 'left' ? 0 : horizontal === 'right' ? deltaX : Math.floor(deltaX / 2);
-    const offsetY =
-      vertical === 'top' ? 0 : vertical === 'bottom' ? deltaY : Math.floor(deltaY / 2);
+    const offset = getAnchorOffset(options.anchor, deltaX, deltaY);
 
     this.width = newWidth;
     this.height = newHeight;
@@ -325,15 +346,10 @@ export class LayerRenderer {
       if (!tmpCtx) continue;
 
       if (options.scaleContent) {
-        if (options.resampleMode === 'nearest') {
-          layer.ctx.imageSmoothingEnabled = false;
-        } else {
-          layer.ctx.imageSmoothingEnabled = true;
-          layer.ctx.imageSmoothingQuality = options.resampleMode === 'bilinear' ? 'medium' : 'high';
-        }
+        configureResample(layer.ctx, options.resampleMode);
         layer.ctx.drawImage(tmp, 0, 0, newWidth, newHeight);
       } else {
-        layer.ctx.drawImage(tmp, offsetX, offsetY);
+        layer.ctx.drawImage(tmp, offset.x, offset.y);
       }
     }
   }

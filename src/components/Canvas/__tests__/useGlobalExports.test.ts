@@ -113,7 +113,14 @@ describe('useGlobalExports', () => {
       win.__canvasClearLayer();
       win.__canvasDuplicateLayer('from', 'to');
       win.__canvasRemoveLayer('id');
-      win.__canvasResize({} as any);
+      win.__canvasResize({
+        width: 100,
+        height: 80,
+        anchor: 'center',
+        scaleContent: false,
+        extensionColor: 'transparent',
+        resampleMode: 'nearest',
+      });
     });
 
     expect(fillActiveLayer).toHaveBeenCalledWith('#ffffff');
