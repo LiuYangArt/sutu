@@ -12,6 +12,7 @@ import { WetEdgeSettings } from './settings/WetEdgeSettings';
 import { TextureSettings } from './settings/TextureSettings';
 import { DualBrushSettings } from './settings/DualBrushSettings';
 import { BuildupSettings } from './settings/BuildupSettings';
+import { NoiseSettings } from './settings/NoiseSettings';
 
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
@@ -28,7 +29,7 @@ export function BrushPanel(): JSX.Element {
     { id: 'color_dynamics', label: 'Color Dynamics' },
     { id: 'transfer', label: 'Transfer' },
     { id: 'brush_pose', label: 'Brush Pose', disabled: true },
-    { id: 'noise', label: 'Noise', disabled: true },
+    { id: 'noise', label: 'Noise' },
     { id: 'wet_edges', label: 'Wet Edges' },
     { id: 'build_up', label: 'Build-up' },
     { id: 'smoothing', label: 'Smoothing', disabled: true },
@@ -59,6 +60,8 @@ export function BrushPanel(): JSX.Element {
         return <BuildupSettings />;
       case 'transfer':
         return <TransferSettings />;
+      case 'noise':
+        return <NoiseSettings />;
       default:
         return (
           <div className="p-4 text-gray-500 text-sm">

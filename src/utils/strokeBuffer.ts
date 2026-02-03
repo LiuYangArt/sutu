@@ -22,6 +22,7 @@ import type { BrushTexture, DualBrushSettings, DualBlendMode } from '@/stores/to
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { patternManager, type PatternData } from './patternManager';
 import { applyScatter } from './scatterDynamics';
+import { getNoisePattern, NOISE_PATTERN_ID } from './noiseTexture';
 
 export type MaskType = 'gaussian' | 'default';
 
@@ -38,6 +39,7 @@ export interface DabParams {
   angle?: number; // Brush angle in degrees (0-360)
   texture?: BrushTexture; // Texture for sampled brushes (from ABR import)
   textureSettings?: TextureSettings | null; // Texture pattern settings (Mode, Scale, Depth, etc.)
+  noiseEnabled?: boolean; // Procedural noise (Photoshop Noise panel compatible)
   // Shape Dynamics: flip flags for sampled/texture brushes
   flipX?: boolean; // Flip horizontally
   flipY?: boolean; // Flip vertically
@@ -62,6 +64,20 @@ export interface Rect {
 const HARD_BRUSH_THRESHOLD = 0.99;
 const ROUNDNESS_HARD_PATH_THRESHOLD = 0.999;
 const ROUNDNESS_AA_HARDNESS_CLAMP = 0.98;
+
+const NOISE_TEXTURE_SETTINGS: TextureSettings = {
+  patternId: NOISE_PATTERN_ID,
+  scale: 100,
+  brightness: 0,
+  contrast: 0,
+  textureEachTip: false,
+  mode: 'overlay',
+  depth: 100, // Strength for overlay mix (0-100)
+  minimumDepth: 0,
+  depthJitter: 0,
+  invert: false,
+  depthControl: 0,
+};
 
 /**
  * Parse hex color to RGB components (0-255)
@@ -439,6 +455,10 @@ export class StrokeAccumulator {
       pattern = patternManager.getPattern(params.textureSettings.patternId);
     }
 
+    // Resolve built-in noise pattern (independent from Texture patterns)
+    const noisePattern = params.noiseEnabled ? getNoisePattern() : undefined;
+    const noiseSettings = params.noiseEnabled ? NOISE_TEXTURE_SETTINGS : undefined;
+
     // Initialize stroke-level dual brush state if enabled
     if (params.dualBrush?.enabled && !this.dualBrushEnabled) {
       this.dualBrushEnabled = true;
@@ -452,15 +472,22 @@ export class StrokeAccumulator {
     let dabDirtyRect: Rect;
 
     if (params.texture) {
-      dabDirtyRect = this.stampTextureBrush(params, rgb, pattern);
+      dabDirtyRect = this.stampTextureBrush(params, rgb, pattern, noiseSettings, noisePattern);
     } else if (isHardBrush && !isSquashedRoundness) {
-      dabDirtyRect = this.stampHardBrush(params, rgb, pattern);
+      dabDirtyRect = this.stampHardBrush(params, rgb, pattern, noiseSettings, noisePattern);
     } else {
       const hardnessOverride =
         isHardBrush && isSquashedRoundness
           ? Math.min(params.hardness, ROUNDNESS_AA_HARDNESS_CLAMP)
           : undefined;
-      dabDirtyRect = this.stampSoftBrush(params, rgb, pattern, hardnessOverride);
+      dabDirtyRect = this.stampSoftBrush(
+        params,
+        rgb,
+        pattern,
+        noiseSettings,
+        noisePattern,
+        hardnessOverride
+      );
     }
 
     // When dual brush is enabled, also write primary alpha to accumulator
@@ -656,7 +683,9 @@ export class StrokeAccumulator {
   private stampTextureBrush(
     params: DabParams,
     rgb: { r: number; g: number; b: number },
-    pattern?: PatternData
+    pattern?: PatternData,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData
   ): Rect {
     const {
       texture,
@@ -708,6 +737,8 @@ export class StrokeAccumulator {
       rgb.b,
       textureSettings,
       pattern,
+      noiseSettings,
+      noisePattern,
       null, // dualMask - now handled at stroke level
       undefined // dualMode
     );
@@ -719,7 +750,9 @@ export class StrokeAccumulator {
   private stampHardBrush(
     params: DabParams,
     rgb: { r: number; g: number; b: number },
-    pattern?: PatternData
+    pattern?: PatternData,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData
   ): Rect {
     const radius = params.size / 2;
 
@@ -742,6 +775,8 @@ export class StrokeAccumulator {
       params.wetEdge ?? 0,
       params.textureSettings,
       pattern,
+      noiseSettings,
+      noisePattern,
       null, // dualMask - now handled at stroke level
       undefined // dualMode
     );
@@ -754,6 +789,8 @@ export class StrokeAccumulator {
     params: DabParams,
     rgb: { r: number; g: number; b: number },
     pattern?: PatternData,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData,
     hardnessOverride?: number
   ): Rect {
     // Soft brushes use cached mask
@@ -788,6 +825,8 @@ export class StrokeAccumulator {
       params.wetEdge ?? 0,
       params.textureSettings,
       pattern,
+      noiseSettings,
+      noisePattern,
       null, // dualMask - now handled at stroke level
       undefined // dualMode
     );

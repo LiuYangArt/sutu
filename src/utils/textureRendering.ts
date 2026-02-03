@@ -1,25 +1,12 @@
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
 
-/**
- * Calculate the texture modulation value for a given pixel
- *
- * @param canvasX Absolute X position on canvas
- * @param canvasY Absolute Y position on canvas
- * @param settings Texture settings
- * @param pattern Pattern data
- * @param depth Effective depth (0-1), already including pressure dynamics if applicable
- * @returns Alpha multiplier (0-1)
- */
-export function calculateTextureInfluence(
+export function sampleTextureValue(
   canvasX: number,
   canvasY: number,
   settings: TextureSettings,
-  pattern: PatternData,
-  depth: number
+  pattern: PatternData
 ): number {
-  if (depth <= 0.001) return 1.0;
-
   // 1. Calculate Pattern UV (Canvas Space) with Tiling
   const scale = Math.max(1, settings.scale);
   const scaleFactor = 100.0 / scale;
@@ -31,8 +18,7 @@ export function calculateTextureInfluence(
   patternX = ((patternX % pattern.width) + pattern.width) % pattern.width;
   patternY = ((patternY % pattern.height) + pattern.height) % pattern.height;
 
-  // 2. Sample Texture
-  // ABR patterns are typically Grayscale but stored as RGBA; use first channel
+  // 2. Sample Texture (stored as RGBA; use first channel)
   const idx = (patternY * pattern.width + patternX) * 4;
   if (idx < 0 || idx >= pattern.data.length) return 1.0;
 
@@ -56,7 +42,29 @@ export function calculateTextureInfluence(
   }
 
   // Clamp to valid range
-  textureValue = Math.max(0, Math.min(1, textureValue));
+  return Math.max(0, Math.min(1, textureValue));
+}
+
+/**
+ * Calculate the texture modulation value for a given pixel
+ *
+ * @param canvasX Absolute X position on canvas
+ * @param canvasY Absolute Y position on canvas
+ * @param settings Texture settings
+ * @param pattern Pattern data
+ * @param depth Effective depth (0-1), already including pressure dynamics if applicable
+ * @returns Alpha multiplier (0-1)
+ */
+export function calculateTextureInfluence(
+  canvasX: number,
+  canvasY: number,
+  settings: TextureSettings,
+  pattern: PatternData,
+  depth: number
+): number {
+  if (depth <= 0.001) return 1.0;
+
+  const textureValue = sampleTextureValue(canvasX, canvasY, settings, pattern);
 
   // 4. Apply Blend Mode
   // Calculate multiplier for brush alpha (1.0 = no change)

@@ -13,7 +13,7 @@
 import type { Rect } from './strokeBuffer';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
-import { calculateTextureInfluence } from './textureRendering';
+import { calculateTextureInfluence, sampleTextureValue } from './textureRendering';
 import type { DualBlendMode } from '@/stores/tool';
 
 export type MaskType = 'gaussian' | 'default';
@@ -190,6 +190,13 @@ export class MaskCache {
     }
   }
 
+  private static blendOverlay(base: number, blend: number): number {
+    const b = Math.max(0, Math.min(1, base));
+    const s = Math.max(0, Math.min(1, blend));
+    if (b < 0.5) return 2.0 * b * s;
+    return 1.0 - 2.0 * (1.0 - b) * (1.0 - s);
+  }
+
   /**
    * Check if the mask needs to be regenerated
    */
@@ -351,6 +358,8 @@ export class MaskCache {
     _wetEdge: number = 0, // Unused
     textureSettings?: TextureSettings | null,
     pattern?: PatternData,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData,
     dualMask?: Float32Array | null,
     dualMode?: DualBlendMode
   ): Rect {
@@ -383,6 +392,9 @@ export class MaskCache {
     const dirtyRight = bufferLeft + endX;
     const dirtyBottom = bufferTop + endY;
 
+    const hasNoise = Boolean(noiseSettings && noisePattern);
+    const noiseStrength = noiseSettings ? noiseSettings.depth / 100.0 : 0;
+
     // Fast blending loop
     if (!useSubpixel) {
       for (let my = startY; my < endY; my++) {
@@ -390,18 +402,27 @@ export class MaskCache {
         const maskRowStart = my * this.maskWidth;
 
         for (let mx = startX; mx < endX; mx++) {
-          const maskValue = this.mask[maskRowStart + mx]!;
+          let maskValue = this.mask[maskRowStart + mx]!;
           if (maskValue < 0.001) continue;
+
+          // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
+          if (hasNoise && noiseStrength > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
+            const px = bufferLeft + mx;
+            const py = bufferTop + my;
+            const noiseVal = sampleTextureValue(px, py, noiseSettings!, noisePattern!);
+            const over = MaskCache.blendOverlay(maskValue, noiseVal);
+            maskValue = maskValue + (over - maskValue) * noiseStrength;
+          }
 
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-          // Texture modulation
+          // Texture modulation (applied to opacity ceiling)
           let textureMod = 1.0;
           if (textureSettings && pattern) {
             // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
             // TextureSettings.depth is 0-100
             const depth = textureSettings.depth / 100.0;
-            textureMod = calculateTextureInfluence(
+            textureMod *= calculateTextureInfluence(
               bufferLeft + mx,
               bufferTop + my,
               textureSettings,
@@ -433,7 +454,7 @@ export class MaskCache {
         for (let mx = startX; mx < endX; mx++) {
           const sampleX = mx - offsetX;
           const sampleY = my - offsetY;
-          const maskValue = MaskCache.sampleBilinear(
+          let maskValue = MaskCache.sampleBilinear(
             this.mask,
             this.maskWidth,
             this.maskHeight,
@@ -442,15 +463,24 @@ export class MaskCache {
           );
           if (maskValue < 0.001) continue;
 
+          // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
+          if (hasNoise && noiseStrength > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
+            const px = bufferLeft + mx;
+            const py = bufferTop + my;
+            const noiseVal = sampleTextureValue(px, py, noiseSettings!, noisePattern!);
+            const over = MaskCache.blendOverlay(maskValue, noiseVal);
+            maskValue = maskValue + (over - maskValue) * noiseStrength;
+          }
+
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
-          // Texture modulation
+          // Texture modulation (applied to opacity ceiling)
           let textureMod = 1.0;
           if (textureSettings && pattern) {
             // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
             // TextureSettings.depth is 0-100
             const depth = textureSettings.depth / 100.0;
-            textureMod = calculateTextureInfluence(
+            textureMod *= calculateTextureInfluence(
               bufferLeft + mx,
               bufferTop + my,
               textureSettings,
@@ -518,6 +548,8 @@ export class MaskCache {
     _wetEdge: number = 0, // Unused: wet edge is handled at stroke buffer level
     textureSettings?: TextureSettings | null,
     pattern?: PatternData,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData,
     dualMask?: Float32Array | null,
     dualMode?: DualBlendMode
   ): Rect {
@@ -546,6 +578,9 @@ export class MaskCache {
     const cosA = Math.cos(-angleRad);
     const sinA = Math.sin(-angleRad);
 
+    const hasNoise = Boolean(noiseSettings && noisePattern);
+    const noiseStrength = noiseSettings ? noiseSettings.depth / 100.0 : 0;
+
     // Inverse radius squared for fast distance check
     const invRx2 = 1 / (radiusX * radiusX);
     const invRy2 = 1 / (radiusY * radiusY);
@@ -572,17 +607,24 @@ export class MaskCache {
         const physicalDist = normDist * radiusX; // Approximate for circular brush
 
         // Inner Mode (Krita-style): AA band at [radius-1.0, radius]
-        const maskValue = MaskCache.calcHardEdgeAA(physicalDist, radiusX);
+        let maskValue = MaskCache.calcHardEdgeAA(physicalDist, radiusX);
 
         if (maskValue < 0.001) continue;
 
         const idx = (rowStart + px) * 4;
 
-        // Texture modulation
+        // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
+        if (hasNoise && noiseStrength > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
+          const noiseVal = sampleTextureValue(px, py, noiseSettings!, noisePattern!);
+          const over = MaskCache.blendOverlay(maskValue, noiseVal);
+          maskValue = maskValue + (over - maskValue) * noiseStrength;
+        }
+
+        // Texture modulation (applied to opacity ceiling)
         let textureMod = 1.0;
         if (textureSettings && pattern) {
           const depth = textureSettings.depth / 100.0;
-          textureMod = calculateTextureInfluence(px, py, textureSettings, pattern, depth);
+          textureMod *= calculateTextureInfluence(px, py, textureSettings, pattern, depth);
         }
 
         // Dual Brush modulation

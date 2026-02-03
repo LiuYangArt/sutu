@@ -135,6 +135,8 @@ export interface BrushRenderConfig {
   // Texture settings (Photoshop-compatible pattern texture)
   textureEnabled: boolean;
   textureSettings?: TextureSettings | null;
+  // Noise settings (Photoshop-compatible)
+  noiseEnabled: boolean;
   // Dual Brush settings (Photoshop-compatible)
   dualBrushEnabled: boolean;
   dualBrush?: DualBrushSettings;
@@ -606,6 +608,7 @@ export function useBrushRenderer({
             flipY: dabFlipY,
             wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
             textureSettings: config.textureEnabled ? config.textureSettings : undefined,
+            noiseEnabled: config.noiseEnabled,
             dualBrush:
               config.dualBrushEnabled && config.dualBrush
                 ? {

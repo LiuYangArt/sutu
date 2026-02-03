@@ -102,6 +102,7 @@ export function Canvas() {
     transferEnabled,
     textureEnabled,
     textureSettings,
+    noiseEnabled,
     dualBrush,
     dualBrushEnabled,
     showCrosshair,
@@ -383,6 +384,7 @@ export function Canvas() {
       transfer,
       textureEnabled,
       textureSettings,
+      noiseEnabled,
       dualBrushEnabled,
       dualBrush,
     };
@@ -415,6 +417,7 @@ export function Canvas() {
     transfer,
     textureEnabled,
     textureSettings,
+    noiseEnabled,
     dualBrushEnabled,
     dualBrush,
   ]);

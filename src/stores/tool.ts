@@ -310,6 +310,9 @@ interface ToolState {
   textureEnabled: boolean;
   textureSettings: TextureSettings;
 
+  // Noise settings (Photoshop-compatible)
+  noiseEnabled: boolean;
+
   // Dual Brush settings (Photoshop-compatible)
   dualBrushEnabled: boolean;
   dualBrush: DualBrushSettings;
@@ -351,6 +354,8 @@ interface ToolState {
   toggleTexture: () => void;
   setTextureSettings: (settings: Partial<TextureSettings>) => void;
   resetTextureSettings: () => void;
+  // Noise actions
+  setNoiseEnabled: (enabled: boolean) => void;
   // Shape Dynamics actions
   setShapeDynamicsEnabled: (enabled: boolean) => void;
   toggleShapeDynamics: () => void;
@@ -440,6 +445,9 @@ export const useToolStore = create<ToolState>()(
       // Texture (default: disabled)
       textureEnabled: false,
       textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
+
+      // Noise (default: disabled)
+      noiseEnabled: false,
 
       // Dual Brush (default: disabled)
       dualBrushEnabled: false,
@@ -537,6 +545,9 @@ export const useToolStore = create<ToolState>()(
       },
 
       resetTextureSettings: () => set({ textureSettings: { ...DEFAULT_TEXTURE_SETTINGS } }),
+
+      // Noise actions
+      setNoiseEnabled: (enabled) => set({ noiseEnabled: enabled }),
 
       // Shape Dynamics actions
       setShapeDynamicsEnabled: (enabled) => set({ shapeDynamicsEnabled: enabled }),
@@ -642,6 +653,7 @@ export const useToolStore = create<ToolState>()(
         buildupEnabled: state.buildupEnabled,
         transferEnabled: state.transferEnabled,
         transfer: state.transfer,
+        noiseEnabled: state.noiseEnabled,
         dualBrushEnabled: state.dualBrushEnabled,
         dualBrush: state.dualBrush
           ? {

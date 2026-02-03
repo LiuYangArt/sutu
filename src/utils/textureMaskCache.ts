@@ -18,7 +18,7 @@ import { loadBrushTexture } from './brushLoader';
 import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUtils';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
-import { calculateTextureInfluence } from './textureRendering';
+import { calculateTextureInfluence, sampleTextureValue } from './textureRendering';
 import type { DualBlendMode } from '@/stores/tool';
 
 // PS Dual Brush blend modes (only 8 supported)
@@ -331,6 +331,8 @@ export class TextureMaskCache {
     b: number,
     textureSettings?: TextureSettings | null,
     pattern?: PatternData,
+    noiseSettings?: TextureSettings | null,
+    noisePattern?: PatternData,
     dualMask?: Float32Array | null,
     dualMode?: DualBlendMode
   ): Rect {
@@ -348,6 +350,8 @@ export class TextureMaskCache {
     const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
     const hasTexturePattern = Boolean(textureSettings && pattern);
     const textureDepth = textureSettings ? textureSettings.depth / 100.0 : 0;
+    const hasNoisePattern = Boolean(noiseSettings && noisePattern);
+    const noiseDepth = noiseSettings ? noiseSettings.depth / 100.0 : 0;
 
     // Clipping
     const startX = Math.max(0, -bufferLeft);
@@ -372,17 +376,27 @@ export class TextureMaskCache {
         const maskRowStart = my * this.scaledWidth;
 
         for (let mx = startX; mx < endX; mx++) {
-          const maskValue = this.scaledMask[maskRowStart + mx]!;
+          let maskValue = this.scaledMask[maskRowStart + mx]!;
           if (maskValue < 0.001) continue;
 
           const bufferX = bufferLeft + mx;
           const bufferY = bufferTop + my;
           const idx = (bufferRowStart + bufferX) * 4;
 
-          // Texture modulation
+          // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
+          if (hasNoisePattern && noiseDepth > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
+            const noiseVal = sampleTextureValue(bufferX, bufferY, noiseSettings!, noisePattern!);
+            const over =
+              maskValue < 0.5
+                ? 2.0 * maskValue * noiseVal
+                : 1.0 - 2.0 * (1.0 - maskValue) * (1.0 - noiseVal);
+            maskValue = maskValue + (over - maskValue) * noiseDepth;
+          }
+
+          // Texture modulation (applied to opacity ceiling)
           let textureMod = 1.0;
           if (hasTexturePattern) {
-            textureMod = calculateTextureInfluence(
+            textureMod *= calculateTextureInfluence(
               bufferX,
               bufferY,
               textureSettings!,
@@ -429,7 +443,7 @@ export class TextureMaskCache {
         for (let mx = startX; mx < endX; mx++) {
           const sampleX = mx - offsetX;
           const sampleY = my - offsetY;
-          const maskValue = TextureMaskCache.sampleBilinear(
+          let maskValue = TextureMaskCache.sampleBilinear(
             this.scaledMask,
             this.scaledWidth,
             this.scaledHeight,
@@ -442,10 +456,20 @@ export class TextureMaskCache {
           const bufferY = bufferTop + my;
           const idx = (bufferRowStart + bufferX) * 4;
 
-          // Texture modulation
+          // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
+          if (hasNoisePattern && noiseDepth > 0.001 && maskValue > 0.001 && maskValue < 0.999) {
+            const noiseVal = sampleTextureValue(bufferX, bufferY, noiseSettings!, noisePattern!);
+            const over =
+              maskValue < 0.5
+                ? 2.0 * maskValue * noiseVal
+                : 1.0 - 2.0 * (1.0 - maskValue) * (1.0 - noiseVal);
+            maskValue = maskValue + (over - maskValue) * noiseDepth;
+          }
+
+          // Texture modulation (applied to opacity ceiling)
           let textureMod = 1.0;
           if (hasTexturePattern) {
-            textureMod = calculateTextureInfluence(
+            textureMod *= calculateTextureInfluence(
               bufferX,
               bufferY,
               textureSettings!,
