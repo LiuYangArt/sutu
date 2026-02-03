@@ -12,6 +12,19 @@ interface GuideLine {
   end: Point;
 }
 
+interface UseShiftLineModeResult {
+  getAnchorPoint: () => Point | null;
+  isLineMode: () => boolean;
+  isLineLocked: () => boolean;
+  isSnapMode: () => boolean;
+  getGuideLine: () => GuideLine | null;
+  updateCursor: (x: number, y: number) => void;
+  constrainPoint: (x: number, y: number) => Point;
+  onStrokeEnd: (lastDabPos?: Point | null) => void;
+  lockLine: (endPoint: Point) => void;
+  unlockLine: () => void;
+}
+
 const SNAP_ANGLE = Math.PI / 4;
 
 function snapEndPoint(start: Point, end: Point): Point {
@@ -45,7 +58,10 @@ function projectPointToSegment(point: Point, start: Point, end: Point): Point {
   };
 }
 
-export function useShiftLineMode({ enabled, onInvalidate }: UseShiftLineModeOptions) {
+export function useShiftLineMode({
+  enabled,
+  onInvalidate,
+}: UseShiftLineModeOptions): UseShiftLineModeResult {
   const anchorRef = useRef<Point | null>(null);
   const tempAnchorRef = useRef<Point | null>(null);
   const cursorRef = useRef<Point | null>(null);
@@ -56,13 +72,27 @@ export function useShiftLineMode({ enabled, onInvalidate }: UseShiftLineModeOpti
   const enabledRef = useRef(enabled);
   const invalidateRef = useRef(onInvalidate);
 
+  const clearLockedLine = useCallback(function clearLockedLine(): void {
+    isLockedRef.current = false;
+    lockedEndRef.current = null;
+  }, []);
+
+  const clearTempAnchor = useCallback(function clearTempAnchor(): void {
+    tempAnchorRef.current = null;
+  }, []);
+
+  const ensureTempAnchorFromCursor = useCallback(function ensureTempAnchorFromCursor(): void {
+    if (!anchorRef.current && !tempAnchorRef.current && cursorRef.current) {
+      tempAnchorRef.current = { ...cursorRef.current };
+    }
+  }, []);
+
   useEffect(() => {
     enabledRef.current = enabled;
     if (!enabled) {
       if (isLockedRef.current || tempAnchorRef.current) {
-        isLockedRef.current = false;
-        lockedEndRef.current = null;
-        tempAnchorRef.current = null;
+        clearLockedLine();
+        clearTempAnchor();
       }
       invalidateRef.current?.();
       return;
@@ -71,31 +101,31 @@ export function useShiftLineMode({ enabled, onInvalidate }: UseShiftLineModeOpti
     if (shiftPressedRef.current && (anchorRef.current || tempAnchorRef.current)) {
       invalidateRef.current?.();
     }
-  }, [enabled]);
+  }, [enabled, clearLockedLine, clearTempAnchor]);
 
   useEffect(() => {
     invalidateRef.current = onInvalidate;
   }, [onInvalidate]);
 
-  const setShiftPressed = useCallback((pressed: boolean) => {
-    if (shiftPressedRef.current === pressed) return;
-    shiftPressedRef.current = pressed;
+  const setShiftPressed = useCallback(
+    (pressed: boolean) => {
+      if (shiftPressedRef.current === pressed) return;
+      shiftPressedRef.current = pressed;
 
-    if (!pressed) {
-      if (isLockedRef.current) {
-        isLockedRef.current = false;
-        lockedEndRef.current = null;
+      if (!pressed) {
+        if (isLockedRef.current) {
+          clearLockedLine();
+        }
+        clearTempAnchor();
+        invalidateRef.current?.();
+        return;
       }
-      tempAnchorRef.current = null;
-      invalidateRef.current?.();
-      return;
-    }
 
-    if (!anchorRef.current && !tempAnchorRef.current && cursorRef.current) {
-      tempAnchorRef.current = { ...cursorRef.current };
-    }
-    invalidateRef.current?.();
-  }, []);
+      ensureTempAnchorFromCursor();
+      invalidateRef.current?.();
+    },
+    [clearLockedLine, clearTempAnchor, ensureTempAnchorFromCursor]
+  );
 
   const setCtrlPressed = useCallback((pressed: boolean) => {
     if (ctrlPressedRef.current === pressed) return;
@@ -199,10 +229,9 @@ export function useShiftLineMode({ enabled, onInvalidate }: UseShiftLineModeOpti
 
   const unlockLine = useCallback(() => {
     if (!isLockedRef.current) return;
-    isLockedRef.current = false;
-    lockedEndRef.current = null;
+    clearLockedLine();
     invalidateRef.current?.();
-  }, []);
+  }, [clearLockedLine]);
 
   const constrainPoint = useCallback((x: number, y: number): Point => {
     if (!enabledRef.current || !isLockedRef.current) {
@@ -216,20 +245,22 @@ export function useShiftLineMode({ enabled, onInvalidate }: UseShiftLineModeOpti
     return projectPointToSegment({ x, y }, start, end);
   }, []);
 
-  const onStrokeEnd = useCallback((lastDabPos?: Point | null) => {
-    if (lastDabPos) {
-      anchorRef.current = { ...lastDabPos };
-    }
-    isLockedRef.current = false;
-    lockedEndRef.current = null;
-    tempAnchorRef.current = null;
+  const onStrokeEnd = useCallback(
+    (lastDabPos?: Point | null) => {
+      if (lastDabPos) {
+        anchorRef.current = { ...lastDabPos };
+      }
+      clearLockedLine();
+      clearTempAnchor();
 
-    if (shiftPressedRef.current && !anchorRef.current && cursorRef.current) {
-      tempAnchorRef.current = { ...cursorRef.current };
-    }
+      if (shiftPressedRef.current && !anchorRef.current) {
+        ensureTempAnchorFromCursor();
+      }
 
-    invalidateRef.current?.();
-  }, []);
+      invalidateRef.current?.();
+    },
+    [clearLockedLine, clearTempAnchor, ensureTempAnchorFromCursor]
+  );
 
   const getAnchorPoint = useCallback(() => anchorRef.current, []);
 

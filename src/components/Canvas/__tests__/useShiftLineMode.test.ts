@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useShiftLineMode } from '../useShiftLineMode';
 
-function dispatchKey(type: 'keydown' | 'keyup', key: 'Shift' | 'Control') {
+function dispatchKey(type: 'keydown' | 'keyup', key: 'Shift' | 'Control'): void {
   window.dispatchEvent(
     new KeyboardEvent(type, {
       key,
