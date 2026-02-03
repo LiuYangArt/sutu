@@ -8,9 +8,12 @@ import { StrokeBuffer } from '@/utils/interpolation';
 import type { RenderBackend } from '@/gpu';
 
 const MAX_POINTS_PER_FRAME = 80;
-const TARGET_BUILDUP_DABS_PER_SEC = 60;
+// Photoshop Build-up (Airbrush) rate tuning:
+// Use a timer-driven stamp rate so buildup works for both mouse + tablet stationary holds.
+// 5Hz (~200ms) is closer to PS feel than 60Hz (which accumulates too fast).
+const TARGET_BUILDUP_DABS_PER_SEC = 5;
 const BUILDUP_INTERVAL_MS = 1000 / TARGET_BUILDUP_DABS_PER_SEC;
-const MAX_BUILDUP_DABS_PER_FRAME = 4;
+const MAX_BUILDUP_DABS_PER_FRAME = 1;
 
 interface QueuedPoint {
   x: number;
@@ -170,7 +173,7 @@ export function useStrokeProcessor({
     return layer?.ctx ?? null;
   }, [activeLayerId, layerRendererRef]);
 
-  const lastPressureRef = useRef(0.5);
+  const lastPressureRef = useRef(0);
   const buildupAccMsRef = useRef(0);
   const rafPrevTimeRef = useRef<number | null>(null);
 
@@ -601,7 +604,48 @@ export function useStrokeProcessor({
 
       // Replay all buffered points
       const points = pendingPointsRef.current;
-      for (const p of points) {
+      const config = getBrushConfig();
+      const isBuildup = brushBackend === 'canvas2d' && config.buildupEnabled;
+      const collapsedPoints =
+        isBuildup && points.length > 1
+          ? (() => {
+              // When Build-up is enabled, the 'starting' phase can accumulate many
+              // near-identical points at the same coordinate (especially with WinTab/raw input).
+              // Replaying all of them can create an overly heavy "starting blob".
+              // Collapse consecutive near-identical points by keeping only the latest.
+              const out: QueuedPoint[] = [];
+              const eps2 = 0.5 * 0.5;
+              let last = points[0]!;
+              out.push(last);
+              for (let i = 1; i < points.length; i++) {
+                const p = points[i]!;
+                const dx = p.x - last.x;
+                const dy = p.y - last.y;
+                if (dx * dx + dy * dy <= eps2) {
+                  out[out.length - 1] = p;
+                  last = p;
+                  continue;
+                }
+                out.push(p);
+                last = p;
+              }
+              return out;
+            })()
+          : points;
+
+      const replayPoints =
+        isBuildup && collapsedPoints.length > 1
+          ? (() => {
+              // In Build-up mode we emit a dab for the first processed point.
+              // PointerDown pressure is sometimes less reliable than the first move/raw sample,
+              // which can create an overly heavy "starting dab" (especially at very light pressure).
+              // If we have at least one follow-up point, start from it and keep tap/hold behavior
+              // (single-point strokes) unchanged.
+              return collapsedPoints.slice(1);
+            })()
+          : collapsedPoints;
+
+      for (const p of replayPoints) {
         processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex);
         window.__strokeDiagnostics?.onPointBuffered();
       }

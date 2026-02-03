@@ -116,10 +116,11 @@ Sidebar checkbox 里加入 `build_up` 的 toggle。
 在 RAF loop 里增加 build-up tick：
 
 - 条件：`backend === 'canvas2d' && buildupEnabled && strokeState==='active'`
-- 频率：`TARGET_BUILDUP_DABS_PER_SEC = 60`（`MAX_BUILDUP_DABS_PER_FRAME = 4`）
+- 频率：`TARGET_BUILDUP_DABS_PER_SEC = 5`（`MAX_BUILDUP_DABS_PER_FRAME = 1`）
 - 位置：`lastInputPosRef ?? lastRenderedPosRef`
 - 压力：优先 WinTab `currentPoint.pressure`，否则用 `lastPressureRef`
 - 调用：`processBrushPointWithConfig(...)` + `flushPending()`
+- 额外：buildup 开启时，`starting` 阶段 replay 会做“近似同点折叠”，并在有后续点时跳过首个 PointerDown 点，避免首 dab 压力不准导致“起笔过重”。
 
 ---
 

@@ -153,8 +153,26 @@ export function usePointerHandlers({
         return;
       }
 
-      // Prepare input data
-      const pressure = e.pressure > 0 ? e.pressure : 0.5;
+      // Prepare input data (pressure/tilt), preferring WinTab buffer if active.
+      // Important: For pen, do NOT default pressure to 0.5 at pointerdown,
+      // otherwise the first dab can become noticeably too heavy (especially with Build-up enabled).
+      const pe = e.nativeEvent as PointerEvent;
+      let pressure = pe.pressure > 0 ? pe.pressure : pe.pointerType === 'pen' ? 0 : 0.5;
+      if (currentTool === 'brush' || currentTool === 'eraser') {
+        const tabletState = useTabletStore.getState();
+        const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
+        if (isWinTabActive) {
+          // Use buffered WinTab points when available; avoid using currentPoint at pointerdown
+          // because it can be stale (previous stroke), causing an overly heavy first dab.
+          const bufferedPoints = drainPointBuffer();
+          if (bufferedPoints.length > 0) {
+            pressure = bufferedPoints[bufferedPoints.length - 1]!.pressure;
+          } else {
+            // No fresh WinTab sample yet.
+            pressure = pe.pointerType === 'pen' ? 0 : 0.5;
+          }
+        }
+      }
 
       const canvas = canvasRef.current;
       if (!canvas) return;
