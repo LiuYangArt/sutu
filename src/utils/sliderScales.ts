@@ -127,3 +127,40 @@ export function sliderProgressToValue(
 
   return result;
 }
+
+/**
+ * Default non-linear config for brush size slider.
+ * 100px at 50% position, power curve for second half.
+ */
+export const BRUSH_SIZE_SLIDER_CONFIG: NonLinearSliderConfig = {
+  midValue: 100,
+  secondHalfExponent: 2.5,
+};
+
+/**
+ * Steps brush size by a fixed slider progress increment.
+ * This ensures the shortcut keys behave consistently with the non-linear slider.
+ *
+ * @param currentSize Current brush size in pixels
+ * @param direction +1 to increase, -1 to decrease
+ * @param min Minimum brush size (default: 1)
+ * @param max Maximum brush size (default: 1000)
+ * @param stepRatio How much slider progress to step (default: 0.025 = 2.5%)
+ * @returns New brush size
+ */
+export function stepBrushSizeBySliderProgress(
+  currentSize: number,
+  direction: 1 | -1,
+  min = 1,
+  max = 1000,
+  stepRatio = 0.025
+): number {
+  // Convert current size to slider progress (0.0 - 1.0)
+  const currentProgress = countToSliderProgress(currentSize, min, max, BRUSH_SIZE_SLIDER_CONFIG);
+
+  // Step the progress
+  const newProgress = Math.max(0, Math.min(1, currentProgress + direction * stepRatio));
+
+  // Convert back to size value
+  return sliderProgressToValue(newProgress, min, max, 1, BRUSH_SIZE_SLIDER_CONFIG);
+}

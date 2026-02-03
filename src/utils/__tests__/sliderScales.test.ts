@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { countToSliderProgress, sliderProgressToValue } from '../sliderScales';
+import {
+  countToSliderProgress,
+  sliderProgressToValue,
+  stepBrushSizeBySliderProgress,
+} from '../sliderScales';
 
 describe('sliderScales', () => {
   describe('Linear mode (no config)', () => {
@@ -74,6 +78,56 @@ describe('sliderScales', () => {
         // 0.5 -> 100
         expect(sliderProgressToValue(0.5, 1, 1000, 1, config)).toBe(100);
       });
+    });
+  });
+
+  describe('stepBrushSizeBySliderProgress', () => {
+    it('increases size with direction +1', () => {
+      const newSize = stepBrushSizeBySliderProgress(100, 1);
+      expect(newSize).toBeGreaterThan(100);
+    });
+
+    it('decreases size with direction -1', () => {
+      const newSize = stepBrushSizeBySliderProgress(100, -1);
+      expect(newSize).toBeLessThan(100);
+    });
+
+    it('clamps at min value', () => {
+      // Try to go below min
+      const newSize = stepBrushSizeBySliderProgress(1, -1);
+      expect(newSize).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clamps at max value', () => {
+      // Try to go above max
+      const newSize = stepBrushSizeBySliderProgress(1000, 1);
+      expect(newSize).toBeLessThanOrEqual(1000);
+    });
+
+    it('small brush has smaller increment than large brush', () => {
+      // At small size (10px), stepping should add a few pixels
+      const smallIncrement = stepBrushSizeBySliderProgress(10, 1) - 10;
+      // At large size (500px), stepping should add many more pixels
+      const largeIncrement = stepBrushSizeBySliderProgress(500, 1) - 500;
+
+      expect(smallIncrement).toBeLessThan(largeIncrement);
+      // Approximate expected ranges
+      expect(smallIncrement).toBeGreaterThan(0);
+      expect(smallIncrement).toBeLessThan(10);
+      expect(largeIncrement).toBeGreaterThan(10);
+    });
+
+    it('roundtrips through multiple steps', () => {
+      // Starting from 100, step up 10 times, then down 10 times
+      let size = 100;
+      for (let i = 0; i < 10; i++) {
+        size = stepBrushSizeBySliderProgress(size, 1);
+      }
+      for (let i = 0; i < 10; i++) {
+        size = stepBrushSizeBySliderProgress(size, -1);
+      }
+      // Should be close to original (may differ due to rounding)
+      expect(size).toBeCloseTo(100, 0);
     });
   });
 });

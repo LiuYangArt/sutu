@@ -1,6 +1,7 @@
 import { useEffect, useState, type MutableRefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
 import { ToolType } from '@/stores/tool';
+import { stepBrushSizeBySliderProgress } from '@/utils/sliderScales';
 
 interface UseKeyboardShortcutsParams {
   currentTool: ToolType;
@@ -104,12 +105,12 @@ export function useKeyboardShortcuts({
 
         case 'BracketLeft':
           e.preventDefault();
-          setCurrentSize(currentSize - (e.shiftKey ? 10 : 5));
+          setCurrentSize(stepBrushSizeBySliderProgress(currentSize, -1));
           break;
 
         case 'BracketRight':
           e.preventDefault();
-          setCurrentSize(currentSize + (e.shiftKey ? 10 : 5));
+          setCurrentSize(stepBrushSizeBySliderProgress(currentSize, 1));
           break;
 
         case 'KeyB':
