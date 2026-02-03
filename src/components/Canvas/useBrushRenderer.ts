@@ -366,7 +366,7 @@ export function useBrushRenderer({
       // Get dab positions from stamper
       const spacingBase = computeSpacingBasePx(spacingSize, config.roundness / 100, config.texture);
       const spacingPx = spacingBase * config.spacing;
-      const buildupMode = backend === 'canvas2d' && config.buildupEnabled;
+      const buildupMode = config.buildupEnabled;
       const dabs = stamper.processPoint(x, y, pressure, spacingPx, buildupMode);
 
       // ===== Dual Brush: Generate secondary dabs independently =====

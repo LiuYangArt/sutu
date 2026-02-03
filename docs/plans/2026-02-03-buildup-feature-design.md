@@ -93,7 +93,7 @@ Sidebar checkbox 里加入 `build_up` 的 toggle。
 
 #### [NEW] `src/components/BrushPanel/settings/BuildupSettings.tsx`
 
-说明文案 + CPU-only 提示（v1）。
+说明文案。
 
 ---
 
@@ -109,13 +109,13 @@ Sidebar checkbox 里加入 `build_up` 的 toggle。
 
 ---
 
-### 4. CPU Build-up Tick（RAF 补点）
+### 4. Build-up Tick（RAF 补点）
 
 #### [MODIFY] `src/components/Canvas/useStrokeProcessor.ts`
 
 在 RAF loop 里增加 build-up tick：
 
-- 条件：`backend === 'canvas2d' && buildupEnabled && strokeState==='active'`
+- 条件：`buildupEnabled && strokeState==='active'`（CPU/GPU 都支持；由 renderer 决定实际 backend）
 - 频率：`TARGET_BUILDUP_DABS_PER_SEC = 5`（`MAX_BUILDUP_DABS_PER_FRAME = 1`）
 - 位置：`lastInputPosRef ?? lastRenderedPosRef`
 - 压力：优先 WinTab `currentPoint.pressure`，否则用 `lastPressureRef`

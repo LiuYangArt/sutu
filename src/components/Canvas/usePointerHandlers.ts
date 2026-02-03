@@ -157,7 +157,12 @@ export function usePointerHandlers({
       // Important: For pen, do NOT default pressure to 0.5 at pointerdown,
       // otherwise the first dab can become noticeably too heavy (especially with Build-up enabled).
       const pe = e.nativeEvent as PointerEvent;
-      let pressure = pe.pressure > 0 ? pe.pressure : pe.pointerType === 'pen' ? 0 : 0.5;
+      let pressure = 0.5;
+      if (pe.pointerType === 'pen') {
+        pressure = pe.pressure > 0 ? pe.pressure : 0;
+      } else if (pe.pressure > 0) {
+        pressure = pe.pressure;
+      }
       if (currentTool === 'brush' || currentTool === 'eraser') {
         const tabletState = useTabletStore.getState();
         const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
@@ -169,7 +174,9 @@ export function usePointerHandlers({
             pressure = bufferedPoints[bufferedPoints.length - 1]!.pressure;
           } else {
             // No fresh WinTab sample yet.
-            pressure = pe.pointerType === 'pen' ? 0 : 0.5;
+            if (pe.pointerType === 'pen') {
+              pressure = 0;
+            }
           }
         }
       }

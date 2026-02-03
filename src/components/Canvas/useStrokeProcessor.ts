@@ -14,6 +14,7 @@ const MAX_POINTS_PER_FRAME = 80;
 const TARGET_BUILDUP_DABS_PER_SEC = 5;
 const BUILDUP_INTERVAL_MS = 1000 / TARGET_BUILDUP_DABS_PER_SEC;
 const MAX_BUILDUP_DABS_PER_FRAME = 1;
+const WINTAB_CURRENT_POINT_MAX_AGE_MS = 80;
 
 interface QueuedPoint {
   x: number;
@@ -342,12 +343,9 @@ export function useStrokeProcessor({
         needsRenderRef.current = true;
       }
 
-      // Build-up tick: CPU-only, stationary hold behavior
+      // Build-up tick: stationary hold behavior (CPU/GPU)
       const canBuildupTick =
-        brushBackend === 'canvas2d' &&
-        currentTool === 'brush' &&
-        isDrawingRef.current &&
-        strokeStateRef.current === 'active';
+        currentTool === 'brush' && isDrawingRef.current && strokeStateRef.current === 'active';
 
       if (canBuildupTick) {
         const config = getBrushConfig();
@@ -367,8 +365,14 @@ export function useStrokeProcessor({
             let pressure = lastPressureRef.current;
             const tabletState = useTabletStore.getState();
             const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
-            if (isWinTabActive && tabletState.currentPoint) {
-              pressure = tabletState.currentPoint.pressure;
+            if (isWinTabActive) {
+              const pt = tabletState.currentPoint;
+              if (pt) {
+                const now = performance.now();
+                if (Math.abs(pt.timestamp_ms - now) <= WINTAB_CURRENT_POINT_MAX_AGE_MS) {
+                  pressure = pt.pressure;
+                }
+              }
             }
 
             processBrushPointWithConfig(pos.x, pos.y, pressure);
@@ -605,45 +609,38 @@ export function useStrokeProcessor({
       // Replay all buffered points
       const points = pendingPointsRef.current;
       const config = getBrushConfig();
-      const isBuildup = brushBackend === 'canvas2d' && config.buildupEnabled;
-      const collapsedPoints =
-        isBuildup && points.length > 1
-          ? (() => {
-              // When Build-up is enabled, the 'starting' phase can accumulate many
-              // near-identical points at the same coordinate (especially with WinTab/raw input).
-              // Replaying all of them can create an overly heavy "starting blob".
-              // Collapse consecutive near-identical points by keeping only the latest.
-              const out: QueuedPoint[] = [];
-              const eps2 = 0.5 * 0.5;
-              let last = points[0]!;
-              out.push(last);
-              for (let i = 1; i < points.length; i++) {
-                const p = points[i]!;
-                const dx = p.x - last.x;
-                const dy = p.y - last.y;
-                if (dx * dx + dy * dy <= eps2) {
-                  out[out.length - 1] = p;
-                  last = p;
-                  continue;
-                }
-                out.push(p);
-                last = p;
-              }
-              return out;
-            })()
-          : points;
+      const isBuildup = config.buildupEnabled;
 
-      const replayPoints =
-        isBuildup && collapsedPoints.length > 1
-          ? (() => {
-              // In Build-up mode we emit a dab for the first processed point.
-              // PointerDown pressure is sometimes less reliable than the first move/raw sample,
-              // which can create an overly heavy "starting dab" (especially at very light pressure).
-              // If we have at least one follow-up point, start from it and keep tap/hold behavior
-              // (single-point strokes) unchanged.
-              return collapsedPoints.slice(1);
-            })()
-          : collapsedPoints;
+      let replayPoints = points;
+      if (isBuildup && points.length > 1) {
+        // When Build-up is enabled, the 'starting' phase can accumulate many
+        // near-identical points at the same coordinate (especially with WinTab/raw input).
+        // Replaying all of them can create an overly heavy "starting blob".
+        // Collapse consecutive near-identical points by keeping only the latest.
+        const out: QueuedPoint[] = [];
+        const eps2 = 0.5 * 0.5;
+        let last = points[0]!;
+        out.push(last);
+        for (let i = 1; i < points.length; i++) {
+          const p = points[i]!;
+          const dx = p.x - last.x;
+          const dy = p.y - last.y;
+          if (dx * dx + dy * dy <= eps2) {
+            out[out.length - 1] = p;
+            last = p;
+            continue;
+          }
+          out.push(p);
+          last = p;
+        }
+
+        // In Build-up mode we emit a dab for the first processed point.
+        // PointerDown pressure is sometimes less reliable than the first move/raw sample,
+        // which can create an overly heavy "starting dab" (especially at very light pressure).
+        // If we have at least one follow-up point, start from it and keep tap/hold behavior
+        // (single-point strokes) unchanged.
+        replayPoints = out.length > 1 ? out.slice(1) : out;
+      }
 
       for (const p of replayPoints) {
         processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex);
@@ -670,6 +667,8 @@ export function useStrokeProcessor({
     wetEdge,
     finalizeStroke,
     processBrushPointWithConfig,
+    brushBackend,
+    getBrushConfig,
     strokeStateRef,
     pendingPointsRef,
     pendingEndRef,

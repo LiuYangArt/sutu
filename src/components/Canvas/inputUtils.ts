@@ -1,5 +1,11 @@
 import { RawInputPoint } from '@/stores/tablet';
 
+function getWinTabPressureFallback(evt: PointerEvent): number {
+  if (evt.pointerType === 'pen') return 0;
+  if (evt.pressure > 0) return evt.pressure;
+  return 0.5;
+}
+
 /**
  * Resolves pressure and tilt data, preferring WinTab buffer if active.
  * Respects pressure=0 from backend smoothing.
@@ -62,7 +68,7 @@ export function getEffectiveInputData(
       return {
         // In WinTab mode, PointerEvent.pressure is often the "device unsupported" default (0.5).
         // Treat pen pressure as unknown (0) when WinTab data is not synchronized.
-        pressure: evt.pointerType === 'pen' ? 0 : evt.pressure > 0 ? evt.pressure : 0.5,
+        pressure: getWinTabPressureFallback(evt),
         tiltX: evt.tiltX,
         tiltY: evt.tiltY,
       };
@@ -78,7 +84,7 @@ export function getEffectiveInputData(
   return {
     // Mouse/touch often report pressure=0; use 0.5 as a reasonable default.
     // In WinTab mode, treat pen pressure as unknown (0) when we can't match tablet samples.
-    pressure: evt.pointerType === 'pen' ? 0 : evt.pressure > 0 ? evt.pressure : 0.5,
+    pressure: getWinTabPressureFallback(evt),
     tiltX: evt.tiltX,
     tiltY: evt.tiltY,
   };
