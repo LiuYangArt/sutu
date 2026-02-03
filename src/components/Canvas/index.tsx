@@ -1059,10 +1059,12 @@ export function Canvas() {
       const guideLine = getShiftLineGuide();
       if (!guideLine) return;
 
+      const guideLineOpacity = isDrawingRef.current ? 0.1 : 1;
       const outerWidth = 3 / scale;
       const innerWidth = 1 / scale;
 
       ctx.save();
+      ctx.globalAlpha = guideLineOpacity;
 
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = outerWidth;
