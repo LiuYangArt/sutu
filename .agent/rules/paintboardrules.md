@@ -14,6 +14,11 @@ trigger: always_on
 
 **目标**: Wacom 数位板输入延迟 < 12ms
 
+## 笔刷系统
+
+当前支持typescript cpu和compute shader gpu 笔刷。 cpu笔刷用于快速开发和debug提供ground truth 为gpu提供效果参考。用户最后使用gpu笔刷以获得最优性能。
+笔刷系统目标是对齐photoshop的效果。
+
 ## 常用命令
 
 ```bash
@@ -42,6 +47,9 @@ pnpm format           # 格式化代码
 ├─────────────────────────────────────────────────────┤
 │  前端 (src/)                         IPC ↑↓         │
 │  ├── components/→ React UI 组件                     │
+│  │   ├── Canvas/    → 画布核心 (拆分为多个 hooks)    │
+│  │   ├── Toolbar/   → 工具栏 (按工具动态切换)       │
+│  │   └── ...                                        │
 │  ├── gpu/       → WebGPU 渲染 (Primary Engine)      │
 │  └── utils/     → TypeScript 渲染 (Fallback Engine) │
 └─────────────────────────────────────────────────────┘
