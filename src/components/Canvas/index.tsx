@@ -11,6 +11,7 @@ import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { useRawPointerInput } from './useRawPointerInput';
 import { useAltEyedropper } from './useAltEyedropper';
+import { useShiftLineMode } from './useShiftLineMode';
 import { SelectionOverlay } from './SelectionOverlay';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
@@ -131,6 +132,7 @@ export function Canvas() {
   const lagometerRef = useRef(new LagometerMonitor());
   const fpsCounterRef = useRef(new FPSCounter());
   const lastRenderedPosRef = useRef<{ x: number; y: number } | null>(null);
+  const lastInputPosRef = useRef<{ x: number; y: number } | null>(null);
   const needsRenderRef = useRef(false);
   const pendingEndRef = useRef(false);
   const panStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -264,6 +266,7 @@ export function Canvas() {
     getPreviewCanvas,
     getPreviewOpacity,
     isStrokeActive,
+    getLastDabPosition,
     getDebugRects,
     flushPending,
     backend: _activeBackend,
@@ -292,6 +295,20 @@ export function Canvas() {
     latencyProfiler: latencyProfilerRef.current,
     onPointBuffered: () => window.__strokeDiagnostics?.onPointBuffered(),
   });
+
+  const isLineToolActive = currentTool === 'brush' || currentTool === 'eraser';
+
+  const requestRender = useCallback(() => {
+    needsRenderRef.current = true;
+  }, []);
+
+  const {
+    getGuideLine: getShiftLineGuide,
+    updateCursor: updateShiftLineCursor,
+    constrainPoint: constrainShiftLinePoint,
+    lockLine: lockShiftLine,
+    onStrokeEnd: onShiftLineStrokeEnd,
+  } = useShiftLineMode({ enabled: isLineToolActive, onInvalidate: requestRender });
 
   // Get the active layer's context for drawing
   const getActiveLayerCtx = useCallback(() => {
@@ -1037,6 +1054,35 @@ export function Canvas() {
   ]);
 
   // Composite with stroke buffer preview overlay at correct layer position
+  const renderGuideLine = useCallback(
+    (ctx: CanvasRenderingContext2D) => {
+      const guideLine = getShiftLineGuide();
+      if (!guideLine) return;
+
+      const outerWidth = 3 / scale;
+      const innerWidth = 1 / scale;
+
+      ctx.save();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = outerWidth;
+      ctx.beginPath();
+      ctx.moveTo(guideLine.start.x, guideLine.start.y);
+      ctx.lineTo(guideLine.end.x, guideLine.end.y);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = innerWidth;
+      ctx.beginPath();
+      ctx.moveTo(guideLine.start.x, guideLine.start.y);
+      ctx.lineTo(guideLine.end.x, guideLine.end.y);
+      ctx.stroke();
+
+      ctx.restore();
+    },
+    [getShiftLineGuide, scale]
+  );
+
   const compositeAndRenderWithPreview = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
@@ -1066,6 +1112,8 @@ export function Canvas() {
         drawDebugRects(ctx, rects);
       }
     }
+
+    renderGuideLine(ctx);
   }, [
     width,
     height,
@@ -1074,21 +1122,24 @@ export function Canvas() {
     getPreviewOpacity,
     getDebugRects,
     activeLayerId,
+    renderGuideLine,
   ]);
 
   // Process a single point through the brush renderer WITHOUT triggering composite
   // Used by batch processing loop in RAF
   const processSinglePoint = useCallback(
     (x: number, y: number, pressure: number, pointIndex?: number) => {
+      const constrained = constrainShiftLinePoint(x, y);
       const config = getBrushConfig();
       lagometerRef.current.setBrushRadius(config.size / 2);
 
-      processBrushPoint(x, y, pressure, config, pointIndex);
+      processBrushPoint(constrained.x, constrained.y, pressure, config, pointIndex);
 
       // Track last rendered position for Visual Lag measurement
-      lastRenderedPosRef.current = { x, y };
+      lastRenderedPosRef.current = { x: constrained.x, y: constrained.y };
+      lastInputPosRef.current = { x: constrained.x, y: constrained.y };
     },
-    [getBrushConfig, processBrushPoint]
+    [getBrushConfig, processBrushPoint, constrainShiftLinePoint]
   );
 
   // Process a single point AND trigger composite (legacy behavior, used during state machine replay)
@@ -1256,6 +1307,14 @@ export function Canvas() {
       }
     }
 
+    if (currentTool === 'brush' || currentTool === 'eraser') {
+      const fallbackPos = lastRenderedPosRef.current ?? lastInputPosRef.current;
+      const lastPos =
+        currentTool === 'brush' ? (getLastDabPosition() ?? fallbackPos) : lastInputPosRef.current;
+      onShiftLineStrokeEnd(lastPos ?? null);
+    }
+    lastInputPosRef.current = null;
+
     // Save stroke to history (uses beforeImage captured at stroke start)
     saveStrokeToHistory();
     if (activeLayerId) {
@@ -1276,6 +1335,8 @@ export function Canvas() {
     activeLayerId,
     updateThumbnail,
     processSinglePoint,
+    getLastDabPosition,
+    onShiftLineStrokeEnd,
   ]);
 
   // Finish the current stroke properly (used by PointerUp and Alt key)
@@ -1386,6 +1447,8 @@ export function Canvas() {
       const canvasX = (e.clientX - rect.left) / scale;
       const canvasY = (e.clientY - rect.top) / scale;
 
+      updateShiftLineCursor(canvasX, canvasY);
+
       // Handle Eyedropper
       if (currentTool === 'eyedropper') {
         pickColorAt(canvasX, canvasY);
@@ -1404,6 +1467,13 @@ export function Canvas() {
       // Check Layer Validation
       const activeLayer = layers.find((l) => l.id === activeLayerId);
       if (!activeLayerId || !activeLayer?.visible) return;
+
+      let constrainedDown = { x: canvasX, y: canvasY };
+      if (currentTool === 'brush' || currentTool === 'eraser') {
+        lockShiftLine({ x: canvasX, y: canvasY });
+        constrainedDown = constrainShiftLinePoint(canvasX, canvasY);
+        lastInputPosRef.current = { x: constrainedDown.x, y: constrainedDown.y };
+      }
 
       // Start Drawing
       canvas.setPointerCapture(e.pointerId);
@@ -1430,8 +1500,8 @@ export function Canvas() {
 
       // Eraser/Other Tools: Legacy Logic
       const point: BufferPoint = {
-        x: canvasX,
-        y: canvasY,
+        x: constrainedDown.x,
+        y: constrainedDown.y,
         pressure,
         tiltX: e.tiltX ?? 0,
         tiltY: e.tiltY ?? 0,
@@ -1462,6 +1532,9 @@ export function Canvas() {
       setIsPanning,
       isSelectionToolActive,
       handleSelectionPointerDown,
+      updateShiftLineCursor,
+      lockShiftLine,
+      constrainShiftLinePoint,
     ]
   );
 
@@ -1519,6 +1592,14 @@ export function Canvas() {
         return;
       }
 
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+      const hoverX = (lastEvent.clientX - rect.left) / scale;
+      const hoverY = (lastEvent.clientY - rect.top) / scale;
+      updateShiftLineCursor(hoverX, hoverY);
+
       // Note: cursor position is updated by native event listener for zero-lag
 
       // 绘画模式
@@ -1532,10 +1613,6 @@ export function Canvas() {
         return;
       }
 
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const rect = canvas.getBoundingClientRect();
       const tabletState = useTabletStore.getState();
       const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
       // Drain input buffer once per frame/event-batch (outside the loop)
@@ -1575,9 +1652,11 @@ export function Canvas() {
         }
 
         // For eraser, use the legacy stroke buffer
+        const constrained = constrainShiftLinePoint(canvasX, canvasY);
+        lastInputPosRef.current = { x: constrained.x, y: constrained.y };
         const point: BufferPoint = {
-          x: canvasX,
-          y: canvasY,
+          x: constrained.x,
+          y: constrained.y,
           pressure,
           tiltX,
           tiltY,
@@ -1606,6 +1685,8 @@ export function Canvas() {
       usingRawInput,
       isSelectionToolActive,
       handleSelectionPointerMove,
+      updateShiftLineCursor,
+      constrainShiftLinePoint,
     ]
   );
 
