@@ -160,6 +160,7 @@ export interface UseBrushRendererResult {
   getPreviewCanvas: () => HTMLCanvasElement | null;
   getPreviewOpacity: () => number;
   isStrokeActive: () => boolean;
+  getLastDabPosition: () => { x: number; y: number } | null;
   /** Flush pending dabs to GPU (call once per frame) */
   flushPending: () => void;
   /** Actual backend in use (may differ from requested if GPU unavailable) */
@@ -204,6 +205,7 @@ export function useBrushRenderer({
   const prevSecondaryDabPosRef = useRef<{ x: number; y: number } | null>(null);
   // Shape Dynamics: Capture initial direction at stroke start
   const initialDirectionRef = useRef<number>(0);
+  const lastDabPosRef = useRef<{ x: number; y: number } | null>(null);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -304,6 +306,7 @@ export function useBrushRenderer({
       prevDabPosRef.current = null;
       prevSecondaryDabPosRef.current = null;
       initialDirectionRef.current = 0;
+      lastDabPosRef.current = null;
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         gpuBufferRef.current.beginStroke();
@@ -466,6 +469,8 @@ export function useBrushRenderer({
         if (hasSelection && !selectionState.isPointInSelection(dab.x, dab.y)) {
           continue;
         }
+
+        lastDabPosRef.current = { x: dab.x, y: dab.y };
 
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
         let dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
@@ -708,6 +713,8 @@ export function useBrushRenderer({
     return cpuBufferRef.current?.isActive() ?? false;
   }, [backend]);
 
+  const getLastDabPosition = useCallback(() => lastDabPosRef.current, []);
+
   const getDebugRects = useCallback(() => {
     if (backend === 'gpu' && gpuBufferRef.current) {
       return gpuBufferRef.current.getDebugRects();
@@ -744,6 +751,7 @@ export function useBrushRenderer({
     getPreviewCanvas,
     getPreviewOpacity,
     isStrokeActive,
+    getLastDabPosition,
     getDebugRects,
     flushPending,
     backend,
