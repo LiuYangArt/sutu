@@ -25,6 +25,10 @@
   - `currentPoint` 是“最后一次 WinTab 输入”，如果 stroke 刚开始时直接读它，有机会读到上一笔的数据。
   - 这在 build-up “首点立刻产 dab” 的语义下，会被放大成肉眼可见的起笔 blob。
 
+- **WinTab timestamp 与 PointerEvent timeStamp timebase 不一致**（事实）
+  - WinTab 后端会使用 `pkTime`（通常是系统运行时间域），而 `PointerEvent.timeStamp` 是页面 time origin 域。
+  - 这两者不能直接做差值/窗口匹配；如果强行用“时间戳接近”做 stale 判定，可能会把所有 `currentPoint` 都判为 stale，导致 pen 压感被当成 0（表现为“压感不生效/画不出来”）。
+
 - **starting 阶段 buffering + replay 可能原地堆很多点**（事实）
   - WinTab/raw input 可能在 beginStroke await 期间塞入多个几乎同坐标的点。
   - replay 如果逐个处理，会在同一点连续 stamp 多次，进一步加重起笔 blob。
@@ -36,8 +40,8 @@
 
 ### B) 起笔压力来源收敛与去“伪压感”
 - pointerdown：pen 在无可靠样本时不再默认 0.5（改为 0），避免轻压起笔被抬高。
-- WinTab buffering：仅在时间戳接近当前 PointerEvent 的情况下使用 WinTab 点；并优先使用“<= eventTime 的最近点”，避免“向未来取样”带来压力尖峰。
-- build-up tick：仅在 `currentPoint` 时间戳足够新鲜时才使用，避免用到上一笔残留压力。
+- WinTab buffering：避免用 WinTab 的 `timestamp_ms` 去对齐 `PointerEvent.timeStamp`；改为“每个 pointer event batch 取最新 WinTab sample（buffer 最后一条）”，无则退回 `currentPoint`。
+- build-up tick：默认使用 `lastPressureRef`（来自已处理的输入点）。如果要支持“原地变压”，需要用“JS 收到该 WinTab 点的时间”做 freshness 判定（而不是直接比较不同 timebase 的 timestamp）。
 
 ### C) starting replay 降低“起笔堆叠”
 - Build-up + CPU 下，starting replay 对“近似同点”的连续点做折叠（只保留最后一个）。
@@ -52,7 +56,7 @@
 
 ## 教训 / 可复用经验
 1) **pen 的 pressure fallback 不能用 0.5**：在 WinTab 场景里，0.5 往往是“未知/不支持”的伪值，会直接污染首 dab。
-2) **`currentPoint` 作为“最后值”需要防 stale**：尤其在“首点立即出墨”的语义下，任何上一笔残留都会被放大。
+2) **不要用 WinTab timestamp 去对齐 PointerEvent.timeStamp**：timebase 不一致会直接把压感判成 0 或导致错配；要么统一后端时间戳语义，要么用“前端收到时间/序号”做关联。
 3) **starting 阶段的 buffering/replay 需要去抖**：否则容易把“等待 beginStroke 的时间”误当成用户想要的喷涂密度。
 4) **Build-up 更像一个 timer**：与 mouse/wacom 都能工作这一点一致，建议用固定频率驱动而不是依赖输入事件密度。
 
