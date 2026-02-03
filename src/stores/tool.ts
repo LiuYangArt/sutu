@@ -356,6 +356,7 @@ interface ToolState {
   resetTextureSettings: () => void;
   // Noise actions
   setNoiseEnabled: (enabled: boolean) => void;
+  toggleNoise: () => void;
   // Shape Dynamics actions
   setShapeDynamicsEnabled: (enabled: boolean) => void;
   toggleShapeDynamics: () => void;
@@ -548,6 +549,8 @@ export const useToolStore = create<ToolState>()(
 
       // Noise actions
       setNoiseEnabled: (enabled) => set({ noiseEnabled: enabled }),
+
+      toggleNoise: () => set((state) => ({ noiseEnabled: !state.noiseEnabled })),
 
       // Shape Dynamics actions
       setShapeDynamicsEnabled: (enabled) => set({ shapeDynamicsEnabled: enabled }),

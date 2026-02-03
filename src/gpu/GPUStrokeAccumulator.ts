@@ -34,6 +34,7 @@ import type { BrushTexture, DualBlendMode, DualBrushSettings } from '@/stores/to
 import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/settings';
 import { patternManager } from '@/utils/patternManager';
 import { applyScatter } from '@/utils/scatterDynamics';
+import { getNoisePattern } from '@/utils/noiseTexture';
 
 interface DebugRect {
   rect: Rect;
@@ -84,6 +85,8 @@ export class GPUStrokeAccumulator {
 
   // Track current pattern settings to detect changes and trigger flush
   private currentPatternSettings: import('./types').GPUPatternSettings | null = null;
+  private currentNoiseEnabled: boolean = false;
+  private noiseTexture: GPUTexture;
 
   private width: number;
   private height: number;
@@ -166,6 +169,7 @@ export class GPUStrokeAccumulator {
     this.computeTextureBrushPipeline.updateCanvasSize(width, height);
     this.textureAtlas = new TextureAtlas(device);
     this.patternCache = new GPUPatternCache(device);
+    this.noiseTexture = this.createNoiseTexture();
 
     // Initialize dual brush resources
     this.secondaryInstanceBuffer = new InstanceBuffer(device);
@@ -229,6 +233,26 @@ export class GPUStrokeAccumulator {
         GPUTextureUsage.STORAGE_BINDING |
         GPUTextureUsage.COPY_SRC,
     });
+  }
+
+  private createNoiseTexture(): GPUTexture {
+    const noise = getNoisePattern();
+
+    const texture = this.device.createTexture({
+      label: 'Noise Pattern Texture',
+      size: { width: noise.width, height: noise.height },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+
+    this.device.queue.writeTexture(
+      { texture },
+      noise.data as unknown as BufferSource,
+      { bytesPerRow: noise.width * 4 },
+      { width: noise.width, height: noise.height }
+    );
+
+    return texture;
   }
 
   private recreateDualBlendTexture(): void {
@@ -591,6 +615,9 @@ export class GPUStrokeAccumulator {
     // Sync wet edge settings from store
     this.syncWetEdgeSettings();
 
+    // Sync noise state from store (used as compute shader uniform)
+    this.currentNoiseEnabled = Boolean(useToolStore.getState().noiseEnabled);
+
     // Pre-warm display texture if wet edge is enabled
     // This moves the lazy initialization cost from the first flushBatch to beginStroke
     if (this.wetEdgeEnabled) {
@@ -724,6 +751,7 @@ export class GPUStrokeAccumulator {
     this.previewCtx.clearRect(0, 0, this.width, this.height);
     this.dabsSinceLastFlush = 0;
     this.currentPatternSettings = null;
+    this.currentNoiseEnabled = false;
     this.patternCache.update(null);
     this.dualBrushEnabled = false;
     this.dualMaskActive = false;
@@ -962,6 +990,7 @@ export class GPUStrokeAccumulator {
 
     const rgb = this.hexToRgb(params.color);
     const scale = this.currentRenderScale;
+    const nextNoiseEnabled = Boolean(params.noiseEnabled);
 
     // Texture brush path - completely separate from parametric brush
     if (params.texture) {
@@ -980,6 +1009,13 @@ export class GPUStrokeAccumulator {
       // Pattern Handling
       // If texture settings changed (e.g. depth, scale, id), we must flush current batch
       // because these are passed as Uniforms to the compute shader.
+      if (this.dabsSinceLastFlush > 0 && nextNoiseEnabled !== this.currentNoiseEnabled) {
+        this.flushTextureBatch(this.dualMaskActive);
+        this.flushBatch(this.dualMaskActive);
+        this.dabsSinceLastFlush = 0; // Reset counter after flush
+      }
+      this.currentNoiseEnabled = nextNoiseEnabled;
+
       const newPatternSettings = this.extractPatternSettings(params.textureSettings);
 
       if (this.hasPatternSettingsChanged(newPatternSettings)) {
@@ -1035,6 +1071,13 @@ export class GPUStrokeAccumulator {
 
     // Parametric brush path
     // Pattern Handling for Parametric Brush
+    if (this.dabsSinceLastFlush > 0 && nextNoiseEnabled !== this.currentNoiseEnabled) {
+      this.flushTextureBatch(this.dualMaskActive); // Flush texture batch too to be safe (shared state)
+      this.flushBatch(this.dualMaskActive);
+      this.dabsSinceLastFlush = 0;
+    }
+    this.currentNoiseEnabled = nextNoiseEnabled;
+
     const newPatternSettings = this.extractPatternSettings(params.textureSettings);
 
     if (this.hasPatternSettingsChanged(newPatternSettings)) {
@@ -1391,7 +1434,10 @@ export class GPUStrokeAccumulator {
         this.pingPongBuffer.dest,
         dabs,
         this.patternCache.getTexture(),
-        this.currentPatternSettings
+        this.currentPatternSettings,
+        this.noiseTexture,
+        this.currentNoiseEnabled,
+        1.0
       );
 
       if (success) {
@@ -1593,7 +1639,10 @@ export class GPUStrokeAccumulator {
         currentTexture,
         dabs,
         this.patternCache.getTexture(),
-        this.currentPatternSettings
+        this.currentPatternSettings,
+        this.noiseTexture,
+        this.currentNoiseEnabled,
+        1.0
       );
 
       if (success) {
@@ -2403,6 +2452,7 @@ export class GPUStrokeAccumulator {
     this.computeDualTextureMaskPipeline.destroy();
     this.computeDualBlendPipeline.destroy();
     this.wetEdgePipeline.destroy();
+    this.noiseTexture.destroy();
     this.readbackBuffer?.destroy();
     this.previewReadbackBuffer?.destroy();
     this.profiler.destroy();

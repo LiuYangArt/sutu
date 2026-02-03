@@ -45,6 +45,7 @@ export class ComputeTextureBrushPipeline {
   private uniformBuffer: GPUBuffer;
   private dabBuffer: GPUBuffer;
   private dummyPatternTexture: GPUTexture;
+  private dummyNoiseTexture: GPUTexture;
   private uniformStride: number;
   private uniformCapacity = 1;
   private dabStride: number;
@@ -101,6 +102,20 @@ export class ComputeTextureBrushPipeline {
       { width: 1, height: 1 }
     );
 
+    // Initialize dummy noise texture (1x1 mid-gray; overlay(., 0.5) is neutral)
+    this.dummyNoiseTexture = device.createTexture({
+      label: 'Dummy Noise Texture',
+      size: { width: 1, height: 1 },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture(
+      { texture: this.dummyNoiseTexture },
+      new Uint8Array([128, 128, 128, 255]),
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
+
     this.initPipeline();
   }
 
@@ -138,6 +153,11 @@ export class ComputeTextureBrushPipeline {
           binding: 5,
           visibility: GPUShaderStage.COMPUTE,
           texture: { sampleType: 'float' }, // Pattern texture
+        },
+        {
+          binding: 6,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: 'float' }, // Noise texture
         },
       ],
     });
@@ -233,7 +253,9 @@ export class ComputeTextureBrushPipeline {
     dabCount: number,
     usePattern: boolean,
     patternTexture: GPUTexture | null,
-    patternSettings: GPUPatternSettings | null
+    patternSettings: GPUPatternSettings | null,
+    noiseEnabled: boolean,
+    noiseStrength: number
   ): void {
     // Block 0
     view.setUint32(byteOffset + 0, bbox.x, true);
@@ -265,7 +287,13 @@ export class ComputeTextureBrushPipeline {
       view.setFloat32(byteOffset + 68, patternTexture.height, true);
     } else {
       view.setUint32(byteOffset + 32, 0, true);
+      view.setFloat32(byteOffset + 64, 0, true);
+      view.setFloat32(byteOffset + 68, 0, true);
     }
+
+    // Block 5: Noise (overlay on tip alpha)
+    view.setUint32(byteOffset + 72, noiseEnabled ? 1 : 0, true);
+    view.setFloat32(byteOffset + 76, noiseEnabled ? noiseStrength : 0.0, true);
   }
 
   /**
@@ -309,7 +337,10 @@ export class ComputeTextureBrushPipeline {
     brushTexture: GPUBrushTexture,
     dabs: TextureDabInstanceData[],
     patternTexture: GPUTexture | null = null,
-    patternSettings: GPUPatternSettings | null = null
+    patternSettings: GPUPatternSettings | null = null,
+    noiseTexture: GPUTexture | null = null,
+    noiseEnabled: boolean = false,
+    noiseStrength: number = 1.0
   ): boolean {
     if (dabs.length === 0) return true;
 
@@ -354,6 +385,7 @@ export class ComputeTextureBrushPipeline {
     const usePattern =
       patternTexture !== null && patternSettings !== null && patternSettings.patternId !== null;
     const activePatternTexture = usePattern ? patternTexture! : this.dummyPatternTexture;
+    const activeNoiseTexture = noiseTexture ?? this.dummyNoiseTexture;
 
     const uniformData = new ArrayBuffer(this.uniformStride * dispatchCount);
     const uniformView = new DataView(uniformData);
@@ -370,7 +402,9 @@ export class ComputeTextureBrushPipeline {
           batch.length,
           usePattern,
           patternTexture,
-          patternSettings
+          patternSettings,
+          noiseEnabled,
+          noiseStrength
         );
         dispatchIndex++;
       }
@@ -391,7 +425,8 @@ export class ComputeTextureBrushPipeline {
         currentInput,
         currentOutput,
         brushTexture,
-        activePatternTexture
+        activePatternTexture,
+        activeNoiseTexture
       );
       const pass = encoder.beginComputePass({ label: 'Compute Texture Brush Pass' });
       pass.setPipeline(this.pipeline);
@@ -440,11 +475,13 @@ export class ComputeTextureBrushPipeline {
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
     brushTexture: GPUBrushTexture,
-    patternTexture: GPUTexture
+    patternTexture: GPUTexture,
+    noiseTexture: GPUTexture
   ): GPUBindGroup {
     const brushLabel = brushTexture.texture.label || 'brush';
     const patternLabel = patternTexture.label || 'none';
-    const key = `${inputTexture.label || 'inp'}_${outputTexture.label || 'out'}_${brushLabel}_${patternLabel}`;
+    const noiseLabel = noiseTexture.label || 'noise';
+    const key = `${inputTexture.label || 'inp'}_${outputTexture.label || 'out'}_${brushLabel}_${patternLabel}_${noiseLabel}`;
 
     let bindGroup = this.cachedBindGroups.get(key);
     if (!bindGroup) {
@@ -464,6 +501,7 @@ export class ComputeTextureBrushPipeline {
           { binding: 3, resource: outputTexture.createView() },
           { binding: 4, resource: brushTexture.view },
           { binding: 5, resource: patternTexture.createView() },
+          { binding: 6, resource: noiseTexture.createView() },
         ],
       });
       this.cachedBindGroups.set(key, bindGroup);
@@ -561,6 +599,7 @@ export class ComputeTextureBrushPipeline {
     this.uniformBuffer.destroy();
     this.dabBuffer.destroy();
     this.dummyPatternTexture.destroy();
+    this.dummyNoiseTexture.destroy();
     this.cachedBindGroups.clear();
   }
 }

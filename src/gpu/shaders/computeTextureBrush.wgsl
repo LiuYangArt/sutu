@@ -58,7 +58,8 @@ struct Uniforms {
 
   // Block 4
   pattern_size: vec2<f32>,
-  padding2: vec2<u32>,
+  noise_enabled: u32,
+  noise_strength: f32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -67,6 +68,7 @@ struct Uniforms {
 @group(0) @binding(3) var output_tex: texture_storage_2d<rgba32float, write>; // Write target (Pong)
 @group(0) @binding(4) var brush_texture: texture_2d<f32>;  // Brush tip texture
 @group(0) @binding(5) var pattern_texture: texture_2d<f32>; // Pattern texture
+@group(0) @binding(6) var noise_texture: texture_2d<f32>; // Noise texture (RGBA8, grayscale)
 
 // ============================================================================
 // Shared Memory Optimization: Cache Dab Data to Workgroup Shared Memory
@@ -80,6 +82,26 @@ var<workgroup> shared_dab_count: u32;
 // ============================================================================
 fn quantize_to_8bit(val: f32) -> f32 {
   return floor(val * 255.0 + 0.5) / 255.0;
+}
+
+// ============================================================================
+// Noise: Overlay on tip alpha (PS-like)
+// ============================================================================
+fn blend_overlay(base: f32, blend: f32) -> f32 {
+  if (base < 0.5) {
+    return 2.0 * base * blend;
+  }
+  return 1.0 - 2.0 * (1.0 - base) * (1.0 - blend);
+}
+
+fn sample_noise(pixel_x: u32, pixel_y: u32) -> f32 {
+  let dims = textureDimensions(noise_texture);
+  if (dims.x == 0u || dims.y == 0u) {
+    return 0.5;
+  }
+  let nx = pixel_x % dims.x;
+  let ny = pixel_y % dims.y;
+  return textureLoad(noise_texture, vec2<i32>(i32(nx), i32(ny)), 0).r;
 }
 
 // ============================================================================
@@ -416,6 +438,13 @@ fn main(
     var mask = compute_texture_mask(pixel, dab);
     if (mask < 0.001) {
       continue;
+    }
+
+    // A2. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
+    if (uniforms.noise_enabled != 0u && mask > 0.001 && mask < 0.999) {
+      let noise_val = sample_noise(pixel_x, pixel_y);
+      let over = blend_overlay(mask, noise_val);
+      mask = mix(mask, over, clamp(uniforms.noise_strength, 0.0, 1.0));
     }
 
     // B. Calculate Dynamic Ceiling (Pattern Modulation)

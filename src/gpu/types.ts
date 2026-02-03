@@ -109,6 +109,8 @@ export interface GPUDabParams {
   texture?: BrushTexture;
   /** Texture settings for pattern modulation */
   textureSettings?: TextureSettings | null;
+  /** Noise toggle (applied as overlay on tip alpha) */
+  noiseEnabled?: boolean;
 }
 
 /**

@@ -1,32 +1,15 @@
-import { useToolStore } from '@/stores/tool';
-
 export function NoiseSettings(): JSX.Element {
-  const { noiseEnabled, setNoiseEnabled } = useToolStore();
-
   return (
     <div className="brush-panel-section">
       <div className="section-header-row">
-        <div className="section-checkbox-label">
-          <h4>Noise</h4>
-        </div>
+        <h4>Noise</h4>
       </div>
 
-      <div className="dynamics-group">
-        <div className="setting-checkbox-row">
-          <label className="flip-checkbox">
-            <input
-              type="checkbox"
-              checked={noiseEnabled}
-              onChange={(e) => setNoiseEnabled(e.target.checked)}
-            />
-            <span>Enable Noise</span>
-          </label>
+      <div className="dynamics-group" style={{ gap: 8 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+          Adds random grain to brush edges for a more natural look.
         </div>
       </div>
-
-      <p className="setting-description">
-        Adds random grain to brush edges for a more natural look.
-      </p>
     </div>
   );
 }
