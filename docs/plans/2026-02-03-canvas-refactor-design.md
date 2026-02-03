@@ -98,53 +98,73 @@ interface UseLayerOperationsParams {
 
 ### 工具独立 Toolbar
 
+**布局设计**：
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  [Global-L]  │      [Tool-specific 区域]        │    [Global-R]     │
+│  菜单按钮     │  根据 currentTool 动态切换       │ 缩放 + Undo/Redo  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- **Global-L**：AppMenu（固定）
+- **Global-R**：ZoomControls + Undo/Redo（固定）
+- **Tool-specific**：中间区域，根据工具类型渲染不同内容
+
 ---
 
 #### [NEW] [BrushToolbar.tsx](file:///f:/CodeProjects/PaintBoard/src/components/Toolbar/BrushToolbar.tsx)
 
-Brush/Eraser 工具栏：
+Brush/Eraser 工具专属：
 
-- Size/Flow/Opacity 滑块
-- 压感开关
-- 准心开关
-- 笔刷设置按钮
+- Size/Flow/Opacity 滑块 + 压感开关
+- 准心开关、笔刷设置按钮
 
 ---
 
 #### [NEW] [SelectionToolbar.tsx](file:///f:/CodeProjects/PaintBoard/src/components/Toolbar/SelectionToolbar.tsx)
 
-Selection/Lasso 工具栏：
+Selection/Lasso/Polygon 工具专属：
 
-- 暂时为空或仅显示提示文字
+- 暂时为空或显示提示
 - 后续可扩展：羽化、反选等
 
 ---
 
-#### [NEW] [ZoomToolbar.tsx](file:///f:/CodeProjects/PaintBoard/src/components/Toolbar/ZoomToolbar.tsx)
+#### [NEW] [ZoomToolOptions.tsx](file:///f:/CodeProjects/PaintBoard/src/components/Toolbar/ZoomToolOptions.tsx)
 
-Zoom/Hand 工具栏：
+Zoom/Hand 工具专属：
 
-- 缩放控件
-- 适应窗口按钮
+- 适应窗口、实际像素等快捷按钮
 
 ---
 
 #### [MODIFY] [index.tsx](file:///f:/CodeProjects/PaintBoard/src/components/Toolbar/index.tsx)
 
-根据 `currentTool` 渲染对应 Toolbar 组件：
+重构布局：
 
 ```tsx
-{
-  (currentTool === 'brush' || currentTool === 'eraser') && <BrushToolbar />;
-}
-{
-  (currentTool === 'select' || currentTool === 'lasso' || currentTool === 'polygon') && (
-    <SelectionToolbar />
-  );
-}
-{
-  (currentTool === 'zoom' || currentTool === 'hand') && <ZoomToolbar />;
-}
+<header className="toolbar">
+  {/* Global Left */}
+  <AppMenu />
+  <div className="toolbar-divider" />
+
+  {/* Tool-specific (中间，动态切换) */}
+  <div className="toolbar-section tool-options">
+    {(currentTool === 'brush' || currentTool === 'eraser') && <BrushToolbar />}
+    {(currentTool === 'select' || currentTool === 'lasso' || currentTool === 'polygon') && (
+      <SelectionToolbar />
+    )}
+    {(currentTool === 'zoom' || currentTool === 'hand') && <ZoomToolOptions />}
+  </div>
+
+  <div className="toolbar-spacer" />
+
+  {/* Global Right */}
+  <ZoomControls />
+  <div className="toolbar-divider" />
+  <UndoRedoButtons />
+</header>
 ```
 
 ---
