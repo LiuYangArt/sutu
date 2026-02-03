@@ -2,6 +2,7 @@ import { Crosshair, SlidersHorizontal } from 'lucide-react';
 import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
 import { useToolStore } from '@/stores/tool';
 import { usePanelStore } from '@/stores/panel';
+import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
 
@@ -70,7 +71,7 @@ export function BrushToolbar() {
     value: currentSize,
     min: 1,
     max: 1000,
-    nonLinearConfig: { midValue: 100, secondHalfExponent: 2.5 },
+    nonLinearConfig: BRUSH_SIZE_SLIDER_CONFIG,
   });
 
   return (

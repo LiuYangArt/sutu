@@ -13,6 +13,7 @@ import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { BrushPreset } from '../types';
 import { BrushThumbnail } from '../BrushThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
+import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 
 interface DualBrushSettingsProps {
   importedPresets: BrushPreset[];
@@ -188,7 +189,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           displayValue={`${Math.round(dualBrush.size)} px`}
           onChange={(v) => setDualBrush({ size: v })}
           disabled={disabled}
-          nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
+          nonLinearConfig={BRUSH_SIZE_SLIDER_CONFIG}
         />
         <SliderRow
           label="Spacing"
@@ -198,7 +199,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           displayValue={`${Math.round(dualBrush.spacing * 100)}%`}
           onChange={(v) => setDualBrush({ spacing: v / 100 })}
           disabled={disabled}
-          nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
+          nonLinearConfig={BRUSH_SIZE_SLIDER_CONFIG}
         />
       </div>
 

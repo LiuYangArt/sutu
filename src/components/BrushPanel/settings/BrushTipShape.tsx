@@ -1,5 +1,6 @@
 import { useToolStore, BrushMaskType } from '@/stores/tool';
 import { SliderRow } from '../BrushPanelComponents';
+import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 
 export function BrushTipShape(): JSX.Element {
   const {
@@ -28,7 +29,7 @@ export function BrushTipShape(): JSX.Element {
         max={1000}
         displayValue={`${brushSize}px`}
         onChange={setBrushSize}
-        nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
+        nonLinearConfig={BRUSH_SIZE_SLIDER_CONFIG}
       />
 
       <SliderRow
@@ -77,7 +78,7 @@ export function BrushTipShape(): JSX.Element {
         max={1000}
         displayValue={`${Math.round(brushSpacing * 100)}%`}
         onChange={(v) => setBrushSpacing(v / 100)}
-        nonLinearConfig={{ midValue: 100, secondHalfExponent: 2.5 }}
+        nonLinearConfig={BRUSH_SIZE_SLIDER_CONFIG}
       />
     </div>
   );
