@@ -1,0 +1,562 @@
+import { useCallback, useEffect, type RefObject, type MutableRefObject } from 'react';
+import { applyPressureCurve, PressureCurve, ToolType } from '@/stores/tool';
+import { clearPointBuffer, type RawInputPoint } from '@/stores/tablet';
+import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
+import { BrushRenderConfig } from './useBrushRenderer';
+import { LayerRenderer } from '@/utils/layerRenderer';
+import { StrokeBuffer } from '@/utils/interpolation';
+
+const MAX_POINTS_PER_FRAME = 80;
+
+interface QueuedPoint {
+  x: number;
+  y: number;
+  pressure: number;
+  pointIndex: number;
+}
+
+interface DebugRect {
+  rect: { left: number; top: number; right: number; bottom: number };
+  label: string;
+  color: string;
+}
+
+interface UseStrokeProcessorParams {
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+  layerRendererRef: RefObject<LayerRenderer | null>;
+  width: number;
+  height: number;
+  scale: number;
+  activeLayerId: string | null;
+  currentTool: ToolType;
+  currentSize: number;
+  brushColor: string;
+  brushOpacity: number;
+  pressureCurve: PressureCurve;
+  brushHardness: number;
+  wetEdge: number;
+  wetEdgeEnabled: boolean;
+  getBrushConfig: () => BrushRenderConfig;
+  getShiftLineGuide: () => {
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+  } | null;
+  constrainShiftLinePoint: (x: number, y: number) => { x: number; y: number };
+  onShiftLineStrokeEnd: (lastDabPos?: { x: number; y: number } | null) => void;
+  isDrawingRef: MutableRefObject<boolean>;
+  strokeBufferRef: MutableRefObject<StrokeBuffer>;
+  strokeStateRef: MutableRefObject<string>;
+  pendingPointsRef: MutableRefObject<QueuedPoint[]>;
+  inputQueueRef: MutableRefObject<QueuedPoint[]>;
+  lastRenderedPosRef: MutableRefObject<{ x: number; y: number } | null>;
+  lastInputPosRef: MutableRefObject<{ x: number; y: number } | null>;
+  needsRenderRef: MutableRefObject<boolean>;
+  pendingEndRef: MutableRefObject<boolean>;
+  lagometerRef: MutableRefObject<LagometerMonitor>;
+  fpsCounterRef: MutableRefObject<FPSCounter>;
+  latencyProfilerRef: MutableRefObject<LatencyProfiler>;
+  beginBrushStroke: (hardness: number, wetEdge: number) => Promise<void>;
+  processBrushPoint: (
+    x: number,
+    y: number,
+    pressure: number,
+    config: BrushRenderConfig,
+    pointIndex?: number
+  ) => void;
+  endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
+  getPreviewCanvas: () => HTMLCanvasElement | null;
+  getPreviewOpacity: () => number;
+  isStrokeActive: () => boolean;
+  getLastDabPosition: () => { x: number; y: number } | null;
+  getDebugRects: () => DebugRect[] | null;
+  flushPending: () => void;
+  compositeAndRender: () => void;
+  saveStrokeToHistory: () => void;
+  updateThumbnail: (layerId: string) => void;
+}
+
+function drawDebugRects(
+  ctx: CanvasRenderingContext2D,
+  rects: Array<{
+    rect: { left: number; top: number; right: number; bottom: number };
+    label: string;
+    color: string;
+  }>
+): void {
+  if (rects.length === 0) return;
+
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 2]);
+  ctx.font = '12px monospace';
+  ctx.textBaseline = 'top';
+
+  const canvasWidth = ctx.canvas.width;
+  const canvasHeight = ctx.canvas.height;
+
+  for (const { rect, label, color } of rects) {
+    const left = Math.max(0, Math.floor(rect.left));
+    const top = Math.max(0, Math.floor(rect.top));
+    const right = Math.min(canvasWidth, Math.ceil(rect.right));
+    const bottom = Math.min(canvasHeight, Math.ceil(rect.bottom));
+    const width = right - left;
+    const height = bottom - top;
+
+    if (width <= 0 || height <= 0) continue;
+
+    ctx.strokeStyle = color;
+    ctx.strokeRect(left + 0.5, top + 0.5, width, height);
+    ctx.fillStyle = color;
+    ctx.fillText(label, left + 2, top + 2);
+  }
+
+  ctx.restore();
+}
+
+export function useStrokeProcessor({
+  canvasRef,
+  layerRendererRef,
+  width,
+  height,
+  scale,
+  activeLayerId,
+  currentTool,
+  currentSize,
+  brushColor,
+  brushOpacity,
+  pressureCurve,
+  brushHardness,
+  wetEdge,
+  wetEdgeEnabled,
+  getBrushConfig,
+  getShiftLineGuide,
+  constrainShiftLinePoint,
+  onShiftLineStrokeEnd,
+  isDrawingRef,
+  strokeBufferRef,
+  strokeStateRef,
+  pendingPointsRef,
+  inputQueueRef,
+  lastRenderedPosRef,
+  lastInputPosRef,
+  needsRenderRef,
+  pendingEndRef,
+  lagometerRef,
+  fpsCounterRef,
+  latencyProfilerRef,
+  beginBrushStroke,
+  processBrushPoint,
+  endBrushStroke,
+  getPreviewCanvas,
+  getPreviewOpacity,
+  isStrokeActive,
+  getLastDabPosition,
+  getDebugRects,
+  flushPending,
+  compositeAndRender,
+  saveStrokeToHistory,
+  updateThumbnail,
+}: UseStrokeProcessorParams) {
+  // Get the active layer's context for drawing
+  const getActiveLayerCtx = useCallback(() => {
+    if (!layerRendererRef.current || !activeLayerId) return null;
+    const layer = layerRendererRef.current.getLayer(activeLayerId);
+    return layer?.ctx ?? null;
+  }, [activeLayerId, layerRendererRef]);
+
+  // Check if active layer is a background layer
+  const isActiveLayerBackground = useCallback(() => {
+    if (!layerRendererRef.current || !activeLayerId) return false;
+    const layer = layerRendererRef.current.getLayer(activeLayerId);
+    return layer?.isBackground ?? false;
+  }, [activeLayerId, layerRendererRef]);
+
+  // Composite with stroke buffer preview overlay at correct layer position
+  const renderGuideLine = useCallback(
+    (ctx: CanvasRenderingContext2D) => {
+      const guideLine = getShiftLineGuide();
+      if (!guideLine) return;
+
+      const guideLineOpacity = isDrawingRef.current ? 0.1 : 1;
+      const outerWidth = 3 / scale;
+      const innerWidth = 1 / scale;
+
+      ctx.save();
+      ctx.globalAlpha = guideLineOpacity;
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = outerWidth;
+      ctx.beginPath();
+      ctx.moveTo(guideLine.start.x, guideLine.start.y);
+      ctx.lineTo(guideLine.end.x, guideLine.end.y);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = innerWidth;
+      ctx.beginPath();
+      ctx.moveTo(guideLine.start.x, guideLine.start.y);
+      ctx.lineTo(guideLine.end.x, guideLine.end.y);
+      ctx.stroke();
+
+      ctx.restore();
+    },
+    [getShiftLineGuide, scale, isDrawingRef]
+  );
+
+  const compositeAndRenderWithPreview = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    const renderer = layerRendererRef.current;
+
+    if (!canvas || !ctx || !renderer) return;
+
+    // Build preview config if stroke is active
+    const preview =
+      isStrokeActive() && activeLayerId
+        ? (() => {
+            const previewCanvas = getPreviewCanvas();
+            return previewCanvas
+              ? { activeLayerId, canvas: previewCanvas, opacity: getPreviewOpacity() }
+              : undefined;
+          })()
+        : undefined;
+
+    // Composite with optional preview
+    const compositeCanvas = renderer.composite(preview);
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(compositeCanvas, 0, 0);
+
+    if (window.__gpuBrushDebugRects) {
+      const rects = getDebugRects();
+      if (rects && rects.length > 0) {
+        drawDebugRects(ctx, rects);
+      }
+    }
+
+    renderGuideLine(ctx);
+  }, [
+    width,
+    height,
+    isStrokeActive,
+    getPreviewCanvas,
+    getPreviewOpacity,
+    getDebugRects,
+    activeLayerId,
+    renderGuideLine,
+    canvasRef,
+    layerRendererRef,
+  ]);
+
+  // Process a single point through the brush renderer WITHOUT triggering composite
+  // Used by batch processing loop in RAF
+  const processSinglePoint = useCallback(
+    (x: number, y: number, pressure: number, pointIndex?: number) => {
+      const constrained = constrainShiftLinePoint(x, y);
+      const config = getBrushConfig();
+      lagometerRef.current.setBrushRadius(config.size / 2);
+
+      processBrushPoint(constrained.x, constrained.y, pressure, config, pointIndex);
+
+      // Track last rendered position for Visual Lag measurement
+      lastRenderedPosRef.current = { x: constrained.x, y: constrained.y };
+      lastInputPosRef.current = { x: constrained.x, y: constrained.y };
+    },
+    [
+      getBrushConfig,
+      processBrushPoint,
+      constrainShiftLinePoint,
+      lagometerRef,
+      lastRenderedPosRef,
+      lastInputPosRef,
+    ]
+  );
+
+  // Process a single point AND trigger composite (legacy behavior, used during state machine replay)
+  const processBrushPointWithConfig = useCallback(
+    (x: number, y: number, pressure: number, pointIndex?: number) => {
+      processSinglePoint(x, y, pressure, pointIndex);
+      // Mark that we need to render after processing
+      needsRenderRef.current = true;
+    },
+    [processSinglePoint, needsRenderRef]
+  );
+
+  // RAF loop: Batch process queued points and composite once per frame
+  useEffect(() => {
+    latencyProfilerRef.current.enable();
+    const fpsCounter = fpsCounterRef.current;
+    fpsCounter.start();
+
+    let id: number;
+    const loop = () => {
+      fpsCounter.tick();
+
+      // Batch process all queued points (with soft limit)
+      const queue = inputQueueRef.current;
+      if (queue.length > 0) {
+        // Visual Lag: measure distance from last queued point (newest input)
+        // to last rendered point (before this batch)
+        const lastQueuedPoint = queue[queue.length - 1]!;
+        const renderedPosBefore = lastRenderedPosRef.current;
+        if (renderedPosBefore) {
+          lagometerRef.current.measure(renderedPosBefore, lastQueuedPoint);
+        }
+
+        const count = Math.min(queue.length, MAX_POINTS_PER_FRAME);
+
+        // Drain and process points
+        for (let i = 0; i < count; i++) {
+          const p = queue[i]!;
+          processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
+        }
+
+        // Clear processed points from queue
+        inputQueueRef.current = count === queue.length ? [] : queue.slice(count);
+
+        flushPending();
+
+        needsRenderRef.current = true;
+      }
+
+      // Composite once per frame if needed
+      if (needsRenderRef.current) {
+        compositeAndRenderWithPreview();
+        needsRenderRef.current = false;
+      }
+
+      id = requestAnimationFrame(loop);
+    };
+    id = requestAnimationFrame(loop);
+
+    return () => {
+      fpsCounter.stop();
+      cancelAnimationFrame(id);
+    };
+  }, [
+    compositeAndRenderWithPreview,
+    processSinglePoint,
+    flushPending,
+    inputQueueRef,
+    lastRenderedPosRef,
+    lagometerRef,
+    needsRenderRef,
+    fpsCounterRef,
+    latencyProfilerRef,
+  ]);
+
+  // 绘制插值后的点序列 (used for eraser, legacy fallback)
+  const drawPoints = useCallback(
+    (points: RawInputPoint[]) => {
+      const ctx = getActiveLayerCtx();
+      if (!ctx || points.length < 2) return;
+
+      const isEraser = currentTool === 'eraser';
+      const isBackground = isActiveLayerBackground();
+
+      for (let i = 1; i < points.length; i++) {
+        const from = points[i - 1];
+        const to = points[i];
+
+        if (!from || !to) continue;
+
+        // 应用压感曲线后计算线条粗细
+        const adjustedPressure = applyPressureCurve(to.pressure, pressureCurve);
+        const size = currentSize * adjustedPressure;
+        const opacity = brushOpacity * adjustedPressure;
+
+        ctx.globalAlpha = opacity;
+        ctx.lineWidth = Math.max(1, size);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        if (isEraser) {
+          if (isBackground) {
+            // Background layer: draw white instead of erasing to transparency
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = '#ffffff';
+          } else {
+            // Normal layer: erase to transparency
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = 'rgba(0,0,0,1)';
+          }
+        } else {
+          // Brush: normal drawing
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.strokeStyle = brushColor;
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+      }
+
+      // Reset composite operation
+      ctx.globalCompositeOperation = 'source-over';
+
+      // Update composite display
+      compositeAndRender();
+    },
+    [
+      currentSize,
+      brushColor,
+      brushOpacity,
+      pressureCurve,
+      currentTool,
+      getActiveLayerCtx,
+      compositeAndRender,
+      isActiveLayerBackground,
+    ]
+  );
+
+  // Internal stroke finishing logic (called after state machine validation)
+  // Renamed to finalizeStroke for clarity
+  const finalizeStroke = useCallback(async () => {
+    // 清理 WinTab 缓冲区
+    clearPointBuffer();
+
+    // For brush tool, composite stroke buffer to layer with opacity ceiling
+    if (currentTool === 'brush') {
+      // Process any remaining points in queue before finalizing
+      const remainingQueue = inputQueueRef.current;
+      if (remainingQueue.length > 0) {
+        for (const p of remainingQueue) {
+          processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
+        }
+        inputQueueRef.current = [];
+      }
+
+      const layerCtx = getActiveLayerCtx();
+      if (layerCtx) {
+        await endBrushStroke(layerCtx);
+      }
+      compositeAndRender();
+    } else {
+      // For eraser, use the legacy stroke buffer
+      const remainingPoints = strokeBufferRef.current?.finish() ?? [];
+      if (remainingPoints.length > 0) {
+        drawPoints(
+          remainingPoints.map((p) => ({
+            ...p,
+            tilt_x: p.tiltX ?? 0,
+            tilt_y: p.tiltY ?? 0,
+            timestamp_ms: 0,
+          }))
+        );
+      }
+    }
+
+    if (currentTool === 'brush' || currentTool === 'eraser') {
+      const fallbackPos = lastRenderedPosRef.current ?? lastInputPosRef.current;
+      const lastPos =
+        currentTool === 'brush' ? (getLastDabPosition() ?? fallbackPos) : lastInputPosRef.current;
+      onShiftLineStrokeEnd(lastPos ?? null);
+    }
+    lastInputPosRef.current = null;
+
+    // Save stroke to history (uses beforeImage captured at stroke start)
+    saveStrokeToHistory();
+    if (activeLayerId) {
+      updateThumbnail(activeLayerId);
+    }
+
+    isDrawingRef.current = false;
+    strokeStateRef.current = 'idle';
+    lastRenderedPosRef.current = null;
+    window.__strokeDiagnostics?.onStrokeEnd();
+  }, [
+    currentTool,
+    inputQueueRef,
+    processSinglePoint,
+    getActiveLayerCtx,
+    endBrushStroke,
+    compositeAndRender,
+    strokeBufferRef,
+    drawPoints,
+    saveStrokeToHistory,
+    activeLayerId,
+    updateThumbnail,
+    getLastDabPosition,
+    onShiftLineStrokeEnd,
+    lastRenderedPosRef,
+    lastInputPosRef,
+    isDrawingRef,
+    strokeStateRef,
+  ]);
+
+  // Finish the current stroke properly (used by PointerUp and Alt key)
+  // Phase 2.7: Uses state machine to handle starting/active/finishing states
+  const finishCurrentStroke = useCallback(async () => {
+    if (!isDrawingRef.current) return;
+
+    const state = strokeStateRef.current;
+
+    // Case 1: Still in 'starting' phase - mark pendingEnd, let PointerDown callback handle it
+    if (state === 'starting') {
+      pendingEndRef.current = true;
+      return;
+    }
+
+    // Case 2: In 'active' phase - transition to 'finishing' and complete
+    if (state === 'active') {
+      strokeStateRef.current = 'finishing';
+      await finalizeStroke();
+      return;
+    }
+
+    // Case 3: 'idle' or 'finishing' - ignore (already handled or never started)
+  }, [finalizeStroke, isDrawingRef, strokeStateRef, pendingEndRef]);
+
+  /**
+   * Initialize brush stroke asynchronously.
+   * Handles state transitions and replaying buffered input.
+   */
+  const initializeBrushStroke = useCallback(async () => {
+    try {
+      const wetEdgeValue = wetEdgeEnabled ? wetEdge : 0;
+      await beginBrushStroke(brushHardness, wetEdgeValue);
+
+      // Check if cancelled or state changed during await
+      if (strokeStateRef.current !== 'starting') {
+        return;
+      }
+
+      // Transition to 'active' state
+      strokeStateRef.current = 'active';
+      window.__strokeDiagnostics?.onStateChange('active');
+
+      // Replay all buffered points
+      const points = pendingPointsRef.current;
+      for (const p of points) {
+        processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex);
+        window.__strokeDiagnostics?.onPointBuffered();
+      }
+      pendingPointsRef.current = [];
+
+      // If pendingEnd flag was set during 'starting' phase, finish immediately
+      if (pendingEndRef.current) {
+        strokeStateRef.current = 'finishing';
+        await finalizeStroke();
+      }
+    } catch (err) {
+      console.error('Failed to begin stroke:', err);
+      // Reset state on error to avoid sticking in 'starting'
+      strokeStateRef.current = 'idle';
+      pendingPointsRef.current = [];
+      isDrawingRef.current = false;
+    }
+  }, [
+    beginBrushStroke,
+    brushHardness,
+    wetEdgeEnabled,
+    wetEdge,
+    finalizeStroke,
+    processBrushPointWithConfig,
+    strokeStateRef,
+    pendingPointsRef,
+    pendingEndRef,
+    isDrawingRef,
+  ]);
+
+  return { drawPoints, finishCurrentStroke, initializeBrushStroke };
+}

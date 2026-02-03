@@ -29,6 +29,43 @@
   flex: 1;
 }
 
+.tool-options {
+  min-height: 32px;
+}
+
+.tool-placeholder {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+.zoom-tool-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-option-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.tool-option-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
 /* Tool Buttons */
 .tool-btn {
   width: 32px;

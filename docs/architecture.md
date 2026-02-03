@@ -168,6 +168,21 @@ pub struct BrushPoint {
 - 实时笔刷预览
 - 视口变换（缩放/平移/旋转）
 
+**Canvas 模块结构（拆分后）**：
+
+```
+Canvas/
+├── index.tsx           # 主组件，组合所有 hooks
+├── useLayerOperations  # 图层操作
+├── useGlobalExports    # window.__ 全局方法
+├── useKeyboardShortcuts# 键盘快捷键
+├── usePointerHandlers  # 指针事件
+├── useStrokeProcessor  # 笔触处理/RAF
+├── useBrushRenderer    # (已有) 笔刷渲染
+├── useSelectionHandler # (已有) 选区处理
+└── useCursor           # (已有) 光标
+```
+
 **分层渲染策略**:
 
 ```

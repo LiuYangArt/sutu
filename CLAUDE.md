@@ -44,6 +44,9 @@ pnpm format           # 格式化代码
 ├─────────────────────────────────────────────────────┤
 │  前端 (src/)                         IPC ↑↓         │
 │  ├── components/→ React UI 组件                     │
+│  │   ├── Canvas/    → 画布核心 (拆分为多个 hooks)    │
+│  │   ├── Toolbar/   → 工具栏 (按工具动态切换)       │
+│  │   └── ...                                        │
 │  ├── gpu/       → WebGPU 渲染 (Primary Engine)      │
 │  └── utils/     → TypeScript 渲染 (Fallback Engine) │
 └─────────────────────────────────────────────────────┘
