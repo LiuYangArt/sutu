@@ -15,6 +15,7 @@ function cleanupGlobals(): void {
   delete win.__canvasClearLayer;
   delete win.__canvasDuplicateLayer;
   delete win.__canvasRemoveLayer;
+  delete win.__canvasResize;
 }
 
 describe('useGlobalExports', () => {
@@ -73,6 +74,7 @@ describe('useGlobalExports', () => {
     const handleClearLayer = vi.fn();
     const handleDuplicateLayer = vi.fn();
     const handleRemoveLayer = vi.fn();
+    const handleResizeCanvas = vi.fn();
 
     const { unmount } = renderHook(() =>
       useGlobalExports({
@@ -85,6 +87,7 @@ describe('useGlobalExports', () => {
         handleClearLayer,
         handleDuplicateLayer,
         handleRemoveLayer,
+        handleResizeCanvas,
       })
     );
 
@@ -97,6 +100,7 @@ describe('useGlobalExports', () => {
     expect(typeof win.__canvasClearLayer).toBe('function');
     expect(typeof win.__canvasDuplicateLayer).toBe('function');
     expect(typeof win.__canvasRemoveLayer).toBe('function');
+    expect(typeof win.__canvasResize).toBe('function');
     expect(typeof win.__getLayerImageData).toBe('function');
     expect(typeof win.__getFlattenedImage).toBe('function');
     expect(typeof win.__getThumbnail).toBe('function');
@@ -109,6 +113,7 @@ describe('useGlobalExports', () => {
       win.__canvasClearLayer();
       win.__canvasDuplicateLayer('from', 'to');
       win.__canvasRemoveLayer('id');
+      win.__canvasResize({} as any);
     });
 
     expect(fillActiveLayer).toHaveBeenCalledWith('#ffffff');
@@ -118,6 +123,7 @@ describe('useGlobalExports', () => {
     expect(handleClearLayer).toHaveBeenCalledTimes(1);
     expect(handleDuplicateLayer).toHaveBeenCalledWith('from', 'to');
     expect(handleRemoveLayer).toHaveBeenCalledWith('id');
+    expect(handleResizeCanvas).toHaveBeenCalledTimes(1);
 
     await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
     await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
@@ -140,5 +146,6 @@ describe('useGlobalExports', () => {
     expect(win.__canvasClearLayer).toBeUndefined();
     expect(win.__canvasDuplicateLayer).toBeUndefined();
     expect(win.__canvasRemoveLayer).toBeUndefined();
+    expect(win.__canvasResize).toBeUndefined();
   });
 });

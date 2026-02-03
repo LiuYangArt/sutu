@@ -3,7 +3,8 @@ import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { PatternLibraryPanel } from './components/PatternLibrary';
-import { useDocumentStore } from './stores/document';
+import { CanvasSizePanel } from './components/CanvasSizePanel';
+import { useDocumentStore, type ResizeCanvasOptions } from './stores/document';
 import { useSelectionStore } from './stores/selection';
 import { useTabletStore } from './stores/tablet';
 import { useToolStore } from './stores/tool';
@@ -21,9 +22,11 @@ const DebugPanel = lazy(() => import('./components/DebugPanel'));
 declare global {
   interface Window {
     __openPatternLibrary?: () => void;
+    __openCanvasSizePanel?: () => void;
     __canvasFillLayer?: (color: string) => void;
     __canvasClearSelection?: () => void;
     __canvasRemoveLayer?: (id: string) => void;
+    __canvasResize?: (options: ResizeCanvasOptions) => void;
   }
 }
 
@@ -47,6 +50,7 @@ function App() {
   const [isReady, setIsReady] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showPatternLibrary, setShowPatternLibrary] = useState(false);
+  const [showCanvasSizePanel, setShowCanvasSizePanel] = useState(false);
   const initDocument = useDocumentStore((s) => s.initDocument);
   const tabletInitializedRef = useRef(false);
 
@@ -187,6 +191,13 @@ function App() {
   }, [setShowPatternLibrary]);
 
   useEffect(() => {
+    window.__openCanvasSizePanel = () => setShowCanvasSizePanel(true);
+    return () => {
+      delete window.__openCanvasSizePanel;
+    };
+  }, [setShowCanvasSizePanel]);
+
+  useEffect(() => {
     window.addEventListener('keydown', handleDebugShortcut);
     window.addEventListener('keydown', handleDrawingShortcuts);
     return () => {
@@ -297,6 +308,15 @@ function App() {
       <PatternLibraryPanel
         isOpen={showPatternLibrary}
         onClose={() => setShowPatternLibrary(false)}
+      />
+      {/* Canvas Size Panel */}
+      <CanvasSizePanel
+        isOpen={showCanvasSizePanel}
+        onClose={() => setShowCanvasSizePanel(false)}
+        onApply={(options) => {
+          useDocumentStore.getState().resizeCanvas(options);
+          setShowCanvasSizePanel(false);
+        }}
       />
       {/* Debug Panel - dev mode only */}
       {showDebugPanel && (

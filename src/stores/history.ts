@@ -4,7 +4,7 @@ import { Layer } from './document';
 /**
  * History entry types for unified timeline
  */
-export type HistoryEntry = StrokeEntry | AddLayerEntry | RemoveLayerEntry;
+export type HistoryEntry = StrokeEntry | AddLayerEntry | RemoveLayerEntry | ResizeCanvasEntry;
 
 interface StrokeEntry {
   type: 'stroke';
@@ -31,6 +31,20 @@ interface RemoveLayerEntry {
   timestamp: number;
 }
 
+interface ResizeCanvasLayerSnapshot {
+  layerId: string;
+  imageData: ImageData;
+}
+
+interface ResizeCanvasEntry {
+  type: 'resizeCanvas';
+  beforeWidth: number;
+  beforeHeight: number;
+  beforeLayers: ResizeCanvasLayerSnapshot[];
+  after?: { width: number; height: number; layers: ResizeCanvasLayerSnapshot[] };
+  timestamp: number;
+}
+
 interface HistoryState {
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
@@ -50,6 +64,13 @@ interface HistoryState {
     imageData: ImageData
   ) => void;
 
+  // Push canvas resize operation (with full layer snapshots)
+  pushResizeCanvas: (
+    beforeWidth: number,
+    beforeHeight: number,
+    beforeLayers: ResizeCanvasLayerSnapshot[]
+  ) => void;
+
   // Undo/Redo
   undo: () => HistoryEntry | null;
   redo: () => HistoryEntry | null;
@@ -60,14 +81,11 @@ interface HistoryState {
 
 // Clone ImageData to avoid reference issues
 function cloneImageData(imageData: ImageData): ImageData {
-  const canvas = document.createElement('canvas');
-  canvas.width = imageData.width;
-  canvas.height = imageData.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Failed to create canvas context');
+  return new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
+}
 
-  ctx.putImageData(imageData, 0, 0);
-  return ctx.getImageData(0, 0, imageData.width, imageData.height);
+function cloneLayerSnapshots(layers: ResizeCanvasLayerSnapshot[]): ResizeCanvasLayerSnapshot[] {
+  return layers.map((l) => ({ layerId: l.layerId, imageData: cloneImageData(l.imageData) }));
 }
 
 export const useHistoryStore = create<HistoryState>((set, get) => {
@@ -110,6 +128,16 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         layerMeta: { ...layerMeta },
         layerIndex,
         imageData: cloneImageData(imageData),
+        timestamp: Date.now(),
+      });
+    },
+
+    pushResizeCanvas: (beforeWidth, beforeHeight, beforeLayers) => {
+      pushEntry({
+        type: 'resizeCanvas',
+        beforeWidth,
+        beforeHeight,
+        beforeLayers: cloneLayerSnapshots(beforeLayers),
         timestamp: Date.now(),
       });
     },

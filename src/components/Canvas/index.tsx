@@ -197,18 +197,25 @@ export function Canvas() {
   // Composite all layers and render to display canvas
   const compositeAndRender = useCallback(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
     const renderer = layerRendererRef.current;
 
-    if (!canvas || !ctx || !renderer) return;
+    if (!canvas || !renderer) return;
+
+    // Ensure display canvas buffer matches document size (needed for immediate resize/undo/redo)
+    const { width: docWidth, height: docHeight } = useDocumentStore.getState();
+    if (canvas.width !== docWidth) canvas.width = docWidth;
+    if (canvas.height !== docHeight) canvas.height = docHeight;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
     // Composite all layers
     const compositeCanvas = renderer.composite();
 
     // Clear and draw composite to display canvas
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, docWidth, docHeight);
     ctx.drawImage(compositeCanvas, 0, 0);
-  }, [width, height]);
+  }, []);
 
   const {
     updateThumbnail,
@@ -221,6 +228,7 @@ export function Canvas() {
     handleClearLayer,
     handleDuplicateLayer,
     handleRemoveLayer,
+    handleResizeCanvas,
   } = useLayerOperations({
     layerRendererRef,
     activeLayerId,
@@ -240,6 +248,7 @@ export function Canvas() {
     handleClearLayer,
     handleDuplicateLayer,
     handleRemoveLayer,
+    handleResizeCanvas,
   });
 
   // Initialize document and layer renderer
@@ -259,7 +268,11 @@ export function Canvas() {
     if (!layerRendererRef.current) {
       layerRendererRef.current = new LayerRenderer(width, height);
     } else {
-      layerRendererRef.current.resize(width, height);
+      const renderer = layerRendererRef.current;
+      const compositeCanvas = renderer.getCompositeCanvas();
+      if (compositeCanvas.width !== width || compositeCanvas.height !== height) {
+        renderer.resize(width, height);
+      }
     }
 
     const renderer = layerRendererRef.current;

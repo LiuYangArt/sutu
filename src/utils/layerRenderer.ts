@@ -1,4 +1,4 @@
-import { BlendMode } from '@/stores/document';
+import { BlendMode, type ResizeCanvasOptions } from '@/stores/document';
 
 /**
  * Layer canvas data for rendering
@@ -234,6 +234,107 @@ export class LayerRenderer {
       layer.ctx.putImageData(imageData, 0, 0);
       layer.ctx.lineCap = 'round';
       layer.ctx.lineJoin = 'round';
+    }
+  }
+
+  /**
+   * Resize canvas with advanced options (anchor/scale/resample/fill)
+   */
+  resizeWithOptions(options: ResizeCanvasOptions): void {
+    const newWidth = options.width;
+    const newHeight = options.height;
+    if (newWidth <= 0 || newHeight <= 0) return;
+
+    const oldWidth = this.width;
+    const oldHeight = this.height;
+
+    const deltaX = newWidth - oldWidth;
+    const deltaY = newHeight - oldHeight;
+
+    const horizontal = (() => {
+      switch (options.anchor) {
+        case 'top-left':
+        case 'left':
+        case 'bottom-left':
+          return 'left';
+        case 'top-right':
+        case 'right':
+        case 'bottom-right':
+          return 'right';
+        case 'top':
+        case 'center':
+        case 'bottom':
+          return 'center';
+      }
+    })();
+
+    const vertical = (() => {
+      switch (options.anchor) {
+        case 'top-left':
+        case 'top':
+        case 'top-right':
+          return 'top';
+        case 'bottom-left':
+        case 'bottom':
+        case 'bottom-right':
+          return 'bottom';
+        case 'left':
+        case 'center':
+        case 'right':
+          return 'center';
+      }
+    })();
+
+    const offsetX =
+      horizontal === 'left' ? 0 : horizontal === 'right' ? deltaX : Math.floor(deltaX / 2);
+    const offsetY =
+      vertical === 'top' ? 0 : vertical === 'bottom' ? deltaY : Math.floor(deltaY / 2);
+
+    this.width = newWidth;
+    this.height = newHeight;
+
+    // Resize composite canvas
+    this.compositeCanvas.width = newWidth;
+    this.compositeCanvas.height = newHeight;
+
+    // Resize each layer canvas (note: this clears content)
+    for (const layer of this.layers.values()) {
+      // Backup current content
+      const tmp = document.createElement('canvas');
+      tmp.width = oldWidth;
+      tmp.height = oldHeight;
+      const tmpCtx = tmp.getContext('2d', { alpha: true });
+      if (tmpCtx) {
+        tmpCtx.drawImage(layer.canvas, 0, 0);
+      }
+
+      // Resize layer canvas (clears content and resets context state)
+      layer.canvas.width = newWidth;
+      layer.canvas.height = newHeight;
+
+      // Restore essential stroke properties
+      layer.ctx.lineCap = 'round';
+      layer.ctx.lineJoin = 'round';
+
+      // Fill extension area for background layer (crop/extend mode only)
+      if (!options.scaleContent && layer.isBackground && options.extensionColor !== 'transparent') {
+        layer.ctx.fillStyle = options.extensionColor;
+        layer.ctx.fillRect(0, 0, newWidth, newHeight);
+      }
+
+      if (!tmpCtx) continue;
+
+      if (options.scaleContent) {
+        if (options.resampleMode === 'nearest') {
+          layer.ctx.imageSmoothingEnabled = false;
+        } else {
+          layer.ctx.imageSmoothingEnabled = true;
+          layer.ctx.imageSmoothingQuality = options.resampleMode === 'bilinear' ? 'medium' : 'high';
+        }
+        layer.ctx.drawImage(tmp, 0, 0, newWidth, newHeight);
+      } else {
+        layer.ctx.drawImage(tmp, offsetX, offsetY);
+      }
     }
   }
 

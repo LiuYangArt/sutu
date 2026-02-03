@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Paintbrush,
   Grid3x3,
+  ImageUpscale,
 } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
@@ -188,6 +189,11 @@ export function Toolbar() {
     win.__canvasRedo?.();
   };
 
+  const handleOpenCanvasSizePanel = () => {
+    const win = window as Window & { __openCanvasSizePanel?: () => void };
+    win.__openCanvasSizePanel?.();
+  };
+
   return (
     <header className="toolbar">
       <AppMenu />
@@ -217,6 +223,9 @@ export function Toolbar() {
       <div className="toolbar-divider" />
 
       <div className="toolbar-section actions">
+        <button onClick={handleOpenCanvasSizePanel} title="Canvas Size">
+          <ImageUpscale {...ICON_PROPS} />
+        </button>
         <button
           data-testid="undo-btn"
           disabled={!canUndo()}

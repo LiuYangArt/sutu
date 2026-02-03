@@ -36,6 +36,28 @@ export type BlendMode =
 
 export type FileFormat = 'ora' | 'tiff' | 'psd';
 
+export type CanvasAnchor =
+  | 'top-left'
+  | 'top'
+  | 'top-right'
+  | 'left'
+  | 'center'
+  | 'right'
+  | 'bottom-left'
+  | 'bottom'
+  | 'bottom-right';
+
+export type ResampleMode = 'nearest' | 'bilinear' | 'bicubic';
+
+export interface ResizeCanvasOptions {
+  width: number;
+  height: number;
+  anchor: CanvasAnchor;
+  scaleContent: boolean;
+  extensionColor: string;
+  resampleMode: ResampleMode;
+}
+
 interface DocumentState {
   // Document properties
   width: number;
@@ -54,6 +76,7 @@ interface DocumentState {
   // Actions
   initDocument: (config: { width: number; height: number; dpi: number }) => void;
   reset: () => void;
+  resizeCanvas: (options: ResizeCanvasOptions) => void;
 
   // Layer actions
   addLayer: (config: { name: string; type: Layer['type'] }) => void;
@@ -116,6 +139,13 @@ export const useDocumentStore = create<DocumentState>()(
       }),
 
     reset: () => set(initialState),
+
+    resizeCanvas: (options) => {
+      const win = window as Window & {
+        __canvasResize?: (opts: ResizeCanvasOptions) => void;
+      };
+      win.__canvasResize?.(options);
+    },
 
     addLayer: (config) =>
       set((state) => {

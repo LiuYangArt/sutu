@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
+import type { ResizeCanvasOptions } from '@/stores/document';
 
 interface UseGlobalExportsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -12,6 +13,7 @@ interface UseGlobalExportsParams {
   handleClearLayer: () => void;
   handleDuplicateLayer: (from: string, to: string) => void;
   handleRemoveLayer: (id: string) => void;
+  handleResizeCanvas: (options: ResizeCanvasOptions) => void;
 }
 
 export function useGlobalExports({
@@ -24,6 +26,7 @@ export function useGlobalExports({
   handleClearLayer,
   handleDuplicateLayer,
   handleRemoveLayer,
+  handleResizeCanvas,
 }: UseGlobalExportsParams): void {
   useEffect(() => {
     const win = window as Window & {
@@ -41,6 +44,7 @@ export function useGlobalExports({
       __canvasClearLayer?: () => void;
       __canvasDuplicateLayer?: (from: string, to: string) => void;
       __canvasRemoveLayer?: (id: string) => void;
+      __canvasResize?: (options: ResizeCanvasOptions) => void;
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -50,6 +54,7 @@ export function useGlobalExports({
     win.__canvasClearLayer = handleClearLayer;
     win.__canvasDuplicateLayer = handleDuplicateLayer;
     win.__canvasRemoveLayer = handleRemoveLayer;
+    win.__canvasResize = handleResizeCanvas;
 
     // Get single layer image data as Base64 PNG data URL
     win.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
@@ -234,6 +239,7 @@ export function useGlobalExports({
       delete win.__canvasClearLayer;
       delete win.__canvasDuplicateLayer;
       delete win.__canvasRemoveLayer;
+      delete win.__canvasResize;
     };
   }, [
     layerRendererRef,
@@ -245,5 +251,6 @@ export function useGlobalExports({
     handleClearLayer,
     handleDuplicateLayer,
     handleRemoveLayer,
+    handleResizeCanvas,
   ]);
 }

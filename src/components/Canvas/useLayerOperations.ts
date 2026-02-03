@@ -1,6 +1,6 @@
 import { useCallback, useRef, type RefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
-import { useDocumentStore, type Layer } from '@/stores/document';
+import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
 import { useHistoryStore } from '@/stores/history';
 import { LayerRenderer } from '@/utils/layerRenderer';
 
@@ -52,20 +52,20 @@ export function useLayerOperations({
   compositeAndRender,
 }: UseLayerOperationsParams) {
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
-  const { pushStroke, pushRemoveLayer, undo, redo } = useHistoryStore();
+  const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
 
   // Store beforeImage when stroke starts
   const beforeImageRef = useRef<{ layerId: string; imageData: ImageData } | null>(null);
 
   // Update layer thumbnail
-  const updateThumbnail = useCallback(
-    (layerId: string) => {
+  const updateThumbnailWithSize = useCallback(
+    (layerId: string, docWidth: number, docHeight: number) => {
       if (!layerRendererRef.current) return;
       const layer = layerRendererRef.current.getLayer(layerId);
       if (!layer) return;
 
       const thumbCanvas = document.createElement('canvas');
-      const aspect = width / height;
+      const aspect = docWidth / docHeight;
       const thumbWidth = 64;
       const thumbHeight = thumbWidth / aspect;
 
@@ -80,7 +80,12 @@ export function useLayerOperations({
 
       updateLayerThumbnail(layerId, thumbCanvas.toDataURL());
     },
-    [width, height, updateLayerThumbnail, layerRendererRef]
+    [updateLayerThumbnail, layerRendererRef]
+  );
+
+  const updateThumbnail = useCallback(
+    (layerId: string) => updateThumbnailWithSize(layerId, width, height),
+    [width, height, updateThumbnailWithSize]
   );
 
   // Save beforeImage at stroke start
@@ -102,6 +107,40 @@ export function useLayerOperations({
     pushStroke(layerId, imageData);
     beforeImageRef.current = null;
   }, [pushStroke]);
+
+  // Resize canvas with history support
+  const handleResizeCanvas = useCallback(
+    (options: ResizeCanvasOptions) => {
+      const renderer = layerRendererRef.current;
+      if (!renderer) return;
+
+      const docState = useDocumentStore.getState();
+      const beforeWidth = docState.width;
+      const beforeHeight = docState.height;
+
+      if (options.width === beforeWidth && options.height === beforeHeight) return;
+
+      const beforeLayers: Array<{ layerId: string; imageData: ImageData }> = [];
+      for (const layer of docState.layers) {
+        const imageData = renderer.getLayerImageData(layer.id);
+        if (!imageData) return;
+        beforeLayers.push({ layerId: layer.id, imageData });
+      }
+
+      pushResizeCanvas(beforeWidth, beforeHeight, beforeLayers);
+      useSelectionStore.getState().deselectAll();
+
+      renderer.resizeWithOptions(options);
+      useDocumentStore.setState({ width: options.width, height: options.height });
+
+      compositeAndRender();
+
+      for (const layer of docState.layers) {
+        updateThumbnailWithSize(layer.id, options.width, options.height);
+      }
+    },
+    [compositeAndRender, layerRendererRef, pushResizeCanvas, updateThumbnailWithSize]
+  );
 
   // Fill active layer with a color (Alt+Backspace shortcut)
   const fillActiveLayer = useCallback(
@@ -233,6 +272,34 @@ export function useLayerOperations({
         updateThumbnail(entry.layerId);
         break;
       }
+      case 'resizeCanvas': {
+        const docState = useDocumentStore.getState();
+        const afterWidth = docState.width;
+        const afterHeight = docState.height;
+
+        const afterLayers: Array<{ layerId: string; imageData: ImageData }> = [];
+        for (const layer of docState.layers) {
+          const imageData = renderer.getLayerImageData(layer.id);
+          if (!imageData) return;
+          afterLayers.push({ layerId: layer.id, imageData });
+        }
+
+        entry.after = { width: afterWidth, height: afterHeight, layers: afterLayers };
+
+        renderer.resize(entry.beforeWidth, entry.beforeHeight);
+        for (const layer of entry.beforeLayers) {
+          renderer.setLayerImageData(layer.layerId, layer.imageData);
+        }
+
+        useDocumentStore.setState({ width: entry.beforeWidth, height: entry.beforeHeight });
+        useSelectionStore.getState().deselectAll();
+
+        compositeAndRender();
+        for (const layer of docState.layers) {
+          updateThumbnailWithSize(layer.id, entry.beforeWidth, entry.beforeHeight);
+        }
+        break;
+      }
       case 'addLayer': {
         // Undo add = remove the layer
         const { removeLayer } = useDocumentStore.getState();
@@ -263,7 +330,14 @@ export function useLayerOperations({
         break;
       }
     }
-  }, [undo, layers, compositeAndRender, updateThumbnail, layerRendererRef]);
+  }, [
+    undo,
+    layers,
+    compositeAndRender,
+    updateThumbnail,
+    updateThumbnailWithSize,
+    layerRendererRef,
+  ]);
 
   // Handle redo for all operation types
   const handleRedo = useCallback(() => {
@@ -280,6 +354,25 @@ export function useLayerOperations({
           renderer.setLayerImageData(entry.layerId, entry.afterImage);
           compositeAndRender();
           updateThumbnail(entry.layerId);
+        }
+        break;
+      }
+      case 'resizeCanvas': {
+        if (!entry.after) return;
+
+        renderer.resize(entry.after.width, entry.after.height);
+        for (const layer of entry.after.layers) {
+          renderer.setLayerImageData(layer.layerId, layer.imageData);
+        }
+
+        useDocumentStore.setState({ width: entry.after.width, height: entry.after.height });
+        useSelectionStore.getState().deselectAll();
+
+        compositeAndRender();
+
+        const docState = useDocumentStore.getState();
+        for (const layer of docState.layers) {
+          updateThumbnailWithSize(layer.id, entry.after.width, entry.after.height);
         }
         break;
       }
@@ -310,7 +403,7 @@ export function useLayerOperations({
         break;
       }
     }
-  }, [redo, compositeAndRender, updateThumbnail, layerRendererRef]);
+  }, [redo, compositeAndRender, updateThumbnail, updateThumbnailWithSize, layerRendererRef]);
 
   // Clear current layer content
   const handleClearLayer = useCallback(() => {
@@ -383,6 +476,7 @@ export function useLayerOperations({
 
   return {
     updateThumbnail,
+    updateThumbnailWithSize,
     captureBeforeImage,
     saveStrokeToHistory,
     fillActiveLayer,
@@ -392,5 +486,6 @@ export function useLayerOperations({
     handleClearLayer,
     handleDuplicateLayer,
     handleRemoveLayer,
+    handleResizeCanvas,
   };
 }
