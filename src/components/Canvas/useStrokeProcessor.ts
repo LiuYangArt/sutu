@@ -667,7 +667,6 @@ export function useStrokeProcessor({
     wetEdge,
     finalizeStroke,
     processBrushPointWithConfig,
-    brushBackend,
     getBrushConfig,
     strokeStateRef,
     pendingPointsRef,
