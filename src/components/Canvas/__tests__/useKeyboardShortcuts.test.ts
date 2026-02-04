@@ -162,23 +162,22 @@ describe('useKeyboardShortcuts', () => {
     const input = document.createElement('input');
     document.body.appendChild(input);
 
+    let events: KeyboardEvent[] = [];
     act(() => {
       dispatchInputKeyDown(input, { code: 'KeyB' });
-      const a = dispatchInputKeyDown(input, { code: 'KeyA', ctrlKey: true });
-      const z = dispatchInputKeyDown(input, { code: 'KeyZ', ctrlKey: true });
-      const y = dispatchInputKeyDown(input, { code: 'KeyY', ctrlKey: true });
-      const c = dispatchInputKeyDown(input, { code: 'KeyC', ctrlKey: true });
-      const v = dispatchInputKeyDown(input, { code: 'KeyV', ctrlKey: true });
-      const x = dispatchInputKeyDown(input, { code: 'KeyX', ctrlKey: true });
-
-      expect(a.defaultPrevented).toBe(false);
-      expect(z.defaultPrevented).toBe(false);
-      expect(y.defaultPrevented).toBe(false);
-      expect(c.defaultPrevented).toBe(false);
-      expect(v.defaultPrevented).toBe(false);
-      expect(x.defaultPrevented).toBe(false);
+      events = [
+        dispatchInputKeyDown(input, { code: 'KeyA', ctrlKey: true }),
+        dispatchInputKeyDown(input, { code: 'KeyZ', ctrlKey: true }),
+        dispatchInputKeyDown(input, { code: 'KeyY', ctrlKey: true }),
+        dispatchInputKeyDown(input, { code: 'KeyC', ctrlKey: true }),
+        dispatchInputKeyDown(input, { code: 'KeyV', ctrlKey: true }),
+        dispatchInputKeyDown(input, { code: 'KeyX', ctrlKey: true }),
+      ];
     });
 
+    for (const event of events) {
+      expect(event.defaultPrevented).toBe(false);
+    }
     expect(setTool).not.toHaveBeenCalled();
     expect(handleUndo).not.toHaveBeenCalled();
     expect(handleRedo).not.toHaveBeenCalled();

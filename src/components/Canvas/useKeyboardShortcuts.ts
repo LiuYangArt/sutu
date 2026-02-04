@@ -3,6 +3,26 @@ import { useSelectionStore } from '@/stores/selection';
 import { ToolType } from '@/stores/tool';
 import { stepBrushSizeBySliderProgress } from '@/utils/sliderScales';
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!target) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
+function isTextEditingCommand(code: string): boolean {
+  switch (code) {
+    case 'KeyA':
+    case 'KeyZ':
+    case 'KeyY':
+    case 'KeyX':
+    case 'KeyC':
+    case 'KeyV':
+      return true;
+    default:
+      return false;
+  }
+}
+
 interface UseKeyboardShortcutsParams {
   currentTool: ToolType;
   currentSize: number;
@@ -37,12 +57,6 @@ export function useKeyboardShortcuts({
   const [spacePressed, setSpacePressed] = useState(false);
 
   useEffect(() => {
-    const isEditableTarget = (target: EventTarget | null): boolean => {
-      if (!target) return false;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
-      return target instanceof HTMLElement && target.isContentEditable;
-    };
-
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
         setSpacePressed(true);
@@ -50,38 +64,40 @@ export function useKeyboardShortcuts({
 
       // 优先处理修饰键组合 (Undo/Redo/Selection)
       if (e.ctrlKey || e.metaKey) {
-        if (
-          isEditableTarget(e.target) &&
-          (e.code === 'KeyA' ||
-            e.code === 'KeyZ' ||
-            e.code === 'KeyY' ||
-            e.code === 'KeyX' ||
-            e.code === 'KeyC' ||
-            e.code === 'KeyV')
-        ) {
+        if (isEditableTarget(e.target) && isTextEditingCommand(e.code)) {
           return;
         }
 
-        if (e.code === 'KeyZ') {
-          e.preventDefault();
-          if (e.shiftKey) {
-            handleRedo();
-          } else {
-            handleUndo();
+        switch (e.code) {
+          case 'KeyZ': {
+            e.preventDefault();
+            if (e.shiftKey) {
+              handleRedo();
+            } else {
+              handleUndo();
+            }
+            return;
           }
-        } else if (e.code === 'KeyY') {
-          e.preventDefault();
-          handleRedo();
-        } else if (e.code === 'KeyA') {
-          // Ctrl+A: Select All
-          e.preventDefault();
-          selectAll(width, height);
-        } else if (e.code === 'KeyD') {
-          // Ctrl+D: Deselect
-          e.preventDefault();
-          deselectAll();
+          case 'KeyY': {
+            e.preventDefault();
+            handleRedo();
+            return;
+          }
+          case 'KeyA': {
+            // Ctrl+A: Select All
+            e.preventDefault();
+            selectAll(width, height);
+            return;
+          }
+          case 'KeyD': {
+            // Ctrl+D: Deselect
+            e.preventDefault();
+            deselectAll();
+            return;
+          }
+          default:
+            return;
         }
-        return;
       }
 
       // Skip tool shortcuts if focus is on input elements (e.g., search boxes)
