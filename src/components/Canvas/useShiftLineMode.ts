@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 
 type Point = { x: number; y: number };
 
 interface UseShiftLineModeOptions {
   enabled: boolean;
   onInvalidate?: () => void;
-  focusContainerRef?: { current: HTMLElement | null };
+  focusContainerRef?: RefObject<HTMLElement | null>;
 }
 
 interface GuideLine {
@@ -142,9 +142,8 @@ export function useShiftLineMode({
       if (e.repeat) return;
 
       // Only react to modifier keydown when focus is within the canvas container.
-      // This avoids Shift line mode triggering while the user is interacting with other panels.
       const focusContainer = focusContainerRef?.current;
-      if (focusContainer && !focusContainer.contains(document.activeElement)) {
+      if (focusContainer?.contains(document.activeElement) === false) {
         return;
       }
 
@@ -174,11 +173,11 @@ export function useShiftLineMode({
   }, [setShiftPressed, setCtrlPressed, focusContainerRef]);
 
   useEffect(() => {
-    const focusContainer = focusContainerRef?.current;
-    if (!focusContainer) return;
+    if (!focusContainerRef) return;
 
     const handleFocusIn = () => {
-      if (!focusContainer.contains(document.activeElement)) {
+      const focusContainer = focusContainerRef.current;
+      if (focusContainer?.contains(document.activeElement) === false) {
         setShiftPressed(false);
         setCtrlPressed(false);
       }
@@ -276,9 +275,7 @@ export function useShiftLineMode({
     (lastDabPos?: Point | null) => {
       const lockedEnd = isLockedRef.current ? lockedEndRef.current : null;
       if (lockedEnd) {
-        // When the guide line is locked, use the locked end as the next anchor.
-        // This makes consecutive Shift-line strokes start from the guide end,
-        // not from the last rendered dab (which may be clamped/projected).
+        // Use locked guide end as the next anchor for consecutive Shift-line strokes.
         anchorRef.current = { ...lockedEnd };
       } else if (lastDabPos) {
         anchorRef.current = { ...lastDabPos };
