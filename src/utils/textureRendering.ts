@@ -97,9 +97,9 @@ export function calculateTextureInfluence(
       case 'hardMix':
         return base + blend >= 1.0 ? 1.0 : 0.0;
       case 'linearHeight':
-        return Math.min(1.0, base * (0.5 + blend));
+        return base * (0.5 + blend * 0.5);
       case 'height':
-        return Math.min(1.0, base * (0.5 + blend));
+        return base * blend;
       default:
         return base * blend;
     }

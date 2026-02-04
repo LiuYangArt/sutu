@@ -52,7 +52,7 @@ function blendDual(primary: number, secondary: number, mode: DualBlendMode): num
     case 'linearHeight':
       // Linear Height: similar to height/emboss effect
       // Treats secondary as height map, scales primary
-      return Math.min(1.0, p * (0.5 + s));
+      return p * (0.5 + s * 0.5);
     default:
       return p * s;
   }

@@ -229,10 +229,10 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
       return 0.0;
     }
     case 8u: { // Linear Height
-      return min(1.0, base * (0.5 + blend));
+      return base * (0.5 + blend * 0.5);
     }
     case 9u: { // Height
-      return min(1.0, base * (0.5 + blend));
+      return base * blend;
     }
     default: { // Default / Multiply
       return base * blend;
