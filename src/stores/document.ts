@@ -134,7 +134,7 @@ const initialState = {
 };
 
 export const useDocumentStore = create<DocumentState>()(
-  immer((set) => ({
+  immer((set, get) => ({
     ...initialState,
 
     initDocument: (config) =>
@@ -337,15 +337,12 @@ export const useDocumentStore = create<DocumentState>()(
       }),
 
     consumePendingHistoryLayerAdd: (id) => {
-      let consumed = false;
+      const idx = get().pendingHistoryLayerAdds.indexOf(id);
+      if (idx === -1) return false;
       set((state) => {
-        const idx = state.pendingHistoryLayerAdds.indexOf(id);
-        if (idx !== -1) {
-          state.pendingHistoryLayerAdds.splice(idx, 1);
-          consumed = true;
-        }
+        state.pendingHistoryLayerAdds.splice(idx, 1);
       });
-      return consumed;
+      return true;
     },
   }))
 );

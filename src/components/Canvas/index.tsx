@@ -123,9 +123,23 @@ export function Canvas() {
     brush: { renderMode },
   } = useSettingsStore();
 
-  const { width, height, activeLayerId, layers, initDocument, backgroundFillColor } =
-    useDocumentStore();
-  const consumePendingHistoryLayerAdd = useDocumentStore((s) => s.consumePendingHistoryLayerAdd);
+  const {
+    width,
+    height,
+    activeLayerId,
+    layers,
+    initDocument,
+    backgroundFillColor,
+    consumePendingHistoryLayerAdd,
+  } = useDocumentStore((s) => ({
+    width: s.width,
+    height: s.height,
+    activeLayerId: s.activeLayerId,
+    layers: s.layers,
+    initDocument: s.initDocument,
+    backgroundFillColor: s.backgroundFillColor,
+    consumePendingHistoryLayerAdd: s.consumePendingHistoryLayerAdd,
+  }));
 
   const { pushAddLayer } = useHistoryStore();
 

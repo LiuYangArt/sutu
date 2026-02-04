@@ -84,11 +84,11 @@ function AppMenu() {
     await fileOpen();
   };
 
-  const handleNew = () => {
+  function handleNew(): void {
     setIsOpen(false);
     const win = window as Window & { __requestNewFile?: () => void };
     win.__requestNewFile?.();
-  };
+  }
 
   const handleSave = async () => {
     setIsOpen(false);

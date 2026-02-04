@@ -19,7 +19,7 @@ export function ConfirmUnsavedChangesDialog({
 
   if (!isOpen) return null;
 
-  const handleSave = async () => {
+  async function handleSave(): Promise<void> {
     if (isSaving) return;
     setIsSaving(true);
     try {
@@ -27,7 +27,7 @@ export function ConfirmUnsavedChangesDialog({
     } finally {
       setIsSaving(false);
     }
-  };
+  }
 
   return (
     <div className="confirm-unsaved-overlay" onClick={onCancel}>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import './NewFilePanel.css';
 
@@ -42,20 +42,16 @@ export function NewFilePanel({
     setBackgroundPreset('white');
   }, [isOpen, defaultValues.width, defaultValues.height, defaultValues.dpi]);
 
-  const parsed = useMemo(() => {
-    return {
-      width: parsePositiveInt(width),
-      height: parsePositiveInt(height),
-      dpi: parsePositiveInt(dpi),
-    };
-  }, [width, height, dpi]);
+  const parsedWidth = parsePositiveInt(width);
+  const parsedHeight = parsePositiveInt(height);
+  const parsedDpi = parsePositiveInt(dpi);
 
-  const canCreate = parsed.width !== null && parsed.height !== null && parsed.dpi !== null;
+  const canCreate = parsedWidth !== null && parsedHeight !== null && parsedDpi !== null;
 
-  const handleCreate = () => {
-    if (!parsed.width || !parsed.height || !parsed.dpi) return;
-    onCreate({ width: parsed.width, height: parsed.height, dpi: parsed.dpi, backgroundPreset });
-  };
+  function handleCreate(): void {
+    if (parsedWidth === null || parsedHeight === null || parsedDpi === null) return;
+    onCreate({ width: parsedWidth, height: parsedHeight, dpi: parsedDpi, backgroundPreset });
+  }
 
   if (!isOpen) return null;
 

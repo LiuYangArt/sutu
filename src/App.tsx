@@ -51,6 +51,22 @@ const waitForTauri = async (maxRetries = 50, interval = 100): Promise<boolean> =
   return false;
 };
 
+function resolveBackgroundFillColor(
+  preset: BackgroundPreset,
+  currentToolBackground: string
+): string | undefined {
+  switch (preset) {
+    case 'white':
+      return '#ffffff';
+    case 'black':
+      return '#000000';
+    case 'current-bg':
+      return currentToolBackground;
+    case 'transparent':
+      return undefined;
+  }
+}
+
 function App() {
   const [isReady, setIsReady] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
@@ -324,22 +340,14 @@ function App() {
     );
   }
 
-  const handleCreateNewDocument = (v: {
+  function handleCreateNewDocument(v: {
     width: number;
     height: number;
     dpi: number;
     backgroundPreset: BackgroundPreset;
-  }) => {
-    const preset = v.backgroundPreset;
-    const toolBg = useToolStore.getState().backgroundColor;
-    const fillColor =
-      preset === 'white'
-        ? '#ffffff'
-        : preset === 'black'
-          ? '#000000'
-          : preset === 'current-bg'
-            ? toolBg
-            : undefined;
+  }): void {
+    const currentToolBackground = useToolStore.getState().backgroundColor;
+    const fillColor = resolveBackgroundFillColor(v.backgroundPreset, currentToolBackground);
 
     useHistoryStore.getState().clear();
     useSelectionStore.getState().deselectAll();
@@ -350,11 +358,11 @@ function App() {
       width: v.width,
       height: v.height,
       dpi: v.dpi,
-      background: { preset, fillColor },
+      background: { preset: v.backgroundPreset, fillColor },
     });
 
     setShowNewFilePanel(false);
-  };
+  }
 
   return (
     <div className="app">
