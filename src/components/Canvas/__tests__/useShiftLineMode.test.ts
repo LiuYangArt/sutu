@@ -75,6 +75,27 @@ describe('useShiftLineMode', () => {
     unmount();
   });
 
+  it('uses locked guide end as next anchor on stroke end', () => {
+    const { result, unmount } = renderHook(() => useShiftLineMode({ enabled: true }));
+
+    act(() => {
+      result.current.onStrokeEnd({ x: 0, y: 0 });
+      dispatchKey('keydown', 'Shift');
+    });
+
+    act(() => {
+      result.current.lockLine({ x: 10, y: 0 });
+    });
+
+    act(() => {
+      // Simulate that the actual last dab ended at a different position (e.g. clamped/projection).
+      result.current.onStrokeEnd({ x: 3, y: 0 });
+    });
+
+    expect(result.current.getAnchorPoint()).toEqual({ x: 10, y: 0 });
+    unmount();
+  });
+
   it('isLineMode is false without anchor', () => {
     const { result, unmount } = renderHook(() => useShiftLineMode({ enabled: true }));
 

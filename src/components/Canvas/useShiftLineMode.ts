@@ -274,7 +274,13 @@ export function useShiftLineMode({
 
   const onStrokeEnd = useCallback(
     (lastDabPos?: Point | null) => {
-      if (lastDabPos) {
+      const lockedEnd = isLockedRef.current ? lockedEndRef.current : null;
+      if (lockedEnd) {
+        // When the guide line is locked, use the locked end as the next anchor.
+        // This makes consecutive Shift-line strokes start from the guide end,
+        // not from the last rendered dab (which may be clamped/projected).
+        anchorRef.current = { ...lockedEnd };
+      } else if (lastDabPos) {
         anchorRef.current = { ...lastDabPos };
       }
       clearLockedLine();
