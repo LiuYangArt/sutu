@@ -88,6 +88,8 @@ run_claude_pwsh.bat
 .agent/skills/99-evolution/hooks/settings.example.json
 test-results/
 debug_output/
-target-cargo/debug/
+
 target-cargo/
 *.abr
+target-cargo-dualbrush/
+target-cargo-dualbrush8HEnqj/CACHEDIR.TAG

@@ -77,3 +77,68 @@ fn test_load_liuyang_paintbrushes() {
         }
     }
 }
+
+#[test]
+fn test_liuyang_sampled_brush_5_4_dual_brush_import() {
+    use crate::abr::AbrParser;
+
+    // Locate the ABR file relative to the project root
+    let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    d.pop(); // Go up from src-tauri
+    d.push("abr");
+    d.push("liuyang_paintbrushes.abr");
+
+    if !d.exists() {
+        // Fallback for different running environments, try absolute path from user request
+        d = PathBuf::from("f:\\CodeProjects\\PaintBoard\\abr\\liuyang_paintbrushes.abr");
+    }
+
+    assert!(d.exists(), "Test file not found at {:?}", d);
+
+    let data = std::fs::read(&d).expect("Failed to read test ABR file");
+    let abr_file = AbrParser::parse(&data).expect("Failed to parse ABR file");
+
+    let brush = abr_file
+        .brushes
+        .iter()
+        .find(|b| b.name.trim_end_matches('\0') == "Sampled Brush 5 4")
+        .expect("Brush 'Sampled Brush 5 4' not found in ABR");
+
+    let dual = brush
+        .dual_brush_settings
+        .as_ref()
+        .expect("dualBrushSettings should be present");
+
+    assert!(dual.enabled, "dualBrushSettings.enabled should be true");
+    assert_eq!(
+        dual.mode,
+        crate::abr::types::DualBlendMode::Darken,
+        "Dual Brush mode should be Darken (Drkn)"
+    );
+    assert!(
+        (dual.size - 606.0).abs() < 0.01,
+        "Dual Brush size should be ~606px"
+    );
+    assert!(
+        (dual.spacing - 0.99).abs() < 0.001,
+        "Dual Brush spacing should be ~0.99"
+    );
+    assert!(
+        (dual.scatter - 206.0).abs() < 0.01,
+        "Dual Brush scatter should be ~206%"
+    );
+    assert_eq!(dual.count, 5, "Dual Brush count should be 5");
+
+    let secondary_id = dual
+        .brush_id
+        .as_ref()
+        .expect("dual.brush_id should be present");
+    let secondary_exists = abr_file
+        .brushes
+        .iter()
+        .any(|b| b.uuid.as_deref() == Some(secondary_id.as_str()));
+    assert!(
+        secondary_exists,
+        "Secondary brush UUID should exist in parsed brushes"
+    );
+}

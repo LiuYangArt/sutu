@@ -768,10 +768,18 @@ impl AbrParser {
 
         // Apply Dual Brush settings
         // Check "useDualBrush" first
-        let use_dual_brush = matches!(
+        // Some ABR files store it at root; others store it inside dualBrush descriptor.
+        let use_dual_brush_root = matches!(
             brush_desc.get("useDualBrush"),
             Some(DescriptorValue::Boolean(true))
         );
+        let use_dual_brush_nested = match brush_desc.get("dualBrush") {
+            Some(DescriptorValue::Descriptor(d)) => {
+                matches!(d.get("useDualBrush"), Some(DescriptorValue::Boolean(true)))
+            }
+            _ => false,
+        };
+        let use_dual_brush = use_dual_brush_root || use_dual_brush_nested;
 
         if use_dual_brush {
             brush.dual_brush_settings = Self::parse_dual_brush_settings(brush_desc);
@@ -1503,10 +1511,17 @@ impl AbrParser {
             _ => return None,
         };
 
-        let mut settings = super::types::DualBrushSettings {
-            enabled: true,
-            ..Default::default()
-        };
+        let mut settings = super::types::DualBrushSettings::default();
+
+        // Enabled flag: prefer nested dualBrush.useDualBrush, fallback to root useDualBrush
+        settings.enabled =
+            if let Some(DescriptorValue::Boolean(val)) = dual_desc.get("useDualBrush") {
+                *val
+            } else if let Some(DescriptorValue::Boolean(val)) = brush_desc.get("useDualBrush") {
+                *val
+            } else {
+                true
+            };
 
         // 1. Flip
         if let Some(DescriptorValue::Boolean(val)) = dual_desc.get("Flip") {
@@ -1534,40 +1549,20 @@ impl AbrParser {
         }
 
         // 3. Scatter (useScatter, bothAxes, scatterDynamics)
-        if let Some(DescriptorValue::Boolean(_)) = dual_desc.get("useScatter") {
-            // Note: In ABR structure, useScatter might be a flag, but actual scatter amount might be in Sctr?
-            // Wait, looking at analyze output (docs), dualBrush object HAS "useScatter" inside it.
-            // But where is the scatter amount?
-            // "scatterDynamics" is inside dualBrush.
-            // "cnt" (Count) is inside dualBrush.
-            // "spcn" (Spacing) is inside dualBrush -> Brsh.
-            // Let's re-read the doc or analyze output.
-            // Design doc:
-            // dualBrush: { ... useScatter: bool ... scatterDynamics: {...} }
-            // But usually scatter amount is a unit float?
-            // Actually, for Dual Brush, the scatter might be driven solely by dynamics?
-            // Or maybe there is a "Sctr" key inside dualBrush?
-            // Checking analyze output from doc:
-            //   Brsh: { ... }
-            //   BlnM: Enum
-            //   useScatter: bool
-            //   Cnt : UnitFloat
-            //   bothAxes: bool
-            //   countDynamics: { ... }
-            //   scatterDynamics: { ... }
-            // It seems 'Sctr' (scatter amount) might be missing or defaulted?
-            // Or maybe it is hidden in scatterDynamics as a 'nm' (minimum)?
-            // Let's assume 0 if not found, or check if there is a 'Sctr' key I missed in doc.
-            // Wait, standard Scattering has 'Sctr' key. Dual Brush might just have useScatter + dynamics.
-            // BUT, if I look at PS UI, there is a Scatter slider.
-            // Let's check for "Sctr" or "nm" or just assume it's part of dynamics.
-            // For now, let's leave scatter as 0.0 unless we find a specific key.
-            // WAIT, looking at my analyze script output simulation:
-            // There isn't a plain 'Sctr' showed in the dualBrush struct in the doc example.
-            // BUT, valid dual brush definitely has scatter.
-            // Let's check if `dual_desc` has "Sctr".
-            if let Some(DescriptorValue::UnitFloat { value, .. }) = dual_desc.get("Sctr") {
-                settings.scatter = *value as f32;
+        let use_scatter = matches!(
+            dual_desc.get("useScatter"),
+            Some(DescriptorValue::Boolean(true))
+        );
+        if use_scatter {
+            // Prefer explicit scatter amount if present
+            if let Some(v) = Self::get_number(dual_desc, &["Sctr", "Scat", "scatter"]) {
+                settings.scatter = (v as f32).clamp(0.0, 1000.0);
+            } else if let Some(sd) = Self::get_descriptor(dual_desc, &["scatterDynamics"]) {
+                // ABR variants (e.g. liuyang_paintbrushes.abr) store the Dual Brush scatter amount
+                // in scatterDynamics.jitter (#Prc)
+                if let Some(v) = Self::get_number(sd, &["jitter"]) {
+                    settings.scatter = (v as f32).clamp(0.0, 1000.0);
+                }
             }
         }
 
@@ -1576,10 +1571,8 @@ impl AbrParser {
         }
 
         // 4. Count (Cnt)
-        if let Some(DescriptorValue::UnitFloat { value, .. }) = dual_desc.get("Cnt ") {
-            settings.count = (*value as u32).max(1);
-        } else if let Some(DescriptorValue::Integer(val)) = dual_desc.get("Cnt ") {
-            settings.count = (*val as u32).max(1);
+        if let Some(v) = Self::get_number(dual_desc, &["Cnt "]) {
+            settings.count = (v.round() as i32).clamp(1, 16) as u32;
         }
 
         // 5. Secondary Brush Params (Brsh descriptor inside dualBrush)
@@ -2053,5 +2046,188 @@ mod tests {
                 eprintln!("Parse result: {}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_parse_dual_brush_settings_count_double_and_scatter_jitter() {
+        let mut brush_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+
+        // Main brush (saved) size for ratio
+        let mut main_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        main_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 600.0,
+            },
+        );
+        brush_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(main_brsh));
+
+        // Dual brush descriptor
+        let mut dual_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_desc.insert("useDualBrush".to_string(), DescriptorValue::Boolean(true));
+        dual_desc.insert(
+            "BlnM".to_string(),
+            DescriptorValue::Enum {
+                type_id: "BlnM".to_string(),
+                value: "Drkn".to_string(),
+            },
+        );
+        dual_desc.insert("useScatter".to_string(), DescriptorValue::Boolean(true));
+        dual_desc.insert("bothAxes".to_string(), DescriptorValue::Boolean(true));
+        dual_desc.insert("Cnt ".to_string(), DescriptorValue::Double(5.0));
+
+        let mut scatter_dyn: indexmap::IndexMap<String, DescriptorValue> =
+            indexmap::IndexMap::new();
+        scatter_dyn.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 206.0,
+            },
+        );
+        dual_desc.insert(
+            "scatterDynamics".to_string(),
+            DescriptorValue::Descriptor(scatter_dyn),
+        );
+
+        let mut dual_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 606.0,
+            },
+        );
+        dual_brsh.insert(
+            "Spcn".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 99.0,
+            },
+        );
+        dual_brsh.insert(
+            "Rndn".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 100.0,
+            },
+        );
+        dual_brsh.insert(
+            "sampledData".to_string(),
+            DescriptorValue::String("0fd938d3-665f-11d8-8a89-d1468c4d447d".to_string()),
+        );
+        dual_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(dual_brsh));
+
+        brush_desc.insert(
+            "dualBrush".to_string(),
+            DescriptorValue::Descriptor(dual_desc),
+        );
+
+        let settings = AbrParser::parse_dual_brush_settings(&brush_desc).expect("dual settings");
+        assert!(settings.enabled);
+        assert_eq!(settings.mode, super::types::DualBlendMode::Darken);
+        assert!(settings.both_axes);
+        assert_eq!(settings.count, 5);
+        assert!((settings.scatter - 206.0).abs() < 1e-6);
+        assert!((settings.size - 606.0).abs() < 1e-6);
+        assert!((settings.spacing - 0.99).abs() < 1e-6);
+        assert!(settings.brush_id.is_some());
+        assert!((settings.size_ratio - (606.0 / 600.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_create_brush_from_descriptor_entry_dual_enabled_nested() {
+        let mut brush_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+
+        // Ensure main sampledData appears before dualBrush so the primary UUID is stable
+        let mut main_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        main_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 600.0,
+            },
+        );
+        main_brsh.insert(
+            "sampledData".to_string(),
+            DescriptorValue::String("2208e679-9fa4-11da-9e8a-f926889842f3".to_string()),
+        );
+        brush_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(main_brsh));
+        brush_desc.insert(
+            "Nm  ".to_string(),
+            DescriptorValue::String("Sampled Brush 5 4".to_string()),
+        );
+
+        let mut dual_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_desc.insert("useDualBrush".to_string(), DescriptorValue::Boolean(true));
+        dual_desc.insert(
+            "BlnM".to_string(),
+            DescriptorValue::Enum {
+                type_id: "BlnM".to_string(),
+                value: "Drkn".to_string(),
+            },
+        );
+        dual_desc.insert("useScatter".to_string(), DescriptorValue::Boolean(true));
+        dual_desc.insert("bothAxes".to_string(), DescriptorValue::Boolean(true));
+        dual_desc.insert("Cnt ".to_string(), DescriptorValue::Double(5.0));
+
+        let mut scatter_dyn: indexmap::IndexMap<String, DescriptorValue> =
+            indexmap::IndexMap::new();
+        scatter_dyn.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 206.0,
+            },
+        );
+        dual_desc.insert(
+            "scatterDynamics".to_string(),
+            DescriptorValue::Descriptor(scatter_dyn),
+        );
+
+        let mut dual_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 606.0,
+            },
+        );
+        dual_brsh.insert(
+            "Spcn".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 99.0,
+            },
+        );
+        dual_brsh.insert(
+            "sampledData".to_string(),
+            DescriptorValue::String("0fd938d3-665f-11d8-8a89-d1468c4d447d".to_string()),
+        );
+        dual_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(dual_brsh));
+
+        brush_desc.insert(
+            "dualBrush".to_string(),
+            DescriptorValue::Descriptor(dual_desc),
+        );
+
+        let samp_map: std::collections::HashMap<String, SampBrushData> =
+            std::collections::HashMap::new();
+        let brush = AbrParser::create_brush_from_descriptor_entry(&brush_desc, 0, &samp_map);
+
+        let dual = brush
+            .dual_brush_settings
+            .expect("dual settings should be present");
+        assert!(dual.enabled);
+        assert_eq!(dual.mode, super::types::DualBlendMode::Darken);
+        assert_eq!(dual.count, 5);
+        assert!((dual.scatter - 206.0).abs() < 1e-6);
+        assert!((dual.size - 606.0).abs() < 1e-6);
+        assert!((dual.spacing - 0.99).abs() < 1e-6);
+        assert_eq!(
+            dual.brush_id.as_deref(),
+            Some("0fd938d3-665f-11d8-8a89-d1468c4d447d")
+        );
     }
 }
