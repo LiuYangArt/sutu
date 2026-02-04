@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
 import { applyPressureCurve, PressureCurve, ToolType } from '@/stores/tool';
 import { clearPointBuffer, useTabletStore, type RawInputPoint } from '@/stores/tablet';
+import { useDocumentStore } from '@/stores/document';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
@@ -452,9 +453,9 @@ export function useStrokeProcessor({
 
         if (isEraser) {
           if (isBackground) {
-            // Background layer: draw white instead of erasing to transparency
+            // Background layer: draw background fill color instead of erasing to transparency
             ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = '#ffffff';
+            ctx.strokeStyle = useDocumentStore.getState().backgroundFillColor || '#ffffff';
           } else {
             // Normal layer: erase to transparency
             ctx.globalCompositeOperation = 'destination-out';

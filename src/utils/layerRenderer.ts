@@ -376,14 +376,14 @@ export class LayerRenderer {
    * Clear a single layer's content
    * For background layers, fill with white instead of making transparent
    */
-  clearLayer(id: string): void {
+  clearLayer(id: string, backgroundFillColor = '#ffffff'): void {
     const layer = this.layers.get(id);
     if (!layer) return;
     layer.ctx.clearRect(0, 0, this.width, this.height);
 
     // Background layer should be filled with white after clearing
     if (layer.isBackground) {
-      layer.ctx.fillStyle = '#ffffff';
+      layer.ctx.fillStyle = backgroundFillColor;
       layer.ctx.fillRect(0, 0, this.width, this.height);
     }
   }

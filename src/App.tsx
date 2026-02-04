@@ -4,6 +4,8 @@ import { Toolbar } from './components/Toolbar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { PatternLibraryPanel } from './components/PatternLibrary';
 import { CanvasSizePanel } from './components/CanvasSizePanel';
+import { NewFilePanel, type BackgroundPreset } from './components/NewFilePanel';
+import { ConfirmUnsavedChangesDialog } from './components/ConfirmUnsavedChangesDialog';
 import { useDocumentStore, type ResizeCanvasOptions } from './stores/document';
 import { useSelectionStore } from './stores/selection';
 import { useTabletStore } from './stores/tablet';
@@ -14,6 +16,8 @@ import { LeftToolbar, RightPanel } from './components/SidePanel';
 import { PanelLayer } from './components/UI/PanelLayer';
 import { ToastLayer } from './components/UI/ToastLayer';
 import { usePanelStore } from './stores/panel';
+import { useHistoryStore } from './stores/history';
+import { useViewportStore } from './stores/viewport';
 
 // Lazy load DebugPanel (only used in dev mode)
 const DebugPanel = lazy(() => import('./components/DebugPanel'));
@@ -23,6 +27,7 @@ declare global {
   interface Window {
     __openPatternLibrary?: () => void;
     __openCanvasSizePanel?: () => void;
+    __requestNewFile?: () => void;
     __canvasFillLayer?: (color: string) => void;
     __canvasClearSelection?: () => void;
     __canvasRemoveLayer?: (id: string) => void;
@@ -51,7 +56,14 @@ function App() {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showPatternLibrary, setShowPatternLibrary] = useState(false);
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState(false);
+  const [showNewFilePanel, setShowNewFilePanel] = useState(false);
+  const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] = useState(false);
   const initDocument = useDocumentStore((s) => s.initDocument);
+  const docDefaults = useDocumentStore((s) => ({
+    width: s.width,
+    height: s.height,
+    dpi: s.dpi,
+  }));
   const tabletInitializedRef = useRef(false);
 
   // Get tablet store actions (stable references)
@@ -77,6 +89,13 @@ function App() {
   const fileOpen = useFileStore((s) => s.open);
   const handleDrawingShortcuts = useCallback(
     (e: KeyboardEvent) => {
+      // Ctrl+N: New
+      if (e.ctrlKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        window.__requestNewFile?.();
+        return;
+      }
+
       // Ctrl+S: Save / Ctrl+Shift+S: Save As
       if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -198,6 +217,22 @@ function App() {
   }, [setShowCanvasSizePanel]);
 
   useEffect(() => {
+    window.__requestNewFile = () => {
+      const { isDirty } = useDocumentStore.getState();
+      if (isDirty) {
+        setShowUnsavedChangesDialog(true);
+        setShowNewFilePanel(false);
+      } else {
+        setShowNewFilePanel(true);
+        setShowUnsavedChangesDialog(false);
+      }
+    };
+    return () => {
+      delete window.__requestNewFile;
+    };
+  }, []);
+
+  useEffect(() => {
     window.addEventListener('keydown', handleDebugShortcut);
     window.addEventListener('keydown', handleDrawingShortcuts);
     return () => {
@@ -289,6 +324,38 @@ function App() {
     );
   }
 
+  const handleCreateNewDocument = (v: {
+    width: number;
+    height: number;
+    dpi: number;
+    backgroundPreset: BackgroundPreset;
+  }) => {
+    const preset = v.backgroundPreset;
+    const toolBg = useToolStore.getState().backgroundColor;
+    const fillColor =
+      preset === 'white'
+        ? '#ffffff'
+        : preset === 'black'
+          ? '#000000'
+          : preset === 'current-bg'
+            ? toolBg
+            : undefined;
+
+    useHistoryStore.getState().clear();
+    useSelectionStore.getState().deselectAll();
+    useDocumentStore.getState().reset();
+    useViewportStore.getState().resetZoom();
+
+    useDocumentStore.getState().initDocument({
+      width: v.width,
+      height: v.height,
+      dpi: v.dpi,
+      background: { preset, fillColor },
+    });
+
+    setShowNewFilePanel(false);
+  };
+
   return (
     <div className="app">
       <Toolbar />
@@ -317,6 +384,26 @@ function App() {
           useDocumentStore.getState().resizeCanvas(options);
           setShowCanvasSizePanel(false);
         }}
+      />
+      <ConfirmUnsavedChangesDialog
+        isOpen={showUnsavedChangesDialog}
+        onCancel={() => setShowUnsavedChangesDialog(false)}
+        onDontSave={() => {
+          setShowUnsavedChangesDialog(false);
+          setShowNewFilePanel(true);
+        }}
+        onSave={async () => {
+          const ok = await useFileStore.getState().save(false);
+          if (!ok) return;
+          setShowUnsavedChangesDialog(false);
+          setShowNewFilePanel(true);
+        }}
+      />
+      <NewFilePanel
+        isOpen={showNewFilePanel}
+        onClose={() => setShowNewFilePanel(false)}
+        defaultValues={docDefaults}
+        onCreate={handleCreateNewDocument}
       />
       {/* Debug Panel - dev mode only */}
       {showDebugPanel && (

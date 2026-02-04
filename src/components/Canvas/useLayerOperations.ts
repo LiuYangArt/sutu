@@ -419,7 +419,7 @@ export function useLayerOperations({
     captureBeforeImage();
 
     // Clear the layer
-    renderer.clearLayer(activeLayerId);
+    renderer.clearLayer(activeLayerId, useDocumentStore.getState().backgroundFillColor);
     compositeAndRender();
 
     // Push to history

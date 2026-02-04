@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   Save,
   FolderOpen,
+  FilePlus,
   LogOut,
   ChevronRight,
   Paintbrush,
@@ -83,6 +84,12 @@ function AppMenu() {
     await fileOpen();
   };
 
+  const handleNew = () => {
+    setIsOpen(false);
+    const win = window as Window & { __requestNewFile?: () => void };
+    win.__requestNewFile?.();
+  };
+
   const handleSave = async () => {
     setIsOpen(false);
     await fileSave(false);
@@ -101,6 +108,12 @@ function AppMenu() {
 
       {isOpen && (
         <div className="menu-dropdown">
+          <button className="menu-item" onClick={handleNew}>
+            <FilePlus size={16} />
+            <span>New</span>
+            <span className="shortcut">Ctrl+N</span>
+          </button>
+
           <button className="menu-item" onClick={handleOpen} disabled={isLoading}>
             <FolderOpen size={16} />
             <span>Open</span>

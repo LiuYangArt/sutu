@@ -1,0 +1,100 @@
+/* Confirm Unsaved Changes Dialog Styles */
+
+.confirm-unsaved-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+}
+
+.confirm-unsaved-panel {
+  width: 460px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.confirm-unsaved-header {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.confirm-unsaved-close-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.confirm-unsaved-close-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.confirm-unsaved-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.confirm-unsaved-text {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.confirm-unsaved-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-unsaved-btn {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.confirm-unsaved-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
+}
+
+.confirm-unsaved-btn.primary {
+  background: var(--primary-bg);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
+.confirm-unsaved-btn.primary:hover {
+  background: var(--primary-border);
+}
+
+.confirm-unsaved-btn.danger {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--text-primary);
+}
+
+.confirm-unsaved-btn.danger:hover {
+  background: var(--danger);
+}
+

@@ -33,6 +33,39 @@ describe('DocumentStore', () => {
       expect(firstLayer!.type).toBe('raster');
       expect(state.activeLayerId).toBe(firstLayer!.id);
     });
+
+    it('should support transparent background (no Background layer)', () => {
+      const store = useDocumentStore.getState();
+
+      store.initDocument({
+        width: 800,
+        height: 600,
+        dpi: 72,
+        background: { preset: 'transparent' },
+      });
+
+      const state = useDocumentStore.getState();
+      expect(state.layers).toHaveLength(1);
+      expect(state.layers[0]!.name).toBe('Layer 1');
+      expect(state.layers[0]!.isBackground).not.toBe(true);
+    });
+
+    it('should set backgroundFillColor when creating a background layer', () => {
+      const store = useDocumentStore.getState();
+
+      store.initDocument({
+        width: 800,
+        height: 600,
+        dpi: 72,
+        background: { preset: 'black', fillColor: '#000000' },
+      });
+
+      const state = useDocumentStore.getState();
+      expect(state.backgroundFillColor).toBe('#000000');
+      expect(state.layers).toHaveLength(1);
+      expect(state.layers[0]!.name).toBe('Background');
+      expect(state.layers[0]!.isBackground).toBe(true);
+    });
   });
 
   describe('addLayer', () => {

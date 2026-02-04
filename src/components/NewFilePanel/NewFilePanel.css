@@ -1,0 +1,121 @@
+/* New File Panel Styles */
+
+.new-file-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+}
+
+.new-file-panel {
+  width: 460px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.new-file-header {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.new-file-close-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.new-file-close-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.new-file-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.new-file-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.new-file-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.new-file-field label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.new-file-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.new-file-select {
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.new-file-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.new-file-btn {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.new-file-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
+}
+
+.new-file-btn.primary {
+  background: var(--primary-bg);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
+.new-file-btn.primary:hover {
+  background: var(--primary-border);
+}
+

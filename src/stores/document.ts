@@ -58,11 +58,22 @@ export interface ResizeCanvasOptions {
   resampleMode: ResampleMode;
 }
 
+export type NewDocumentBackgroundPreset = 'transparent' | 'white' | 'black' | 'current-bg';
+
+export interface NewDocumentBackgroundConfig {
+  preset: NewDocumentBackgroundPreset;
+  fillColor?: string;
+}
+
 interface DocumentState {
   // Document properties
   width: number;
   height: number;
   dpi: number;
+  backgroundFillColor: string;
+
+  // Internal: only user-triggered layer adds should be recorded in history
+  pendingHistoryLayerAdds: string[];
 
   // File management
   filePath: string | null;
@@ -74,7 +85,12 @@ interface DocumentState {
   activeLayerId: string | null;
 
   // Actions
-  initDocument: (config: { width: number; height: number; dpi: number }) => void;
+  initDocument: (config: {
+    width: number;
+    height: number;
+    dpi: number;
+    background?: NewDocumentBackgroundConfig;
+  }) => void;
   reset: () => void;
   resizeCanvas: (options: ResizeCanvasOptions) => void;
 
@@ -95,6 +111,9 @@ interface DocumentState {
   setFilePath: (path: string | null, format: FileFormat | null) => void;
   setDirty: (dirty: boolean) => void;
   markDirty: () => void;
+
+  // Internal helpers
+  consumePendingHistoryLayerAdd: (id: string) => boolean;
 }
 
 // Helper to generate unique IDs
@@ -105,6 +124,8 @@ const initialState = {
   width: 4000,
   height: 3000,
   dpi: 72,
+  backgroundFillColor: '#ffffff',
+  pendingHistoryLayerAdds: [] as string[],
   filePath: null as string | null,
   fileFormat: null as FileFormat | null,
   isDirty: false,
@@ -122,7 +143,29 @@ export const useDocumentStore = create<DocumentState>()(
         state.height = config.height;
         state.dpi = config.dpi;
 
-        // Create default background layer
+        state.pendingHistoryLayerAdds = [];
+
+        const preset = config.background?.preset ?? 'white';
+        if (preset === 'transparent') {
+          const layer: Layer = {
+            id: generateId(),
+            name: 'Layer 1',
+            type: 'raster',
+            visible: true,
+            locked: false,
+            opacity: 100,
+            blendMode: 'normal',
+            isBackground: false,
+          };
+          state.backgroundFillColor = '#ffffff';
+          state.layers = [layer];
+          state.activeLayerId = layer.id;
+          return;
+        }
+
+        const fillColor = config.background?.fillColor ?? '#ffffff';
+        state.backgroundFillColor = fillColor;
+
         const bgLayer: Layer = {
           id: generateId(),
           name: 'Background',
@@ -161,6 +204,7 @@ export const useDocumentStore = create<DocumentState>()(
 
         state.layers.push(newLayer);
         state.activeLayerId = newLayer.id;
+        state.pendingHistoryLayerAdds.push(newLayer.id);
       }),
 
     removeLayer: (id) =>
@@ -203,6 +247,7 @@ export const useDocumentStore = create<DocumentState>()(
         // Insert after the original layer
         state.layers.splice(index + 1, 0, duplicated);
         state.activeLayerId = newLayerId;
+        state.pendingHistoryLayerAdds.push(newLayerId);
       });
       return newLayerId;
     },
@@ -290,5 +335,17 @@ export const useDocumentStore = create<DocumentState>()(
       set((state) => {
         state.isDirty = true;
       }),
+
+    consumePendingHistoryLayerAdd: (id) => {
+      let consumed = false;
+      set((state) => {
+        const idx = state.pendingHistoryLayerAdds.indexOf(id);
+        if (idx !== -1) {
+          state.pendingHistoryLayerAdds.splice(idx, 1);
+          consumed = true;
+        }
+      });
+      return consumed;
+    },
   }))
 );

@@ -123,7 +123,9 @@ export function Canvas() {
     brush: { renderMode },
   } = useSettingsStore();
 
-  const { width, height, activeLayerId, layers, initDocument } = useDocumentStore();
+  const { width, height, activeLayerId, layers, initDocument, backgroundFillColor } =
+    useDocumentStore();
+  const consumePendingHistoryLayerAdd = useDocumentStore((s) => s.consumePendingHistoryLayerAdd);
 
   const { pushAddLayer } = useHistoryStore();
 
@@ -300,7 +302,7 @@ export function Canvas() {
           visible: layer.visible,
           opacity: layer.opacity,
           blendMode: layer.blendMode,
-          fillColor: layer.isBackground ? '#ffffff' : undefined,
+          fillColor: layer.isBackground ? backgroundFillColor : undefined,
           isBackground: layer.isBackground,
         });
         // Generate initial thumbnail for new layers
@@ -308,8 +310,10 @@ export function Canvas() {
 
         // Save initial state to history for new layers
         // Use pushAddLayer to record layer creation for undo
-        const layerIndex = layers.findIndex((l) => l.id === layer.id);
-        pushAddLayer(layer.id, layer, layerIndex);
+        if (consumePendingHistoryLayerAdd(layer.id)) {
+          const layerIndex = layers.findIndex((l) => l.id === layer.id);
+          pushAddLayer(layer.id, layer, layerIndex);
+        }
       } else {
         // Update existing layer properties
         renderer.updateLayer(layer.id, {
@@ -331,7 +335,17 @@ export function Canvas() {
     if (activeLayerId && !historyInitializedRef.current) {
       historyInitializedRef.current = true;
     }
-  }, [layers, width, height, activeLayerId, compositeAndRender, pushAddLayer, updateThumbnail]);
+  }, [
+    layers,
+    width,
+    height,
+    activeLayerId,
+    compositeAndRender,
+    pushAddLayer,
+    updateThumbnail,
+    backgroundFillColor,
+    consumePendingHistoryLayerAdd,
+  ]);
 
   // Re-composite when layer visibility/opacity changes
   useEffect(() => {
