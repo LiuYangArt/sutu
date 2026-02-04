@@ -37,6 +37,12 @@ export function useKeyboardShortcuts({
   const [spacePressed, setSpacePressed] = useState(false);
 
   useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!target) return false;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+      return target instanceof HTMLElement && target.isContentEditable;
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
         setSpacePressed(true);
@@ -44,6 +50,18 @@ export function useKeyboardShortcuts({
 
       // 优先处理修饰键组合 (Undo/Redo/Selection)
       if (e.ctrlKey || e.metaKey) {
+        if (
+          isEditableTarget(e.target) &&
+          (e.code === 'KeyA' ||
+            e.code === 'KeyZ' ||
+            e.code === 'KeyY' ||
+            e.code === 'KeyX' ||
+            e.code === 'KeyC' ||
+            e.code === 'KeyV')
+        ) {
+          return;
+        }
+
         if (e.code === 'KeyZ') {
           e.preventDefault();
           if (e.shiftKey) {

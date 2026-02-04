@@ -27,14 +27,14 @@ function dispatchWindowKeyUp(init: KeyboardEventInit & { code: string }): void {
 function dispatchInputKeyDown(
   target: HTMLInputElement | HTMLTextAreaElement,
   init: KeyboardEventInit & { code: string }
-): void {
-  target.dispatchEvent(
-    new KeyboardEvent('keydown', {
-      bubbles: true,
-      cancelable: true,
-      ...init,
-    })
-  );
+): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  target.dispatchEvent(event);
+  return event;
 }
 
 describe('useKeyboardShortcuts', () => {
@@ -135,9 +135,11 @@ describe('useKeyboardShortcuts', () => {
     expect(calls[1]?.[0]).toBeGreaterThan(50); // BracketRight increased
   });
 
-  it('skips tool shortcuts in input/textarea, but still allows Ctrl+Z', () => {
+  it('does not intercept Ctrl+A/Z/Y/X/C/V in input/textarea', () => {
     const setTool = vi.fn<[ToolType], void>();
     const handleUndo = vi.fn();
+    const handleRedo = vi.fn();
+    const selectAll = vi.fn();
 
     renderHook(() =>
       useKeyboardShortcuts({
@@ -146,8 +148,8 @@ describe('useKeyboardShortcuts', () => {
         setTool,
         setCurrentSize: vi.fn(),
         handleUndo,
-        handleRedo: vi.fn(),
-        selectAll: vi.fn(),
+        handleRedo,
+        selectAll,
         deselectAll: vi.fn(),
         cancelSelection: vi.fn(),
         width: 100,
@@ -162,13 +164,63 @@ describe('useKeyboardShortcuts', () => {
 
     act(() => {
       dispatchInputKeyDown(input, { code: 'KeyB' });
-      dispatchInputKeyDown(input, { code: 'KeyZ', ctrlKey: true });
+      const a = dispatchInputKeyDown(input, { code: 'KeyA', ctrlKey: true });
+      const z = dispatchInputKeyDown(input, { code: 'KeyZ', ctrlKey: true });
+      const y = dispatchInputKeyDown(input, { code: 'KeyY', ctrlKey: true });
+      const c = dispatchInputKeyDown(input, { code: 'KeyC', ctrlKey: true });
+      const v = dispatchInputKeyDown(input, { code: 'KeyV', ctrlKey: true });
+      const x = dispatchInputKeyDown(input, { code: 'KeyX', ctrlKey: true });
+
+      expect(a.defaultPrevented).toBe(false);
+      expect(z.defaultPrevented).toBe(false);
+      expect(y.defaultPrevented).toBe(false);
+      expect(c.defaultPrevented).toBe(false);
+      expect(v.defaultPrevented).toBe(false);
+      expect(x.defaultPrevented).toBe(false);
     });
 
     expect(setTool).not.toHaveBeenCalled();
-    expect(handleUndo).toHaveBeenCalledTimes(1);
+    expect(handleUndo).not.toHaveBeenCalled();
+    expect(handleRedo).not.toHaveBeenCalled();
+    expect(selectAll).not.toHaveBeenCalled();
 
     input.remove();
+  });
+
+  it('handles Ctrl+A on window: selectAll + preventDefault', () => {
+    const selectAll = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll,
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+      })
+    );
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyA',
+      ctrlKey: true,
+    });
+
+    act(() => {
+      window.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(selectAll).toHaveBeenCalledWith(100, 100);
   });
 
   it('handles Escape: cancelMove when moving, otherwise cancelSelection', () => {

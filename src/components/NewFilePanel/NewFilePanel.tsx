@@ -56,7 +56,7 @@ export function NewFilePanel({
   if (!isOpen) return null;
 
   return (
-    <div className="new-file-overlay" onClick={onClose}>
+    <div className="new-file-overlay">
       <div className="new-file-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         <div className="mica-panel-header new-file-header">
           <h2>New Document</h2>

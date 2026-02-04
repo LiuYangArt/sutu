@@ -180,7 +180,7 @@ export function CanvasSizePanel({
   ];
 
   return (
-    <div className="canvas-size-overlay" onClick={onClose}>
+    <div className="canvas-size-overlay">
       <div className="canvas-size-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         <div className="mica-panel-header canvas-size-header">
           <h2>Canvas Size</h2>

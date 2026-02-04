@@ -414,7 +414,7 @@ export function SettingsPanel() {
   };
 
   return (
-    <div className="settings-overlay" onClick={closeSettings}>
+    <div className="settings-overlay">
       <div className="settings-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="settings-header">

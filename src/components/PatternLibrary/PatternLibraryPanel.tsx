@@ -123,7 +123,7 @@ export function PatternLibraryPanel({
   if (!isOpen) return null;
 
   return (
-    <div className="pattern-library-overlay" onClick={onClose}>
+    <div className="pattern-library-overlay">
       <div className="pattern-library-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="mica-panel-header pattern-library-header">

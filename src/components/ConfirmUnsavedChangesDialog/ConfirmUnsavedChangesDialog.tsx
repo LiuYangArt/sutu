@@ -30,7 +30,7 @@ export function ConfirmUnsavedChangesDialog({
   }
 
   return (
-    <div className="confirm-unsaved-overlay" onClick={onCancel}>
+    <div className="confirm-unsaved-overlay">
       <div className="confirm-unsaved-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         <div className="mica-panel-header confirm-unsaved-header">
           <h2>Unsaved Changes</h2>
