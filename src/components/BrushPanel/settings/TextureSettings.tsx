@@ -1,10 +1,10 @@
 import { useState } from 'react';
+import { LZ4Image } from '@/components/common/LZ4Image';
 import { useToolStore, ControlSource } from '@/stores/tool';
+import { TEXTURE_SCALE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { TextureBlendMode } from '../types';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
-import { LZ4Image } from '@/components/common/LZ4Image';
 import { PatternPicker } from './PatternPicker';
-import { TEXTURE_SCALE_SLIDER_CONFIG } from '@/utils/sliderScales';
 
 /** Control options for Texture Depth */
 const DEPTH_CONTROL_OPTIONS: SelectOption[] = [

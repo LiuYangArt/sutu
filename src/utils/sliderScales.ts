@@ -17,10 +17,13 @@ export interface NonLinearSliderConfig {
    * - 1.0: Linear (standard)
    * - > 1.0: Compressed towards start (values increase slowly then fast)
    * - < 1.0: Compressed towards end (values increase fast then slowly)
-   * A value of ~2.6 approximates 250 being at 75% point between 100 and 1000.
+   * A value of ~2.5 approximates 250 being at 75% point between 100 and 1000.
    */
   secondHalfExponent?: number;
 }
+
+const PS_LIKE_MID_VALUE = 100;
+const PS_LIKE_SECOND_HALF_EXPONENT = 2.5;
 
 /**
  * Converts a real value to a normalized slider position (0.0 to 1.0).
@@ -133,8 +136,8 @@ export function sliderProgressToValue(
  * 100px at 50% position, power curve for second half.
  */
 export const BRUSH_SIZE_SLIDER_CONFIG: NonLinearSliderConfig = {
-  midValue: 100,
-  secondHalfExponent: 2.5,
+  midValue: PS_LIKE_MID_VALUE,
+  secondHalfExponent: PS_LIKE_SECOND_HALF_EXPONENT,
 };
 
 /**
@@ -142,8 +145,8 @@ export const BRUSH_SIZE_SLIDER_CONFIG: NonLinearSliderConfig = {
  * 100% at 50% position, power curve for second half up to 1000%.
  */
 export const TEXTURE_SCALE_SLIDER_CONFIG: NonLinearSliderConfig = {
-  midValue: 100,
-  secondHalfExponent: 2.5,
+  midValue: PS_LIKE_MID_VALUE,
+  secondHalfExponent: PS_LIKE_SECOND_HALF_EXPONENT,
 };
 
 /**
