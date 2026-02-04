@@ -157,7 +157,7 @@ export function TextureSettings(): JSX.Element {
         <SliderRow
           label="Scale"
           value={textureSettings.scale}
-          min={10}
+          min={1}
           max={200}
           displayValue={`${Math.round(textureSettings.scale)}%`}
           onChange={(v) => setTextureSettings({ scale: v })}
