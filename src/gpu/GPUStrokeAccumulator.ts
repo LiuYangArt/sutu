@@ -923,15 +923,20 @@ export class GPUStrokeAccumulator {
 
     const scale = this.currentRenderScale;
     const useTexture = Boolean(dualBrush.texture);
-    const dualEffectiveRadius =
-      useTexture && dualBrush.texture
-        ? this.computeTextureEffectiveRadius(
-            effectiveSize,
-            roundness,
-            dualBrush.texture.width,
-            dualBrush.texture.height
-          )
-        : effectiveSize / 2;
+    const dualEffectiveRadius = (() => {
+      if (useTexture && dualBrush.texture) {
+        return this.computeTextureEffectiveRadius(
+          effectiveSize,
+          roundness,
+          dualBrush.texture.width,
+          dualBrush.texture.height
+        );
+      }
+
+      const radius = effectiveSize / 2;
+      const hardness = isSquashedRoundness ? 0.98 : 1.0;
+      return calculateEffectiveRadius(radius, hardness);
+    })();
 
     if (useTexture && dualBrush.texture) {
       if (!this.dualTextureAtlas.setTextureSync(dualBrush.texture)) {
