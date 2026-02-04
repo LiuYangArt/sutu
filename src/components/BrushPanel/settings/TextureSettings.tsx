@@ -4,6 +4,7 @@ import { TextureBlendMode } from '../types';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { LZ4Image } from '@/components/common/LZ4Image';
 import { PatternPicker } from './PatternPicker';
+import { TEXTURE_SCALE_SLIDER_CONFIG } from '@/utils/sliderScales';
 
 /** Control options for Texture Depth */
 const DEPTH_CONTROL_OPTIONS: SelectOption[] = [
@@ -158,7 +159,8 @@ export function TextureSettings(): JSX.Element {
           label="Scale"
           value={textureSettings.scale}
           min={1}
-          max={200}
+          max={1000}
+          nonLinearConfig={TEXTURE_SCALE_SLIDER_CONFIG}
           displayValue={`${Math.round(textureSettings.scale)}%`}
           onChange={(v) => setTextureSettings({ scale: v })}
         />

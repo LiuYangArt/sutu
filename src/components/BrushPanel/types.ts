@@ -66,7 +66,7 @@ export interface TextureSettings {
   // Note: 'enabled' is NOT stored here - use `textureEnabled` from useToolStore
   /** Pattern ID (references a pattern in the library) */
   patternId: string | null;
-  /** Scale percentage (1-200) */
+  /** Scale percentage (1-1000) */
   scale: number;
   /** Brightness adjustment (-150 to +150) */
   brightness: number;

@@ -49,6 +49,21 @@ describe('sliderScales', () => {
       expect(countToSliderProgress(val, 1, 1000, config)).toBeCloseTo(0.75);
     });
 
+    it('applies exponent curve in second segment', () => {
+      const curvedConfig = { midValue: 100, secondHalfExponent: 2.5 };
+      const expectedProgress = 0.75; // 50% into 2nd segment => 75% overall
+      const expectedValue = 100 + (1000 - 100) * Math.pow(0.5, 2.5);
+
+      expect(countToSliderProgress(expectedValue, 1, 1000, curvedConfig)).toBeCloseTo(
+        expectedProgress,
+        3
+      );
+      expect(sliderProgressToValue(expectedProgress, 1, 1000, undefined, curvedConfig)).toBeCloseTo(
+        expectedValue,
+        3
+      );
+    });
+
     describe('Inverse transformation (Progress -> Value)', () => {
       it('reverses 0 to min', () => {
         expect(sliderProgressToValue(0, 1, 1000, undefined, config)).toBe(1);

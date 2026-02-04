@@ -228,7 +228,7 @@ export interface BrushTexture {
 /** Clamp brush/eraser size to valid range */
 const clampSize = (size: number): number => Math.max(1, Math.min(1000, size));
 /** Clamp texture scale percentage to valid range */
-const clampTextureScale = (scale: number): number => Math.max(1, Math.min(200, scale));
+const clampTextureScale = (scale: number): number => Math.max(1, Math.min(1000, scale));
 
 /**
  * Apply pressure curve transformation

@@ -138,6 +138,15 @@ export const BRUSH_SIZE_SLIDER_CONFIG: NonLinearSliderConfig = {
 };
 
 /**
+ * Default non-linear config for texture scale slider (Photoshop-like).
+ * 100% at 50% position, power curve for second half up to 1000%.
+ */
+export const TEXTURE_SCALE_SLIDER_CONFIG: NonLinearSliderConfig = {
+  midValue: 100,
+  secondHalfExponent: 2.5,
+};
+
+/**
  * Steps brush size by a fixed slider progress increment.
  * This ensures the shortcut keys behave consistently with the non-linear slider.
  *
