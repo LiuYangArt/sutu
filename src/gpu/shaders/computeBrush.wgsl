@@ -220,12 +220,22 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
 }
 
 // ============================================================================
-// Calculate Pattern Modulation (Modifies tip alpha)
+// Calculate Pattern Modulation (Returns Alpha Darken ceiling multiplier)
 // ============================================================================
-fn calculate_pattern_mask(
+fn calculate_pattern_multiplier(
   pixel: vec2<f32>,
   base_mask: f32
 ) -> f32 {
+  let base = clamp(base_mask, 0.0, 1.0);
+  if (base <= 0.001) {
+    return 0.0;
+  }
+
+  let depth = clamp(uniforms.pattern_depth / 100.0, 0.0, 1.0);
+  if (depth <= 0.001) {
+    return 1.0;
+  }
+
   // 1. Calculate Canvas Space UV
   let scale = max(0.1, uniforms.pattern_scale);
   let scale_factor = uniforms.pattern_size * (scale / 100.0);
@@ -253,13 +263,13 @@ fn calculate_pattern_mask(
   tex_val = clamp(tex_val, 0.0, 1.0);
 
   // 4. Apply Blend Mode
-  let base = clamp(base_mask, 0.0, 1.0);
   let blended_mask = apply_blend_mode(base, tex_val, uniforms.pattern_mode);
 
   // 5. Apply Depth (Strength)
-  let depth = clamp(uniforms.pattern_depth / 100.0, 0.0, 1.0);
+  let target_mask = clamp(mix(base, blended_mask, depth), 0.0, 1.0);
 
-  return clamp(mix(base, blended_mask, depth), 0.0, 1.0);
+  // Return multiplier relative to base mask (may exceed 1.0 for some modes)
+  return target_mask / base;
 }
 
 // ============================================================================
@@ -276,14 +286,14 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
     // But we still need to blend the color ON TOP even if alpha doesn't increase
     if (src_alpha > 0.001 && dst.a > 0.001) {
       // Color-only blend: new dab paints on top
-      let blend_factor = src_alpha * ceiling;  // Weighted by dab's opacity
+      let blend_factor = min(1.0, src_alpha * ceiling);  // Weighted by dab's opacity
       let new_rgb = dst.rgb + (src_color - dst.rgb) * blend_factor;
       return vec4<f32>(new_rgb, dst.a);
     }
     return dst;
   }
 
-  let new_alpha = dst.a + alpha_headroom * src_alpha;
+  let new_alpha = min(1.0, dst.a + alpha_headroom * src_alpha);
 
   var new_rgb: vec3<f32>;
   if (dst.a > 0.001) {
@@ -451,9 +461,10 @@ fn main(
       continue;
     }
 
-    // A2. Texture: apply blend mode on tip alpha (mask)
+    // A2. Texture: apply blend mode to Alpha Darken ceiling (not tip alpha)
+    var pattern_mult = 1.0;
     if (uniforms.pattern_enabled != 0u) {
-       mask = calculate_pattern_mask(pixel, mask);
+       pattern_mult = calculate_pattern_multiplier(pixel, mask);
     }
 
     // A3. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
@@ -463,7 +474,7 @@ fn main(
       mask = mix(mask, over, clamp(uniforms.noise_strength, 0.0, 1.0));
     }
 
-    let ceiling = dab.dab_opacity;
+    let ceiling = dab.dab_opacity * pattern_mult;
     let src_alpha = mask * dab.flow;
 
     // Alpha Darken blend

@@ -406,9 +406,10 @@ export class TextureMaskCache {
           const bufferY = bufferTop + my;
           const idx = (bufferRowStart + bufferX) * 4;
 
-          // Texture modulation (applied to tip alpha)
+          // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
+          let textureMod = 1.0;
           if (hasTexturePattern) {
-            maskValue = calculateTextureInfluence(
+            textureMod = calculateTextureInfluence(
               bufferX,
               bufferY,
               textureSettings!,
@@ -445,8 +446,8 @@ export class TextureMaskCache {
           const dstB = buffer[idx + 2]!;
           const dstA = buffer[idx + 3]! / 255;
 
-          // Alpha Darken blending - dual brush affects opacity ceiling, not flow
-          const effectiveOpacity = dabOpacity * dualMod;
+          // Alpha Darken blending - texture/dual brush affect opacity ceiling, not flow
+          const effectiveOpacity = dabOpacity * dualMod * textureMod;
           const outA =
             dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
 
@@ -479,9 +480,10 @@ export class TextureMaskCache {
           const bufferY = bufferTop + my;
           const idx = (bufferRowStart + bufferX) * 4;
 
-          // Texture modulation (applied to tip alpha)
+          // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
+          let textureMod = 1.0;
           if (hasTexturePattern) {
-            maskValue = calculateTextureInfluence(
+            textureMod = calculateTextureInfluence(
               bufferX,
               bufferY,
               textureSettings!,
@@ -524,8 +526,8 @@ export class TextureMaskCache {
           const dstB = buffer[idx + 2]!;
           const dstA = buffer[idx + 3]! / 255;
 
-          // Alpha Darken blending - dual brush affects opacity ceiling, not flow
-          const effectiveOpacity = dabOpacity * dualMod;
+          // Alpha Darken blending - texture/dual brush affect opacity ceiling, not flow
+          const effectiveOpacity = dabOpacity * dualMod * textureMod;
           const outA =
             dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
 

@@ -55,26 +55,26 @@ describe('calculateTextureInfluence', () => {
       data: new Uint8Array([blendByte, blendByte, blendByte, 255]),
     };
 
-    const cases: Array<{ mode: TextureSettings['mode']; expected: number }> = [
-      { mode: 'multiply', expected: baseAlpha * blend },
-      { mode: 'subtract', expected: Math.max(0, baseAlpha - blend) },
-      { mode: 'darken', expected: Math.min(baseAlpha, blend) },
-      { mode: 'overlay', expected: 2 * baseAlpha * blend },
-      { mode: 'colorDodge', expected: 1.0 },
+    const cases: Array<{ mode: TextureSettings['mode']; expectedMultiplier: number }> = [
+      { mode: 'multiply', expectedMultiplier: blend },
+      { mode: 'subtract', expectedMultiplier: Math.max(0, baseAlpha - blend) / baseAlpha },
+      { mode: 'darken', expectedMultiplier: Math.min(baseAlpha, blend) / baseAlpha },
+      { mode: 'overlay', expectedMultiplier: (2 * baseAlpha * blend) / baseAlpha },
+      { mode: 'colorDodge', expectedMultiplier: 1.0 / baseAlpha },
       {
         mode: 'colorBurn',
-        expected: 1 - Math.min(1, (1 - baseAlpha) / blend),
+        expectedMultiplier: (1 - Math.min(1, (1 - baseAlpha) / blend)) / baseAlpha,
       },
-      { mode: 'linearBurn', expected: Math.max(0, baseAlpha + blend - 1) },
-      { mode: 'hardMix', expected: 1.0 },
-      { mode: 'linearHeight', expected: baseAlpha * (0.5 + blend * 0.5) },
-      { mode: 'height', expected: Math.min(1.0, baseAlpha * 2.0 * blend) },
+      { mode: 'linearBurn', expectedMultiplier: Math.max(0, baseAlpha + blend - 1) / baseAlpha },
+      { mode: 'hardMix', expectedMultiplier: 1.0 / baseAlpha },
+      { mode: 'linearHeight', expectedMultiplier: 0.5 + blend * 0.5 },
+      { mode: 'height', expectedMultiplier: Math.min(1.0, baseAlpha * 2.0 * blend) / baseAlpha },
     ];
 
     for (const c of cases) {
       const settings = { ...defaultSettings, mode: c.mode };
       expect(calculateTextureInfluence(0, 0, settings, pattern, 1.0, baseAlpha)).toBeCloseTo(
-        c.expected,
+        c.expectedMultiplier,
         5
       );
     }
@@ -96,14 +96,14 @@ describe('calculateTextureInfluence', () => {
     const expected = 1.0 - 2.0 * (1.0 - baseAlpha) * (1.0 - blend);
 
     expect(calculateTextureInfluence(0, 0, settings, pattern, 1.0, baseAlpha)).toBeCloseTo(
-      expected,
+      expected / baseAlpha,
       5
     );
   });
 
-  it('should return base alpha when depth is 0', () => {
+  it('should return multiplier=1 when depth is 0', () => {
     const result = calculateTextureInfluence(0, 0, defaultSettings, mockPattern, 0, 0.3);
-    expect(result).toBe(0.3);
+    expect(result).toBe(1.0);
   });
 
   it('should handle Multiply mode correctly at 100% depth', () => {
@@ -207,5 +207,19 @@ describe('calculateTextureInfluence', () => {
 
     // Test with white (1.0) -> (0.5)*4 + 0.5 = 2.5 -> Clamped to 1.0
     expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0, 1.0)).toBe(1.0);
+  });
+
+  it('should convert RGB pattern to grayscale using luma', () => {
+    const pattern: PatternData = {
+      id: 'rgb-pattern',
+      width: 1,
+      height: 1,
+      data: new Uint8Array([255, 0, 0, 255]),
+    };
+
+    expect(calculateTextureInfluence(0, 0, defaultSettings, pattern, 1.0, 1.0)).toBeCloseTo(
+      0.299,
+      3
+    );
   });
 });

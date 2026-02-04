@@ -57,7 +57,7 @@ export function sampleTextureValue(
  * @param pattern Pattern data
  * @param depth Effective depth (0-1), already including pressure dynamics if applicable
  * @param baseAlpha Base tip alpha (0-1) before texture modulation
- * @returns Modified tip alpha (0-1)
+ * @returns Alpha multiplier relative to baseAlpha (may exceed 1.0 for some modes)
  */
 export function calculateTextureInfluence(
   canvasX: number,
@@ -69,7 +69,9 @@ export function calculateTextureInfluence(
 ): number {
   const base = Math.max(0, Math.min(1, baseAlpha));
   if (base <= 0.001) return 0.0;
-  if (depth <= 0.001) return base;
+
+  const depth01 = Math.max(0, Math.min(1, depth));
+  if (depth01 <= 0.001) return 1.0;
 
   const textureValue = sampleTextureValue(canvasX, canvasY, settings, pattern);
 
@@ -111,7 +113,10 @@ export function calculateTextureInfluence(
   })();
 
   // 5. Apply Depth (Strength)
-  const finalAlpha = base * (1.0 - depth) + blendedAlpha * depth;
+  const finalAlpha = base * (1.0 - depth01) + blendedAlpha * depth01;
+  const clampedFinalAlpha = Math.max(0, Math.min(1, finalAlpha));
 
-  return Math.max(0, Math.min(1, finalAlpha));
+  // Return alpha multiplier relative to the original base alpha.
+  // NOTE: Can exceed 1.0 for some blend modes (e.g. Overlay/Color Dodge/Height).
+  return clampedFinalAlpha / base;
 }
