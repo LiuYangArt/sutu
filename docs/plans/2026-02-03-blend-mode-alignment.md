@@ -18,8 +18,8 @@ Texture 笔刷混合模式在 UI 中定义了 10 种，但 CPU 和 GPU 渲染路
 | colorBurn    | ❌ fallback               | ✅ mode=5               |
 | linearBurn   | ❌ fallback               | ✅ mode=6               |
 | hardMix      | ❌ fallback               | ✅ mode=7               |
-| linearHeight | ⚠️ 同 multiply            | ❌ 缺失                 |
-| height       | ⚠️ 同 multiply            | ❌ 缺失                 |
+| linearHeight | ✅ 已实现                 | ✅ mode=8               |
+| height       | ✅ 已实现                 | ✅ mode=9               |
 
 ### Dual Brush 混合模式 (8种)
 
@@ -46,7 +46,7 @@ CPU/GPU 已完全对齐，无需修改。
 
 - `multiply`: 改为标准 `base * blend`
 - `linearHeight`: `base * (0.5 + blend * 0.5)`
-- `height`: 作为 `multiply` 的别名
+- `height`: `min(1.0, base * 2.0 * blend)`（高度图：0.5 为中性，允许抬高）
 
 ---
 
@@ -60,8 +60,8 @@ CPU/GPU 已完全对齐，无需修改。
 case 8u: { // Linear Height
   return base * (0.5 + blend * 0.5);
 }
-case 9u: { // Height (alias for Multiply)
-  return base * blend;
+case 9u: { // Height
+  return min(1.0, base * 2.0 * blend);
 }
 ```
 

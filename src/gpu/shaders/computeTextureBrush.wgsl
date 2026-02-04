@@ -104,6 +104,10 @@ fn sample_noise(pixel_x: u32, pixel_y: u32) -> f32 {
   return textureLoad(noise_texture, vec2<i32>(i32(nx), i32(ny)), 0).r;
 }
 
+fn pattern_luma(color: vec4<f32>) -> f32 {
+  return dot(color.rgb, vec3<f32>(0.299, 0.587, 0.114));
+}
+
 // ============================================================================
 // Alpha Darken Blend (matches brush.wgsl exactly)
 // ============================================================================
@@ -181,10 +185,10 @@ fn sample_pattern_tiled(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
   let x1 = (x0 + 1) % w;
   let y1 = (y0 + 1) % h;
 
-  let s00 = textureLoad(tex, vec2<i32>(x0, y0), 0).r;
-  let s10 = textureLoad(tex, vec2<i32>(x1, y0), 0).r;
-  let s01 = textureLoad(tex, vec2<i32>(x0, y1), 0).r;
-  let s11 = textureLoad(tex, vec2<i32>(x1, y1), 0).r;
+  let s00 = pattern_luma(textureLoad(tex, vec2<i32>(x0, y0), 0));
+  let s10 = pattern_luma(textureLoad(tex, vec2<i32>(x1, y0), 0));
+  let s01 = pattern_luma(textureLoad(tex, vec2<i32>(x0, y1), 0));
+  let s11 = pattern_luma(textureLoad(tex, vec2<i32>(x1, y1), 0));
 
   let top = mix(s00, s10, frac.x);
   let bottom = mix(s01, s11, frac.x);
@@ -232,7 +236,7 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
       return base * (0.5 + blend * 0.5);
     }
     case 9u: { // Height
-      return base * blend;
+      return min(1.0, base * 2.0 * blend);
     }
     default: { // Default / Multiply
       return base * blend;

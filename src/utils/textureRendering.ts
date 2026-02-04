@@ -22,8 +22,11 @@ export function sampleTextureValue(
   const idx = (patternY * pattern.width + patternX) * 4;
   if (idx < 0 || idx >= pattern.data.length) return 1.0;
 
-  // Normalize to 0-1 range
-  let textureValue = pattern.data[idx]! / 255.0;
+  // Normalize to 0-1 range (use luminance to match Photoshop for RGB patterns)
+  const r = (pattern.data[idx] ?? 0) / 255.0;
+  const g = (pattern.data[idx + 1] ?? 0) / 255.0;
+  const b = (pattern.data[idx + 2] ?? 0) / 255.0;
+  let textureValue = 0.299 * r + 0.587 * g + 0.114 * b;
 
   // 3. Apply Adjustments
   if (settings.invert) {
@@ -99,7 +102,9 @@ export function calculateTextureInfluence(
       case 'linearHeight':
         return base * (0.5 + blend * 0.5);
       case 'height':
-        return base * blend;
+        // Height: treat texture as height map (neutral at 0.5), allowing lift (alpha increase)
+        // Full depth (depth=1) => influence = 2 * blend, final alpha = base * influence (clamped)
+        return Math.min(1.0, base * 2.0 * blend);
       default:
         return base * blend;
     }

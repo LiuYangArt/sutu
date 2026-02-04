@@ -68,7 +68,7 @@ describe('calculateTextureInfluence', () => {
       { mode: 'linearBurn', expected: Math.max(0, baseAlpha + blend - 1) },
       { mode: 'hardMix', expected: 1.0 },
       { mode: 'linearHeight', expected: baseAlpha * (0.5 + blend * 0.5) },
-      { mode: 'height', expected: baseAlpha * blend },
+      { mode: 'height', expected: Math.min(1.0, baseAlpha * 2.0 * blend) },
     ];
 
     for (const c of cases) {
