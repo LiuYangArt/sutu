@@ -53,8 +53,8 @@ export function sampleTextureValue(
  * @param settings Texture settings
  * @param pattern Pattern data
  * @param depth Effective depth (0-1), already including pressure dynamics if applicable
- * @param baseCeiling Base opacity ceiling (0-1) before texture modulation (dabOpacity)
- * @returns Alpha multiplier relative to baseCeiling (may exceed 1.0 for some modes)
+ * @param baseAlpha Base tip alpha (0-1) before texture modulation
+ * @returns Modified tip alpha (0-1)
  */
 export function calculateTextureInfluence(
   canvasX: number,
@@ -62,24 +62,22 @@ export function calculateTextureInfluence(
   settings: TextureSettings,
   pattern: PatternData,
   depth: number,
-  baseCeiling: number
+  baseAlpha: number
 ): number {
-  if (depth <= 0.001) return 1.0;
+  const base = Math.max(0, Math.min(1, baseAlpha));
+  if (base <= 0.001) return 0.0;
+  if (depth <= 0.001) return base;
 
   const textureValue = sampleTextureValue(canvasX, canvasY, settings, pattern);
-
-  const base = Math.max(0, Math.min(1, baseCeiling));
-  if (base <= 0.001) return 0.0;
 
   const blend = Math.max(0, Math.min(1, textureValue));
 
   // 4. Apply Blend Mode (match GPU apply_blend_mode)
-  // Base: current ceiling (dabOpacity)
+  // Base: current tip alpha (maskValue)
   // Blend: pattern texture value
-  const blendedCeiling = (() => {
+  const blendedAlpha = (() => {
     switch (settings.mode) {
       case 'multiply':
-      case 'height':
         return base * blend;
       case 'subtract':
         return Math.max(0, base - blend);
@@ -99,15 +97,16 @@ export function calculateTextureInfluence(
       case 'hardMix':
         return base + blend >= 1.0 ? 1.0 : 0.0;
       case 'linearHeight':
-        return base * (0.5 + blend * 0.5);
+        return Math.min(1.0, base * (0.5 + blend));
+      case 'height':
+        return Math.min(1.0, base * (0.5 + blend));
       default:
         return base * blend;
     }
   })();
 
   // 5. Apply Depth (Strength)
-  const finalCeiling = base * (1.0 - depth) + blendedCeiling * depth;
+  const finalAlpha = base * (1.0 - depth) + blendedAlpha * depth;
 
-  // Return alpha multiplier relative to base ceiling
-  return finalCeiling / base;
+  return Math.max(0, Math.min(1, finalAlpha));
 }

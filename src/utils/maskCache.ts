@@ -191,7 +191,7 @@ export class MaskCache {
       case 'linearHeight':
         // Linear Height: similar to height/emboss effect
         // Treats secondary as height map, scales primary
-        return p * (0.5 + s * 0.5);
+        return Math.min(1.0, p * (0.5 + s));
       default:
         return p * s;
     }
@@ -424,6 +424,23 @@ export class MaskCache {
           let maskValue = this.mask[maskRowStart + mx]!;
           if (maskValue < 0.001) continue;
 
+          const idx = (bufferRowStart + bufferLeft + mx) * 4;
+
+          // Texture modulation (applied to tip alpha)
+          if (textureSettings && pattern) {
+            // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
+            // TextureSettings.depth is 0-100
+            const depth = textureSettings.depth / 100.0;
+            maskValue = calculateTextureInfluence(
+              bufferLeft + mx,
+              bufferTop + my,
+              textureSettings,
+              pattern,
+              depth,
+              maskValue
+            );
+          }
+
           if (hasNoise) {
             maskValue = MaskCache.applyNoiseOverlayToMaskAlpha(
               maskValue,
@@ -432,24 +449,6 @@ export class MaskCache {
               noiseStrength,
               noiseSettings,
               noisePattern
-            );
-          }
-
-          const idx = (bufferRowStart + bufferLeft + mx) * 4;
-
-          // Texture modulation (applied to opacity ceiling)
-          let textureMod = 1.0;
-          if (textureSettings && pattern) {
-            // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
-            // TextureSettings.depth is 0-100
-            const depth = textureSettings.depth / 100.0;
-            textureMod *= calculateTextureInfluence(
-              bufferLeft + mx,
-              bufferTop + my,
-              textureSettings,
-              pattern,
-              depth,
-              dabOpacity
             );
           }
 
@@ -466,7 +465,7 @@ export class MaskCache {
           }
 
           srcAlpha *= flow;
-          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
+          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod, r, g, b);
         }
       }
     } else {
@@ -485,6 +484,23 @@ export class MaskCache {
           );
           if (maskValue < 0.001) continue;
 
+          const idx = (bufferRowStart + bufferLeft + mx) * 4;
+
+          // Texture modulation (applied to tip alpha)
+          if (textureSettings && pattern) {
+            // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
+            // TextureSettings.depth is 0-100
+            const depth = textureSettings.depth / 100.0;
+            maskValue = calculateTextureInfluence(
+              bufferLeft + mx,
+              bufferTop + my,
+              textureSettings,
+              pattern,
+              depth,
+              maskValue
+            );
+          }
+
           if (hasNoise) {
             maskValue = MaskCache.applyNoiseOverlayToMaskAlpha(
               maskValue,
@@ -493,24 +509,6 @@ export class MaskCache {
               noiseStrength,
               noiseSettings,
               noisePattern
-            );
-          }
-
-          const idx = (bufferRowStart + bufferLeft + mx) * 4;
-
-          // Texture modulation (applied to opacity ceiling)
-          let textureMod = 1.0;
-          if (textureSettings && pattern) {
-            // Calculate depth (can add jitter logic here if needed, passing simple depth for now)
-            // TextureSettings.depth is 0-100
-            const depth = textureSettings.depth / 100.0;
-            textureMod *= calculateTextureInfluence(
-              bufferLeft + mx,
-              bufferTop + my,
-              textureSettings,
-              pattern,
-              depth,
-              dabOpacity
             );
           }
 
@@ -533,7 +531,7 @@ export class MaskCache {
           }
 
           srcAlpha *= flow;
-          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
+          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod, r, g, b);
         }
       }
     }
@@ -638,6 +636,12 @@ export class MaskCache {
 
         const idx = (rowStart + px) * 4;
 
+        // Texture modulation (applied to tip alpha)
+        if (textureSettings && pattern) {
+          const depth = textureSettings.depth / 100.0;
+          maskValue = calculateTextureInfluence(px, py, textureSettings, pattern, depth, maskValue);
+        }
+
         if (hasNoise) {
           maskValue = MaskCache.applyNoiseOverlayToMaskAlpha(
             maskValue,
@@ -646,20 +650,6 @@ export class MaskCache {
             noiseStrength,
             noiseSettings,
             noisePattern
-          );
-        }
-
-        // Texture modulation (applied to opacity ceiling)
-        let textureMod = 1.0;
-        if (textureSettings && pattern) {
-          const depth = textureSettings.depth / 100.0;
-          textureMod *= calculateTextureInfluence(
-            px,
-            py,
-            textureSettings,
-            pattern,
-            depth,
-            dabOpacity
           );
         }
 
@@ -684,7 +674,7 @@ export class MaskCache {
 
         // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
         const srcAlpha = maskValue * flow;
-        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * textureMod * dualMod, r, g, b);
+        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod, r, g, b);
       }
     }
 

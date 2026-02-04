@@ -43,8 +43,8 @@ const defaultSettings: TextureSettings = {
 };
 
 describe('calculateTextureInfluence', () => {
-  it('should handle all texture blend modes (non-unity base ceiling)', () => {
-    const baseCeiling = 0.25;
+  it('should handle all texture blend modes at full depth', () => {
+    const baseAlpha = 0.25;
     const blendByte = 230;
     const blend = blendByte / 255;
 
@@ -56,32 +56,32 @@ describe('calculateTextureInfluence', () => {
     };
 
     const cases: Array<{ mode: TextureSettings['mode']; expected: number }> = [
-      { mode: 'multiply', expected: blend },
-      { mode: 'subtract', expected: Math.max(0, baseCeiling - blend) / baseCeiling },
-      { mode: 'darken', expected: Math.min(baseCeiling, blend) / baseCeiling },
-      { mode: 'overlay', expected: (2 * baseCeiling * blend) / baseCeiling },
-      { mode: 'colorDodge', expected: 1 / baseCeiling },
+      { mode: 'multiply', expected: baseAlpha * blend },
+      { mode: 'subtract', expected: Math.max(0, baseAlpha - blend) },
+      { mode: 'darken', expected: Math.min(baseAlpha, blend) },
+      { mode: 'overlay', expected: 2 * baseAlpha * blend },
+      { mode: 'colorDodge', expected: 1.0 },
       {
         mode: 'colorBurn',
-        expected: (1 - Math.min(1, (1 - baseCeiling) / blend)) / baseCeiling,
+        expected: 1 - Math.min(1, (1 - baseAlpha) / blend),
       },
-      { mode: 'linearBurn', expected: Math.max(0, baseCeiling + blend - 1) / baseCeiling },
-      { mode: 'hardMix', expected: 1 / baseCeiling },
-      { mode: 'linearHeight', expected: (baseCeiling * (0.5 + blend * 0.5)) / baseCeiling },
-      { mode: 'height', expected: blend },
+      { mode: 'linearBurn', expected: Math.max(0, baseAlpha + blend - 1) },
+      { mode: 'hardMix', expected: 1.0 },
+      { mode: 'linearHeight', expected: Math.min(1, baseAlpha * (0.5 + blend)) },
+      { mode: 'height', expected: Math.min(1, baseAlpha * (0.5 + blend)) },
     ];
 
     for (const c of cases) {
       const settings = { ...defaultSettings, mode: c.mode };
-      expect(calculateTextureInfluence(0, 0, settings, pattern, 1.0, baseCeiling)).toBeCloseTo(
+      expect(calculateTextureInfluence(0, 0, settings, pattern, 1.0, baseAlpha)).toBeCloseTo(
         c.expected,
         5
       );
     }
   });
 
-  it('should handle Overlay mode correctly when base ceiling >= 0.5', () => {
-    const baseCeiling = 0.75;
+  it('should handle Overlay mode correctly when base alpha >= 0.5', () => {
+    const baseAlpha = 0.75;
     const blendByte = 230;
     const blend = blendByte / 255;
 
@@ -93,18 +93,17 @@ describe('calculateTextureInfluence', () => {
     };
 
     const settings = { ...defaultSettings, mode: 'overlay' as const };
-    const blendedCeiling = 1.0 - 2.0 * (1.0 - baseCeiling) * (1.0 - blend);
-    const expected = blendedCeiling / baseCeiling;
+    const expected = 1.0 - 2.0 * (1.0 - baseAlpha) * (1.0 - blend);
 
-    expect(calculateTextureInfluence(0, 0, settings, pattern, 1.0, baseCeiling)).toBeCloseTo(
+    expect(calculateTextureInfluence(0, 0, settings, pattern, 1.0, baseAlpha)).toBeCloseTo(
       expected,
       5
     );
   });
 
-  it('should return 1.0 when depth is 0', () => {
-    const result = calculateTextureInfluence(0, 0, defaultSettings, mockPattern, 0, 1.0);
-    expect(result).toBe(1.0);
+  it('should return base alpha when depth is 0', () => {
+    const result = calculateTextureInfluence(0, 0, defaultSettings, mockPattern, 0, 0.3);
+    expect(result).toBe(0.3);
   });
 
   it('should handle Multiply mode correctly at 100% depth', () => {

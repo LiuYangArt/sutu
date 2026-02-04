@@ -51,7 +51,7 @@ fn blend_dual(primary: f32, secondary: f32, mode: u32) -> f32 {
       return select(0.0, 1.0, p + s >= 1.0);
     }
     case 7u: { // Linear Height
-      return p * (0.5 + s * 0.5);
+      return min(1.0, p * (0.5 + s));
     }
     default: { // Multiply
       return p * s;

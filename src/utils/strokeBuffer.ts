@@ -118,7 +118,7 @@ function blendDual(primary: number, secondary: number, mode: DualBlendMode): num
     case 'hardMix':
       return p + s >= 1.0 ? 1.0 : 0.0;
     case 'linearHeight':
-      return p * (0.5 + s * 0.5);
+      return Math.min(1.0, p * (0.5 + s));
     default:
       return p * s;
   }

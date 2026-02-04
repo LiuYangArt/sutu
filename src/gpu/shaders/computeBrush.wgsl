@@ -168,8 +168,8 @@ fn sample_pattern_tiled(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
 
 // ============================================================================
 // Apply Blend Mode (Standard Photoshop Modes)
-// Base: Brush Ceiling (dab_opacity)
-// Blend: Pattern Texture Value
+// Base: Tip alpha (mask)
+// Blend: Pattern texture value
 // ============================================================================
 fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
   switch (mode) {
@@ -204,10 +204,10 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
       return 0.0;
     }
     case 8u: { // Linear Height
-      return base * (0.5 + blend * 0.5);
+      return min(1.0, base * (0.5 + blend));
     }
-    case 9u: { // Height (alias for Multiply)
-      return base * blend;
+    case 9u: { // Height
+      return min(1.0, base * (0.5 + blend));
     }
     default: { // Default / Multiply
       return base * blend;
@@ -216,11 +216,11 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
 }
 
 // ============================================================================
-// Calculate Pattern Ceiling Modulation (Modifies Alpha Darken Ceiling)
+// Calculate Pattern Modulation (Modifies tip alpha)
 // ============================================================================
-fn calculate_pattern_ceiling(
+fn calculate_pattern_mask(
   pixel: vec2<f32>,
-  base_ceiling: f32
+  base_mask: f32
 ) -> f32 {
   // 1. Calculate Canvas Space UV
   let scale = max(0.1, uniforms.pattern_scale);
@@ -249,13 +249,13 @@ fn calculate_pattern_ceiling(
   tex_val = clamp(tex_val, 0.0, 1.0);
 
   // 4. Apply Blend Mode
-  // Base is the current ceiling (dab_opacity)
-  let blended_ceiling = apply_blend_mode(base_ceiling, tex_val, uniforms.pattern_mode);
+  let base = clamp(base_mask, 0.0, 1.0);
+  let blended_mask = apply_blend_mode(base, tex_val, uniforms.pattern_mode);
 
   // 5. Apply Depth (Strength)
   let depth = clamp(uniforms.pattern_depth / 100.0, 0.0, 1.0);
 
-  return mix(base_ceiling, blended_ceiling, depth);
+  return clamp(mix(base, blended_mask, depth), 0.0, 1.0);
 }
 
 // ============================================================================
@@ -447,19 +447,19 @@ fn main(
       continue;
     }
 
-    // A2. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
+    // A2. Texture: apply blend mode on tip alpha (mask)
+    if (uniforms.pattern_enabled != 0u) {
+       mask = calculate_pattern_mask(pixel, mask);
+    }
+
+    // A3. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
     if (uniforms.noise_enabled != 0u && mask > 0.001 && mask < 0.999) {
       let noise_val = sample_noise(pixel_x, pixel_y);
       let over = blend_overlay(mask, noise_val);
       mask = mix(mask, over, clamp(uniforms.noise_strength, 0.0, 1.0));
     }
 
-    // B. Calculate Dynamic Ceiling (Pattern Modulation) for Parametric Brushes
-    var ceiling = dab.dab_opacity;
-    if (uniforms.pattern_enabled != 0u) {
-       ceiling = calculate_pattern_ceiling(pixel, ceiling);
-    }
-
+    let ceiling = dab.dab_opacity;
     let src_alpha = mask * dab.flow;
 
     // Alpha Darken blend
