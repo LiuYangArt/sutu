@@ -144,21 +144,18 @@ impl AbrParser {
             _ => return Err(AbrError::UnsupportedVersion(version_num)),
         };
 
-        let (subversion, count) = match version {
-            AbrVersion::V1 | AbrVersion::V2 => {
-                let count = cursor.read_u16::<BigEndian>()? as u32;
-                (0, count)
-            }
-            AbrVersion::V6 | AbrVersion::V7 | AbrVersion::V10 | AbrVersion::V6Plus(_) => {
-                let subversion = cursor.read_u16::<BigEndian>()?;
-                // For v6+, we need to scan the samp section to count brushes
-                // Save position after reading header (before 8BIM blocks)
-                let header_end = cursor.position();
-                let count = Self::count_samples_v6(cursor, subversion)?;
-                // Reset to header end so parse_v6 can find sections
-                cursor.seek(SeekFrom::Start(header_end))?;
-                (subversion, count)
-            }
+        let (subversion, count) = if version.is_new_format() {
+            let subversion = cursor.read_u16::<BigEndian>()?;
+            // For v6+, we need to scan the samp section to count brushes.
+            // Save position after reading header (before 8BIM blocks).
+            let header_end = cursor.position();
+            let count = Self::count_samples_v6(cursor, subversion)?;
+            // Reset to header end so parse_v6 can find sections.
+            cursor.seek(SeekFrom::Start(header_end))?;
+            (subversion, count)
+        } else {
+            let count = cursor.read_u16::<BigEndian>()? as u32;
+            (0, count)
         };
 
         Ok(AbrHeader {

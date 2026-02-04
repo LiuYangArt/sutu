@@ -1,19 +1,27 @@
 #![allow(clippy::unwrap_used)]
 use std::path::PathBuf;
 
+fn resolve_abr_path(relative_name: &str, fallback_abs: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop(); // Go up from src-tauri
+    path.push("abr");
+    path.push(relative_name);
+
+    if path.exists() {
+        return path;
+    }
+
+    PathBuf::from(fallback_abs)
+}
+
 #[test]
 fn test_load_liuyang_paintbrushes() {
     use crate::abr::AbrParser;
-    // Locate the ABR file relative to the project root
-    let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    d.pop(); // Go up from src-tauri
-    d.push("abr");
-    d.push("liuyang_paintbrushes.abr");
 
-    if !d.exists() {
-        // Fallback for different running environments, try absolute path from user request
-        d = PathBuf::from("f:\\CodeProjects\\PaintBoard\\abr\\liuyang_paintbrushes.abr");
-    }
+    let d = resolve_abr_path(
+        "liuyang_paintbrushes.abr",
+        "f:\\CodeProjects\\PaintBoard\\abr\\liuyang_paintbrushes.abr",
+    );
 
     assert!(d.exists(), "Test file not found at {:?}", d);
 
@@ -82,16 +90,10 @@ fn test_load_liuyang_paintbrushes() {
 fn test_liuyang_sampled_brush_5_4_dual_brush_import() {
     use crate::abr::AbrParser;
 
-    // Locate the ABR file relative to the project root
-    let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    d.pop(); // Go up from src-tauri
-    d.push("abr");
-    d.push("liuyang_paintbrushes.abr");
-
-    if !d.exists() {
-        // Fallback for different running environments, try absolute path from user request
-        d = PathBuf::from("f:\\CodeProjects\\PaintBoard\\abr\\liuyang_paintbrushes.abr");
-    }
+    let d = resolve_abr_path(
+        "liuyang_paintbrushes.abr",
+        "f:\\CodeProjects\\PaintBoard\\abr\\liuyang_paintbrushes.abr",
+    );
 
     assert!(d.exists(), "Test file not found at {:?}", d);
 
@@ -147,16 +149,10 @@ fn test_liuyang_sampled_brush_5_4_dual_brush_import() {
 fn test_load_202002_v9() {
     use crate::abr::AbrParser;
 
-    // Locate the ABR file relative to the project root
-    let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    d.pop(); // Go up from src-tauri
-    d.push("abr");
-    d.push("202002.abr");
-
-    if !d.exists() {
-        // Fallback for different running environments, try absolute path
-        d = PathBuf::from("f:\\CodeProjects\\PaintBoard\\abr\\202002.abr");
-    }
+    let d = resolve_abr_path(
+        "202002.abr",
+        "f:\\CodeProjects\\PaintBoard\\abr\\202002.abr",
+    );
 
     assert!(d.exists(), "Test file not found at {:?}", d);
 
