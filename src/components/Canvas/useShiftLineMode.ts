@@ -5,6 +5,7 @@ type Point = { x: number; y: number };
 interface UseShiftLineModeOptions {
   enabled: boolean;
   onInvalidate?: () => void;
+  focusContainerRef?: { current: HTMLElement | null };
 }
 
 interface GuideLine {
@@ -61,6 +62,7 @@ function projectPointToSegment(point: Point, start: Point, end: Point): Point {
 export function useShiftLineMode({
   enabled,
   onInvalidate,
+  focusContainerRef,
 }: UseShiftLineModeOptions): UseShiftLineModeResult {
   const anchorRef = useRef<Point | null>(null);
   const tempAnchorRef = useRef<Point | null>(null);
@@ -138,6 +140,14 @@ export function useShiftLineMode({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
+
+      // Only react to modifier keydown when focus is within the canvas container.
+      // This avoids Shift line mode triggering while the user is interacting with other panels.
+      const focusContainer = focusContainerRef?.current;
+      if (focusContainer && !focusContainer.contains(document.activeElement)) {
+        return;
+      }
+
       if (e.key === 'Shift') setShiftPressed(true);
       if (e.key === 'Control') setCtrlPressed(true);
     };
@@ -161,7 +171,24 @@ export function useShiftLineMode({
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [setShiftPressed, setCtrlPressed]);
+  }, [setShiftPressed, setCtrlPressed, focusContainerRef]);
+
+  useEffect(() => {
+    const focusContainer = focusContainerRef?.current;
+    if (!focusContainer) return;
+
+    const handleFocusIn = () => {
+      if (!focusContainer.contains(document.activeElement)) {
+        setShiftPressed(false);
+        setCtrlPressed(false);
+      }
+    };
+
+    document.addEventListener('focusin', handleFocusIn);
+    return () => {
+      document.removeEventListener('focusin', handleFocusIn);
+    };
+  }, [setShiftPressed, setCtrlPressed, focusContainerRef]);
 
   const isLineMode = useCallback(() => {
     return (

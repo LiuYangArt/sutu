@@ -192,7 +192,11 @@ export function Canvas() {
     constrainPoint: constrainShiftLinePoint,
     lockLine: lockShiftLine,
     onStrokeEnd: onShiftLineStrokeEnd,
-  } = useShiftLineMode({ enabled: isLineToolActive, onInvalidate: requestRender });
+  } = useShiftLineMode({
+    enabled: isLineToolActive,
+    onInvalidate: requestRender,
+    focusContainerRef: containerRef,
+  });
 
   // Composite all layers and render to display canvas
   const compositeAndRender = useCallback(() => {
@@ -579,6 +583,7 @@ export function Canvas() {
     <div
       ref={containerRef}
       className="canvas-container"
+      tabIndex={-1}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

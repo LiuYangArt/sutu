@@ -85,4 +85,44 @@ describe('useShiftLineMode', () => {
     expect(result.current.isLineMode()).toBe(false);
     unmount();
   });
+
+  it('only responds to Shift keydown when focus is within focusContainerRef', () => {
+    const focusContainer = document.createElement('div');
+    focusContainer.tabIndex = -1;
+
+    const otherButton = document.createElement('button');
+    otherButton.textContent = 'other';
+
+    document.body.appendChild(focusContainer);
+    document.body.appendChild(otherButton);
+
+    const { result, unmount } = renderHook(() =>
+      useShiftLineMode({ enabled: true, focusContainerRef: { current: focusContainer } })
+    );
+
+    try {
+      act(() => {
+        result.current.onStrokeEnd({ x: 0, y: 0 });
+        result.current.updateCursor(10, 0);
+      });
+
+      act(() => {
+        otherButton.focus();
+        dispatchKey('keydown', 'Shift');
+      });
+
+      expect(result.current.getGuideLine()).toBeNull();
+
+      act(() => {
+        focusContainer.focus();
+        dispatchKey('keydown', 'Shift');
+      });
+
+      expect(result.current.getGuideLine()).not.toBeNull();
+    } finally {
+      unmount();
+      focusContainer.remove();
+      otherButton.remove();
+    }
+  });
 });

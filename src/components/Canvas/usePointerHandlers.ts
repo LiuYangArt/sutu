@@ -134,6 +134,12 @@ export function usePointerHandlers({
       const container = containerRef.current;
       if (!container) return;
 
+      // Ensure the canvas container receives focus so modifier-key behaviors
+      // (e.g. Shift line mode) only activate when the canvas is active.
+      if (!container.contains(document.activeElement)) {
+        container.focus({ preventScroll: true });
+      }
+
       // Handle Panning (Space key)
       if (spacePressed) {
         setIsPanning(true);

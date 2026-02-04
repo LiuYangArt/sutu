@@ -6,6 +6,10 @@
   position: relative;
 }
 
+.canvas-container:focus {
+  outline: none;
+}
+
 .canvas-viewport {
   position: absolute;
   top: 0;
