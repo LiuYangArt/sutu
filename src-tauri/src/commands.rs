@@ -500,6 +500,8 @@ pub struct PatternInfo {
 pub struct ImportAbrResult {
     /// Brush presets (metadata only, textures via protocol)
     pub presets: Vec<BrushPreset>,
+    /// Brush tips list for Dual Brush selector (includes tip-only brushes)
+    pub tips: Vec<BrushPreset>,
     /// Imported patterns (metadata)
     pub patterns: Vec<PatternInfo>,
     /// Benchmark timing info
@@ -709,11 +711,14 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
     }
 
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
+    let mut tips: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
     // Track usage of IDs to ensure uniqueness within this import batch
     // Map ID -> count (how many times seen so far)
     let mut id_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for mut brush in abr_file.brushes {
+        let is_tip_only = brush.is_tip_only;
+
         // Debug connection between brush and pattern
         if let Some(ref mut tex) = brush.texture_settings {
             tracing::info!(
@@ -791,7 +796,10 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
         // Build preset with the ID we generated
         let preset = build_preset_with_id(brush, id);
-        presets.push(preset);
+        tips.push(preset.clone());
+        if !is_tip_only {
+            presets.push(preset);
+        }
     }
 
     let cache_ms = cache_start.elapsed().as_secs_f64() * 1000.0;
@@ -826,6 +834,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
     Ok(ImportAbrResult {
         presets,
+        tips,
         patterns: pattern_infos,
         benchmark: AbrBenchmark {
             total_ms,
@@ -843,6 +852,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 /// Build BrushPreset with a specific ID (used when we generate ID before caching)
 fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
     let dynamics = brush.dynamics.as_ref();
+    let source_uuid = brush.uuid.clone();
 
     // Generate cursor outline from texture if available
     let (cursor_path, cursor_bounds) = brush
@@ -862,6 +872,7 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
 
     BrushPreset {
         id,
+        source_uuid,
         name: brush.name,
         diameter: brush.diameter,
         spacing: brush.spacing * 100.0,
@@ -1092,6 +1103,7 @@ mod tests {
             hardness: None,
             dynamics: None,
             is_computed: false,
+            is_tip_only: false,
             texture_settings: Some(texture_settings),
             dual_brush_settings: None,
             shape_dynamics_enabled: None,

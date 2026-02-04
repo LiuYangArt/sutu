@@ -1,5 +1,7 @@
 export interface BrushPreset {
   id: string;
+  /** Original ABR sampled UUID (if any). Used for linking Dual Brush secondary tips. */
+  sourceUuid?: string | null;
   name: string;
   diameter: number;
   spacing: number;
@@ -82,6 +84,7 @@ export interface AbrBenchmark {
 /** ABR import result with benchmark info */
 export interface ImportAbrResult {
   presets: BrushPreset[];
+  tips: BrushPreset[];
   patterns: PatternInfo[];
   benchmark: AbrBenchmark;
 }

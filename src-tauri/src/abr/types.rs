@@ -60,6 +60,9 @@ pub struct AbrBrush {
     pub dynamics: Option<AbrDynamics>,
     /// Whether this is a computed (parametric) brush vs sampled
     pub is_computed: bool,
+    /// True if this brush is not a real preset entry, but imported only as a tip resource
+    /// (e.g. referenced by Dual Brush but missing from the desc brush list).
+    pub is_tip_only: bool,
     /// Texture settings (parsed from descriptor)
     pub texture_settings: Option<TextureSettings>,
     /// Dual brush settings (parsed from descriptor)
@@ -435,6 +438,8 @@ impl Default for TextureSettings {
 pub struct BrushPreset {
     /// Unique identifier
     pub id: String,
+    /// Original ABR sampled UUID (if any). Used for linking Dual Brush secondary tips.
+    pub source_uuid: Option<String>,
     /// Display name
     pub name: String,
     /// Brush diameter
@@ -495,6 +500,7 @@ pub struct CursorBoundsData {
 impl From<AbrBrush> for BrushPreset {
     fn from(brush: AbrBrush) -> Self {
         let dynamics = brush.dynamics.as_ref();
+        let source_uuid = brush.uuid.clone();
 
         // Generate cursor outline from texture if available
         let (cursor_path, cursor_bounds) = brush
@@ -516,6 +522,7 @@ impl From<AbrBrush> for BrushPreset {
             id: brush
                 .uuid
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            source_uuid,
             name: brush.name,
             diameter: brush.diameter,
             spacing: brush.spacing * 100.0,
@@ -571,6 +578,7 @@ mod tests {
             hardness: Some(1.0),
             dynamics: None,
             is_computed: true,
+            is_tip_only: false,
             texture_settings: None,
             dual_brush_settings: None,
             shape_dynamics_enabled: None,
@@ -604,6 +612,7 @@ mod tests {
             hardness: Some(1.0),
             dynamics: None,
             is_computed: false,
+            is_tip_only: false,
             texture_settings: None,
             dual_brush_settings: None,
             shape_dynamics_enabled: None,

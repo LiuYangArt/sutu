@@ -17,6 +17,7 @@ import { NoiseSettings } from './settings/NoiseSettings';
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('brushes');
   const [importedPresets, setImportedPresets] = useState<BrushPreset[]>([]);
+  const [importedTips, setImportedTips] = useState<BrushPreset[]>([]);
 
   // Tab Configuration - Renderer moved to Settings panel
   const tabs: TabConfig[] = [
@@ -40,7 +41,12 @@ export function BrushPanel(): JSX.Element {
     switch (activeTab) {
       case 'brushes':
         return (
-          <BrushPresets importedPresets={importedPresets} setImportedPresets={setImportedPresets} />
+          <BrushPresets
+            importedPresets={importedPresets}
+            setImportedPresets={setImportedPresets}
+            importedTips={importedTips}
+            setImportedTips={setImportedTips}
+          />
         );
       case 'tip_shape':
         return <BrushTipShape />;
@@ -51,7 +57,7 @@ export function BrushPanel(): JSX.Element {
       case 'texture':
         return <TextureSettings />;
       case 'dual_brush':
-        return <DualBrushSettings importedPresets={importedPresets} />;
+        return <DualBrushSettings importedTips={importedTips} />;
       case 'color_dynamics':
         return <ColorDynamicsSettings />;
       case 'wet_edges':

@@ -90,6 +90,7 @@ test-results/
 debug_output/
 
 target-cargo/
+target-cargo-*/
 *.abr
 target-cargo-dualbrush/
 target-cargo-dualbrush8HEnqj/CACHEDIR.TAG

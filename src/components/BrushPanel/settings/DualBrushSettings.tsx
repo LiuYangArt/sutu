@@ -16,7 +16,7 @@ import { loadBrushTexture } from '@/utils/brushLoader';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 
 interface DualBrushSettingsProps {
-  importedPresets: BrushPreset[];
+  importedTips: BrushPreset[];
 }
 
 // PS Dual Brush only supports these 8 blend modes
@@ -33,7 +33,7 @@ const BLEND_MODE_OPTIONS: SelectOption[] = [
 
 // Helper removed - using shared brushLoader
 
-export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): JSX.Element {
+export function DualBrushSettings({ importedTips }: DualBrushSettingsProps): JSX.Element {
   const { dualBrush, setDualBrush, dualBrushEnabled } = useToolStore();
 
   const disabled = !dualBrushEnabled;
@@ -140,7 +140,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           </button>
 
           {/* Imported presets */}
-          {importedPresets.map((preset, index) => (
+          {importedTips.map((preset, index) => (
             <button
               key={`dual-${preset.id}-${index}`}
               className={`abr-preset-item ${dualBrush.brushIndex === index ? 'selected' : ''}`}

@@ -379,6 +379,7 @@ impl AbrParser {
             hardness: None,
             dynamics: None,
             is_computed: false,
+            is_tip_only: false,
             texture_settings: None,
             dual_brush_settings: None,
             shape_dynamics_enabled: None,
@@ -412,8 +413,9 @@ impl AbrParser {
         // This is the preferred way for V6/V10 brushes
         if let Some(desc_data) = Self::find_desc_section(data) {
             match Self::create_brushes_from_desc(data, &desc_data, &mut samp_map) {
-                Ok(brushes) => {
+                Ok(mut brushes) => {
                     if !brushes.is_empty() {
+                        Self::augment_tip_only_brushes_from_dual_refs(&mut brushes, &samp_map);
                         return Ok(brushes);
                     }
                     tracing::warn!(
@@ -455,6 +457,7 @@ impl AbrParser {
                         hardness: None,
                         dynamics: None,
                         is_computed: false,
+                        is_tip_only: false,
 
                         texture_settings: None,
                         dual_brush_settings: None,
@@ -476,6 +479,85 @@ impl AbrParser {
         // If we really need order in fallback, we should have stored it.
         // But for now let's just return what we have.
         Ok(fallback_brushes.into_iter().map(|(_, b)| b).collect())
+    }
+
+    fn augment_tip_only_brushes_from_dual_refs(
+        brushes: &mut Vec<AbrBrush>,
+        samp_map: &HashMap<String, SampBrushData>,
+    ) {
+        use std::collections::{HashMap as StdHashMap, HashSet};
+
+        let mut existing: HashSet<&str> = HashSet::new();
+        for b in brushes.iter() {
+            if let Some(uuid) = b.uuid.as_deref() {
+                existing.insert(uuid);
+            }
+        }
+
+        // Collect all referenced secondary tips that are missing from the brush list.
+        // Keep a stable name for UI display if present in dual brush settings.
+        let mut missing: StdHashMap<String, String> = StdHashMap::new();
+        for b in brushes.iter() {
+            let dual = match b.dual_brush_settings.as_ref() {
+                Some(d) if d.enabled => d,
+                _ => continue,
+            };
+            let uuid = match dual.brush_id.as_deref() {
+                Some(u) if !u.is_empty() => u,
+                _ => continue,
+            };
+
+            if existing.contains(uuid) {
+                continue;
+            }
+
+            let name = dual
+                .brush_name
+                .as_deref()
+                .unwrap_or(uuid)
+                .trim_end_matches('\0')
+                .to_string();
+            missing.entry(uuid.to_string()).or_insert(name);
+        }
+
+        for (uuid, name) in missing {
+            let samp = match samp_map.get(&uuid) {
+                Some(s) => s,
+                None => {
+                    tracing::warn!(
+                        "[ABR] dual brush references samp uuid '{}' but no samp data found",
+                        uuid
+                    );
+                    continue;
+                }
+            };
+
+            brushes.push(AbrBrush {
+                name,
+                uuid: Some(uuid),
+                tip_image: Some(samp.tip_image.clone()),
+                diameter: samp.diameter,
+                spacing: AbrDefaults::SPACING,
+                angle: AbrDefaults::ANGLE,
+                roundness: AbrDefaults::ROUNDNESS,
+                hardness: None,
+                dynamics: Some(AbrDynamics::default()),
+                is_computed: false,
+                is_tip_only: true,
+                texture_settings: None,
+                dual_brush_settings: None,
+                shape_dynamics_enabled: None,
+                shape_dynamics: None,
+                scatter_enabled: None,
+                scatter: None,
+                color_dynamics_enabled: None,
+                color_dynamics: None,
+                transfer_enabled: None,
+                transfer: None,
+                base_opacity: None,
+                base_flow: None,
+            });
+        }
     }
 
     /// Parse 'samp' section into a lookup map
@@ -655,6 +737,7 @@ impl AbrParser {
                     hardness: None,
                     dynamics: Some(AbrDynamics::default()),
                     is_computed: false,
+                    is_tip_only: false,
                     texture_settings: None,
                     dual_brush_settings: None,
                     shape_dynamics_enabled: None,
@@ -683,6 +766,7 @@ impl AbrParser {
                     hardness: None,
                     dynamics: None,
                     is_computed: false,
+                    is_tip_only: false,
                     texture_settings: None,
                     dual_brush_settings: None,
                     shape_dynamics_enabled: None,
@@ -737,6 +821,7 @@ impl AbrParser {
                 hardness: Some(hardness * 100.0),
                 dynamics: Some(AbrDynamics::default()),
                 is_computed: true,
+                is_tip_only: false,
                 texture_settings: None,
                 dual_brush_settings: None,
                 shape_dynamics_enabled: None,
@@ -1120,6 +1205,13 @@ impl AbrParser {
         brsh: &indexmap::IndexMap<String, DescriptorValue>,
         brush: &mut AbrBrush,
     ) {
+        // Diameter (Dmtr) - Pixels
+        // Important: for sampled brushes, samp bitmap size may differ from the preset's saved size.
+        // Photoshop stores the brush preset size in Brsh.Dmtr (#Pxl) which should override the bitmap width.
+        if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Dmtr") {
+            brush.diameter = *value as f32;
+        }
+
         // Spacing (Spcn) - Percent, stored as 0-100, we need 0.0-1.0
         if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Spcn") {
             brush.spacing = (*value as f32) / 100.0;
@@ -1895,6 +1987,7 @@ mod tests {
             hardness: None,
             dynamics: None,
             is_computed: false,
+            is_tip_only: false,
             texture_settings: None,
             dual_brush_settings: None,
             shape_dynamics_enabled: None,
@@ -2126,7 +2219,7 @@ mod tests {
 
         let settings = AbrParser::parse_dual_brush_settings(&brush_desc).expect("dual settings");
         assert!(settings.enabled);
-        assert_eq!(settings.mode, super::types::DualBlendMode::Darken);
+        assert_eq!(settings.mode, crate::abr::types::DualBlendMode::Darken);
         assert!(settings.both_axes);
         assert_eq!(settings.count, 5);
         assert!((settings.scatter - 206.0).abs() < 1e-6);
@@ -2220,7 +2313,7 @@ mod tests {
             .dual_brush_settings
             .expect("dual settings should be present");
         assert!(dual.enabled);
-        assert_eq!(dual.mode, super::types::DualBlendMode::Darken);
+        assert_eq!(dual.mode, crate::abr::types::DualBlendMode::Darken);
         assert_eq!(dual.count, 5);
         assert!((dual.scatter - 206.0).abs() < 1e-6);
         assert!((dual.size - 606.0).abs() < 1e-6);

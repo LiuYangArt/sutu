@@ -129,7 +129,8 @@ describe('applyPresetToToolStore', () => {
   it('应用 Dual Brush preset 并正确映射 secondary tip', () => {
     const secondaryPreset: BrushPreset = {
       ...DEFAULT_ROUND_BRUSH,
-      id: 'secondary-1',
+      id: 'cached-secondary-1',
+      sourceUuid: 'secondary-uuid-1',
       name: 'Secondary Tip',
       hasTexture: false,
       textureWidth: null,
@@ -143,7 +144,7 @@ describe('applyPresetToToolStore', () => {
       diameter: 100,
       dualBrushSettings: {
         enabled: true,
-        brushId: 'secondary-1',
+        brushId: 'secondary-uuid-1',
         brushName: null,
         mode: 'overlay',
         flip: true,
@@ -161,7 +162,7 @@ describe('applyPresetToToolStore', () => {
 
     const s = useToolStore.getState();
     expect(s.dualBrushEnabled).toBe(true);
-    expect(s.dualBrush.brushId).toBe('secondary-1');
+    expect(s.dualBrush.brushId).toBe('cached-secondary-1');
     expect(s.dualBrush.brushIndex).toBe(0);
     expect(s.dualBrush.brushName).toBe('Secondary Tip');
     expect(s.dualBrush.mode).toBe('overlay');

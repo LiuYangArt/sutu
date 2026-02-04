@@ -14,6 +14,8 @@ import { loadBrushTexture } from '@/utils/brushLoader';
 interface BrushPresetsProps {
   importedPresets: BrushPreset[];
   setImportedPresets: (presets: BrushPreset[]) => void;
+  importedTips: BrushPreset[];
+  setImportedTips: (tips: BrushPreset[]) => void;
 }
 
 function createBrushTextureFromPreset(preset: BrushPreset): BrushTexture | undefined {
@@ -59,7 +61,7 @@ function preloadDualTextureIfNeeded(texture: BrushTexture | undefined): void {
     });
 }
 
-export function applyPresetToToolStore(preset: BrushPreset, importedPresets: BrushPreset[]): void {
+export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushPreset[]): void {
   const {
     setBrushSize,
     setBrushHardness,
@@ -169,16 +171,17 @@ export function applyPresetToToolStore(preset: BrushPreset, importedPresets: Bru
     const dual = preset.dualBrushSettings;
 
     const secondaryPreset = dual.brushId
-      ? (importedPresets.find((p) => p.id === dual.brushId) ?? null)
+      ? (importedTips.find((p) => p.id === dual.brushId || p.sourceUuid === dual.brushId) ?? null)
       : null;
 
-    const brushIndex = secondaryPreset ? importedPresets.indexOf(secondaryPreset) : null;
+    const brushIndex = secondaryPreset ? importedTips.indexOf(secondaryPreset) : null;
     const texture = secondaryPreset ? createBrushTextureFromPreset(secondaryPreset) : undefined;
+    const resolvedBrushId = secondaryPreset?.id ?? dual.brushId ?? null;
 
     setDualBrushEnabled(true);
     setDualBrush({
       enabled: true,
-      brushId: dual.brushId,
+      brushId: resolvedBrushId,
       brushIndex,
       brushName: dual.brushName ?? secondaryPreset?.name ?? null,
       mode: dual.mode,
@@ -200,6 +203,8 @@ export function applyPresetToToolStore(preset: BrushPreset, importedPresets: Bru
 export function BrushPresets({
   importedPresets,
   setImportedPresets,
+  importedTips,
+  setImportedTips,
 }: BrushPresetsProps): JSX.Element {
   const [selectedPresetId, setSelectedPresetId] = useState<string>(DEFAULT_ROUND_BRUSH.id);
   const [isImporting, setIsImporting] = useState(false);
@@ -226,6 +231,11 @@ export function BrushPresets({
         const newPresets = result.presets.filter((p) => !existingIds.has(p.id));
         setImportedPresets([...importedPresets, ...newPresets]);
 
+        // Add tips (for Dual Brush selector; includes tip-only brushes)
+        const existingTipIds = new Set(importedTips.map((p) => p.id));
+        const newTips = result.tips.filter((p) => !existingTipIds.has(p.id));
+        setImportedTips([...importedTips, ...newTips]);
+
         // Add patterns if any
         if (result.patterns && result.patterns.length > 0) {
           useToolStore.getState().appendPatterns(result.patterns);
@@ -245,7 +255,7 @@ export function BrushPresets({
     // Update selected preset ID for visual feedback
     setSelectedPresetId(preset.id);
 
-    applyPresetToToolStore(preset, importedPresets);
+    applyPresetToToolStore(preset, importedTips);
   };
 
   return (
