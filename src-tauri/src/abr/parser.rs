@@ -1935,7 +1935,7 @@ mod tests {
         let sc = brush.scatter.expect("scatter");
         assert_eq!(sc.scatter_control, crate::abr::ControlSource::PenPressure);
         assert_eq!(sc.scatter, 200.0);
-        assert_eq!(sc.both_axes, true);
+        assert!(sc.both_axes);
         assert_eq!(sc.count, 4);
         assert_eq!(sc.count_jitter, 25.0);
 
