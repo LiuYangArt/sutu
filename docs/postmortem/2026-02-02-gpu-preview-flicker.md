@@ -31,6 +31,17 @@ GPU compute shader 笔刷在笔刷尺寸较大、快速绘制、开启 Dual Brus
 `updatePreview()` 使用 `combined-dirty` 作为读回与 putImageData 的区域，导致读回区域过大且在边缘被 clamp，
 在 Dual Brush 高负载时更易出现 **预览更新滞后/边缘空洞**。
 
+## 补充结论（2026-02-04 回归定位）
+
+另一个会造成“绘制过程中出现方块/洞、停笔后消失”的根因：**Dual Mask 的 dirty rect 估算小于实际写入范围**。
+
+- GPU dual mask 的 parametric 路径在 shader 中使用 `calculate_effective_radius(radius, hardness)` 扩大有效半径；
+- 但 CPU 侧 `stampSecondaryDab()` 之前只用 `effectiveSize / 2` 来扩展 `dualDirtyRect`；
+- 导致 `applyDualBlend()` 处理的 `combined-dirty` 覆盖不足，预览读回时出现未更新区域的方块洞；
+- 当 dual brush size 变大/更频繁变化时（例如按比例缩放对齐 PS），该问题更容易触发，但根因不是 sizeRatio 本身。
+
+修复：让 `dualDirtyRect` 的扩展逻辑与 shader 一致（parametric dual brush 用 `calculateEffectiveRadius(radius, hardness)`）。
+
 ## 解决方案 A（已实施）
 
 **目标：只修预览闪烁，不动 dual blend 计算范围。**
@@ -55,3 +66,4 @@ GPU compute shader 笔刷在笔刷尺寸较大、快速绘制、开启 Dual Brus
 
 - A 方案：已实施。
 - B 方案：记录待评估。
+- 2026-02-04：补充修复 `dualDirtyRect` 低估导致的方块洞（绘制中可见，停笔后消失）。

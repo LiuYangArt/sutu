@@ -235,6 +235,53 @@ const clampTextureScale = (scale: number): number => Math.max(1, Math.min(1000, 
 /** Clamp dual brush size ratio to valid range */
 const clampDualSizeRatio = (ratio: number): number => Math.max(0, Math.min(10, ratio));
 
+function computeDualSizeFromRatio(brushSize: number, ratio: number): number {
+  return clampSize(brushSize * clampDualSizeRatio(ratio));
+}
+
+function computeDualSizeRatioFromSize(brushSize: number, size: number): number {
+  if (brushSize <= 0) return 1;
+  return clampDualSizeRatio(clampSize(size) / brushSize);
+}
+
+function normalizeDualBrush(
+  brushSize: number,
+  current: DualBrushSettings,
+  patch: Partial<DualBrushSettings>
+): DualBrushSettings {
+  const next = { ...current, ...patch };
+
+  if (patch.sizeRatio !== undefined) {
+    const ratio = clampDualSizeRatio(patch.sizeRatio);
+    return {
+      ...next,
+      sizeRatio: ratio,
+      size: computeDualSizeFromRatio(brushSize, ratio),
+    };
+  }
+
+  if (patch.size !== undefined) {
+    const size = clampSize(patch.size);
+    const ratio = computeDualSizeRatioFromSize(brushSize, size);
+    return {
+      ...next,
+      size,
+      sizeRatio: ratio,
+    };
+  }
+
+  const ratio =
+    typeof next.sizeRatio === 'number' && Number.isFinite(next.sizeRatio)
+      ? clampDualSizeRatio(next.sizeRatio)
+      : computeDualSizeRatioFromSize(brushSize, next.size);
+
+  return {
+    ...next,
+    size: clampSize(next.size),
+    sizeRatio: ratio,
+  };
+}
+
 /**
  * Apply pressure curve transformation
  * @param pressure - Raw pressure value (0-1)
@@ -479,7 +526,7 @@ export const useToolStore = create<ToolState>()(
             brushSize: clamped,
             dualBrush: {
               ...state.dualBrush,
-              size: clampSize(clamped * ratio),
+              size: computeDualSizeFromRatio(clamped, ratio),
               sizeRatio: ratio,
             },
           };
@@ -527,7 +574,7 @@ export const useToolStore = create<ToolState>()(
               brushSize: clamped,
               dualBrush: {
                 ...s.dualBrush,
-                size: clampSize(clamped * ratio),
+                size: computeDualSizeFromRatio(clamped, ratio),
                 sizeRatio: ratio,
               },
             };
@@ -656,49 +703,9 @@ export const useToolStore = create<ToolState>()(
       toggleDualBrush: () => set((state) => ({ dualBrushEnabled: !state.dualBrushEnabled })),
 
       setDualBrush: (settings) =>
-        set((state) => {
-          const base = { ...state.dualBrush, ...settings };
-          const brushSize = state.brushSize;
-
-          if (settings.sizeRatio !== undefined) {
-            const ratio = clampDualSizeRatio(settings.sizeRatio);
-            return {
-              dualBrush: {
-                ...base,
-                sizeRatio: ratio,
-                size: clampSize(brushSize * ratio),
-              },
-            };
-          }
-
-          if (settings.size !== undefined) {
-            const size = clampSize(settings.size);
-            const ratio = brushSize > 0 ? clampDualSizeRatio(size / brushSize) : 1;
-            return {
-              dualBrush: {
-                ...base,
-                size,
-                sizeRatio: ratio,
-              },
-            };
-          }
-
-          // Ensure persisted/legacy state always has a valid ratio.
-          const ratio =
-            typeof base.sizeRatio === 'number' && Number.isFinite(base.sizeRatio)
-              ? clampDualSizeRatio(base.sizeRatio)
-              : brushSize > 0
-                ? clampDualSizeRatio(clampSize(base.size) / brushSize)
-                : 1;
-
-          return {
-            dualBrush: {
-              ...base,
-              size: clampSize(base.size),
-              sizeRatio: ratio,
-            },
-          };
-        }),
+        set((state) => ({
+          dualBrush: normalizeDualBrush(state.brushSize, state.dualBrush, settings),
+        })),
 
       resetDualBrush: () => set({ dualBrush: { ...DEFAULT_DUAL_BRUSH } }),
     }),
@@ -717,8 +724,7 @@ export const useToolStore = create<ToolState>()(
           const size = typeof dual.size === 'number' ? dual.size : 25;
 
           if (typeof dual.sizeRatio !== 'number' || !Number.isFinite(dual.sizeRatio)) {
-            const ratio = brushSize > 0 ? size / brushSize : 1;
-            dual.sizeRatio = clampDualSizeRatio(ratio);
+            dual.sizeRatio = computeDualSizeRatioFromSize(brushSize, size);
           } else {
             dual.sizeRatio = clampDualSizeRatio(dual.sizeRatio);
           }

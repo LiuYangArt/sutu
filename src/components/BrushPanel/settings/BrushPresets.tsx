@@ -16,6 +16,49 @@ interface BrushPresetsProps {
   setImportedPresets: (presets: BrushPreset[]) => void;
 }
 
+function createBrushTextureFromPreset(preset: BrushPreset): BrushTexture | undefined {
+  if (!preset.hasTexture || !preset.textureWidth || !preset.textureHeight) {
+    return undefined;
+  }
+
+  return {
+    id: preset.id,
+    data: '',
+    width: preset.textureWidth,
+    height: preset.textureHeight,
+  };
+}
+
+function preloadDualTextureIfNeeded(texture: BrushTexture | undefined): void {
+  if (!texture) return;
+
+  loadBrushTexture(texture.id, texture.width, texture.height)
+    .then((imageData) => {
+      if (!imageData) return;
+
+      const currentBrushId = useToolStore.getState().dualBrush.brushId;
+      if (currentBrushId !== texture.id) return;
+
+      useToolStore.setState((state) => {
+        const currentDual = state.dualBrush;
+        if (currentDual.brushId !== texture.id || !currentDual.texture) return state;
+
+        return {
+          dualBrush: {
+            ...currentDual,
+            texture: {
+              ...currentDual.texture,
+              imageData,
+            },
+          },
+        };
+      });
+    })
+    .catch((err) => {
+      console.error('[DualBrush] Failed to preload texture (preset apply):', err);
+    });
+}
+
 export function applyPresetToToolStore(preset: BrushPreset, importedPresets: BrushPreset[]): void {
   const {
     setBrushSize,
@@ -125,29 +168,12 @@ export function applyPresetToToolStore(preset: BrushPreset, importedPresets: Bru
   if (preset.dualBrushSettings?.enabled === true) {
     const dual = preset.dualBrushSettings;
 
-    let brushIndex: number | null = null;
-    let texture: BrushTexture | undefined = undefined;
-
     const secondaryPreset = dual.brushId
       ? (importedPresets.find((p) => p.id === dual.brushId) ?? null)
       : null;
 
-    if (secondaryPreset) {
-      brushIndex = importedPresets.findIndex((p) => p.id === secondaryPreset.id);
-
-      if (
-        secondaryPreset.hasTexture &&
-        secondaryPreset.textureWidth &&
-        secondaryPreset.textureHeight
-      ) {
-        texture = {
-          id: secondaryPreset.id,
-          data: '',
-          width: secondaryPreset.textureWidth,
-          height: secondaryPreset.textureHeight,
-        };
-      }
-    }
+    const brushIndex = secondaryPreset ? importedPresets.indexOf(secondaryPreset) : null;
+    const texture = secondaryPreset ? createBrushTextureFromPreset(secondaryPreset) : undefined;
 
     setDualBrushEnabled(true);
     setDualBrush({
@@ -167,33 +193,7 @@ export function applyPresetToToolStore(preset: BrushPreset, importedPresets: Bru
     });
 
     // Preload secondary texture to avoid "first stroke black" issue
-    if (texture) {
-      loadBrushTexture(texture.id, texture.width, texture.height)
-        .then((imageData) => {
-          if (!imageData) return;
-
-          const currentBrushId = useToolStore.getState().dualBrush.brushId;
-          if (currentBrushId !== texture.id) return;
-
-          useToolStore.setState((state) => {
-            const currentDual = state.dualBrush;
-            if (currentDual.brushId !== texture.id || !currentDual.texture) return state;
-
-            return {
-              dualBrush: {
-                ...currentDual,
-                texture: {
-                  ...currentDual.texture,
-                  imageData,
-                },
-              },
-            };
-          });
-        })
-        .catch((err) => {
-          console.error('[DualBrush] Failed to preload texture (preset apply):', err);
-        });
-    }
+    preloadDualTextureIfNeeded(texture);
   }
 }
 
