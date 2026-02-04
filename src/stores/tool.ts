@@ -714,13 +714,14 @@ export const useToolStore = create<ToolState>()(
       version: 2,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
-        if (!persistedState || typeof persistedState !== 'object') return persistedState as any;
+        if (!persistedState || typeof persistedState !== 'object')
+          return persistedState as ToolState;
 
-        const state = persistedState as any;
+        const state = persistedState as Record<string, unknown>;
         const brushSize = typeof state.brushSize === 'number' ? state.brushSize : 20;
 
         if (state.dualBrush && typeof state.dualBrush === 'object') {
-          const dual = state.dualBrush as any;
+          const dual = state.dualBrush as Record<string, unknown>;
           const size = typeof dual.size === 'number' ? dual.size : 25;
 
           if (typeof dual.sizeRatio !== 'number' || !Number.isFinite(dual.sizeRatio)) {
@@ -730,56 +731,57 @@ export const useToolStore = create<ToolState>()(
           }
         }
 
-        return state;
+        return state as unknown as ToolState;
       },
-      partialize: (state) => ({
-        brushSize: state.brushSize,
-        brushFlow: state.brushFlow,
-        brushOpacity: state.brushOpacity,
-        brushHardness: state.brushHardness,
-        brushMaskType: state.brushMaskType,
-        brushSpacing: state.brushSpacing,
-        brushRoundness: state.brushRoundness,
-        brushAngle: state.brushAngle,
-        brushColor: state.brushColor,
-        backgroundColor: state.backgroundColor,
-        eraserSize: state.eraserSize,
-        pressureSizeEnabled: state.pressureSizeEnabled,
-        pressureFlowEnabled: state.pressureFlowEnabled,
-        pressureOpacityEnabled: state.pressureOpacityEnabled,
-        pressureCurve: state.pressureCurve,
-        shapeDynamicsEnabled: state.shapeDynamicsEnabled,
-        shapeDynamics: state.shapeDynamics,
-        scatterEnabled: state.scatterEnabled,
-        scatter: state.scatter,
-        colorDynamicsEnabled: state.colorDynamicsEnabled,
-        colorDynamics: state.colorDynamics,
-        wetEdgeEnabled: state.wetEdgeEnabled,
-        wetEdge: state.wetEdge,
-        buildupEnabled: state.buildupEnabled,
-        transferEnabled: state.transferEnabled,
-        transfer: state.transfer,
-        noiseEnabled: state.noiseEnabled,
-        dualBrushEnabled: state.dualBrushEnabled,
-        dualBrush: state.dualBrush
-          ? {
-              enabled: state.dualBrush.enabled,
-              brushId: state.dualBrush.brushId,
-              brushIndex: state.dualBrush.brushIndex,
-              brushName: state.dualBrush.brushName,
-              mode: state.dualBrush.mode,
-              flip: state.dualBrush.flip,
-              size: state.dualBrush.size,
-              sizeRatio: state.dualBrush.sizeRatio,
-              spacing: state.dualBrush.spacing,
-              roundness: state.dualBrush.roundness,
-              scatter: state.dualBrush.scatter,
-              bothAxes: state.dualBrush.bothAxes,
-              count: state.dualBrush.count,
-              // texture is excluded - it's runtime data
-            }
-          : state.dualBrush,
-      }),
+      partialize: (state) =>
+        ({
+          brushSize: state.brushSize,
+          brushFlow: state.brushFlow,
+          brushOpacity: state.brushOpacity,
+          brushHardness: state.brushHardness,
+          brushMaskType: state.brushMaskType,
+          brushSpacing: state.brushSpacing,
+          brushRoundness: state.brushRoundness,
+          brushAngle: state.brushAngle,
+          brushColor: state.brushColor,
+          backgroundColor: state.backgroundColor,
+          eraserSize: state.eraserSize,
+          pressureSizeEnabled: state.pressureSizeEnabled,
+          pressureFlowEnabled: state.pressureFlowEnabled,
+          pressureOpacityEnabled: state.pressureOpacityEnabled,
+          pressureCurve: state.pressureCurve,
+          shapeDynamicsEnabled: state.shapeDynamicsEnabled,
+          shapeDynamics: state.shapeDynamics,
+          scatterEnabled: state.scatterEnabled,
+          scatter: state.scatter,
+          colorDynamicsEnabled: state.colorDynamicsEnabled,
+          colorDynamics: state.colorDynamics,
+          wetEdgeEnabled: state.wetEdgeEnabled,
+          wetEdge: state.wetEdge,
+          buildupEnabled: state.buildupEnabled,
+          transferEnabled: state.transferEnabled,
+          transfer: state.transfer,
+          noiseEnabled: state.noiseEnabled,
+          dualBrushEnabled: state.dualBrushEnabled,
+          dualBrush: state.dualBrush
+            ? {
+                enabled: state.dualBrush.enabled,
+                brushId: state.dualBrush.brushId,
+                brushIndex: state.dualBrush.brushIndex,
+                brushName: state.dualBrush.brushName,
+                mode: state.dualBrush.mode,
+                flip: state.dualBrush.flip,
+                size: state.dualBrush.size,
+                sizeRatio: state.dualBrush.sizeRatio,
+                spacing: state.dualBrush.spacing,
+                roundness: state.dualBrush.roundness,
+                scatter: state.dualBrush.scatter,
+                bothAxes: state.dualBrush.bothAxes,
+                count: state.dualBrush.count,
+                // texture is excluded - it's runtime data
+              }
+            : state.dualBrush,
+        }) as unknown as ToolState,
     }
   )
 );

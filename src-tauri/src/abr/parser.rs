@@ -1601,17 +1601,19 @@ impl AbrParser {
             _ => return None,
         };
 
-        let mut settings = super::types::DualBrushSettings::default();
-
         // Enabled flag: prefer nested dualBrush.useDualBrush, fallback to root useDualBrush
-        settings.enabled =
-            if let Some(DescriptorValue::Boolean(val)) = dual_desc.get("useDualBrush") {
-                *val
-            } else if let Some(DescriptorValue::Boolean(val)) = brush_desc.get("useDualBrush") {
-                *val
-            } else {
-                true
-            };
+        let enabled = if let Some(DescriptorValue::Boolean(val)) = dual_desc.get("useDualBrush") {
+            *val
+        } else if let Some(DescriptorValue::Boolean(val)) = brush_desc.get("useDualBrush") {
+            *val
+        } else {
+            true
+        };
+
+        let mut settings = super::types::DualBrushSettings {
+            enabled,
+            ..Default::default()
+        };
 
         // 1. Flip
         if let Some(DescriptorValue::Boolean(val)) = dual_desc.get("Flip") {
