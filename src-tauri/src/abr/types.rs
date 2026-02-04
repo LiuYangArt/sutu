@@ -28,12 +28,18 @@ pub enum AbrVersion {
     V7,
     /// Latest format (Creative Cloud)
     V10,
+    /// Modern format (>=6) but not explicitly enumerated above.
+    /// Keeps original major version for diagnostics (e.g. 9 => V6Plus(9)).
+    V6Plus(u16),
 }
 
 impl AbrVersion {
     /// Check if this is a "new" format (V6+)
     pub fn is_new_format(&self) -> bool {
-        matches!(self, AbrVersion::V6 | AbrVersion::V7 | AbrVersion::V10)
+        matches!(
+            self,
+            AbrVersion::V6 | AbrVersion::V7 | AbrVersion::V10 | AbrVersion::V6Plus(_)
+        )
     }
 }
 

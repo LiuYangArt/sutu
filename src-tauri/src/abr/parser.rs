@@ -1,7 +1,7 @@
 //! ABR file parser
 //!
 //! Parses Adobe Photoshop ABR brush files.
-//! Supports versions 1, 2, 6, 7, and 10.
+//! Supports versions 1, 2, and modern v6+ (>=6).
 //!
 //! Reference: Krita's kis_abr_brush_collection.cpp
 
@@ -140,6 +140,7 @@ impl AbrParser {
             6 => AbrVersion::V6,
             7 => AbrVersion::V7,
             10 => AbrVersion::V10,
+            v if v >= 6 => AbrVersion::V6Plus(v),
             _ => return Err(AbrError::UnsupportedVersion(version_num)),
         };
 
@@ -148,7 +149,7 @@ impl AbrParser {
                 let count = cursor.read_u16::<BigEndian>()? as u32;
                 (0, count)
             }
-            AbrVersion::V6 | AbrVersion::V7 | AbrVersion::V10 => {
+            AbrVersion::V6 | AbrVersion::V7 | AbrVersion::V10 | AbrVersion::V6Plus(_) => {
                 let subversion = cursor.read_u16::<BigEndian>()?;
                 // For v6+, we need to scan the samp section to count brushes
                 // Save position after reading header (before 8BIM blocks)

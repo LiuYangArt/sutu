@@ -6,7 +6,7 @@
 //! # Supported Versions
 //!
 //! - V1/V2: Old format (Photoshop 5-6)
-//! - V6/V7/V10: New format (Photoshop 7+ and Creative Cloud)
+//! - V6+: Modern format (Photoshop 7+ and later)
 //!
 //! # Example
 //!

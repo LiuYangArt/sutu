@@ -142,3 +142,33 @@ fn test_liuyang_sampled_brush_5_4_dual_brush_import() {
         "Secondary brush UUID should exist in parsed brushes"
     );
 }
+
+#[test]
+fn test_load_202002_v9() {
+    use crate::abr::AbrParser;
+
+    // Locate the ABR file relative to the project root
+    let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    d.pop(); // Go up from src-tauri
+    d.push("abr");
+    d.push("202002.abr");
+
+    if !d.exists() {
+        // Fallback for different running environments, try absolute path
+        d = PathBuf::from("f:\\CodeProjects\\PaintBoard\\abr\\202002.abr");
+    }
+
+    assert!(d.exists(), "Test file not found at {:?}", d);
+
+    let data = std::fs::read(&d).expect("Failed to read test ABR file");
+    let abr_file = AbrParser::parse(&data).expect("Failed to parse ABR file");
+
+    assert!(
+        abr_file.version.is_new_format(),
+        "ABR v9 should be treated as modern (v6+) format"
+    );
+    assert!(
+        !abr_file.brushes.is_empty(),
+        "ABR v9 file should contain at least one brush"
+    );
+}
