@@ -180,6 +180,8 @@ export interface DualBrushSettings {
   mode: DualBlendMode;
   flip: boolean;
   size: number; // Pixels
+  /** Dual size ratio relative to the preset's saved main size (dual_size / main_size) */
+  sizeRatio: number; // 0-10
   spacing: number; // 0-10
   roundness?: number; // 0-100 (secondary tip shape)
   scatter: number; // Rust side uses f32
@@ -197,6 +199,7 @@ export const DEFAULT_DUAL_BRUSH: DualBrushSettings = {
   mode: 'multiply',
   flip: false,
   size: 25,
+  sizeRatio: 1.25,
   spacing: 0.25,
   roundness: 100,
   scatter: 0,
@@ -229,6 +232,8 @@ export interface BrushTexture {
 const clampSize = (size: number): number => Math.max(1, Math.min(1000, size));
 /** Clamp texture scale percentage to valid range */
 const clampTextureScale = (scale: number): number => Math.max(1, Math.min(1000, scale));
+/** Clamp dual brush size ratio to valid range */
+const clampDualSizeRatio = (ratio: number): number => Math.max(0, Math.min(10, ratio));
 
 /**
  * Apply pressure curve transformation
@@ -466,7 +471,19 @@ export const useToolStore = create<ToolState>()(
 
       setTool: (tool) => set({ currentTool: tool }),
 
-      setBrushSize: (size) => set({ brushSize: clampSize(size) }),
+      setBrushSize: (size) =>
+        set((state) => {
+          const clamped = clampSize(size);
+          const ratio = clampDualSizeRatio(state.dualBrush.sizeRatio);
+          return {
+            brushSize: clamped,
+            dualBrush: {
+              ...state.dualBrush,
+              size: clampSize(clamped * ratio),
+              sizeRatio: ratio,
+            },
+          };
+        }),
 
       setBrushFlow: (flow) => set({ brushFlow: Math.max(0.01, Math.min(1, flow)) }),
 
@@ -503,7 +520,18 @@ export const useToolStore = create<ToolState>()(
         if (state.currentTool === 'eraser') {
           set({ eraserSize: clampSize(size) });
         } else {
-          set({ brushSize: clampSize(size) });
+          set((s) => {
+            const clamped = clampSize(size);
+            const ratio = clampDualSizeRatio(s.dualBrush.sizeRatio);
+            return {
+              brushSize: clamped,
+              dualBrush: {
+                ...s.dualBrush,
+                size: clampSize(clamped * ratio),
+                sizeRatio: ratio,
+              },
+            };
+          });
         }
       },
 
@@ -628,15 +656,76 @@ export const useToolStore = create<ToolState>()(
       toggleDualBrush: () => set((state) => ({ dualBrushEnabled: !state.dualBrushEnabled })),
 
       setDualBrush: (settings) =>
-        set((state) => ({
-          dualBrush: { ...state.dualBrush, ...settings },
-        })),
+        set((state) => {
+          const base = { ...state.dualBrush, ...settings };
+          const brushSize = state.brushSize;
+
+          if (settings.sizeRatio !== undefined) {
+            const ratio = clampDualSizeRatio(settings.sizeRatio);
+            return {
+              dualBrush: {
+                ...base,
+                sizeRatio: ratio,
+                size: clampSize(brushSize * ratio),
+              },
+            };
+          }
+
+          if (settings.size !== undefined) {
+            const size = clampSize(settings.size);
+            const ratio = brushSize > 0 ? clampDualSizeRatio(size / brushSize) : 1;
+            return {
+              dualBrush: {
+                ...base,
+                size,
+                sizeRatio: ratio,
+              },
+            };
+          }
+
+          // Ensure persisted/legacy state always has a valid ratio.
+          const ratio =
+            typeof base.sizeRatio === 'number' && Number.isFinite(base.sizeRatio)
+              ? clampDualSizeRatio(base.sizeRatio)
+              : brushSize > 0
+                ? clampDualSizeRatio(clampSize(base.size) / brushSize)
+                : 1;
+
+          return {
+            dualBrush: {
+              ...base,
+              size: clampSize(base.size),
+              sizeRatio: ratio,
+            },
+          };
+        }),
 
       resetDualBrush: () => set({ dualBrush: { ...DEFAULT_DUAL_BRUSH } }),
     }),
     {
       name: 'paintboard-brush-settings',
+      version: 2,
       // Only persist brush-related settings, not current tool or runtime state
+      migrate: (persistedState: unknown) => {
+        if (!persistedState || typeof persistedState !== 'object') return persistedState as any;
+
+        const state = persistedState as any;
+        const brushSize = typeof state.brushSize === 'number' ? state.brushSize : 20;
+
+        if (state.dualBrush && typeof state.dualBrush === 'object') {
+          const dual = state.dualBrush as any;
+          const size = typeof dual.size === 'number' ? dual.size : 25;
+
+          if (typeof dual.sizeRatio !== 'number' || !Number.isFinite(dual.sizeRatio)) {
+            const ratio = brushSize > 0 ? size / brushSize : 1;
+            dual.sizeRatio = clampDualSizeRatio(ratio);
+          } else {
+            dual.sizeRatio = clampDualSizeRatio(dual.sizeRatio);
+          }
+        }
+
+        return state;
+      },
       partialize: (state) => ({
         brushSize: state.brushSize,
         brushFlow: state.brushFlow,
@@ -675,6 +764,7 @@ export const useToolStore = create<ToolState>()(
               mode: state.dualBrush.mode,
               flip: state.dualBrush.flip,
               size: state.dualBrush.size,
+              sizeRatio: state.dualBrush.sizeRatio,
               spacing: state.dualBrush.spacing,
               roundness: state.dualBrush.roundness,
               scatter: state.dualBrush.scatter,

@@ -5,6 +5,7 @@ import {
   DEFAULT_COLOR_DYNAMICS,
   DEFAULT_SCATTER_SETTINGS,
   DEFAULT_SHAPE_DYNAMICS,
+  DEFAULT_DUAL_BRUSH,
   DEFAULT_TRANSFER_SETTINGS,
   useToolStore,
 } from '@/stores/tool';
@@ -22,9 +23,11 @@ describe('applyPresetToToolStore', () => {
       colorDynamics: { ...DEFAULT_COLOR_DYNAMICS, hueJitter: 55, purity: 10 },
       transferEnabled: true,
       transfer: { ...DEFAULT_TRANSFER_SETTINGS, opacityJitter: 66, minimumOpacity: 22 },
+      dualBrushEnabled: true,
+      dualBrush: { ...DEFAULT_DUAL_BRUSH, enabled: true, brushId: 'leak', size: 80, sizeRatio: 2 },
     });
 
-    applyPresetToToolStore(DEFAULT_ROUND_BRUSH);
+    applyPresetToToolStore(DEFAULT_ROUND_BRUSH, []);
 
     const s = useToolStore.getState();
     expect(s.brushOpacity).toBe(1);
@@ -41,6 +44,9 @@ describe('applyPresetToToolStore', () => {
 
     expect(s.transferEnabled).toBe(false);
     expect(s.transfer).toEqual(DEFAULT_TRANSFER_SETTINGS);
+
+    expect(s.dualBrushEnabled).toBe(false);
+    expect(s.dualBrush).toEqual(DEFAULT_DUAL_BRUSH);
   });
 
   it('应用 ABR preset 的基础值与动态面板参数', () => {
@@ -93,7 +99,7 @@ describe('applyPresetToToolStore', () => {
       },
     };
 
-    applyPresetToToolStore(preset);
+    applyPresetToToolStore(preset, []);
 
     const s = useToolStore.getState();
     expect(s.brushOpacity).toBeCloseTo(0.5);
@@ -118,5 +124,54 @@ describe('applyPresetToToolStore', () => {
     expect(s.transferEnabled).toBe(true);
     expect(s.transfer.opacityJitter).toBe(50);
     expect(s.transfer.flowJitter).toBe(60);
+  });
+
+  it('应用 Dual Brush preset 并正确映射 secondary tip', () => {
+    const secondaryPreset: BrushPreset = {
+      ...DEFAULT_ROUND_BRUSH,
+      id: 'secondary-1',
+      name: 'Secondary Tip',
+      hasTexture: false,
+      textureWidth: null,
+      textureHeight: null,
+    };
+
+    const preset: BrushPreset = {
+      ...DEFAULT_ROUND_BRUSH,
+      id: 'main-1',
+      name: 'Main With Dual',
+      diameter: 100,
+      dualBrushSettings: {
+        enabled: true,
+        brushId: 'secondary-1',
+        brushName: null,
+        mode: 'overlay',
+        flip: true,
+        size: 50,
+        roundness: 80,
+        sizeRatio: 0.5,
+        spacing: 0.12,
+        scatter: 123,
+        bothAxes: true,
+        count: 3,
+      },
+    };
+
+    applyPresetToToolStore(preset, [secondaryPreset, preset]);
+
+    const s = useToolStore.getState();
+    expect(s.dualBrushEnabled).toBe(true);
+    expect(s.dualBrush.brushId).toBe('secondary-1');
+    expect(s.dualBrush.brushIndex).toBe(0);
+    expect(s.dualBrush.brushName).toBe('Secondary Tip');
+    expect(s.dualBrush.mode).toBe('overlay');
+    expect(s.dualBrush.flip).toBe(true);
+    expect(s.dualBrush.spacing).toBeCloseTo(0.12);
+    expect(s.dualBrush.scatter).toBe(123);
+    expect(s.dualBrush.bothAxes).toBe(true);
+    expect(s.dualBrush.count).toBe(3);
+    expect(s.dualBrush.roundness).toBe(80);
+    expect(s.dualBrush.sizeRatio).toBeCloseTo(0.5);
+    expect(s.dualBrush.size).toBe(50);
   });
 });

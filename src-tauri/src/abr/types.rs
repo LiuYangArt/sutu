@@ -332,6 +332,12 @@ pub struct DualBrushSettings {
     /// Size override for secondary brush (pixels)
     pub size: f32,
 
+    /// Roundness (0-100, Photoshop-compatible)
+    pub roundness: f32,
+
+    /// Dual size ratio relative to the preset's saved main size (dual_size / main_size)
+    pub size_ratio: f32,
+
     /// Spacing for secondary brush (% of diameter, 0.0-1.0)
     pub spacing: f32,
 
@@ -354,6 +360,8 @@ impl Default for DualBrushSettings {
             mode: DualBlendMode::Multiply,
             flip: false,
             size: 25.0,
+            roundness: 100.0,
+            size_ratio: 1.0,
             spacing: 0.25,
             scatter: 0.0,
             both_axes: false,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { useToolStore } from '../tool';
+import { useToolStore, DEFAULT_DUAL_BRUSH } from '../tool';
 
 describe('ToolStore', () => {
   describe('setTool', () => {
@@ -30,6 +30,54 @@ describe('ToolStore', () => {
 
       store.setBrushSize(0);
       expect(useToolStore.getState().brushSize).toBe(1);
+    });
+  });
+
+  describe('Dual Brush Size Ratio', () => {
+    it('should update dual brush size when main brush size changes', () => {
+      useToolStore.setState({
+        brushSize: 20,
+        dualBrush: { ...DEFAULT_DUAL_BRUSH },
+      });
+
+      const store = useToolStore.getState();
+
+      // main = 100, dual = 50 -> ratio = 0.5
+      store.setBrushSize(100);
+      store.setDualBrush({ size: 50 });
+
+      // main = 200 -> dual = 100
+      store.setBrushSize(200);
+
+      const s = useToolStore.getState();
+      expect(s.dualBrush.size).toBe(100);
+      expect(s.dualBrush.sizeRatio).toBeCloseTo(0.5);
+    });
+
+    it('should update sizeRatio when dual size is changed directly', () => {
+      useToolStore.setState({
+        brushSize: 100,
+        dualBrush: { ...DEFAULT_DUAL_BRUSH },
+      });
+
+      const store = useToolStore.getState();
+      store.setDualBrush({ size: 150 });
+
+      expect(useToolStore.getState().dualBrush.sizeRatio).toBeCloseTo(1.5);
+    });
+
+    it('should use sizeRatio as the source of truth when provided', () => {
+      useToolStore.setState({
+        brushSize: 80,
+        dualBrush: { ...DEFAULT_DUAL_BRUSH },
+      });
+
+      const store = useToolStore.getState();
+      store.setDualBrush({ size: 999, sizeRatio: 0.5 });
+
+      const s = useToolStore.getState();
+      expect(s.dualBrush.size).toBe(40);
+      expect(s.dualBrush.sizeRatio).toBeCloseTo(0.5);
     });
   });
 

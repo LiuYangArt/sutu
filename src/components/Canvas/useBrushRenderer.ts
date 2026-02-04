@@ -387,14 +387,8 @@ export function useBrushRenderer({
       if (dualEnabled && dualBrush) {
         const secondaryStamper = secondaryStamperRef.current;
 
-        // Calculate secondary brush size (scale with main brush like PS)
-        // Use the same scaling logic as before: relative to native size
-        let nativeSize = 200;
-        if (config.texture) {
-          nativeSize = Math.max(config.texture.width, config.texture.height);
-        }
-        const scaleFactor = size / nativeSize;
-        const secondarySize = dualBrush.size * scaleFactor;
+        // Secondary size is maintained by the store (Photoshop-like ratio behavior).
+        const secondarySize = dualBrush.size;
 
         // Use secondary brush's own spacing (this was the missing part!)
         const secondarySpacing = dualBrush.spacing ?? 0.1;

@@ -18,6 +18,8 @@ export interface BrushPreset {
   cursorBounds?: { width: number; height: number } | null;
   /** Texture settings from ABR Texture panel */
   textureSettings?: TextureSettings | null;
+  /** Dual Brush settings from ABR Dual Brush panel */
+  dualBrushSettings?: DualBrushSettingsPreset | null;
 
   /** Shape Dynamics (Photoshop-compatible) */
   shapeDynamicsEnabled?: boolean | null;
@@ -36,6 +38,33 @@ export interface BrushPreset {
   baseOpacity?: number | null;
   /** Base flow (0..1) */
   baseFlow?: number | null;
+}
+
+/** Dual blend mode (Photoshop Dual Brush panel compatible) */
+export type DualBlendMode =
+  | 'multiply'
+  | 'darken'
+  | 'overlay'
+  | 'colorDodge'
+  | 'colorBurn'
+  | 'linearBurn'
+  | 'hardMix'
+  | 'linearHeight';
+
+/** Dual Brush settings payload from ABR import */
+export interface DualBrushSettingsPreset {
+  enabled: boolean;
+  brushId: string | null;
+  brushName: string | null;
+  mode: DualBlendMode;
+  flip: boolean;
+  size: number; // px
+  roundness: number; // 0-100
+  sizeRatio: number; // dual_size / main_size (0-10)
+  spacing: number; // 0-1
+  scatter: number;
+  bothAxes: boolean;
+  count: number;
 }
 
 /** ABR import benchmark timing */

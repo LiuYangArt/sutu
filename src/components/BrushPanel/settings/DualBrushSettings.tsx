@@ -37,6 +37,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
   const { dualBrush, setDualBrush, dualBrushEnabled } = useToolStore();
 
   const disabled = !dualBrushEnabled;
+  const ratioPercent = Math.round(dualBrush.sizeRatio * 100);
 
   const handlePresetSelect = (preset: BrushPreset, index: number) => {
     // 1. Immediate UI update
@@ -186,7 +187,7 @@ export function DualBrushSettings({ importedPresets }: DualBrushSettingsProps): 
           value={dualBrush.size}
           min={1}
           max={1000}
-          displayValue={`${Math.round(dualBrush.size)} px`}
+          displayValue={`${Math.round(dualBrush.size)} px (${ratioPercent}%)`}
           onChange={(v) => setDualBrush({ size: v })}
           disabled={disabled}
           nonLinearConfig={BRUSH_SIZE_SLIDER_CONFIG}

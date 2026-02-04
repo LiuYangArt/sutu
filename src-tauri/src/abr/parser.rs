@@ -1589,6 +1589,11 @@ impl AbrParser {
                 settings.size = *value as f32;
             }
 
+            // Roundness (Rndn)
+            if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Rndn") {
+                settings.roundness = *value as f32;
+            }
+
             // Spacing (Spcn)
             if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Spcn") {
                 settings.spacing = (*value as f32) / 100.0;
@@ -1606,6 +1611,29 @@ impl AbrParser {
             }
         }
 
+        // 6. Size ratio (dual_size / main_size at save time)
+        // Photoshop stores both main and dual sizes as absolute pixels in the preset,
+        // but at runtime it keeps a ratio so dual size scales with main brush size changes.
+        let main_size = match brush_desc.get("Brsh") {
+            Some(DescriptorValue::Descriptor(brsh)) => match brsh.get("Dmtr") {
+                Some(DescriptorValue::UnitFloat { value, .. }) => *value as f32,
+                _ => 0.0,
+            },
+            _ => 0.0,
+        };
+
+        let ratio = if main_size > 0.0 {
+            settings.size / main_size
+        } else {
+            1.0
+        };
+
+        settings.size_ratio = if ratio.is_finite() {
+            ratio.clamp(0.0, 10.0)
+        } else {
+            1.0
+        };
+
         Some(settings)
     }
 }
@@ -1614,6 +1642,66 @@ impl AbrParser {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_dual_brush_size_ratio() {
+        let mut brush_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+
+        // Main brush (saved) size
+        let mut main_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        main_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 100.0,
+            },
+        );
+        brush_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(main_brsh));
+
+        // Dual brush descriptor
+        let mut dual_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        let mut dual_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 50.0,
+            },
+        );
+        dual_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(dual_brsh));
+        brush_desc.insert(
+            "dualBrush".to_string(),
+            DescriptorValue::Descriptor(dual_desc),
+        );
+
+        let settings = AbrParser::parse_dual_brush_settings(&brush_desc).expect("dual settings");
+        assert_eq!(settings.size, 50.0);
+        assert!((settings.size_ratio - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_dual_brush_size_ratio_main_missing() {
+        let mut brush_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+
+        let mut dual_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        let mut dual_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 50.0,
+            },
+        );
+        dual_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(dual_brsh));
+        brush_desc.insert(
+            "dualBrush".to_string(),
+            DescriptorValue::Descriptor(dual_desc),
+        );
+
+        let settings = AbrParser::parse_dual_brush_settings(&brush_desc).expect("dual settings");
+        assert_eq!(settings.size, 50.0);
+        assert_eq!(settings.size_ratio, 1.0);
+    }
 
     #[test]
     fn test_apply_advanced_dynamics_from_descriptor() {

@@ -90,3 +90,4 @@ test-results/
 debug_output/
 target-cargo/debug/
 target-cargo/
+*.abr

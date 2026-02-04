@@ -9,13 +9,14 @@ import {
   ImportAbrResult,
 } from '../types';
 import { BrushThumbnail } from '../BrushThumbnail';
+import { loadBrushTexture } from '@/utils/brushLoader';
 
 interface BrushPresetsProps {
   importedPresets: BrushPreset[];
   setImportedPresets: (presets: BrushPreset[]) => void;
 }
 
-export function applyPresetToToolStore(preset: BrushPreset): void {
+export function applyPresetToToolStore(preset: BrushPreset, importedPresets: BrushPreset[]): void {
   const {
     setBrushSize,
     setBrushHardness,
@@ -40,7 +41,14 @@ export function applyPresetToToolStore(preset: BrushPreset): void {
     resetTransfer,
     setTransferEnabled,
     setTransfer,
+    resetDualBrush,
+    setDualBrushEnabled,
+    setDualBrush,
   } = useToolStore.getState();
+
+  // Reset Dual Brush first to prevent preset-to-preset leakage
+  resetDualBrush();
+  setDualBrushEnabled(false);
 
   setBrushSize(Math.round(preset.diameter));
   setBrushHardness(Math.round(preset.hardness));
@@ -112,6 +120,81 @@ export function applyPresetToToolStore(preset: BrushPreset): void {
 
   // Enable texture based on preset's texture settings, not brush tip type
   setTextureEnabled(shouldEnableTexture);
+
+  // Apply dual brush settings from preset (Photoshop Dual Brush panel)
+  if (preset.dualBrushSettings?.enabled === true) {
+    const dual = preset.dualBrushSettings;
+
+    let brushIndex: number | null = null;
+    let texture: BrushTexture | undefined = undefined;
+
+    const secondaryPreset = dual.brushId
+      ? (importedPresets.find((p) => p.id === dual.brushId) ?? null)
+      : null;
+
+    if (secondaryPreset) {
+      brushIndex = importedPresets.findIndex((p) => p.id === secondaryPreset.id);
+
+      if (
+        secondaryPreset.hasTexture &&
+        secondaryPreset.textureWidth &&
+        secondaryPreset.textureHeight
+      ) {
+        texture = {
+          id: secondaryPreset.id,
+          data: '',
+          width: secondaryPreset.textureWidth,
+          height: secondaryPreset.textureHeight,
+        };
+      }
+    }
+
+    setDualBrushEnabled(true);
+    setDualBrush({
+      enabled: true,
+      brushId: dual.brushId,
+      brushIndex,
+      brushName: dual.brushName ?? secondaryPreset?.name ?? null,
+      mode: dual.mode,
+      flip: dual.flip,
+      spacing: dual.spacing,
+      scatter: dual.scatter,
+      bothAxes: dual.bothAxes,
+      count: dual.count,
+      roundness: dual.roundness,
+      texture,
+      sizeRatio: dual.sizeRatio,
+    });
+
+    // Preload secondary texture to avoid "first stroke black" issue
+    if (texture) {
+      loadBrushTexture(texture.id, texture.width, texture.height)
+        .then((imageData) => {
+          if (!imageData) return;
+
+          const currentBrushId = useToolStore.getState().dualBrush.brushId;
+          if (currentBrushId !== texture.id) return;
+
+          useToolStore.setState((state) => {
+            const currentDual = state.dualBrush;
+            if (currentDual.brushId !== texture.id || !currentDual.texture) return state;
+
+            return {
+              dualBrush: {
+                ...currentDual,
+                texture: {
+                  ...currentDual.texture,
+                  imageData,
+                },
+              },
+            };
+          });
+        })
+        .catch((err) => {
+          console.error('[DualBrush] Failed to preload texture (preset apply):', err);
+        });
+    }
+  }
 }
 
 export function BrushPresets({
@@ -162,7 +245,7 @@ export function BrushPresets({
     // Update selected preset ID for visual feedback
     setSelectedPresetId(preset.id);
 
-    applyPresetToToolStore(preset);
+    applyPresetToToolStore(preset, importedPresets);
   };
 
   return (
