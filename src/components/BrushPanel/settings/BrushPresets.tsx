@@ -170,11 +170,18 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
   if (preset.dualBrushSettings?.enabled === true) {
     const dual = preset.dualBrushSettings;
 
-    const secondaryPreset = dual.brushId
-      ? (importedTips.find((p) => p.id === dual.brushId || p.sourceUuid === dual.brushId) ?? null)
-      : null;
+    let secondaryPreset: BrushPreset | null = null;
+    let brushIndex: number | null = null;
+    if (dual.brushId) {
+      const idx = importedTips.findIndex(
+        (p) => p.id === dual.brushId || p.sourceUuid === dual.brushId
+      );
+      if (idx >= 0) {
+        secondaryPreset = importedTips[idx] ?? null;
+        brushIndex = idx;
+      }
+    }
 
-    const brushIndex = secondaryPreset ? importedTips.indexOf(secondaryPreset) : null;
     const texture = secondaryPreset ? createBrushTextureFromPreset(secondaryPreset) : undefined;
     const resolvedBrushId = secondaryPreset?.id ?? dual.brushId ?? null;
 

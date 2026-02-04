@@ -796,10 +796,13 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
         // Build preset with the ID we generated
         let preset = build_preset_with_id(brush, id);
-        tips.push(preset.clone());
-        if !is_tip_only {
-            presets.push(preset);
+        if is_tip_only {
+            tips.push(preset);
+            continue;
         }
+
+        presets.push(preset.clone());
+        tips.push(preset);
     }
 
     let cache_ms = cache_start.elapsed().as_secs_f64() * 1000.0;
@@ -851,62 +854,9 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
 
 /// Build BrushPreset with a specific ID (used when we generate ID before caching)
 fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
-    let dynamics = brush.dynamics.as_ref();
-    let source_uuid = brush.uuid.clone();
-
-    // Generate cursor outline from texture if available
-    let (cursor_path, cursor_bounds) = brush
-        .tip_image
-        .as_ref()
-        .map(|img| {
-            let path = crate::abr::cursor::extract_cursor_outline(img, 128);
-            let bounds = path.as_ref().map(|_| crate::abr::CursorBoundsData {
-                width: img.width as f32,
-                height: img.height as f32,
-            });
-            (path, bounds)
-        })
-        .unwrap_or((None, None));
-
-    let has_texture = brush.tip_image.is_some() && !brush.is_computed;
-
-    BrushPreset {
-        id,
-        source_uuid,
-        name: brush.name,
-        diameter: brush.diameter,
-        spacing: brush.spacing * 100.0,
-        hardness: brush.hardness.unwrap_or(100.0),
-        angle: brush.angle,
-        roundness: brush.roundness * 100.0,
-        has_texture,
-        texture_width: if has_texture {
-            brush.tip_image.as_ref().map(|img| img.width)
-        } else {
-            None
-        },
-        texture_height: if has_texture {
-            brush.tip_image.as_ref().map(|img| img.height)
-        } else {
-            None
-        },
-        size_pressure: dynamics.map(|d| d.size_control == 2).unwrap_or(false),
-        opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
-        cursor_path,
-        cursor_bounds,
-        texture_settings: brush.texture_settings,
-        dual_brush_settings: brush.dual_brush_settings,
-        shape_dynamics_enabled: brush.shape_dynamics_enabled,
-        shape_dynamics: brush.shape_dynamics,
-        scatter_enabled: brush.scatter_enabled,
-        scatter: brush.scatter,
-        color_dynamics_enabled: brush.color_dynamics_enabled,
-        color_dynamics: brush.color_dynamics,
-        transfer_enabled: brush.transfer_enabled,
-        transfer: brush.transfer,
-        base_opacity: brush.base_opacity,
-        base_flow: brush.base_flow,
-    }
+    let mut preset: BrushPreset = brush.into();
+    preset.id = id;
+    preset
 }
 
 // ============================================================================
