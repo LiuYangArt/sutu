@@ -15,6 +15,105 @@ interface BrushPresetsProps {
   setImportedPresets: (presets: BrushPreset[]) => void;
 }
 
+export function applyPresetToToolStore(preset: BrushPreset): void {
+  const {
+    setBrushSize,
+    setBrushHardness,
+    setBrushSpacing,
+    setBrushRoundness,
+    setBrushAngle,
+    setBrushOpacity,
+    setBrushFlow,
+    setBrushTexture,
+    clearBrushTexture,
+    setTextureEnabled,
+    setTextureSettings,
+    resetShapeDynamics,
+    setShapeDynamicsEnabled,
+    setShapeDynamics,
+    resetScatter,
+    setScatterEnabled,
+    setScatter,
+    resetColorDynamics,
+    setColorDynamicsEnabled,
+    setColorDynamics,
+    resetTransfer,
+    setTransferEnabled,
+    setTransfer,
+  } = useToolStore.getState();
+
+  setBrushSize(Math.round(preset.diameter));
+  setBrushHardness(Math.round(preset.hardness));
+  setBrushSpacing(preset.spacing / 100);
+  setBrushRoundness(Math.round(preset.roundness));
+  setBrushAngle(Math.round(preset.angle));
+
+  // Base Opacity/Flow (reset to defaults when missing to avoid preset-to-preset leakage)
+  setBrushOpacity(preset.baseOpacity ?? 1);
+  setBrushFlow(preset.baseFlow ?? 1);
+
+  // Reset Photoshop-compatible dynamics panels to avoid leaking state across presets
+  resetShapeDynamics();
+  setShapeDynamicsEnabled(false);
+  resetScatter();
+  setScatterEnabled(false);
+  resetColorDynamics();
+  setColorDynamicsEnabled(false);
+  resetTransfer();
+  setTransferEnabled(false);
+
+  if (preset.shapeDynamicsEnabled === true) {
+    if (preset.shapeDynamics) setShapeDynamics(preset.shapeDynamics);
+    setShapeDynamicsEnabled(true);
+  }
+  if (preset.scatterEnabled === true) {
+    if (preset.scatter) setScatter(preset.scatter);
+    setScatterEnabled(true);
+  }
+  if (preset.colorDynamicsEnabled === true) {
+    if (preset.colorDynamics) setColorDynamics(preset.colorDynamics);
+    setColorDynamicsEnabled(true);
+  }
+  if (preset.transferEnabled === true) {
+    if (preset.transfer) setTransfer(preset.transfer);
+    setTransferEnabled(true);
+  }
+
+  // Apply texture reference if preset has one
+  // Note: Texture data is fetched via protocol when needed for rendering
+  if (preset.hasTexture && preset.textureWidth && preset.textureHeight) {
+    const texture: BrushTexture = {
+      id: preset.id,
+      // Data will be fetched via project://brush/{id} when rendering
+      data: '', // Empty - not used for rendering anymore
+      width: preset.textureWidth,
+      height: preset.textureHeight,
+      cursorPath: preset.cursorPath ?? undefined,
+      cursorBounds: preset.cursorBounds ?? undefined,
+    };
+    setBrushTexture(texture);
+  } else {
+    // Clear texture for procedural brushes
+    clearBrushTexture();
+  }
+
+  // Apply texture settings from preset (Photoshop Texture panel)
+  // Enable texture only if preset has textureSettings with a patternId
+  // Note: hasTexture indicates sampled brush (tip image), NOT Texture Tab
+  const shouldEnableTexture = !!preset.textureSettings?.patternId;
+
+  if (preset.textureSettings) {
+    // Use preset's texture settings if available
+    setTextureSettings(preset.textureSettings);
+  } else {
+    // Reset to defaults if preset has no texture settings
+    setTextureSettings(DEFAULT_TEXTURE_SETTINGS);
+  }
+
+  // Enable texture based on preset's texture settings, not brush tip type
+  setTextureEnabled(shouldEnableTexture);
+}
+
 export function BrushPresets({
   importedPresets,
   setImportedPresets,
@@ -22,18 +121,6 @@ export function BrushPresets({
   const [selectedPresetId, setSelectedPresetId] = useState<string>(DEFAULT_ROUND_BRUSH.id);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-
-  const {
-    setBrushSize,
-    setBrushHardness,
-    setBrushSpacing,
-    setBrushRoundness,
-    setBrushAngle,
-    setBrushTexture,
-    clearBrushTexture,
-    setTextureEnabled,
-    setTextureSettings,
-  } = useToolStore();
 
   /** Import ABR file (optimized: zero-encoding, LZ4 compression) */
   const handleImportABR = async () => {
@@ -75,45 +162,7 @@ export function BrushPresets({
     // Update selected preset ID for visual feedback
     setSelectedPresetId(preset.id);
 
-    setBrushSize(Math.round(preset.diameter));
-    setBrushHardness(Math.round(preset.hardness));
-    setBrushSpacing(preset.spacing / 100);
-    setBrushRoundness(Math.round(preset.roundness));
-    setBrushAngle(Math.round(preset.angle));
-
-    // Apply texture reference if preset has one
-    // Note: Texture data is fetched via protocol when needed for rendering
-    if (preset.hasTexture && preset.textureWidth && preset.textureHeight) {
-      const texture: BrushTexture = {
-        id: preset.id,
-        // Data will be fetched via project://brush/{id} when rendering
-        data: '', // Empty - not used for rendering anymore
-        width: preset.textureWidth,
-        height: preset.textureHeight,
-        cursorPath: preset.cursorPath ?? undefined,
-        cursorBounds: preset.cursorBounds ?? undefined,
-      };
-      setBrushTexture(texture);
-    } else {
-      // Clear texture for procedural brushes
-      clearBrushTexture();
-    }
-
-    // Apply texture settings from preset (Photoshop Texture panel)
-    // Enable texture only if preset has textureSettings with a patternId
-    // Note: hasTexture indicates sampled brush (tip image), NOT Texture Tab
-    const shouldEnableTexture = !!preset.textureSettings?.patternId;
-
-    if (preset.textureSettings) {
-      // Use preset's texture settings if available
-      setTextureSettings(preset.textureSettings);
-    } else {
-      // Reset to defaults if preset has no texture settings
-      setTextureSettings(DEFAULT_TEXTURE_SETTINGS);
-    }
-
-    // Enable texture based on preset's texture settings, not brush tip type
-    setTextureEnabled(shouldEnableTexture);
+    applyPresetToToolStore(preset);
   };
 
   return (

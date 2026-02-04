@@ -64,6 +64,21 @@ pub struct AbrBrush {
     pub texture_settings: Option<TextureSettings>,
     /// Dual brush settings (parsed from descriptor)
     pub dual_brush_settings: Option<DualBrushSettings>,
+
+    // Photoshop-compatible advanced dynamics (from descriptor)
+    pub shape_dynamics_enabled: Option<bool>,
+    pub shape_dynamics: Option<ShapeDynamicsSettings>,
+    pub scatter_enabled: Option<bool>,
+    pub scatter: Option<ScatterSettings>,
+    pub color_dynamics_enabled: Option<bool>,
+    pub color_dynamics: Option<ColorDynamicsSettings>,
+    pub transfer_enabled: Option<bool>,
+    pub transfer: Option<TransferSettings>,
+
+    /// Base opacity (0..1) if specified in ABR
+    pub base_opacity: Option<f32>,
+    /// Base flow (0..1) if specified in ABR
+    pub base_flow: Option<f32>,
 }
 
 /// Grayscale image data for brush tips
@@ -123,6 +138,142 @@ pub struct AbrDynamics {
     pub opacity_control: u32,
     /// Opacity jitter
     pub opacity_jitter: f32,
+}
+
+/// Control source for dynamic brush parameters (Photoshop-compatible)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ControlSource {
+    /// No control, use base value only
+    #[default]
+    Off,
+    /// Fade over stroke distance
+    Fade,
+    /// Pen pressure (0-1)
+    PenPressure,
+    /// Pen tilt magnitude
+    PenTilt,
+    /// Pen barrel rotation
+    Rotation,
+    /// Stroke direction (Angle only)
+    Direction,
+    /// Initial direction at stroke start (Angle only)
+    Initial,
+}
+
+/// Shape Dynamics settings (Photoshop Shape Dynamics panel compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShapeDynamicsSettings {
+    // Size Jitter
+    pub size_jitter: f32, // 0-100 (%)
+    pub size_control: ControlSource,
+    pub minimum_diameter: f32, // 0-100 (%)
+
+    // Angle Jitter
+    pub angle_jitter: f32, // 0-360 (deg)
+    pub angle_control: ControlSource,
+
+    // Roundness Jitter
+    pub roundness_jitter: f32, // 0-100 (%)
+    pub roundness_control: ControlSource,
+    pub minimum_roundness: f32, // 0-100 (%)
+
+    // Flip Jitter
+    pub flip_x_jitter: bool,
+    pub flip_y_jitter: bool,
+}
+
+impl Default for ShapeDynamicsSettings {
+    fn default() -> Self {
+        Self {
+            size_jitter: 0.0,
+            size_control: ControlSource::Off,
+            minimum_diameter: 0.0,
+            angle_jitter: 0.0,
+            angle_control: ControlSource::Off,
+            roundness_jitter: 0.0,
+            roundness_control: ControlSource::Off,
+            minimum_roundness: 25.0,
+            flip_x_jitter: false,
+            flip_y_jitter: false,
+        }
+    }
+}
+
+/// Scatter settings (Photoshop Scattering panel compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScatterSettings {
+    pub scatter: f32, // 0-1000 (% of diameter)
+    pub scatter_control: ControlSource,
+    pub both_axes: bool,
+    pub count: u32, // 1-16
+    pub count_control: ControlSource,
+    pub count_jitter: f32, // 0-100 (%)
+}
+
+impl Default for ScatterSettings {
+    fn default() -> Self {
+        Self {
+            scatter: 0.0,
+            scatter_control: ControlSource::Off,
+            both_axes: false,
+            count: 1,
+            count_control: ControlSource::Off,
+            count_jitter: 0.0,
+        }
+    }
+}
+
+/// Color Dynamics settings (Photoshop Color Dynamics panel compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColorDynamicsSettings {
+    pub foreground_background_jitter: f32, // 0-100 (%)
+    pub foreground_background_control: ControlSource,
+    pub hue_jitter: f32,        // 0-100 (%)
+    pub saturation_jitter: f32, // 0-100 (%)
+    pub brightness_jitter: f32, // 0-100 (%)
+    pub purity: f32,            // -100..100
+}
+
+impl Default for ColorDynamicsSettings {
+    fn default() -> Self {
+        Self {
+            foreground_background_jitter: 0.0,
+            foreground_background_control: ControlSource::Off,
+            hue_jitter: 0.0,
+            saturation_jitter: 0.0,
+            brightness_jitter: 0.0,
+            purity: 0.0,
+        }
+    }
+}
+
+/// Transfer settings (Photoshop Transfer panel compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferSettings {
+    pub opacity_jitter: f32, // 0-100 (%)
+    pub opacity_control: ControlSource,
+    pub minimum_opacity: f32, // 0-100 (%)
+    pub flow_jitter: f32,     // 0-100 (%)
+    pub flow_control: ControlSource,
+    pub minimum_flow: f32, // 0-100 (%)
+}
+
+impl Default for TransferSettings {
+    fn default() -> Self {
+        Self {
+            opacity_jitter: 0.0,
+            opacity_control: ControlSource::Off,
+            minimum_opacity: 0.0,
+            flow_jitter: 0.0,
+            flow_control: ControlSource::Off,
+            minimum_flow: 0.0,
+        }
+    }
 }
 
 /// Texture blend mode (Photoshop-compatible)
@@ -305,6 +456,24 @@ pub struct BrushPreset {
     pub texture_settings: Option<TextureSettings>,
     /// Dual brush settings (from ABR Dual Brush panel data)
     pub dual_brush_settings: Option<DualBrushSettings>,
+
+    /// Shape Dynamics (Photoshop-compatible)
+    pub shape_dynamics_enabled: Option<bool>,
+    pub shape_dynamics: Option<ShapeDynamicsSettings>,
+    /// Scattering (Photoshop-compatible)
+    pub scatter_enabled: Option<bool>,
+    pub scatter: Option<ScatterSettings>,
+    /// Color Dynamics (Photoshop-compatible)
+    pub color_dynamics_enabled: Option<bool>,
+    pub color_dynamics: Option<ColorDynamicsSettings>,
+    /// Transfer (Photoshop-compatible)
+    pub transfer_enabled: Option<bool>,
+    pub transfer: Option<TransferSettings>,
+
+    /// Base opacity (0..1)
+    pub base_opacity: Option<f32>,
+    /// Base flow (0..1)
+    pub base_flow: Option<f32>,
 }
 
 /// Cursor bounds data for frontend
@@ -363,6 +532,16 @@ impl From<AbrBrush> for BrushPreset {
             cursor_bounds,
             texture_settings: brush.texture_settings,
             dual_brush_settings: brush.dual_brush_settings,
+            shape_dynamics_enabled: brush.shape_dynamics_enabled,
+            shape_dynamics: brush.shape_dynamics,
+            scatter_enabled: brush.scatter_enabled,
+            scatter: brush.scatter,
+            color_dynamics_enabled: brush.color_dynamics_enabled,
+            color_dynamics: brush.color_dynamics,
+            transfer_enabled: brush.transfer_enabled,
+            transfer: brush.transfer,
+            base_opacity: brush.base_opacity,
+            base_flow: brush.base_flow,
         }
     }
 }
@@ -386,6 +565,16 @@ mod tests {
             is_computed: true,
             texture_settings: None,
             dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            base_opacity: None,
+            base_flow: None,
         };
 
         let preset: BrushPreset = brush.into();
@@ -409,6 +598,16 @@ mod tests {
             is_computed: false,
             texture_settings: None,
             dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            base_opacity: None,
+            base_flow: None,
         };
 
         let preset: BrushPreset = brush.into();

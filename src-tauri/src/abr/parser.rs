@@ -13,7 +13,10 @@ use super::defaults::AbrDefaults;
 use super::descriptor::{parse_descriptor, DescriptorValue};
 use super::error::AbrError;
 use super::samp::normalize_brush_texture;
-use super::types::{AbrBrush, AbrDynamics, AbrFile, AbrVersion, GrayscaleImage, TextureSettings};
+use super::types::{
+    AbrBrush, AbrDynamics, AbrFile, AbrVersion, ColorDynamicsSettings, ControlSource,
+    GrayscaleImage, ScatterSettings, ShapeDynamicsSettings, TextureSettings, TransferSettings,
+};
 use std::collections::HashMap;
 
 /// Preliminary brush data extracted from 'samp' section
@@ -378,6 +381,16 @@ impl AbrParser {
             is_computed: false,
             texture_settings: None,
             dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            base_opacity: None,
+            base_flow: None,
         })
     }
 
@@ -445,6 +458,16 @@ impl AbrParser {
 
                         texture_settings: None,
                         dual_brush_settings: None,
+                        shape_dynamics_enabled: None,
+                        shape_dynamics: None,
+                        scatter_enabled: None,
+                        scatter: None,
+                        color_dynamics_enabled: None,
+                        color_dynamics: None,
+                        transfer_enabled: None,
+                        transfer: None,
+                        base_opacity: None,
+                        base_flow: None,
                     },
                 )
             })
@@ -634,6 +657,16 @@ impl AbrParser {
                     is_computed: false,
                     texture_settings: None,
                     dual_brush_settings: None,
+                    shape_dynamics_enabled: None,
+                    shape_dynamics: None,
+                    scatter_enabled: None,
+                    scatter: None,
+                    color_dynamics_enabled: None,
+                    color_dynamics: None,
+                    transfer_enabled: None,
+                    transfer: None,
+                    base_opacity: None,
+                    base_flow: None,
                 }
             } else {
                 // UUID found but no data?
@@ -652,6 +685,16 @@ impl AbrParser {
                     is_computed: false,
                     texture_settings: None,
                     dual_brush_settings: None,
+                    shape_dynamics_enabled: None,
+                    shape_dynamics: None,
+                    scatter_enabled: None,
+                    scatter: None,
+                    color_dynamics_enabled: None,
+                    color_dynamics: None,
+                    transfer_enabled: None,
+                    transfer: None,
+                    base_opacity: None,
+                    base_flow: None,
                 }
             }
         } else {
@@ -696,6 +739,16 @@ impl AbrParser {
                 is_computed: true,
                 texture_settings: None,
                 dual_brush_settings: None,
+                shape_dynamics_enabled: None,
+                shape_dynamics: None,
+                scatter_enabled: None,
+                scatter: None,
+                color_dynamics_enabled: None,
+                color_dynamics: None,
+                transfer_enabled: None,
+                transfer: None,
+                base_opacity: None,
+                base_flow: None,
             }
         };
 
@@ -728,6 +781,9 @@ impl AbrParser {
         if let Some(DescriptorValue::Descriptor(brsh)) = brush_desc.get("Brsh") {
             Self::apply_brush_tip_params(brsh, &mut brush);
         }
+
+        // Apply Photoshop-compatible Dynamics / Scatter / Color Dynamics / Transfer + base Flow/Opacity
+        Self::apply_advanced_dynamics_from_descriptor(brush_desc, &mut brush);
 
         brush
     }
@@ -1077,6 +1133,353 @@ impl AbrParser {
         }
     }
 
+    fn apply_advanced_dynamics_from_descriptor(
+        brush_desc: &indexmap::IndexMap<String, DescriptorValue>,
+        brush: &mut AbrBrush,
+    ) {
+        // Base Opacity / Flow (0..1)
+        if let Some(opacity) =
+            Self::get_ratio_0_1(brush_desc, &["Opct", "opacity", "Opacity", "Opac"])
+        {
+            brush.base_opacity = Some(opacity);
+        }
+        if let Some(flow) = Self::get_ratio_0_1(brush_desc, &["Flw ", "flow", "Flow"]) {
+            brush.base_flow = Some(flow);
+        }
+
+        // ------------------------------------------------------------------
+        // Shape Dynamics
+        // ------------------------------------------------------------------
+        let mut shape = ShapeDynamicsSettings::default();
+        let mut has_shape_info = false;
+
+        if let Some(enabled) = Self::get_bool(brush_desc, &["useTipDynamics"]) {
+            brush.shape_dynamics_enabled = Some(enabled);
+            has_shape_info = true;
+        } else if brush_desc.get("ShDy").is_some() {
+            // Some ABR variants store Shape Dynamics as a sub-descriptor without an explicit toggle.
+            brush.shape_dynamics_enabled = Some(true);
+            has_shape_info = true;
+        }
+
+        // Size dynamics (szVr)
+        if let Some(sz) = Self::get_descriptor(brush_desc, &["szVr", "szDy"]) {
+            has_shape_info = true;
+            if let Some(v) = sz.get("bVTy") {
+                shape.size_control = Self::parse_control_source(v);
+            }
+            if let Some(v) = Self::get_number(sz, &["jitter"]) {
+                shape.size_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+            if let Some(v) = Self::get_number(sz, &["Mnm ", "minimumDiameter", "Mnm"]) {
+                shape.minimum_diameter = (v as f32).clamp(0.0, 100.0);
+            } else if let Some(v) = Self::get_number(brush_desc, &["minimumDiameter"]) {
+                shape.minimum_diameter = (v as f32).clamp(0.0, 100.0);
+            }
+        } else if let Some(v) = Self::get_number(brush_desc, &["minimumDiameter"]) {
+            has_shape_info = true;
+            shape.minimum_diameter = (v as f32).clamp(0.0, 100.0);
+        }
+
+        // Angle dynamics (angleDynamics)
+        if let Some(ang) = Self::get_descriptor(brush_desc, &["angleDynamics"]) {
+            has_shape_info = true;
+            if let Some(v) = ang.get("bVTy") {
+                shape.angle_control = Self::parse_control_source(v);
+            }
+            if let Some((unit, value)) = Self::get_unit_number(ang, &["jitter"]) {
+                let deg = match unit.as_deref() {
+                    Some("#Ang") => value,
+                    Some("#Prc") => value * 3.6,
+                    _ => value,
+                };
+                shape.angle_jitter = (deg as f32).clamp(0.0, 360.0);
+            }
+        }
+
+        // Roundness dynamics (roundnessDynamics)
+        if let Some(rnd) = Self::get_descriptor(brush_desc, &["roundnessDynamics"]) {
+            has_shape_info = true;
+            if let Some(v) = rnd.get("bVTy") {
+                shape.roundness_control = Self::parse_control_source(v);
+            }
+            if let Some(v) = Self::get_number(rnd, &["jitter"]) {
+                shape.roundness_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+            if let Some(v) = Self::get_number(rnd, &["Mnm ", "minimumRoundness", "Mnm"]) {
+                shape.minimum_roundness = (v as f32).clamp(0.0, 100.0);
+            } else if let Some(v) = Self::get_number(brush_desc, &["minimumRoundness"]) {
+                shape.minimum_roundness = (v as f32).clamp(0.0, 100.0);
+            }
+        } else if let Some(v) = Self::get_number(brush_desc, &["minimumRoundness"]) {
+            has_shape_info = true;
+            shape.minimum_roundness = (v as f32).clamp(0.0, 100.0);
+        }
+
+        // Flip X/Y (optional)
+        if let Some(v) = Self::get_bool(brush_desc, &["flipX"]) {
+            has_shape_info = true;
+            shape.flip_x_jitter = v;
+        }
+        if let Some(v) = Self::get_bool(brush_desc, &["flipY"]) {
+            has_shape_info = true;
+            shape.flip_y_jitter = v;
+        }
+
+        if has_shape_info {
+            brush.shape_dynamics = Some(shape);
+        }
+
+        // ------------------------------------------------------------------
+        // Scattering
+        // ------------------------------------------------------------------
+        let mut scatter = ScatterSettings::default();
+        let mut has_scatter_info = false;
+
+        if let Some(enabled) = Self::get_bool(brush_desc, &["useScatter"]) {
+            brush.scatter_enabled = Some(enabled);
+            has_scatter_info = true;
+        }
+
+        if let Some(v) = Self::get_number(brush_desc, &["Scat", "Sctr", "scatter"]) {
+            scatter.scatter = (v as f32).clamp(0.0, 1000.0);
+            has_scatter_info = true;
+        }
+        if let Some(v) = Self::get_bool(brush_desc, &["bothAxes"]) {
+            scatter.both_axes = v;
+            has_scatter_info = true;
+        }
+        if let Some(v) = Self::get_number(brush_desc, &["Cnt "]) {
+            scatter.count = (v.round() as i32).clamp(1, 16) as u32;
+            has_scatter_info = true;
+        }
+        if let Some(sd) = Self::get_descriptor(brush_desc, &["scatterDynamics"]) {
+            has_scatter_info = true;
+            if let Some(v) = sd.get("bVTy") {
+                scatter.scatter_control = Self::parse_control_source(v);
+            }
+        }
+        if let Some(cd) = Self::get_descriptor(brush_desc, &["countDynamics"]) {
+            has_scatter_info = true;
+            if let Some(v) = cd.get("bVTy") {
+                scatter.count_control = Self::parse_control_source(v);
+            }
+            if let Some(v) = Self::get_number(cd, &["jitter"]) {
+                scatter.count_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+        }
+
+        if has_scatter_info {
+            if brush.scatter_enabled.is_none() {
+                let active = scatter.scatter > 0.0
+                    || scatter.both_axes
+                    || scatter.count != 1
+                    || scatter.count_jitter > 0.0
+                    || scatter.scatter_control != ControlSource::Off
+                    || scatter.count_control != ControlSource::Off;
+                brush.scatter_enabled = Some(active);
+            }
+            brush.scatter = Some(scatter);
+        }
+
+        // ------------------------------------------------------------------
+        // Transfer (Opacity/Flow)
+        // ------------------------------------------------------------------
+        let mut transfer = TransferSettings::default();
+        let mut has_transfer_info = false;
+
+        // Opacity dynamics (opVr)
+        if let Some(op) = Self::get_descriptor(brush_desc, &["opVr", "opDy"]) {
+            has_transfer_info = true;
+            if let Some(v) = op.get("bVTy") {
+                transfer.opacity_control = Self::parse_control_source(v);
+            }
+            if let Some(v) = Self::get_number(op, &["jitter"]) {
+                transfer.opacity_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+            if let Some(v) = Self::get_number(op, &["Mnm ", "Mnm", "minimumOpacity"]) {
+                transfer.minimum_opacity = (v as f32).clamp(0.0, 100.0);
+            }
+        }
+
+        // Flow dynamics (flVr / flowDynamics)
+        if let Some(fl) = Self::get_descriptor(brush_desc, &["flVr", "flDy", "flowDynamics"]) {
+            has_transfer_info = true;
+            if let Some(v) = fl.get("bVTy") {
+                transfer.flow_control = Self::parse_control_source(v);
+            }
+            if let Some(v) = Self::get_number(fl, &["jitter"]) {
+                transfer.flow_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+            if let Some(v) = Self::get_number(fl, &["Mnm ", "Mnm", "minimumFlow"]) {
+                transfer.minimum_flow = (v as f32).clamp(0.0, 100.0);
+            }
+        }
+
+        if has_transfer_info {
+            brush.transfer = Some(transfer.clone());
+            let active = transfer.opacity_control != ControlSource::Off
+                || transfer.opacity_jitter > 0.0
+                || transfer.minimum_opacity > 0.0
+                || transfer.flow_control != ControlSource::Off
+                || transfer.flow_jitter > 0.0
+                || transfer.minimum_flow > 0.0;
+            brush.transfer_enabled = Some(active);
+        }
+
+        // ------------------------------------------------------------------
+        // Color Dynamics
+        // ------------------------------------------------------------------
+        let mut color = ColorDynamicsSettings::default();
+        let mut has_color_info = false;
+
+        if let Some(cd) = Self::get_descriptor(brush_desc, &["colorDynamics", "ClrD", "ClDy"]) {
+            has_color_info = true;
+
+            if let Some(v) = Self::get_number(cd, &["HueJ"]) {
+                color.hue_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+            if let Some(v) = Self::get_number(cd, &["Satr"]) {
+                color.saturation_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+            if let Some(v) = Self::get_number(cd, &["Brgh"]) {
+                color.brightness_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+            if let Some(v) = Self::get_number(cd, &["purity"]) {
+                color.purity = (v as f32).clamp(-100.0, 100.0);
+            }
+
+            // Foreground/Background (fgbg)
+            if let Some(fb) = Self::get_descriptor(cd, &["fgbg"]) {
+                if let Some(v) = fb.get("bVTy") {
+                    color.foreground_background_control = Self::parse_control_source(v);
+                }
+                if let Some(v) = Self::get_number(fb, &["jitter"]) {
+                    color.foreground_background_jitter = (v as f32).clamp(0.0, 100.0);
+                }
+            } else if let Some(v) = Self::get_number(cd, &["F/B", "FgBg", "BgFg"]) {
+                // Fallback for weird encodings
+                color.foreground_background_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+        }
+
+        if has_color_info {
+            brush.color_dynamics = Some(color.clone());
+            let active = color.foreground_background_jitter > 0.0
+                || color.foreground_background_control != ControlSource::Off
+                || color.hue_jitter > 0.0
+                || color.saturation_jitter > 0.0
+                || color.brightness_jitter > 0.0
+                || color.purity != 0.0;
+            brush.color_dynamics_enabled = Some(active);
+        }
+    }
+
+    fn get_descriptor<'a>(
+        desc: &'a indexmap::IndexMap<String, DescriptorValue>,
+        keys: &[&str],
+    ) -> Option<&'a indexmap::IndexMap<String, DescriptorValue>> {
+        for key in keys {
+            match desc.get(*key) {
+                Some(DescriptorValue::Descriptor(d)) => return Some(d),
+                _ => continue,
+            }
+        }
+        None
+    }
+
+    fn get_bool(desc: &indexmap::IndexMap<String, DescriptorValue>, keys: &[&str]) -> Option<bool> {
+        for key in keys {
+            match desc.get(*key) {
+                Some(DescriptorValue::Boolean(b)) => return Some(*b),
+                _ => continue,
+            }
+        }
+        None
+    }
+
+    fn get_number(
+        desc: &indexmap::IndexMap<String, DescriptorValue>,
+        keys: &[&str],
+    ) -> Option<f64> {
+        Self::get_unit_number(desc, keys).map(|(_, v)| v)
+    }
+
+    fn get_unit_number(
+        desc: &indexmap::IndexMap<String, DescriptorValue>,
+        keys: &[&str],
+    ) -> Option<(Option<String>, f64)> {
+        for key in keys {
+            match desc.get(*key) {
+                Some(DescriptorValue::UnitFloat { unit, value }) => {
+                    return Some((Some(unit.clone()), *value))
+                }
+                Some(DescriptorValue::Double(v)) => return Some((None, *v)),
+                Some(DescriptorValue::Integer(v)) => return Some((None, *v as f64)),
+                Some(DescriptorValue::LargeInteger(v)) => return Some((None, *v as f64)),
+                _ => continue,
+            }
+        }
+        None
+    }
+
+    fn get_ratio_0_1(
+        desc: &indexmap::IndexMap<String, DescriptorValue>,
+        keys: &[&str],
+    ) -> Option<f32> {
+        let (unit, value) = Self::get_unit_number(desc, keys)?;
+        let mut v = value as f32;
+
+        match unit.as_deref() {
+            Some("#Prc") => v /= 100.0,
+            _ => {
+                // Some ABR variants store percent as a unitless number (0-100)
+                if v > 1.0 {
+                    v /= 100.0;
+                }
+            }
+        }
+
+        Some(v.clamp(0.01, 1.0))
+    }
+
+    fn parse_control_source(val: &DescriptorValue) -> ControlSource {
+        let n = match val {
+            DescriptorValue::Integer(v) => Some(*v as i64),
+            DescriptorValue::LargeInteger(v) => Some(*v),
+            _ => None,
+        };
+
+        if let Some(code) = n {
+            return match code {
+                0 => ControlSource::Off,
+                1 => ControlSource::Fade,
+                2 => ControlSource::PenPressure,
+                3 => ControlSource::PenTilt,
+                4 => ControlSource::Rotation,
+                6 => ControlSource::Direction,
+                7 => ControlSource::Initial,
+                _ => ControlSource::Off,
+            };
+        }
+
+        match val {
+            DescriptorValue::Enum { value, .. } => match value.as_str() {
+                "Fad " => ControlSource::Fade,
+                "PnPr" => ControlSource::PenPressure,
+                "PnTl" => ControlSource::PenTilt,
+                "Rttn" => ControlSource::Rotation,
+                "Drcn" => ControlSource::Direction,
+                "Init" | "InIt" => ControlSource::Initial,
+                other => {
+                    tracing::debug!("[ABR] Unknown control source enum: {}", other);
+                    ControlSource::Off
+                }
+            },
+            _ => ControlSource::Off,
+        }
+    }
+
     /// Parse Dual Brush settings from descriptor
     fn parse_dual_brush_settings(
         brush_desc: &indexmap::IndexMap<String, DescriptorValue>,
@@ -1198,6 +1601,264 @@ impl AbrParser {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_apply_advanced_dynamics_from_descriptor() {
+        let mut desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+
+        // Base opacity/flow (percent)
+        desc.insert(
+            "Opct".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 50.0,
+            },
+        );
+        desc.insert(
+            "Flw ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 70.0,
+            },
+        );
+
+        // Shape Dynamics
+        desc.insert("useTipDynamics".to_string(), DescriptorValue::Boolean(true));
+        let mut szvr: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        szvr.insert("bVTy".to_string(), DescriptorValue::Integer(2));
+        szvr.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 12.0,
+            },
+        );
+        szvr.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 33.0,
+            },
+        );
+        desc.insert("szVr".to_string(), DescriptorValue::Descriptor(szvr));
+
+        let mut ang: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        ang.insert("bVTy".to_string(), DescriptorValue::Integer(6));
+        ang.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 50.0, // -> 180 degrees
+            },
+        );
+        desc.insert(
+            "angleDynamics".to_string(),
+            DescriptorValue::Descriptor(ang),
+        );
+
+        let mut rnd: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        rnd.insert("bVTy".to_string(), DescriptorValue::Integer(0));
+        rnd.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 15.0,
+            },
+        );
+        rnd.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 49.0,
+            },
+        );
+        desc.insert(
+            "roundnessDynamics".to_string(),
+            DescriptorValue::Descriptor(rnd),
+        );
+
+        // Scatter
+        desc.insert("useScatter".to_string(), DescriptorValue::Boolean(true));
+        desc.insert(
+            "Scat".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 200.0,
+            },
+        );
+        desc.insert("bothAxes".to_string(), DescriptorValue::Boolean(true));
+        desc.insert(
+            "Cnt ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 4.0,
+            },
+        );
+        let mut sd: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        sd.insert("bVTy".to_string(), DescriptorValue::Integer(2));
+        desc.insert(
+            "scatterDynamics".to_string(),
+            DescriptorValue::Descriptor(sd),
+        );
+        let mut cd: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        cd.insert("bVTy".to_string(), DescriptorValue::Integer(0));
+        cd.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 25.0,
+            },
+        );
+        desc.insert("countDynamics".to_string(), DescriptorValue::Descriptor(cd));
+
+        // Transfer
+        let mut opvr: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        opvr.insert("bVTy".to_string(), DescriptorValue::Integer(2));
+        opvr.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 50.0,
+            },
+        );
+        opvr.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 10.0,
+            },
+        );
+        desc.insert("opVr".to_string(), DescriptorValue::Descriptor(opvr));
+
+        let mut fldy: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        fldy.insert("bVTy".to_string(), DescriptorValue::Integer(2));
+        fldy.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 60.0,
+            },
+        );
+        fldy.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 20.0,
+            },
+        );
+        desc.insert(
+            "flowDynamics".to_string(),
+            DescriptorValue::Descriptor(fldy),
+        );
+
+        // Color Dynamics
+        let mut col: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        col.insert(
+            "HueJ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 10.0,
+            },
+        );
+        col.insert(
+            "Satr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 20.0,
+            },
+        );
+        col.insert(
+            "Brgh".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 30.0,
+            },
+        );
+        col.insert("purity".to_string(), DescriptorValue::Integer(-15));
+        let mut fgbg: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        fgbg.insert("bVTy".to_string(), DescriptorValue::Integer(2));
+        fgbg.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 40.0,
+            },
+        );
+        col.insert("fgbg".to_string(), DescriptorValue::Descriptor(fgbg));
+        desc.insert(
+            "colorDynamics".to_string(),
+            DescriptorValue::Descriptor(col),
+        );
+
+        let mut brush = AbrBrush {
+            name: "Test".to_string(),
+            uuid: None,
+            tip_image: None,
+            diameter: 20.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: None,
+            dynamics: None,
+            is_computed: false,
+            texture_settings: None,
+            dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            base_opacity: None,
+            base_flow: None,
+        };
+
+        AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
+
+        assert_eq!(brush.base_opacity, Some(0.5));
+        assert_eq!(brush.base_flow, Some(0.7));
+
+        assert_eq!(brush.shape_dynamics_enabled, Some(true));
+        let sh = brush.shape_dynamics.expect("shape dynamics");
+        assert_eq!(sh.size_control, crate::abr::ControlSource::PenPressure);
+        assert_eq!(sh.size_jitter, 12.0);
+        assert_eq!(sh.minimum_diameter, 33.0);
+        assert_eq!(sh.angle_control, crate::abr::ControlSource::Direction);
+        assert_eq!(sh.angle_jitter, 180.0);
+        assert_eq!(sh.roundness_jitter, 15.0);
+        assert_eq!(sh.minimum_roundness, 49.0);
+
+        assert_eq!(brush.scatter_enabled, Some(true));
+        let sc = brush.scatter.expect("scatter");
+        assert_eq!(sc.scatter_control, crate::abr::ControlSource::PenPressure);
+        assert_eq!(sc.scatter, 200.0);
+        assert_eq!(sc.both_axes, true);
+        assert_eq!(sc.count, 4);
+        assert_eq!(sc.count_jitter, 25.0);
+
+        assert_eq!(brush.transfer_enabled, Some(true));
+        let tr = brush.transfer.expect("transfer");
+        assert_eq!(tr.opacity_control, crate::abr::ControlSource::PenPressure);
+        assert_eq!(tr.opacity_jitter, 50.0);
+        assert_eq!(tr.minimum_opacity, 10.0);
+        assert_eq!(tr.flow_control, crate::abr::ControlSource::PenPressure);
+        assert_eq!(tr.flow_jitter, 60.0);
+        assert_eq!(tr.minimum_flow, 20.0);
+
+        assert_eq!(brush.color_dynamics_enabled, Some(true));
+        let co = brush.color_dynamics.expect("color dynamics");
+        assert_eq!(co.hue_jitter, 10.0);
+        assert_eq!(co.saturation_jitter, 20.0);
+        assert_eq!(co.brightness_jitter, 30.0);
+        assert_eq!(co.purity, -15.0);
+        assert_eq!(co.foreground_background_jitter, 40.0);
+        assert_eq!(
+            co.foreground_background_control,
+            crate::abr::ControlSource::PenPressure
+        );
+    }
 
     #[test]
     fn test_rle_decode_simple() {

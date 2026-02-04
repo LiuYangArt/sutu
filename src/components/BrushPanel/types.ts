@@ -18,6 +18,24 @@ export interface BrushPreset {
   cursorBounds?: { width: number; height: number } | null;
   /** Texture settings from ABR Texture panel */
   textureSettings?: TextureSettings | null;
+
+  /** Shape Dynamics (Photoshop-compatible) */
+  shapeDynamicsEnabled?: boolean | null;
+  shapeDynamics?: ShapeDynamicsSettings | null;
+  /** Scattering (Photoshop-compatible) */
+  scatterEnabled?: boolean | null;
+  scatter?: ScatterSettings | null;
+  /** Color Dynamics (Photoshop-compatible) */
+  colorDynamicsEnabled?: boolean | null;
+  colorDynamics?: ColorDynamicsSettings | null;
+  /** Transfer (Photoshop-compatible) */
+  transferEnabled?: boolean | null;
+  transfer?: TransferSettings | null;
+
+  /** Base opacity (0..1) */
+  baseOpacity?: number | null;
+  /** Base flow (0..1) */
+  baseFlow?: number | null;
 }
 
 /** ABR import benchmark timing */
@@ -86,6 +104,73 @@ export interface TextureSettings {
   invert: boolean;
   /** Depth control source (0=Off, 2=Pressure, etc.) */
   depthControl: number;
+}
+
+/**
+ * Control source for dynamic brush parameters (Photoshop-compatible)
+ */
+export type ControlSource =
+  | 'off'
+  | 'fade'
+  | 'penPressure'
+  | 'penTilt'
+  | 'rotation'
+  | 'direction'
+  | 'initial';
+
+/**
+ * Shape Dynamics settings (Photoshop Shape Dynamics panel compatible)
+ */
+export interface ShapeDynamicsSettings {
+  sizeJitter: number; // 0-100 (%)
+  sizeControl: ControlSource;
+  minimumDiameter: number; // 0-100 (%)
+
+  angleJitter: number; // 0-360 (deg)
+  angleControl: ControlSource;
+
+  roundnessJitter: number; // 0-100 (%)
+  roundnessControl: ControlSource;
+  minimumRoundness: number; // 0-100 (%)
+
+  flipXJitter: boolean;
+  flipYJitter: boolean;
+}
+
+/**
+ * Scatter settings (Photoshop Scattering panel compatible)
+ */
+export interface ScatterSettings {
+  scatter: number; // 0-1000 (% of diameter)
+  scatterControl: ControlSource;
+  bothAxes: boolean;
+  count: number; // 1-16
+  countControl: ControlSource;
+  countJitter: number; // 0-100 (%)
+}
+
+/**
+ * Color Dynamics settings (Photoshop Color Dynamics panel compatible)
+ */
+export interface ColorDynamicsSettings {
+  foregroundBackgroundJitter: number; // 0-100 (%)
+  foregroundBackgroundControl: ControlSource;
+  hueJitter: number; // 0-100 (%)
+  saturationJitter: number; // 0-100 (%)
+  brightnessJitter: number; // 0-100 (%)
+  purity: number; // -100..100
+}
+
+/**
+ * Transfer settings (Photoshop Transfer panel compatible)
+ */
+export interface TransferSettings {
+  opacityJitter: number; // 0-100 (%)
+  opacityControl: ControlSource;
+  minimumOpacity: number; // 0-100 (%)
+  flowJitter: number; // 0-100 (%)
+  flowControl: ControlSource;
+  minimumFlow: number; // 0-100 (%)
 }
 
 /** Default texture settings */

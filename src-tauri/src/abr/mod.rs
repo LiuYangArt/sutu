@@ -41,8 +41,9 @@ pub use parser::AbrParser;
 pub use patt::PatternResource;
 pub use samp::normalize_brush_texture;
 pub use types::{
-    AbrBrush, AbrDynamics, AbrFile, AbrVersion, BrushPreset, CursorBoundsData, GrayscaleImage,
-    TextureBlendMode, TextureSettings,
+    AbrBrush, AbrDynamics, AbrFile, AbrVersion, BrushPreset, ColorDynamicsSettings, ControlSource,
+    CursorBoundsData, GrayscaleImage, ScatterSettings, ShapeDynamicsSettings, TextureBlendMode,
+    TextureSettings, TransferSettings,
 };
 
 #[cfg(test)]

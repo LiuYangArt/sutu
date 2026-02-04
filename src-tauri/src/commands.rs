@@ -885,6 +885,16 @@ fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
         cursor_bounds,
         texture_settings: brush.texture_settings,
         dual_brush_settings: brush.dual_brush_settings,
+        shape_dynamics_enabled: brush.shape_dynamics_enabled,
+        shape_dynamics: brush.shape_dynamics,
+        scatter_enabled: brush.scatter_enabled,
+        scatter: brush.scatter,
+        color_dynamics_enabled: brush.color_dynamics_enabled,
+        color_dynamics: brush.color_dynamics,
+        transfer_enabled: brush.transfer_enabled,
+        transfer: brush.transfer,
+        base_opacity: brush.base_opacity,
+        base_flow: brush.base_flow,
     }
 }
 
@@ -1084,6 +1094,16 @@ mod tests {
             is_computed: false,
             texture_settings: Some(texture_settings),
             dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            base_opacity: None,
+            base_flow: None,
         };
 
         let preset = build_preset_with_id(brush, "preset-id".to_string());
