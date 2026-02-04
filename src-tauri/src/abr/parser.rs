@@ -1227,6 +1227,19 @@ impl AbrParser {
         }
 
         if has_shape_info {
+            if brush.shape_dynamics_enabled.is_none() {
+                let active = shape.size_control != ControlSource::Off
+                    || shape.size_jitter > 0.0
+                    || shape.minimum_diameter > 0.0
+                    || shape.angle_control != ControlSource::Off
+                    || shape.angle_jitter > 0.0
+                    || shape.roundness_control != ControlSource::Off
+                    || shape.roundness_jitter > 0.0
+                    || shape.minimum_roundness > 0.0
+                    || shape.flip_x_jitter
+                    || shape.flip_y_jitter;
+                brush.shape_dynamics_enabled = Some(active);
+            }
             brush.shape_dynamics = Some(shape);
         }
 
@@ -1317,7 +1330,6 @@ impl AbrParser {
         }
 
         if has_transfer_info {
-            brush.transfer = Some(transfer.clone());
             let active = transfer.opacity_control != ControlSource::Off
                 || transfer.opacity_jitter > 0.0
                 || transfer.minimum_opacity > 0.0
@@ -1325,6 +1337,7 @@ impl AbrParser {
                 || transfer.flow_jitter > 0.0
                 || transfer.minimum_flow > 0.0;
             brush.transfer_enabled = Some(active);
+            brush.transfer = Some(transfer);
         }
 
         // ------------------------------------------------------------------
@@ -1364,7 +1377,6 @@ impl AbrParser {
         }
 
         if has_color_info {
-            brush.color_dynamics = Some(color.clone());
             let active = color.foreground_background_jitter > 0.0
                 || color.foreground_background_control != ControlSource::Off
                 || color.hue_jitter > 0.0
@@ -1372,6 +1384,7 @@ impl AbrParser {
                 || color.brightness_jitter > 0.0
                 || color.purity != 0.0;
             brush.color_dynamics_enabled = Some(active);
+            brush.color_dynamics = Some(color);
         }
     }
 
