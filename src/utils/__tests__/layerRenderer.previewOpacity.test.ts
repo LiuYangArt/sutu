@@ -71,9 +71,13 @@ describe('LayerRenderer preview compositing', () => {
   beforeEach(() => {
     ctxByCanvas = new WeakMap();
 
-    // @ts-expect-error - Overloading getContext for testing causes TS issues with disjoint union types
     getContextSpy = vi
-      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .spyOn(
+        HTMLCanvasElement.prototype as unknown as {
+          getContext: (...args: unknown[]) => unknown;
+        },
+        'getContext'
+      )
       .mockImplementation(function (this: HTMLCanvasElement) {
         const existing = ctxByCanvas.get(this);
         if (existing) return existing as unknown as CanvasRenderingContext2D;

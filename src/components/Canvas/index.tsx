@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import { useToolStore, ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
 import { useDocumentStore } from '@/stores/document';
@@ -20,6 +20,7 @@ import { SelectionOverlay } from './SelectionOverlay';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
+import { GPUContext, GpuCanvasRenderer } from '@/gpu';
 
 import './Canvas.css';
 
@@ -36,6 +37,7 @@ declare global {
     ) => Promise<void>;
     __gpuBrushDebugRects?: boolean;
     __gpuBrushUseBatchUnionRect?: boolean;
+    __gpuM0Baseline?: () => Promise<void>;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;
@@ -49,12 +51,15 @@ type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number 
 
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
   const brushCursorRef = useRef<HTMLDivElement>(null);
   const eyedropperCursorRef = useRef<HTMLDivElement>(null);
   const layerRendererRef = useRef<LayerRenderer | null>(null);
   const strokeBufferRef = useRef(new StrokeBuffer());
+  const gpuRendererRef = useRef<GpuCanvasRenderer | null>(null);
+  const layerRevisionRef = useRef(0);
   const lagometerRef = useRef(new LagometerMonitor());
   const fpsCounterRef = useRef(new FPSCounter());
   const lastRenderedPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -141,6 +146,8 @@ export function Canvas() {
     consumePendingHistoryLayerAdd: s.consumePendingHistoryLayerAdd,
   }));
 
+  const visibleLayerCount = useMemo(() => layers.filter((layer) => layer.visible).length, [layers]);
+
   const { pushAddLayer } = useHistoryStore();
 
   const { isPanning, scale, setScale, setIsPanning, pan, zoomIn, zoomOut, offsetX, offsetY } =
@@ -157,6 +164,7 @@ export function Canvas() {
 
   // Get selection store actions for keyboard shortcuts
   const { selectAll, deselectAll, cancelSelection } = useSelectionStore();
+  const selectionMask = useSelectionStore((s) => s.selectionMask);
 
   // Initialize brush renderer for Flow/Opacity three-level pipeline
   const {
@@ -170,13 +178,51 @@ export function Canvas() {
     getDebugRects,
     flushPending,
     backend: brushBackend,
-    gpuAvailable: _gpuAvailable,
+    gpuAvailable,
+    setGpuPreviewReadbackEnabled,
+    getGpuScratchTexture,
+    prepareEndStrokeGpu,
+    clearGpuScratch,
+    getGpuDirtyRect,
+    getGpuRenderScale,
   } = useBrushRenderer({
     width,
     height,
     renderMode,
     benchmarkProfiler: latencyProfilerRef.current,
   });
+
+  const gpuDisplayActive = useMemo(
+    () =>
+      brushBackend === 'gpu' && gpuAvailable && currentTool === 'brush' && visibleLayerCount <= 1,
+    [brushBackend, gpuAvailable, currentTool, visibleLayerCount]
+  );
+
+  useEffect(() => {
+    if (!gpuAvailable) return;
+    const device = GPUContext.getInstance().device;
+    const gpuCanvas = gpuCanvasRef.current;
+    if (!device || !gpuCanvas) return;
+
+    if (!gpuRendererRef.current) {
+      gpuRendererRef.current = new GpuCanvasRenderer(device, gpuCanvas, {
+        tileSize: 256,
+        layerFormat: 'rgba8unorm',
+      });
+    }
+
+    gpuRendererRef.current.resize(width, height);
+  }, [gpuAvailable, width, height]);
+
+  useEffect(() => {
+    setGpuPreviewReadbackEnabled(!gpuDisplayActive);
+  }, [gpuDisplayActive, setGpuPreviewReadbackEnabled]);
+
+  useEffect(() => {
+    if (gpuRendererRef.current) {
+      gpuRendererRef.current.setSelectionMask(selectionMask ?? null);
+    }
+  }, [selectionMask]);
 
   // Tablet store: We use getState() directly in event handlers for real-time data
   // No need to subscribe to state changes here since we sync-read in handlers
@@ -202,6 +248,10 @@ export function Canvas() {
     needsRenderRef.current = true;
   }, []);
 
+  const markLayerDirty = useCallback(() => {
+    layerRevisionRef.current += 1;
+  }, []);
+
   const {
     getGuideLine: getShiftLineGuide,
     updateCursor: updateShiftLineCursor,
@@ -225,6 +275,34 @@ export function Canvas() {
     const { width: docWidth, height: docHeight } = useDocumentStore.getState();
     if (canvas.width !== docWidth) canvas.width = docWidth;
     if (canvas.height !== docHeight) canvas.height = docHeight;
+    const gpuCanvas = gpuCanvasRef.current;
+    if (gpuCanvas) {
+      if (gpuCanvas.width !== docWidth) gpuCanvas.width = docWidth;
+      if (gpuCanvas.height !== docHeight) gpuCanvas.height = docHeight;
+    }
+
+    if (gpuDisplayActive && gpuRendererRef.current && activeLayerId) {
+      const layer = renderer.getLayer(activeLayerId);
+      if (!layer) return;
+
+      gpuRendererRef.current.syncLayerFromCanvas(
+        activeLayerId,
+        layer.canvas,
+        layerRevisionRef.current
+      );
+      gpuRendererRef.current.renderFrame({
+        layerId: activeLayerId,
+        scratchTexture: null,
+        strokeOpacity: 1,
+        renderScale: getGpuRenderScale(),
+      });
+
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, docWidth, docHeight);
+      }
+      return;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -235,7 +313,7 @@ export function Canvas() {
     // Clear and draw composite to display canvas
     ctx.clearRect(0, 0, docWidth, docHeight);
     ctx.drawImage(compositeCanvas, 0, 0);
-  }, []);
+  }, [activeLayerId, getGpuRenderScale, gpuDisplayActive]);
 
   const {
     updateThumbnail,
@@ -256,7 +334,81 @@ export function Canvas() {
     width,
     height,
     compositeAndRender,
+    markLayerDirty,
   });
+
+  const renderGpuFrame = useCallback(
+    (showScratch: boolean) => {
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer || !activeLayerId) return;
+
+      const layer = renderer.getLayer(activeLayerId);
+      if (!layer) return;
+
+      gpuRenderer.syncLayerFromCanvas(activeLayerId, layer.canvas, layerRevisionRef.current);
+
+      const scratchTexture = showScratch ? getGpuScratchTexture() : null;
+      const strokeOpacity = showScratch ? getPreviewOpacity() : 1;
+
+      gpuRenderer.renderFrame({
+        layerId: activeLayerId,
+        scratchTexture,
+        strokeOpacity,
+        renderScale: getGpuRenderScale(),
+      });
+    },
+    [activeLayerId, getGpuScratchTexture, getPreviewOpacity, getGpuRenderScale]
+  );
+
+  const commitStrokeGpu = useCallback(async () => {
+    const gpuRenderer = gpuRendererRef.current;
+    const renderer = layerRendererRef.current;
+    if (!gpuRenderer || !renderer || !activeLayerId) return;
+
+    const scratchTexture = getGpuScratchTexture();
+    const dirtyRect = getGpuDirtyRect();
+    if (
+      !scratchTexture ||
+      !dirtyRect ||
+      dirtyRect.right <= dirtyRect.left ||
+      dirtyRect.bottom <= dirtyRect.top
+    ) {
+      clearGpuScratch();
+      return;
+    }
+
+    await prepareEndStrokeGpu();
+
+    const tiles = gpuRenderer.commitStroke({
+      layerId: activeLayerId,
+      scratchTexture,
+      dirtyRect,
+      strokeOpacity: getPreviewOpacity(),
+      renderScale: getGpuRenderScale(),
+      applyDither: true,
+      ditherStrength: 1.0,
+    });
+
+    clearGpuScratch();
+
+    const layer = renderer.getLayer(activeLayerId);
+    if (layer) {
+      await gpuRenderer.readbackTilesToLayer({
+        layerId: activeLayerId,
+        tiles,
+        targetCtx: layer.ctx,
+      });
+    }
+  }, [
+    activeLayerId,
+    getGpuScratchTexture,
+    getGpuDirtyRect,
+    prepareEndStrokeGpu,
+    clearGpuScratch,
+    getPreviewOpacity,
+    getGpuRenderScale,
+  ]);
 
   useGlobalExports({
     layerRendererRef,
@@ -365,6 +517,11 @@ export function Canvas() {
   useEffect(() => {
     compositeAndRender();
   }, [layers, compositeAndRender]);
+
+  // Re-render when GPU display mode toggles
+  useEffect(() => {
+    compositeAndRender();
+  }, [gpuDisplayActive, compositeAndRender]);
 
   // 鼠标滚轮缩放
   const handleWheel = useCallback(
@@ -483,6 +640,9 @@ export function Canvas() {
     wetEdge,
     wetEdgeEnabled,
     brushBackend,
+    useGpuDisplay: gpuDisplayActive,
+    renderGpuFrame,
+    commitStrokeGpu,
     getBrushConfig,
     getShiftLineGuide,
     constrainShiftLinePoint,
@@ -622,6 +782,14 @@ export function Canvas() {
       <div className="canvas-checkerboard" style={{ clipPath: clipPathKey }} />
       <SelectionOverlay scale={scale} offsetX={offsetX} offsetY={offsetY} />
       <div className="canvas-viewport" style={viewportStyle}>
+        <canvas
+          ref={gpuCanvasRef}
+          width={width}
+          height={height}
+          className="gpu-canvas"
+          data-testid="gpu-canvas"
+          style={{ display: gpuDisplayActive ? 'block' : 'none' }}
+        />
         <canvas
           ref={canvasRef}
           width={width}

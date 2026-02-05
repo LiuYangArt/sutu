@@ -39,6 +39,15 @@ export { InstanceBuffer } from './resources/InstanceBuffer';
 export { TextureInstanceBuffer } from './resources/TextureInstanceBuffer';
 export { TextureAtlas } from './resources/TextureAtlas';
 
+// Benchmarks
+export { runM0Baseline } from './benchmarks/m0Baseline';
+
 // Pipeline
 export { BrushPipeline } from './pipeline/BrushPipeline';
 export { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
+
+// Layers
+export { GpuCanvasRenderer } from './layers/GpuCanvasRenderer';
+export { GpuLayerStore } from './layers/GpuLayerStore';
+export { TileResidencyManager } from './layers/TileResidencyManager';
+export { SelectionMaskGpu } from './layers/SelectionMaskGpu';

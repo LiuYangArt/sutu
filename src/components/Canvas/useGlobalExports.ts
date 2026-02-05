@@ -3,6 +3,7 @@ import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
+import { GPUContext, runM0Baseline } from '@/gpu';
 
 interface UseGlobalExportsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -46,6 +47,7 @@ export function useGlobalExports({
       __canvasDuplicateLayer?: (from: string, to: string) => void;
       __canvasRemoveLayer?: (id: string) => void;
       __canvasResize?: (options: ResizeCanvasOptions) => void;
+      __gpuM0Baseline?: () => Promise<void>;
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -56,6 +58,16 @@ export function useGlobalExports({
     win.__canvasDuplicateLayer = handleDuplicateLayer;
     win.__canvasRemoveLayer = handleRemoveLayer;
     win.__canvasResize = handleResizeCanvas;
+    win.__gpuM0Baseline = async () => {
+      const device = GPUContext.getInstance().device;
+      if (!device) {
+        console.warn('[M0Baseline] GPU device not available');
+        return;
+      }
+      const result = await runM0Baseline(device);
+      // eslint-disable-next-line no-console
+      console.log('[M0Baseline] result', result);
+    };
 
     // Get single layer image data as Base64 PNG data URL
     win.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
@@ -255,6 +267,7 @@ export function useGlobalExports({
       delete win.__canvasDuplicateLayer;
       delete win.__canvasRemoveLayer;
       delete win.__canvasResize;
+      delete win.__gpuM0Baseline;
     };
   }, [
     layerRendererRef,

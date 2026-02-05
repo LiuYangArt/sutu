@@ -121,6 +121,7 @@ export class GPUStrokeAccumulator {
   private previewReadbackBufferSizeBytes: number = 0;
   private previewUpdatePending: boolean = false;
   private previewNeedsUpdate: boolean = false; // Flag to ensure final update
+  private previewReadbackEnabled: boolean = true;
 
   // Promise-based preview update tracking (optimization 1)
   private currentPreviewPromise: Promise<void> | null = null;
@@ -1289,6 +1290,9 @@ export class GPUStrokeAccumulator {
   }
 
   private requestPreviewUpdate(rect: Rect | null): void {
+    if (!this.previewReadbackEnabled) {
+      return;
+    }
     this.addPendingPreviewRect(rect);
     this.previewNeedsUpdate = true;
     if (!this.previewUpdatePending) {
@@ -2114,6 +2118,11 @@ export class GPUStrokeAccumulator {
    * Optimization 8: Handle buffer deadlock defense
    */
   private async updatePreview(): Promise<void> {
+    if (!this.previewReadbackEnabled) {
+      this.previewNeedsUpdate = false;
+      this.previewUpdatePending = false;
+      return;
+    }
     // Optimization 1: If already running, return existing promise (most efficient wait)
     if (this.currentPreviewPromise) {
       return this.currentPreviewPromise;
@@ -2326,7 +2335,9 @@ export class GPUStrokeAccumulator {
 
     // Optimization 6: Always execute updatePreview to ensure final batch is readback
     // Even if previewNeedsUpdate is false, we need to guarantee data completeness
-    await this.updatePreview();
+    if (this.previewReadbackEnabled) {
+      await this.updatePreview();
+    }
   }
 
   /**
@@ -2476,6 +2487,22 @@ export class GPUStrokeAccumulator {
    */
   getCanvas(): HTMLCanvasElement {
     return this.previewCanvas;
+  }
+
+  setPreviewReadbackEnabled(enabled: boolean): void {
+    this.previewReadbackEnabled = enabled;
+    if (!enabled) {
+      this.previewNeedsUpdate = false;
+      this.previewUpdatePending = false;
+    }
+  }
+
+  getScratchTexture(): GPUTexture {
+    return this.getPresentableTexture();
+  }
+
+  getRenderScale(): number {
+    return this.currentRenderScale;
   }
 
   /**

@@ -214,7 +214,7 @@ const THUMB_BUCKETS = [32, 48, 80] as const;
 export function normalizePatternThumbSize(size: number): number {
   if (!Number.isFinite(size)) return 48;
   const clamped = Math.min(256, Math.max(16, Math.round(size)));
-  let best = THUMB_BUCKETS[0];
+  let best: number = THUMB_BUCKETS[0];
   let bestDiff = Math.abs(best - clamped);
   for (const s of THUMB_BUCKETS.slice(1)) {
     const diff = Math.abs(s - clamped);

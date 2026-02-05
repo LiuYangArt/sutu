@@ -172,6 +172,12 @@ export interface UseBrushRendererResult {
   /** Whether GPU is available */
   gpuAvailable: boolean;
   getDebugRects: () => Array<{ rect: Rect; label: string; color: string }> | null;
+  setGpuPreviewReadbackEnabled: (enabled: boolean) => void;
+  getGpuScratchTexture: () => GPUTexture | null;
+  prepareEndStrokeGpu: () => Promise<void>;
+  clearGpuScratch: () => void;
+  getGpuDirtyRect: () => Rect | null;
+  getGpuRenderScale: () => number;
 }
 
 export function useBrushRenderer({
@@ -736,6 +742,40 @@ export function useBrushRenderer({
     return null;
   }, [backend]);
 
+  const setGpuPreviewReadbackEnabled = useCallback((enabled: boolean) => {
+    gpuBufferRef.current?.setPreviewReadbackEnabled(enabled);
+  }, []);
+
+  const getGpuScratchTexture = useCallback(() => {
+    return gpuBufferRef.current?.getScratchTexture() ?? null;
+  }, []);
+
+  const prepareEndStrokeGpu = useCallback(async () => {
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      await gpuBufferRef.current.prepareEndStroke();
+    }
+  }, [backend]);
+
+  const clearGpuScratch = useCallback(() => {
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      gpuBufferRef.current.clear();
+    }
+  }, [backend]);
+
+  const getGpuDirtyRect = useCallback(() => {
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      return gpuBufferRef.current.getDirtyRect();
+    }
+    return null;
+  }, [backend]);
+
+  const getGpuRenderScale = useCallback(() => {
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      return gpuBufferRef.current.getRenderScale();
+    }
+    return 1.0;
+  }, [backend]);
+
   /**
    * Flush pending dabs to GPU (called once per frame by RAF loop)
    * This ensures all dabs accumulated during the frame are rendered together
@@ -770,5 +810,11 @@ export function useBrushRenderer({
     flushPending,
     backend,
     gpuAvailable,
+    setGpuPreviewReadbackEnabled,
+    getGpuScratchTexture,
+    prepareEndStrokeGpu,
+    clearGpuScratch,
+    getGpuDirtyRect,
+    getGpuRenderScale,
   };
 }

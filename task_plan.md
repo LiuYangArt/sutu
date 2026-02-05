@@ -1,25 +1,27 @@
-# Task Plan: GPU Dual Brush (Compute)
+# Task Plan: GPU-First M2 (Single-Layer Paintable)
 
 ## Goal
-在 WebGPU compute 管线中实现与 CPU/Photoshop 一致的 Dual Brush 效果，并在失败时回退 CPU + 右上角提示。
+以“GPU tile layer + 全尺寸 scratch + 无实时 readback”为核心路径，完成 M0 基线验证与 M2 单层可绘交付，并保持选区与历史在 stroke end 的小范围 readback。
 
 ## Phases
 - [x] Phase 1: Plan and setup
-- [x] Phase 2: Research/gather information
-- [x] Phase 3: Execute/build
-- [ ] Phase 4: Review and deliver
+- [x] Phase 2: M0 baseline + benchmarks
+- [x] Phase 3: Tile layer + GPU display
+- [x] Phase 4: GPU commit + selection + dirty readback
+- [ ] Phase 5: Review and deliver
 
 ## Key Questions
-1. Dual Brush GPU 采用哪种结构以对齐 CPU？
-2. 失败回退与提示如何落地到现有渲染/状态体系？
+1. 单层 GPU 路径的 fallback/切换条件是否稳定？
+2. `rgba8unorm` linear + dither vs `rgba8unorm-srgb` 的最终选择？
+3. 256/512 tile size 的实际性能差异？
 
 ## Decisions Made
-- Dual Brush 采用“主/次独立 mask + stroke-level blend + wet edge 后处理”的 GPU 管线（与 CPU 一致）。
-- 散布/Count 仍由 CPU 生成，GPU 只负责累积与混合。
-- compute 失败时：中断当前笔划、回退 CPU，并弹出右上角提示。
+- 单层 GPU 可绘优先，多层可见回退 Canvas2D。
+- scratch 全尺寸保留，后续再 tile 化。
+- 选区与历史在 stroke end 做小范围 readback。
 
 ## Errors Encountered
 - None
 
 ## Status
-**Currently in Phase 4** - 等待验证与交付
+**Currently in Phase 5** - 回归检查与交付说明

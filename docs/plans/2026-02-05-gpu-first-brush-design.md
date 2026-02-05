@@ -248,3 +248,26 @@
 
 - 优化 tile cache miss 与合成 pass 数量
 - 对热点 shader 做性能优化（合成 pass 合并、减少采样次数）
+
+## 12. M0 基线记录（待补）
+
+> 通过 `window.__gpuM0Baseline()` 获取结果后填写
+
+### 12.1 纹理分配/clear 基线
+
+- 4K `rgba8unorm`：
+- 4K `rgba8unorm-srgb`：
+- 8K `rgba8unorm`：
+- 8K `rgba8unorm-srgb`：
+
+### 12.2 Allocation Probe（估算浏览器配额）
+
+- 4K `rgba8unorm`：
+- 4K `rgba8unorm-srgb`：
+- 8K `rgba8unorm`：
+- 8K `rgba8unorm-srgb`：
+
+### 12.3 Tile Size 对比（256/512）
+
+- 4K tile 256（tilesX/Y/总数/估算显存）：
+- 4K tile 512（tilesX/Y/总数/估算显存）：

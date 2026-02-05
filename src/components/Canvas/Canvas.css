@@ -18,6 +18,23 @@
   z-index: 1;
 }
 
+.gpu-canvas,
+.main-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  pointer-events: none;
+}
+
+.gpu-canvas {
+  z-index: 0;
+}
+
+.main-canvas {
+  z-index: 1;
+}
+
 /* Screen-space checkerboard background */
 .canvas-checkerboard {
   position: absolute;

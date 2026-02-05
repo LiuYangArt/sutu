@@ -1,3 +1,20 @@
+# Notes: GPU-First M2 (Single-Layer Paintable)
+
+## Goals
+- GPU tile layer display + 全尺寸 scratch
+- 无实时 readback；仅 stroke end dirty readback
+- 单层 GPU，多层回退 Canvas2D
+
+## Key Decisions
+- scratch 继续使用 GPUStrokeAccumulator 的全尺寸纹理
+- layer tiles 采用 `rgba8unorm`（M0 对比后最终确认）
+- selection mask 以 GPU 纹理形式参与 display/commit
+
+## Open Questions
+- `rgba8unorm-srgb` 方案的渲染/commit 路径是否需要额外 pass？
+- tile size 256/512 的真实性能差异
+- allocation probe 的最小可行实现
+
 # Notes: GPU Dual Brush Implementation
 
 ## Sources

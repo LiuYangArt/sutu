@@ -46,6 +46,9 @@ interface UseStrokeProcessorParams {
   wetEdge: number;
   wetEdgeEnabled: boolean;
   brushBackend: RenderBackend;
+  useGpuDisplay: boolean;
+  renderGpuFrame: (showScratch: boolean) => void;
+  commitStrokeGpu?: () => Promise<void>;
   getBrushConfig: () => BrushRenderConfig;
   getShiftLineGuide: () => {
     start: { x: number; y: number };
@@ -139,6 +142,9 @@ export function useStrokeProcessor({
   wetEdge,
   wetEdgeEnabled,
   brushBackend,
+  useGpuDisplay,
+  renderGpuFrame,
+  commitStrokeGpu,
   getBrushConfig,
   getShiftLineGuide,
   constrainShiftLinePoint,
@@ -219,6 +225,25 @@ export function useStrokeProcessor({
   );
 
   const compositeAndRenderWithPreview = useCallback(() => {
+    if (useGpuDisplay) {
+      renderGpuFrame(isStrokeActive());
+
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+
+      ctx.clearRect(0, 0, width, height);
+
+      if (window.__gpuBrushDebugRects) {
+        const rects = getDebugRects();
+        if (rects && rects.length > 0) {
+          drawDebugRects(ctx, rects);
+        }
+      }
+
+      renderGuideLine(ctx);
+      return;
+    }
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     const renderer = layerRendererRef.current;
@@ -250,6 +275,8 @@ export function useStrokeProcessor({
 
     renderGuideLine(ctx);
   }, [
+    useGpuDisplay,
+    renderGpuFrame,
     width,
     height,
     isStrokeActive,
@@ -508,9 +535,13 @@ export function useStrokeProcessor({
         inputQueueRef.current = [];
       }
 
-      const layerCtx = getActiveLayerCtx();
-      if (layerCtx) {
-        await endBrushStroke(layerCtx);
+      if (useGpuDisplay && commitStrokeGpu) {
+        await commitStrokeGpu();
+      } else {
+        const layerCtx = getActiveLayerCtx();
+        if (layerCtx) {
+          await endBrushStroke(layerCtx);
+        }
       }
       compositeAndRender();
     } else {
@@ -550,6 +581,8 @@ export function useStrokeProcessor({
     currentTool,
     inputQueueRef,
     processSinglePoint,
+    useGpuDisplay,
+    commitStrokeGpu,
     getActiveLayerCtx,
     endBrushStroke,
     compositeAndRender,

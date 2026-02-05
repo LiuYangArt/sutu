@@ -20,10 +20,12 @@ describe('useBrushRenderer opacity pipeline', () => {
       return mockCtx as any;
     });
 
-    stampSpy = vi.spyOn(StrokeAccumulator.prototype, 'stampDab').mockImplementation(() => {});
-    endStrokeSpy = vi
-      .spyOn(StrokeAccumulator.prototype, 'endStroke')
-      .mockImplementation(() => ({ left: 0, top: 0, right: 0, bottom: 0 }));
+    stampSpy = vi.spyOn(StrokeAccumulator.prototype, 'stampDab') as ReturnType<typeof vi.spyOn>;
+    stampSpy.mockImplementation(() => {});
+    endStrokeSpy = vi.spyOn(StrokeAccumulator.prototype, 'endStroke') as ReturnType<
+      typeof vi.spyOn
+    >;
+    endStrokeSpy.mockImplementation(() => ({ left: 0, top: 0, right: 0, bottom: 0 }));
   });
 
   afterEach(() => {

@@ -12,6 +12,7 @@ interface UseLayerOperationsParams {
   width: number;
   height: number;
   compositeAndRender: () => void;
+  markLayerDirty: () => void;
 }
 
 /**
@@ -64,6 +65,7 @@ export function useLayerOperations({
   width,
   height,
   compositeAndRender,
+  markLayerDirty,
 }: UseLayerOperationsParams) {
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
   const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
@@ -131,12 +133,19 @@ export function useLayerOperations({
       useDocumentStore.setState({ width: options.width, height: options.height });
 
       compositeAndRender();
+      markLayerDirty();
 
       for (const layer of docState.layers) {
         updateThumbnailWithSize(layer.id, options.width, options.height);
       }
     },
-    [compositeAndRender, layerRendererRef, pushResizeCanvas, updateThumbnailWithSize]
+    [
+      compositeAndRender,
+      markLayerDirty,
+      layerRendererRef,
+      pushResizeCanvas,
+      updateThumbnailWithSize,
+    ]
   );
 
   // Fill active layer with a color (Alt+Backspace shortcut)
@@ -172,6 +181,7 @@ export function useLayerOperations({
       pushStroke(activeLayerId, beforeImage);
 
       // Update thumbnail and re-render
+      markLayerDirty();
       updateThumbnail(activeLayerId);
       compositeAndRender();
     },
@@ -181,6 +191,7 @@ export function useLayerOperations({
       width,
       height,
       pushStroke,
+      markLayerDirty,
       updateThumbnail,
       compositeAndRender,
       layerRendererRef,
@@ -228,6 +239,7 @@ export function useLayerOperations({
     pushStroke(activeLayerId, beforeImage);
 
     // Update thumbnail and re-render
+    markLayerDirty();
     updateThumbnail(activeLayerId);
     compositeAndRender();
   }, [
@@ -236,6 +248,7 @@ export function useLayerOperations({
     width,
     height,
     pushStroke,
+    markLayerDirty,
     updateThumbnail,
     compositeAndRender,
     layerRendererRef,
@@ -272,6 +285,7 @@ export function useLayerOperations({
         }
         renderer.setLayerImageData(entry.layerId, entry.beforeImage);
         compositeAndRender();
+        markLayerDirty();
         updateThumbnail(entry.layerId);
         break;
       }
@@ -294,6 +308,7 @@ export function useLayerOperations({
         useSelectionStore.getState().deselectAll();
 
         compositeAndRender();
+        markLayerDirty();
         for (const layer of docState.layers) {
           updateThumbnailWithSize(layer.id, entry.beforeWidth, entry.beforeHeight);
         }
@@ -305,6 +320,7 @@ export function useLayerOperations({
         renderer.removeLayer(entry.layerId);
         removeLayer(entry.layerId);
         compositeAndRender();
+        markLayerDirty();
         break;
       }
       case 'removeLayer': {
@@ -325,6 +341,7 @@ export function useLayerOperations({
         renderer.setLayerImageData(entry.layerId, entry.imageData);
         renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
         compositeAndRender();
+        markLayerDirty();
         updateThumbnail(entry.layerId);
         break;
       }
@@ -333,6 +350,7 @@ export function useLayerOperations({
     undo,
     layers,
     compositeAndRender,
+    markLayerDirty,
     updateThumbnail,
     updateThumbnailWithSize,
     layerRendererRef,
@@ -359,6 +377,7 @@ export function useLayerOperations({
         if (entry.afterImage) {
           renderer.setLayerImageData(entry.layerId, entry.afterImage);
           compositeAndRender();
+          markLayerDirty();
           updateThumbnail(entry.layerId);
         }
         break;
@@ -375,6 +394,7 @@ export function useLayerOperations({
         useSelectionStore.getState().deselectAll();
 
         compositeAndRender();
+        markLayerDirty();
 
         const docState = useDocumentStore.getState();
         for (const layer of docState.layers) {
@@ -397,6 +417,7 @@ export function useLayerOperations({
         });
         renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
         compositeAndRender();
+        markLayerDirty();
         updateThumbnail(entry.layerId);
         break;
       }
@@ -406,10 +427,18 @@ export function useLayerOperations({
         renderer.removeLayer(entry.layerId);
         removeLayer(entry.layerId);
         compositeAndRender();
+        markLayerDirty();
         break;
       }
     }
-  }, [redo, compositeAndRender, updateThumbnail, updateThumbnailWithSize, layerRendererRef]);
+  }, [
+    redo,
+    compositeAndRender,
+    markLayerDirty,
+    updateThumbnail,
+    updateThumbnailWithSize,
+    layerRendererRef,
+  ]);
 
   // Clear current layer content
   const handleClearLayer = useCallback(() => {
@@ -425,12 +454,14 @@ export function useLayerOperations({
 
     // Push to history
     saveStrokeToHistory();
+    markLayerDirty();
     updateThumbnail(activeLayerId);
   }, [
     activeLayerId,
     captureBeforeImage,
     saveStrokeToHistory,
     compositeAndRender,
+    markLayerDirty,
     updateThumbnail,
     layerRendererRef,
   ]);
@@ -449,9 +480,10 @@ export function useLayerOperations({
       // Copy the source layer content to target layer
       targetLayer.ctx.drawImage(sourceLayer.canvas, 0, 0);
       compositeAndRender();
+      markLayerDirty();
       updateThumbnail(toId);
     },
-    [compositeAndRender, updateThumbnail, layerRendererRef]
+    [compositeAndRender, markLayerDirty, updateThumbnail, layerRendererRef]
   );
 
   // Remove layer with history support
@@ -476,8 +508,9 @@ export function useLayerOperations({
       removeLayer(layerId);
 
       compositeAndRender();
+      markLayerDirty();
     },
-    [layers, pushRemoveLayer, compositeAndRender, layerRendererRef]
+    [layers, pushRemoveLayer, compositeAndRender, markLayerDirty, layerRendererRef]
   );
 
   return {
