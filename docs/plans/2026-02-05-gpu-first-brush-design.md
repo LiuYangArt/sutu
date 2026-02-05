@@ -40,11 +40,20 @@
 
 理由：`rgba32float` 在 8K 下显存/带宽不可接受；`rgba8unorm` 作为最终目标格式更合理，`rgba16float` 仅在 active stroke 期间保障混合精度。
 
+补充（需验证）：
+
+- **线性 8-bit 暗部 banding 风险**：`rgba8unorm` 存线性时，暗部精度最差，必须依赖 dither 才能压住 banding。
+- **备选存储**：`rgba8unorm-srgb`（读取自动解码到线性）。优点是暗部感知精度更高；但 **sRGB 格式不能作为 storage texture**，因此写回 layer 需要走 render pass（color attachment）或额外转换 pass。
+- 结论：M0 里做 `rgba8unorm (linear + dither)` vs `rgba8unorm-srgb` 的对比基准，再最终锁定。
+
 ### 3.2 Tile/虚拟纹理（新增）
 
 - 画布按固定 **tile** 切分（建议 256 或 512）。
 - 每层由 **tile 纹理集合** 表示，非活动层不做全画布常驻。
 - 采用 **LRU** 或相似策略控制 GPU 常驻 tile 数量。
+- **Tile 边界采样策略（必须显式处理）**：
+  - 合成/commit 走 `textureLoad`（整数坐标）以避免 filtering 引入的边缘伪影。
+  - 显示缩放（linear filtering / mip）需要 **tile padding（推荐 1px border）** 或 shader 手动 clamp，否则 zoom out 时容易出现接缝。
 
 ### 3.3 可见 tile 合成缓存（新增）
 
@@ -52,7 +61,8 @@
 
 - `belowComposite`：active layer 之下所有层 **可见 tile** 合成缓存。
 - `aboveComposite`：active layer 之上所有层 **可见 tile** 合成缓存。
-- 缓存仅在对应 tile 的层内容/属性（opacity/blend/visibility/顺序）变化时失效。
+- 缓存是 **tile 化** 的，且作用域仅覆盖 **当前 viewport 的可见 tiles**（不维护整张 8K 全画布离屏缓存）。
+- 缓存仅在对应 tile 的层内容/属性（opacity/blend/visibility/顺序）变化，或 viewport 变化导致可见 tile 集合变化时失效/重建。
 
 ### 3.4 降级策略（新增）
 
@@ -66,11 +76,14 @@
 
 - 为 active layer 引入 **`activeLayerTmp`**（或 ping-pong）。
 - 提交路径：`activeScratch + activeLayer -> activeLayerTmp`，然后交换句柄。
+- `commitStroke()` **只处理 dirty tiles**（由 stroke 的 tile 覆盖集合决定），并尽量使用 scissor / AABB 限制 dispatch 范围。
 
 ### 3.6 设备能力探测（新增）
 
 - 启动时探测 `maxTextureDimension2D`、格式支持、可用显存预算。
 - 超出上限时按 3.4 规则降级。
+- 显存预算不要仅依赖静态信息：增加 **allocation probe（逐步分配 + submit）** 估计浏览器实际可用上限，并将 LRU 预算设为该上限的 **60%~70%**。
+- 需要明确 **device lost / OOM** 的用户态恢复策略（清缓存 → 降级 → 切换 fallback）。
 
 ## 4. 架构概览
 
@@ -133,11 +146,14 @@
 
 - 探测 `maxTextureDimension2D`、格式支持、显存预算
 - 8K/4K 分配与 clear/compose micro-benchmark
+- `rgba8unorm (linear + dither)` vs `rgba8unorm-srgb` 的视觉与误差基准（叠加多次、暗部、渐变）
+- allocation probe + device lost/oom 最小恢复路径原型（至少能降级继续画）
 
 ### M1：Tile 基础设施与显示
 
 - tile 切分 + LRU 常驻
 - 仅显示单层 tile 纹理
+- 空 tile 不分配：tile 索引使用稀疏结构（Map/Hash）存储
 
 ### M2：GPU 合成最小集
 
@@ -148,6 +164,7 @@
 
 - `GPUStrokeAccumulator` 直写 `rgba16float` tiles
 - `commitStroke()` ping-pong/临时纹理方案
+- scissor / AABB 驱动的局部 dispatch（只覆盖 dirty rect）
 
 ### M4：主要特性恢复
 
@@ -162,15 +179,21 @@
 ## 8. 风险与对策
 
 1. **色彩一致性偏差**
-   - 对策：建立小画布像素对比基准，定义误差阈值
+   - 对策：建立小画布像素对比基准，定义误差阈值；在 M0 决定 layer 存储格式（linear+dither vs srgb）
 
 2. **显存压力 / tile 震荡**
-   - 对策：LRU 预算上限 + 可见 tile 优先 + 统计 cache miss
+   - 对策：LRU 预算上限 + 可见 tile 优先 + 统计 cache miss；以 allocation probe 结果设预算并留安全余量
 
-3. **tile 失效条件遗漏**
+3. **Tile 接缝/缩放伪影**
+   - 对策：合成/commit 用 `textureLoad`；显示缩放采用 tile padding 或手动 clamp；必要时对缩放路径做专门验收用例
+
+4. **tile 失效条件遗漏**
    - 对策：显式枚举失效条件（可见性/opacity/blend/顺序/内容），并加测试用例
 
-4. **兼容性**
+5. **导出/截图大任务导致 GPU 超时/不稳定**
+   - 对策：导出按 tile/chunk 分块合成与 readback（例如 2048x2048 chunk），避免长时间单次提交
+
+6. **兼容性**
    - 对策：保留 Canvas2D fallback，GPU 不可用自动切换
 
 ## 9. 验收用例（摘要）
@@ -191,8 +214,9 @@
 
 - 8K WebGPU 纹理分配/clear/compose micro-benchmark（记录峰值显存与帧耗时）
 - 明确 blend modes 目标清单与“视觉一致性”误差阈值
-- 定义 `rgba8unorm` 线性存储 + sRGB 显示的转换规则与 dither 方案
-- 明确 tile size（256/512）与 LRU 预算策略
+- 定义 `rgba8unorm` 线性存储 + sRGB 显示的转换规则与 dither 方案；并对比 `rgba8unorm-srgb` 存储方案
+- 明确 tile size（256/512）与 LRU 预算策略（预算来自 allocation probe）
+- 明确 device lost/OOM 的降级顺序与恢复机制
 
 ### Phase 1：Tile 显示与最小合成
 
@@ -218,6 +242,7 @@
 
 - selection 纹理化并纳入合成
 - 明确导出/截图 readback 路径（仅在用户触发时执行）
+- 导出按 tile/chunk 分块 readback + CPU 拼接（避免 TDR / GPU process reset）
 
 ### Phase 5：优化与可扩展性评估
 

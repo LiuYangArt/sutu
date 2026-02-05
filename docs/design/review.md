@@ -1,344 +1,144 @@
-这两个问题指向了同一个核心缺陷：**当前的平滑算法是“全有或全无”的，且错误地将闭合路径视为连续的平滑曲线。**
+作为一个资深的图形架构师和软件开发人员，我仔细审阅了这份《GPU-First 笔刷与渲染架构设计》草案。
 
-要解决这个问题，我们需要在**数据结构层**区分“手绘点”和“锚点（多边形点）”，并在**渲染层**针对每一段线段单独决定是画曲线还是画直线。
+### **总体评价：置信度高 (High Confidence)**
 
-以下是完整的解决方案：
+**评分：8.5/10**
 
-### 1. 修改数据结构 (Types)
+这份设计文档非常扎实，**方向完全正确**。它敏锐地抓住了 Web 端高性能绘图的核心痛点——CPU/GPU 带宽瓶颈（Readback），并提出了标准的行业解决方案（Tile 化、虚拟纹理、全 GPU 流程）。针对 8K 这一极高目标，采用“稀疏存储 + LRU”是唯一可行的路径。
 
-首先，我们不能只存坐标 `{x, y}`。我们需要知道这个点是怎么产生的（是通过拖拽产生的平滑点，还是点击产生的硬角点）。
+然而，从“设计草案”到“落地代码”，在 **显存管理细节**、**图块边缘伪影处理** 和 **色彩精度** 三个方面还存在潜在陷阱。
+
+以下是具体的 Review 意见和优化建议：
+
+---
+
+### 一、 关键风险点与优化建议
+
+#### 1. 色彩精度的陷阱：`rgba8unorm` 存线性空间 (Critical)
+
+**文档现状**：3.1 节提到 _Layer 存储：`rgba8unorm`（线性空间）_。
+**问题分析**：这是一个高风险决策。8-bit 只有 256 个色阶。如果存储的是 **线性（Linear）** 数据，暗部的精度会极度压缩，导致严重的色带（Banding）现象。sRGB（Gamma 2.2）曲线存在的意义就是利用人眼特性，把 8-bit 精度更多分配给暗部。
+**优化建议**：
+
+- **方案 A（推荐）**：Layer 存储使用 `rgba8unorm-srgb` 格式。WebGPU 硬件会自动在读取时解码为线性浮点（供混合计算），写入时编码回 sRGB。这样既保证了混合的数学正确性（在线性空间），又保证了存储的感知精度。
+- **方案 B**：如果坚持 `rgba8unorm` 存线性，则 **必须** 在混合写入层时实施非常激进的 Dither（抖动），但这会引入噪点。
+- **结论**：强烈建议改为 `rgba8unorm-srgb` 用于存储，计算保持 Linear。
+
+#### 2. Tile 拼接处的“接缝”与采样伪影 (Filtering Artifacts)
+
+**文档现状**：3.2 节提到 Tile 切分，但未提及 Padding 或 Sampling 策略。
+**问题分析**：当笔刷跨越 Tile 边界，或者缩放画布进行 Bilinear 插值显示时，如果直接采样 Tile 边缘，纹理采样器会采样到 Tile 外部（通常是 Clamp to Edge 的颜色，或者是空的）。这会导致 Tile 之间出现可见的接缝或黑线。
+**优化建议**：
+
+- **方案 A（Padding）**：每个 Tile 物理纹理大小为 `(Size + 2 * Padding)`，例如 512x512 的内容存为 514x514 的纹理，边缘 1px 复制相邻像素。这会增加显存和更新开销。
+- **方案 B（Shader控制）**：在 Shader 中手动实现双线性插值（fetch 4个点），并严格限制坐标不越界。
+- **方案 C（仅显示缩放时）**：如果画布是 1:1 显示，使用 `nearest` 采样；只有在 Zoom out 时使用 Mipmap 或 Padding。
+- **补充**：对于笔刷合成（Composite），通常是 1:1 像素对齐的，可以用 `LoadOp` 或整数坐标 `textureLoad` 避免插值问题，这点需要在开发阶段特别注意。
+
+#### 3. 浏览器显存上限 vs 物理显存 (Browser Limits)
+
+**文档现状**：目标是 32GB 显卡跑 8K。
+**问题分析**：虽然显卡有 32GB，但 Chrome/Edge 对单个 Tab 或 WebGPU Context 通常有 **配额限制**（例如 2GB - 8GB 不等，取决于 OS 实现）。即便物理显存够，浏览器也可能 Crash。
+**优化建议**：
+
+- **被动防御**：在 3.6 设备探测中，不要只信赖 `navigator.deviceMemory` 或 Adapter Info，需要通过分配测试（Allocation Probe）来探测实际可用显存上限。
+- **Tile 压缩**：对于非 Active Layer，如果不进行频繁编辑，可以考虑是否引入压缩纹理（如 BC7/ASTC，虽然 WebGPU 运行时生成压缩纹理很慢，但可以作为“长期不活动层”的归档手段，但这可能过于复杂，暂且作为备选）。
+- **显存预算**：LRU 的预算不能是物理显存的 100%，建议设定为浏览器配额的 60%-70%。
+
+---
+
+### 二、 架构设计的微调
+
+#### 1. 提交笔触 (Commit Stroke) 的优化
+
+**文档现状**：`activeScratch + activeLayer -> activeLayerTmp`，然后 Swap。
+**优化建议**：
+
+- **局部更新 (Dirty Rect)**：8K 画布非常大，如果画一笔只改动了左上角一个 Tile，绝对不要全屏合成。
+- **Tile 级 Ping-Pong**：只需要对 **受影响的 Tile** 进行 Ping-Pong 和 Swap。未被笔触覆盖的 Tile 句柄直接从旧 Layer 复制到新 Layer（或者仅修改指针引用，如果 Layer 只是 Tile 的集合）。
+- **Sparse Allocation**：如果笔触画到了一个原本是“空”的区域，此时才动态分配该位置的 Tile。
+
+#### 2. 合成缓存 (Composite Cache) 的颗粒度
+
+**文档现状**：`belowComposite` 和 `aboveComposite` 缓存。
+**优化建议**：
+
+- 这些缓存也应该是 **Tile 化** 的。
+- 场景：我在 Layer 5 画画。
+  - Layer 1-4 的对应 Tile 合成 -> 写入 `BelowCompositeTile[x,y]`。
+  - 如果 Layer 2 的 Opacity 变了，标记 Layer 2 所有的 Tile 为 Dirty，下一帧只需重绘 `BelowComposite` 涉及的 Tile。
+  - **关键点**：不要维护一张巨大的 8K 离屏纹理作为 `belowComposite`，它也应该是由 Tile 组成的虚拟纹理，或者直接是 Screen Size 的纹理（视口大小，非画布大小）。**强烈建议 `below/above` composite 缓存仅针对当前 Viewport 大小，而不是全画布 8K 大小，以节省显存。** (这一点非常重要，能极大降低显存压力)
+
+---
+
+### 三、 具体的阶段任务补充 (Actionable Items)
+
+建议在您的 M0-M5 计划中补充以下技术验证点：
+
+#### Phase 0 (基线)
+
+- **[新增]**：验证 `rgba8unorm-srgb` vs `rgba8unorm` 在混合叠加多次后的色彩差异。
+- **[新增]**：WebGPU 显存OOM（Out of Memory）恢复机制原型。如果 LRU 满了或者浏览器报错，如何优雅地从 System Memory 恢复 Tile。
+
+#### Phase 1 (Tile)
+
+- **[新增]**：实现“稀疏索引纹理”（Sparse Index Buffer/Map），即一个 JS `Map<TileKey, TextureView>`，确保空区域不占用 VRAM。
+
+#### Phase 2 (笔刷)
+
+- **[改进]**：实现基于 AABB（包围盒）的 Scissor Test，确保 Shader 只在笔刷影响的像素范围内运行。
+
+#### Phase 4 (导出)
+
+- **[特别注意]**：导出 8K 图片时，浏览器可能会杀掉 GPU 进程（TDR）。
+- **策略**：导出必须分块进行（Readback chunk by chunk），比如每次读 2048x2048，在 CPU 拼好，防止 GPU 超时。
+
+---
+
+### 四、 总结代码示例 (伪代码)
+
+为了帮助你理解 Tile 管理和 Ping-Pong 的核心逻辑，这里给出一个 TS 伪代码结构：
 
 ```typescript
-// types.ts
-export interface SelectionPoint {
-  x: number;
-  y: number;
-  // 'freehand': 拖拽产生的点，需要平滑连接
-  // 'corner': 点击产生的点，或者是拖拽的起止点，需要直线连接
-  type: 'freehand' | 'corner';
+// Tile 的唯一标识
+type TileKey = string; // e.g., "x_y"
+
+class Layer {
+  // 稀疏存储：只存储有内容的 Tile
+  tiles: Map<TileKey, GPUTexture>;
+
+  // 获取某个位置的 Tile，如果没有则返回空或创建
+  getTile(x: number, y: number): GPUTexture | null { ... }
+}
+
+class StrokeCommitter {
+  // 优化：仅针对受影响的 Tile 进行 Commit
+  commit(
+    activeLayer: Layer,
+    scratchTexture: GPUTexture, // 包含了当前笔触的临时纹理
+    affectedRegion: Rect // 笔触包围盒
+  ) {
+    const tileKeys = getTilesInRect(affectedRegion);
+
+    for (const key of tileKeys) {
+      const originalTile = activeLayer.tiles.get(key);
+      // 从池中获取一个新 Tile
+      const newTile = TileMemoryManager.allocate();
+
+      // 执行 Shader: Blend(originalTile, scratch) -> newTile
+      this.runComputeShader(originalTile, scratchTexture, newTile);
+
+      // 更新 Layer 引用
+      activeLayer.tiles.set(key, newTile);
+
+      // 回收旧 Tile (延迟回收以防还在被 Display 使用)
+      TileMemoryManager.release(originalTile);
+    }
+  }
 }
 ```
 
-### 2. 修改交互逻辑 (Selection Handler)
+### 最终结论
 
-我们需要在生成点的时候打上标签。
-
-- `onPointerDown` (点击开始)：标记为 `corner`。
-- `onPointerMove` (拖拽中)：标记为 `freehand`。
-- `onPointerUp` (松手)：如果是拖拽结束，最后一个点通常视为 `corner`（作为一段笔触的终结）。
-
-**文件:** `src/hooks/useSelectionHandler.ts`
-
-```typescript
-// ... imports
-
-const onPointerDown = (e) => {
-  const newPoint = { x: e.clientX, y: e.clientY, type: 'corner' }; // 起点是硬角
-  setSelectionPoints([newPoint]);
-  // ...
-};
-
-const onPointerMove = (e) => {
-  if (isDragging) {
-    // 拖拽过程中产生的点是手绘点
-    const newPoint = { x: e.clientX, y: e.clientY, type: 'freehand' };
-
-    // 这里可以加一个采样优化，比如每移动3px才加一个点，避免点过密
-    addSelectionPoint(newPoint);
-  }
-  // ...
-};
-
-const onPointerUp = (e) => {
-  // 如果刚才是在拖拽，松手的那一刻，把最后一个点更新为 'corner'
-  // 这样确保这段手绘线段有一个明确的“终点”
-  if (isDragging) {
-    markLastPointAsCorner();
-  }
-
-  // 提交选区...
-};
-```
-
-### 3. 核心修复：混合渲染算法 (Path Rendering)
-
-这是解决你两个 Bug 的关键代码。我们不再把整个数组丢进平滑函数，而是遍历点，根据相邻两个点的类型决定画法。
-
-**算法逻辑：**
-
-1.  **解决 Bug 1 (闭合变圆)**：我们只处理点 `0` 到 `N` 的路径，最后用标准的 `ctx.closePath()`。`closePath` 在 Canvas 中永远是画直线连接起点，这正好符合“未闭合时松手自动直线闭合”的需求。
-2.  **解决 Bug 2 (混合选区平滑)**：只有当 **当前点** 和 **下一个点** 都是 `freehand` 类型时，才使用贝塞尔曲线平滑。一旦遇到 `corner` 点，强制使用 `lineTo`。
-
-**文件:** `src/utils/selectionRender.ts`
-
-```typescript
-import { SelectionPoint } from '../types';
-
-export const pointsToPath = (points: SelectionPoint[]): Path2D => {
-  const path = new Path2D();
-
-  if (points.length < 2) return path;
-
-  // 1. 移动到起点
-  path.moveTo(points[0].x, points[0].y);
-
-  // 2. 遍历所有点（注意：不包含最后回到起点的那个闭合动作）
-  for (let i = 0; i < points.length - 1; i++) {
-    const curr = points[i];
-    const next = points[i + 1];
-
-    // 核心逻辑：只有两个点都是 'freehand' 且距离适中时，才平滑
-    // 如果任意一个是 'corner'，说明这里是多边形转折，或者是手绘的起止，必须用直线
-    if (curr.type === 'freehand' && next.type === 'freehand') {
-      // === 平滑策略 ===
-      // 使用中点画法 (Midpoint approach) 获得圆润的笔触
-      // 我们画到当前点和下个点的“中点”，把当前点作为控制点（或者反之）
-      // 这里的简单做法是：取两点中点作为终点，next作为控制点其实不准确。
-      // 更稳健的平滑通常是：quadraticCurveTo(curr.x, curr.y, (curr.x + next.x)/2, (curr.y + next.y)/2)
-      // 但上面的写法是从上一段的中点过来的。
-
-      // 简单且效果好的平滑公式：
-      const midX = (curr.x + next.x) / 2;
-      const midY = (curr.y + next.y) / 2;
-
-      // 注意：这种画法通常需要从 mid 开始画。
-      // 为了不破坏结构，我们这里做一个简单的贝塞尔：
-      // 以 curr 为控制点（如果前一个是直线过来的，这里可能会稍微突变，
-      // 但对于密集的 freehand 点，直接 quadraticCurveTo 到 mid 是最顺滑的）
-      path.quadraticCurveTo(curr.x, curr.y, midX, midY);
-    } else {
-      // === 直线策略 (Polygonal) ===
-      // 遇到 polygonal 点，或者是 freehand 的终点 -> 直线连接
-      // 这保证了尖角被保留
-      path.lineTo(next.x, next.y);
-    }
-  }
-
-  // 3. 处理最后一个点到终点的连接
-  // 如果上面的循环用的是中点平滑，最后还需要补齐到最后一个点
-  const lastIndex = points.length - 1;
-  const lastPoint = points[lastIndex];
-  // 确保路径走到了数组最后一个点（因为上面的平滑可能只到了中点）
-  path.lineTo(lastPoint.x, lastPoint.y);
-
-  // 4. 闭合路径 (解决 Bug 1)
-  // closePath 会自动创建一条从 lastPoint 到 points[0] 的【直线】
-  // 无论之前的点多么平滑，这条闭合线永远是直的，不会出现弧形。
-  path.closePath();
-
-  return path;
-};
-```
-
-### 4. 进一步优化：解决平滑算法的滞后问题
-
-上面的简单 `quadraticCurveTo` 在混合模式下可能会在直线接曲线时出现一个小缺口或错位。更完美的混合渲染逻辑如下：
-
-```typescript
-export const pointsToPath = (points: SelectionPoint[]): Path2D => {
-  const path = new Path2D();
-  if (points.length < 2) return path;
-
-  path.moveTo(points[0].x, points[0].y);
-
-  let i = 1;
-  while (i < points.length) {
-    const prev = points[i - 1];
-    const curr = points[i];
-
-    // 只有当这一段完全在“手绘流”中时，才应用平滑
-    // 也就是：起点是 freehand (或从 freehand 过来)，终点也是 freehand
-    if (prev.type === 'freehand' && curr.type === 'freehand') {
-      // 找到连续的一组 freehand 点
-      let j = i;
-      while (j < points.length && points[j].type === 'freehand') {
-        j++;
-      }
-
-      // 对这段 [i-1 ... j-1] 的点应用样条平滑 (Spline)
-      // 简化的做法：
-      for (let k = i; k < j; k++) {
-        const p0 = points[k - 1];
-        const p1 = points[k];
-        const midX = (p0.x + p1.x) / 2;
-        const midY = (p0.y + p1.y) / 2;
-        // 在两点之间画曲线
-        path.quadraticCurveTo(p0.x, p0.y, midX, midY);
-      }
-
-      // 更新索引
-      i = j;
-    } else {
-      // 只要两点中有一个是 corner，就是直线
-      // 这完美保留了多边形的尖角
-      path.lineTo(curr.x, curr.y);
-      i++;
-    }
-  }
-
-  // 强制直线闭合
-  path.closePath();
-
-  return path;
-};
-```
-
-### 总结修复点：
-
-1.  **Bug 1 (闭合变圆)**：
-    - **原因**：之前的算法可能把 `points[last]` 和 `points[0]` 也纳入了平滑计算。
-    - **修复**：平滑循环只处理点数组内部。最后使用 `path.closePath()`，Canvas 标准规定这是直线闭合。
-
-2.  **Bug 2 (混合选区无尖角)**：
-    - **原因**：全局应用平滑，没有区分线段类型。
-    - **修复**：引入 `type: 'corner' | 'freehand'`。渲染时，只有连续的 `freehand` 点之间才画曲线（`quadraticCurveTo`），一旦遇到 `corner` 点，立即切换回 `lineTo`。
-
-这样，你的选区工具就能像 Photoshop 的磁性套索或混合套索一样，既能画出顺滑的曲线，又能随时 Alt+Click 画出锐利的多边形直线，且松手时自动直线闭合。
-
----
-
-你这两个现象本质上是同一个根因：**当前的平滑是按“整条闭合路径”一锅端处理**（把 `last -> first` 也当成要参与 Chaikin/Bezier 的一段），并且在 **freehand 与 polygonal 混合**时，平滑算法把 polygonal 的拐角也一起“圆掉”了。
-
-要彻底修好，需要把“路径”从 `points[]` 升级为 **带语义的节点/段**，然后做到：
-
-1. **闭合边 (last -> first) 永远用直线**（尤其是未闭合就 mouseup commit 的情况）
-2. **平滑只能在 freehand 段内进行，不能跨越 polygonal 拐角**（拐角点要作为硬断点/锚点保留）
-
-下面给一个推荐实现（改动不大，但能一次性把这俩 bug 解决）。
-
----
-
-## 1) 数据结构：点带类型（关键）
-
-把原来的 `Point[]` 改为：
-
-```ts
-type NodeType = 'corner' | 'freehand'; // corner = polygonal click/拐角锚点
-type LassoNode = { x: number; y: number; t: NodeType };
-```
-
-规则：
-
-- Alt+Click（或 polygonal 点击落点） → push `{t:'corner'}`
-- freehand 拖拽采样点 → push `{t:'freehand'}`
-- 如果 freehand 开始点就是起点：建议起点也标成 `corner`（锚点），后续拖拽点是 `freehand`
-
-这样混合模式下，“哪些地方必须尖角”就有信息可用。
-
----
-
-## 2) 生成渲染/Mask 的 Path：分段平滑 + 拐角硬断点
-
-核心思想：把节点按 `corner` 切成若干段，每段内部如果是 freehand 就平滑，但**段的两端（角点）保持原样**，且**不允许平滑跨段**。
-
-```ts
-function chaikinOpen(points: { x: number; y: number }[], iterations = 2) {
-  // 开口曲线版本：保留首尾点，不做闭环
-  let pts = points;
-  for (let k = 0; k < iterations; k++) {
-    const out: typeof pts = [];
-    out.push(pts[0]);
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[i],
-        p1 = pts[i + 1];
-      out.push({ x: 0.75 * p0.x + 0.25 * p1.x, y: 0.75 * p0.y + 0.25 * p1.y });
-      out.push({ x: 0.25 * p0.x + 0.75 * p1.x, y: 0.25 * p0.y + 0.75 * p1.y });
-    }
-    out.push(pts[pts.length - 1]);
-    pts = out;
-  }
-  return pts;
-}
-
-function buildPathFromNodes(nodes: LassoNode[], opts?: { closeWithLine?: boolean }) {
-  const closeWithLine = opts?.closeWithLine ?? true;
-
-  const path = new Path2D();
-  if (nodes.length < 2) return path;
-
-  // 1) 找到所有 corner 索引（没有 corner 就把首尾当 corner）
-  const cornerIdx: number[] = [];
-  for (let i = 0; i < nodes.length; i++) if (nodes[i].t === 'corner') cornerIdx.push(i);
-  if (cornerIdx.length === 0) cornerIdx.push(0, nodes.length - 1);
-  if (cornerIdx[0] !== 0) cornerIdx.unshift(0);
-  if (cornerIdx[cornerIdx.length - 1] !== nodes.length - 1) cornerIdx.push(nodes.length - 1);
-
-  // 2) 从第一个点 moveTo
-  path.moveTo(nodes[0].x, nodes[0].y);
-
-  // 3) 逐段处理：每段 [a..b]
-  for (let s = 0; s < cornerIdx.length - 1; s++) {
-    const a = cornerIdx[s];
-    const b = cornerIdx[s + 1];
-    const segment = nodes.slice(a, b + 1);
-
-    const hasFreehand = segment.some((n) => n.t === 'freehand');
-    if (!hasFreehand || segment.length <= 2) {
-      // 纯 polygonal 或只有一条边：直线连接，保持尖角
-      for (let i = 1; i < segment.length; i++) path.lineTo(segment[i].x, segment[i].y);
-      continue;
-    }
-
-    // 混合段：只对段内点做平滑，但首尾是 corner 要保留
-    const pts = segment.map(({ x, y }) => ({ x, y }));
-    const smooth = chaikinOpen(pts, 2);
-
-    // 用 lineTo 连接平滑后的折线（你也可改成 quad/bezier 画法）
-    for (let i = 1; i < smooth.length; i++) path.lineTo(smooth[i].x, smooth[i].y);
-  }
-
-  // 4) 关键：闭合策略 —— 永远用直线闭合（避免 last->first 被平滑成弧线）
-  if (closeWithLine) {
-    path.lineTo(nodes[0].x, nodes[0].y); // 显式直线回到起点
-    path.closePath();
-  }
-
-  return path;
-}
-```
-
-### 这段代码解决两类 bug
-
-- **bug A：未闭合 mouseup 后 last->first 变弧线**
-  因为我们不做“闭环平滑”，而是最后显式 `lineTo(start)`，闭合边必为直线。
-- **bug B：freehand + polygonal 混合时 polygonal 尖角被圆掉**
-  因为 `corner` 会把路径切段，平滑不会跨过角点，角点的折线连接天然保持尖角。
-
----
-
-## 3) Commit 时如何决定 `closeWithLine`
-
-你描述的场景是“未闭合松开鼠标也应用选区”，那就应该 **强制 closeWithLine=true**，并且闭合边为直线。
-
-- 预览（还在画，未提交）：可以不 close（便于用户看到开放路径）
-- 提交（mouseup / enter / double click）：必须 close，且 close 边为直线
-
-```ts
-// 预览
-const previewPath = buildPathFromNodes(nodes, { closeWithLine: false });
-
-// 提交
-const commitPath = buildPathFromNodes(nodes, { closeWithLine: true });
-```
-
----
-
-## 4) 你现有代码里最可能的“坑位”
-
-如果你现在是：
-
-- 把点数组当闭合多边形做 Chaikin（把最后一点和第一点当相邻点）
-- 或者 `closePath()` 之前用 bezier 自动连接回起点
-
-都会导致你看到的“closing edge 弧线”。
-
-修正要点就是：**平滑只对开口 polyline 做**，闭合边用显式直线补上。
-
----
-
-## 需要你确认的两点（我才能把补丁更贴合你项目）
-
-1. 你现在生成 mask 的入口函数叫什么？（`pathToMask` / `pointsToPath` / 还是 GPU 管线里生成多边形？）
-2. 混合模式在交互上是怎么触发的：按住 Alt 临时 polygonal，还是点击=polygonal 拖拽=freehand？
-
-你把对应文件里“收集 points”与“生成 Path/Mask”的那两段代码贴出来（几十行即可），我可以按你现有结构给出最小 diff 版修改。
+这份文档是高质量的，方案可行。
+**最需要改进的唯一也是最大的一点是：3.1 节关于 `rgba8unorm` (Linear) 的存储格式决策，建议复核并改为 `srgb` 格式存储或增加高强度 Dither 策略。** 此外，务必明确“合成缓存”是基于 Viewport 的还是全画布的（建议基于 Viewport 或稀疏 Tile）。
