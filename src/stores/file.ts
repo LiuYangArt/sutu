@@ -102,11 +102,14 @@ function layerToLayerData(layer: Layer, imageData?: string): LayerData {
  * Convert backend LayerData to frontend Layer format
  */
 function layerDataToLayer(data: LayerData): Layer {
-  const thumbnail = data.imageData
-    ? data.imageData.startsWith('data:')
-      ? data.imageData
-      : `data:image/png;base64,${data.imageData}`
-    : undefined;
+  let thumbnail: string | undefined;
+  if (data.imageData) {
+    if (data.imageData.startsWith('data:')) {
+      thumbnail = data.imageData;
+    } else {
+      thumbnail = `data:image/png;base64,${data.imageData}`;
+    }
+  }
 
   return {
     id: data.id,

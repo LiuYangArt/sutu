@@ -1,8 +1,7 @@
 import { useEffect, type RefObject } from 'react';
+import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
-import type { ResizeCanvasOptions } from '@/stores/document';
-import { useDocumentStore } from '@/stores/document';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
 
 interface UseGlobalExportsParams {
@@ -115,6 +114,11 @@ export function useGlobalExports({
       const docHeight = docState.height;
       const updateLayerThumbnail = docState.updateLayerThumbnail;
 
+      function updateThumbnailForLayer(layerId: string, layerCanvas: HTMLCanvasElement): void {
+        const thumb = renderLayerThumbnail(layerCanvas, docWidth, docHeight);
+        if (thumb) updateLayerThumbnail(layerId, thumb);
+      }
+
       let fetchTotal = 0;
       let decompressTotal = 0;
       let renderTotal = 0;
@@ -140,8 +144,7 @@ export function useGlobalExports({
             img.onload = () => {
               layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
               layer.ctx.drawImage(img, offsetX, offsetY);
-              const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
-              if (thumb) updateLayerThumbnail(layerData.id, thumb);
+              updateThumbnailForLayer(layerData.id, layer.canvas);
               resolve();
             };
             img.onerror = () => resolve();
@@ -175,8 +178,7 @@ export function useGlobalExports({
                 );
                 layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
                 layer.ctx.putImageData(imageData, offsetX, offsetY);
-                const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
-                if (thumb) updateLayerThumbnail(layerData.id, thumb);
+                updateThumbnailForLayer(layerData.id, layer.canvas);
                 renderTotal += performance.now() - renderStart;
               }
             } else if (contentType === 'image/x-rgba') {
@@ -186,8 +188,7 @@ export function useGlobalExports({
                 const imageData = new ImageData(new Uint8ClampedArray(buffer), imgWidth, imgHeight);
                 layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
                 layer.ctx.putImageData(imageData, offsetX, offsetY);
-                const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
-                if (thumb) updateLayerThumbnail(layerData.id, thumb);
+                updateThumbnailForLayer(layerData.id, layer.canvas);
                 renderTotal += performance.now() - renderStart;
               }
             } else {
@@ -198,8 +199,7 @@ export function useGlobalExports({
               const bitmap = await createImageBitmap(blob);
               layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
               layer.ctx.drawImage(bitmap, offsetX, offsetY);
-              const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
-              if (thumb) updateLayerThumbnail(layerData.id, thumb);
+              updateThumbnailForLayer(layerData.id, layer.canvas);
               renderTotal += performance.now() - renderStart;
             }
           } catch (e) {
