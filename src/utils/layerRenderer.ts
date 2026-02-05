@@ -145,22 +145,21 @@ export class LayerRenderer {
     previewOpacity: number
   ): HTMLCanvasElement {
     const opacity = Math.max(0, Math.min(1, previewOpacity));
+    const ctx = this.previewLayerCtx;
 
     // Copy layer content including transparent pixels
-    this.previewLayerCtx.save();
-    this.previewLayerCtx.globalCompositeOperation = 'copy';
-    this.previewLayerCtx.globalAlpha = 1;
-    this.previewLayerCtx.drawImage(layerCanvas, 0, 0);
-    this.previewLayerCtx.restore();
+    ctx.save();
+    ctx.globalCompositeOperation = 'copy';
+    ctx.globalAlpha = 1;
+    ctx.drawImage(layerCanvas, 0, 0);
 
     if (opacity > 0) {
-      this.previewLayerCtx.save();
-      this.previewLayerCtx.globalCompositeOperation = 'source-over';
-      this.previewLayerCtx.globalAlpha = opacity;
-      this.previewLayerCtx.drawImage(previewCanvas, 0, 0);
-      this.previewLayerCtx.restore();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = opacity;
+      ctx.drawImage(previewCanvas, 0, 0);
     }
 
+    ctx.restore();
     return this.previewLayerCanvas;
   }
 
@@ -261,7 +260,7 @@ export class LayerRenderer {
    * Optionally composites a stroke preview into the active layer (display-only),
    * so that layer opacity/blend mode is applied consistently (WYSIWYG).
    *
-   * @param preview - Optional preview config to insert after active layer
+   * @param preview - Optional stroke preview config for the active layer
    */
   composite(preview?: {
     activeLayerId: string;
@@ -276,10 +275,10 @@ export class LayerRenderer {
       const layer = this.layers.get(id);
       if (!layer || !layer.visible) continue;
 
-      const hasPreview = preview && id === preview.activeLayerId && preview.opacity > 0;
-      const sourceCanvas = hasPreview
-        ? this.composeLayerWithPreview(layer.canvas, preview.canvas, preview.opacity)
-        : layer.canvas;
+      let sourceCanvas = layer.canvas;
+      if (preview && id === preview.activeLayerId && preview.opacity > 0) {
+        sourceCanvas = this.composeLayerWithPreview(layer.canvas, preview.canvas, preview.opacity);
+      }
 
       // Draw the layer
       this.compositeCtx.save();

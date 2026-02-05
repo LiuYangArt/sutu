@@ -16,18 +16,10 @@ type Mock2dContext = {
   globalCompositeOperation: GlobalCompositeOperation;
   save: () => void;
   restore: () => void;
-  clearRect: (...args: unknown[]) => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  drawImage: (...args: any[]) => void;
-  // Minimal props used during layer creation/resizing
+  clearRect: () => void;
+  drawImage: (img: unknown, ..._rest: unknown[]) => void;
   lineCap: CanvasLineCap;
   lineJoin: CanvasLineJoin;
-  imageSmoothingEnabled: boolean;
-  imageSmoothingQuality: ImageSmoothingQuality;
-  fillStyle: string;
-  fillRect: (...args: unknown[]) => void;
-  getImageData: (...args: unknown[]) => ImageData;
-  putImageData: (...args: unknown[]) => void;
 };
 
 function createMock2dContext(): Mock2dContext {
@@ -67,12 +59,6 @@ function createMock2dContext(): Mock2dContext {
     },
     lineCap: 'round',
     lineJoin: 'round',
-    imageSmoothingEnabled: true,
-    imageSmoothingQuality: 'low',
-    fillStyle: '#000000',
-    fillRect: () => {},
-    getImageData: () => new ImageData(1, 1),
-    putImageData: () => {},
   };
 
   return ctx;
@@ -88,14 +74,13 @@ describe('LayerRenderer preview compositing', () => {
     // @ts-expect-error - Overloading getContext for testing causes TS issues with disjoint union types
     getContextSpy = vi
       .spyOn(HTMLCanvasElement.prototype, 'getContext')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .mockImplementation(function (this: HTMLCanvasElement) {
         const existing = ctxByCanvas.get(this);
-        if (existing) return existing as any;
+        if (existing) return existing as unknown as CanvasRenderingContext2D;
 
         const next = createMock2dContext();
         ctxByCanvas.set(this, next);
-        return next as any;
+        return next as unknown as CanvasRenderingContext2D;
       });
   });
 
