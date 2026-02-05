@@ -3,6 +3,7 @@ import { useSelectionStore } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
 import { useHistoryStore } from '@/stores/history';
 import { LayerRenderer } from '@/utils/layerRenderer';
+import { renderLayerThumbnail } from '@/utils/layerThumbnail';
 
 interface UseLayerOperationsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -77,21 +78,8 @@ export function useLayerOperations({
       const layer = layerRendererRef.current.getLayer(layerId);
       if (!layer) return;
 
-      const thumbCanvas = document.createElement('canvas');
-      const aspect = docWidth / docHeight;
-      const thumbWidth = 64;
-      const thumbHeight = thumbWidth / aspect;
-
-      thumbCanvas.width = thumbWidth;
-      thumbCanvas.height = thumbHeight;
-
-      const ctx = thumbCanvas.getContext('2d');
-      if (!ctx) return;
-
-      ctx.clearRect(0, 0, thumbWidth, thumbHeight);
-      ctx.drawImage(layer.canvas, 0, 0, thumbWidth, thumbHeight);
-
-      updateLayerThumbnail(layerId, thumbCanvas.toDataURL());
+      const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
+      if (thumb) updateLayerThumbnail(layerId, thumb);
     },
     [updateLayerThumbnail, layerRendererRef]
   );
@@ -184,7 +172,7 @@ export function useLayerOperations({
       pushStroke(activeLayerId, beforeImage);
 
       // Update thumbnail and re-render
-      updateLayerThumbnail(activeLayerId, layer.canvas.toDataURL('image/png', 0.5));
+      updateThumbnail(activeLayerId);
       compositeAndRender();
     },
     [
@@ -193,7 +181,7 @@ export function useLayerOperations({
       width,
       height,
       pushStroke,
-      updateLayerThumbnail,
+      updateThumbnail,
       compositeAndRender,
       layerRendererRef,
     ]
@@ -240,7 +228,7 @@ export function useLayerOperations({
     pushStroke(activeLayerId, beforeImage);
 
     // Update thumbnail and re-render
-    updateLayerThumbnail(activeLayerId, layer.canvas.toDataURL('image/png', 0.5));
+    updateThumbnail(activeLayerId);
     compositeAndRender();
   }, [
     activeLayerId,
@@ -248,7 +236,7 @@ export function useLayerOperations({
     width,
     height,
     pushStroke,
-    updateLayerThumbnail,
+    updateThumbnail,
     compositeAndRender,
     layerRendererRef,
   ]);

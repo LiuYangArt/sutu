@@ -102,6 +102,12 @@ function layerToLayerData(layer: Layer, imageData?: string): LayerData {
  * Convert backend LayerData to frontend Layer format
  */
 function layerDataToLayer(data: LayerData): Layer {
+  const thumbnail = data.imageData
+    ? data.imageData.startsWith('data:')
+      ? data.imageData
+      : `data:image/png;base64,${data.imageData}`
+    : undefined;
+
   return {
     id: data.id,
     name: data.name,
@@ -111,7 +117,7 @@ function layerDataToLayer(data: LayerData): Layer {
     opacity: Math.round(data.opacity * 100), // Convert 0.0-1.0 to 0-100
     blendMode: data.blendMode as Layer['blendMode'],
     isBackground: data.isBackground,
-    thumbnail: data.imageData, // Use image data as thumbnail temporarily
+    thumbnail,
   };
 }
 

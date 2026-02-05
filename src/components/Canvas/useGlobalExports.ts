@@ -2,6 +2,8 @@ import { useEffect, type RefObject } from 'react';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import type { ResizeCanvasOptions } from '@/stores/document';
+import { useDocumentStore } from '@/stores/document';
+import { renderLayerThumbnail } from '@/utils/layerThumbnail';
 
 interface UseGlobalExportsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -108,6 +110,11 @@ export function useGlobalExports({
     ): Promise<void> => {
       if (!layerRendererRef.current) return;
 
+      const docState = useDocumentStore.getState();
+      const docWidth = docState.width;
+      const docHeight = docState.height;
+      const updateLayerThumbnail = docState.updateLayerThumbnail;
+
       let fetchTotal = 0;
       let decompressTotal = 0;
       let renderTotal = 0;
@@ -133,6 +140,8 @@ export function useGlobalExports({
             img.onload = () => {
               layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
               layer.ctx.drawImage(img, offsetX, offsetY);
+              const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
+              if (thumb) updateLayerThumbnail(layerData.id, thumb);
               resolve();
             };
             img.onerror = () => resolve();
@@ -166,6 +175,8 @@ export function useGlobalExports({
                 );
                 layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
                 layer.ctx.putImageData(imageData, offsetX, offsetY);
+                const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
+                if (thumb) updateLayerThumbnail(layerData.id, thumb);
                 renderTotal += performance.now() - renderStart;
               }
             } else if (contentType === 'image/x-rgba') {
@@ -175,6 +186,8 @@ export function useGlobalExports({
                 const imageData = new ImageData(new Uint8ClampedArray(buffer), imgWidth, imgHeight);
                 layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
                 layer.ctx.putImageData(imageData, offsetX, offsetY);
+                const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
+                if (thumb) updateLayerThumbnail(layerData.id, thumb);
                 renderTotal += performance.now() - renderStart;
               }
             } else {
@@ -185,6 +198,8 @@ export function useGlobalExports({
               const bitmap = await createImageBitmap(blob);
               layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
               layer.ctx.drawImage(bitmap, offsetX, offsetY);
+              const thumb = renderLayerThumbnail(layer.canvas, docWidth, docHeight);
+              if (thumb) updateLayerThumbnail(layerData.id, thumb);
               renderTotal += performance.now() - renderStart;
             }
           } catch (e) {

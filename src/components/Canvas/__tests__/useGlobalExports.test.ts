@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGlobalExports } from '../useGlobalExports';
+import { useDocumentStore } from '@/stores/document';
 
 function cleanupGlobals(): void {
   const win = window as any;
@@ -21,6 +22,10 @@ function cleanupGlobals(): void {
 describe('useGlobalExports', () => {
   beforeEach(() => {
     cleanupGlobals();
+
+    // Reset document store to keep tests isolated, then set deterministic dimensions for thumbnails.
+    useDocumentStore.getState().reset();
+    useDocumentStore.setState({ width: 100, height: 80 });
 
     // JSDOM does not implement Canvas APIs. Stub minimal surface to avoid Not Implemented errors.
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
@@ -154,5 +159,88 @@ describe('useGlobalExports', () => {
     expect(win.__canvasDuplicateLayer).toBeUndefined();
     expect(win.__canvasRemoveLayer).toBeUndefined();
     expect(win.__canvasResize).toBeUndefined();
+  });
+
+  it('updates layer thumbnail after __loadLayerImages draws pixels (legacy base64 path)', async () => {
+    // Seed document store with a layer so updateLayerThumbnail can apply.
+    useDocumentStore.setState({
+      layers: [
+        {
+          id: 'layerA',
+          name: 'Layer A',
+          type: 'raster',
+          visible: true,
+          locked: false,
+          opacity: 100,
+          blendMode: 'normal',
+        },
+      ],
+      activeLayerId: 'layerA',
+    });
+
+    const OriginalImage = globalThis.Image;
+    class TestImage {
+      crossOrigin: string | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    (globalThis as any).Image = TestImage as any;
+
+    try {
+      const canvasA = document.createElement('canvas');
+
+      const layerRenderer = {
+        getLayer: (id: string) => {
+          if (id === 'layerA') return { canvas: canvasA, ctx: canvasA.getContext('2d') };
+          return null;
+        },
+        composite: () => canvasA,
+      } as any;
+
+      const layerRendererRef = { current: layerRenderer } as any;
+
+      const compositeAndRender = vi.fn();
+      const fillActiveLayer = vi.fn();
+      const handleClearSelection = vi.fn();
+      const handleUndo = vi.fn();
+      const handleRedo = vi.fn();
+      const handleClearLayer = vi.fn();
+      const handleDuplicateLayer = vi.fn();
+      const handleRemoveLayer = vi.fn();
+      const handleResizeCanvas = vi.fn();
+
+      renderHook(() =>
+        useGlobalExports({
+          layerRendererRef,
+          compositeAndRender,
+          fillActiveLayer,
+          handleClearSelection,
+          handleUndo,
+          handleRedo,
+          handleClearLayer,
+          handleDuplicateLayer,
+          handleRemoveLayer,
+          handleResizeCanvas,
+        })
+      );
+
+      const win = window as any;
+      expect(typeof win.__loadLayerImages).toBe('function');
+
+      await act(async () => {
+        await win.__loadLayerImages([
+          { id: 'layerA', imageData: 'data:image/png;base64,stub', offsetX: 0, offsetY: 0 },
+        ]);
+      });
+
+      const layer = useDocumentStore.getState().layers.find((l) => l.id === 'layerA');
+      expect(layer?.thumbnail).toMatch(/^data:image\/png;base64,/);
+      expect(compositeAndRender).toHaveBeenCalledTimes(1);
+    } finally {
+      (globalThis as any).Image = OriginalImage as any;
+    }
   });
 });
