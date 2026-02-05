@@ -33,7 +33,7 @@ import { useToolStore } from '@/stores/tool';
 import type { BrushTexture, DualBlendMode, DualBrushSettings } from '@/stores/tool';
 import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/settings';
 import { patternManager } from '@/utils/patternManager';
-import { applyScatter } from '@/utils/scatterDynamics';
+import { forEachScatter } from '@/utils/scatterDynamics';
 import { getNoisePattern } from '@/utils/noiseTexture';
 import { alignTo, computeTextureCopyRectFromLogicalRect } from './utils/textureCopyRect';
 
@@ -114,6 +114,7 @@ export class GPUStrokeAccumulator {
   // Auto-flush threshold: Must be <= WGSL MAX_SHARED_DABS (128) to prevent silent truncation.
   // Using 64 as a conservative value to avoid triggering dispatchInBatches which has ping-pong bugs.
   private static readonly MAX_SAFE_BATCH_SIZE = 64;
+  private static readonly MAX_SAFE_SECONDARY_BATCH_SIZE = 256;
 
   // Preview readback buffer (separate to avoid conflicts)
   private previewReadbackBuffer: GPUBuffer | null = null;
@@ -909,24 +910,21 @@ export class GPUStrokeAccumulator {
       countJitter: 0,
     };
 
-    const scatteredPositions = applyScatter(
-      {
-        x,
-        y,
-        strokeAngle,
-        diameter: effectiveSize,
-        dynamics: {
-          pressure: 1,
-          tiltX: 0,
-          tiltY: 0,
-          rotation: 0,
-          direction: 0,
-          initialDirection: 0,
-          fadeProgress: 0,
-        },
+    const scatterInput = {
+      x,
+      y,
+      strokeAngle,
+      diameter: effectiveSize,
+      dynamics: {
+        pressure: 1,
+        tiltX: 0,
+        tiltY: 0,
+        rotation: 0,
+        direction: 0,
+        initialDirection: 0,
+        fadeProgress: 0,
       },
-      scatterSettings
-    );
+    };
 
     const scale = this.currentRenderScale;
     const useTexture = Boolean(dualBrush.texture);
@@ -951,7 +949,12 @@ export class GPUStrokeAccumulator {
       }
     }
 
-    for (const pos of scatteredPositions) {
+    let aborted = false;
+    forEachScatter(scatterInput, scatterSettings, (pos) => {
+      if (aborted || this.fallbackRequest) {
+        return;
+      }
+
       const randomAngle = Math.random() * 360;
       const angleRad = (randomAngle * Math.PI) / 180;
 
@@ -972,6 +975,20 @@ export class GPUStrokeAccumulator {
         };
         this.secondaryTextureInstanceBuffer.push(textureDab);
         this.dualMaskActive = true;
+
+        if (
+          this.secondaryTextureInstanceBuffer.count >=
+          GPUStrokeAccumulator.MAX_SAFE_SECONDARY_BATCH_SIZE
+        ) {
+          const didFlush = this.flushSecondaryBatches();
+          if (didFlush) {
+            this.dualPostPending = true;
+          }
+          if (this.fallbackRequest) {
+            aborted = true;
+            return;
+          }
+        }
       } else {
         const radius = effectiveSize / 2;
         const dabData: DabInstanceData = {
@@ -990,10 +1007,23 @@ export class GPUStrokeAccumulator {
         };
         this.secondaryInstanceBuffer.push(dabData);
         this.dualMaskActive = true;
+
+        if (
+          this.secondaryInstanceBuffer.count >= GPUStrokeAccumulator.MAX_SAFE_SECONDARY_BATCH_SIZE
+        ) {
+          const didFlush = this.flushSecondaryBatches();
+          if (didFlush) {
+            this.dualPostPending = true;
+          }
+          if (this.fallbackRequest) {
+            aborted = true;
+            return;
+          }
+        }
       }
 
       this.expandDualDirtyRect(pos.x, pos.y, dualEffectiveRadius);
-    }
+    });
   }
 
   stampDab(params: GPUDabParams): void {
@@ -1207,6 +1237,13 @@ export class GPUStrokeAccumulator {
       return flag;
     }
     return true;
+  }
+
+  private shouldLogUploadDebug(): boolean {
+    if (typeof window === 'undefined') return false;
+    return Boolean(
+      (window as unknown as { __gpuBrushUploadDebug?: boolean }).__gpuBrushUploadDebug
+    );
   }
 
   private getPreviewUpdateRect(): { rect: Rect; source: 'combined-dirty' | 'batch-union' } {
@@ -1816,6 +1853,7 @@ export class GPUStrokeAccumulator {
 
   private flushSecondaryBatches(): boolean {
     let didFlush = false;
+    const maxDabsPerDispatch = 128;
 
     if (this.secondaryInstanceBuffer.count > 0) {
       if (!this.useComputeShader) {
@@ -1824,9 +1862,9 @@ export class GPUStrokeAccumulator {
         return false;
       }
 
-      const dabs = this.secondaryInstanceBuffer.getDabsData();
+      const allDabs = this.secondaryInstanceBuffer.getDabsData();
       const dualBbox = this.computeDabsBoundingBox(
-        dabs,
+        allDabs,
         this.dualMaskBuffer.textureWidth,
         this.dualMaskBuffer.textureHeight
       );
@@ -1835,28 +1873,43 @@ export class GPUStrokeAccumulator {
       this.addPendingPreviewRect(this.lastDualBatchRect);
       this.secondaryInstanceBuffer.clear();
 
-      const encoder = this.device.createCommandEncoder({
-        label: 'Dual Mask Batch Encoder',
-      });
-
-      // Preserve previous mask data
-      this.dualMaskBuffer.copySourceToDest(encoder);
-
-      const success = this.computeDualMaskPipeline.dispatch(
-        encoder,
-        this.dualMaskBuffer.source,
-        this.dualMaskBuffer.dest,
-        dabs
-      );
-
-      if (!success) {
-        this.requestCpuFallback('GPU dual mask compute failed');
-        return false;
+      if (this.shouldLogUploadDebug()) {
+        const estimatedUploadBytes = allDabs.length * 48;
+        if (estimatedUploadBytes > 64 * 1024 * 1024 || allDabs.length > 10_000) {
+          console.warn('[GPUStrokeAccumulator] Dual secondary upload stats', {
+            dabs: allDabs.length,
+            estimatedUploadBytes,
+            bbox: dualBbox,
+          });
+        }
       }
 
-      this.dualMaskBuffer.swap();
-      this.device.queue.submit([encoder.finish()]);
-      didFlush = true;
+      for (let start = 0; start < allDabs.length; start += maxDabsPerDispatch) {
+        const dabs = allDabs.slice(start, start + maxDabsPerDispatch);
+
+        const encoder = this.device.createCommandEncoder({
+          label: 'Dual Mask Batch Encoder',
+        });
+
+        // Preserve previous mask data
+        this.dualMaskBuffer.copySourceToDest(encoder);
+
+        const success = this.computeDualMaskPipeline.dispatch(
+          encoder,
+          this.dualMaskBuffer.source,
+          this.dualMaskBuffer.dest,
+          dabs
+        );
+
+        if (!success) {
+          this.requestCpuFallback('GPU dual mask compute failed');
+          return false;
+        }
+
+        this.dualMaskBuffer.swap();
+        this.device.queue.submit([encoder.finish()]);
+        didFlush = true;
+      }
     }
 
     if (this.secondaryTextureInstanceBuffer.count > 0) {
@@ -1873,9 +1926,9 @@ export class GPUStrokeAccumulator {
         return didFlush;
       }
 
-      const dabs = this.secondaryTextureInstanceBuffer.getDabsData();
+      const allDabs = this.secondaryTextureInstanceBuffer.getDabsData();
       const dualTextureBbox = this.computeTextureDabsBoundingBox(
-        dabs,
+        allDabs,
         this.dualMaskBuffer.textureWidth,
         this.dualMaskBuffer.textureHeight
       );
@@ -1884,28 +1937,43 @@ export class GPUStrokeAccumulator {
       this.addPendingPreviewRect(this.lastDualBatchRect);
       this.secondaryTextureInstanceBuffer.clear();
 
-      const encoder = this.device.createCommandEncoder({
-        label: 'Dual Texture Mask Batch Encoder',
-      });
-
-      this.dualMaskBuffer.copySourceToDest(encoder);
-
-      const success = this.computeDualTextureMaskPipeline.dispatch(
-        encoder,
-        this.dualMaskBuffer.source,
-        this.dualMaskBuffer.dest,
-        currentTexture.texture,
-        dabs
-      );
-
-      if (!success) {
-        this.requestCpuFallback('GPU dual texture mask compute failed');
-        return false;
+      if (this.shouldLogUploadDebug()) {
+        const estimatedUploadBytes = allDabs.length * 48;
+        if (estimatedUploadBytes > 64 * 1024 * 1024 || allDabs.length > 10_000) {
+          console.warn('[GPUStrokeAccumulator] Dual texture secondary upload stats', {
+            dabs: allDabs.length,
+            estimatedUploadBytes,
+            bbox: dualTextureBbox,
+          });
+        }
       }
 
-      this.dualMaskBuffer.swap();
-      this.device.queue.submit([encoder.finish()]);
-      didFlush = true;
+      for (let start = 0; start < allDabs.length; start += maxDabsPerDispatch) {
+        const dabs = allDabs.slice(start, start + maxDabsPerDispatch);
+
+        const encoder = this.device.createCommandEncoder({
+          label: 'Dual Texture Mask Batch Encoder',
+        });
+
+        this.dualMaskBuffer.copySourceToDest(encoder);
+
+        const success = this.computeDualTextureMaskPipeline.dispatch(
+          encoder,
+          this.dualMaskBuffer.source,
+          this.dualMaskBuffer.dest,
+          currentTexture.texture,
+          dabs
+        );
+
+        if (!success) {
+          this.requestCpuFallback('GPU dual texture mask compute failed');
+          return false;
+        }
+
+        this.dualMaskBuffer.swap();
+        this.device.queue.submit([encoder.finish()]);
+        didFlush = true;
+      }
     }
 
     return didFlush;
@@ -2055,6 +2123,10 @@ export class GPUStrokeAccumulator {
       return;
     }
 
+    if (!this.previewNeedsUpdate && !this.pendingPreviewRect) {
+      return;
+    }
+
     // Optimization 8: If buffer is mapped but no promise (shouldn't happen), try to unmap
     if (this.previewReadbackBuffer.mapState === 'mapped') {
       try {
@@ -2195,6 +2267,7 @@ export class GPUStrokeAccumulator {
           }
         }
       } catch (e) {
+        this.previewNeedsUpdate = true;
         console.error('[GPUStrokeAccumulator] Preview update failed:', e);
       } finally {
         this.currentPreviewPromise = null;
@@ -2301,15 +2374,38 @@ export class GPUStrokeAccumulator {
 
     if (rectWidth <= 0 || rectHeight <= 0) return;
 
+    // Get selection mask for clipping (selection path remains pixel-accurate)
+    const selectionState = useSelectionStore.getState();
+    const selectionMask = selectionState.hasSelection ? selectionState.selectionMask : null;
+
+    // Fast path: no selection => let the browser composite
+    if (!selectionMask) {
+      const clampedOpacity = Math.max(0, Math.min(1, opacity));
+      if (clampedOpacity <= 0) return;
+
+      layerCtx.save();
+      layerCtx.globalCompositeOperation = 'source-over';
+      layerCtx.globalAlpha = clampedOpacity;
+      layerCtx.drawImage(
+        this.previewCanvas,
+        rect.left,
+        rect.top,
+        rectWidth,
+        rectHeight,
+        rect.left,
+        rect.top,
+        rectWidth,
+        rectHeight
+      );
+      layerCtx.restore();
+      return;
+    }
+
     // Read stroke data from previewCanvas (same as what user saw)
     const strokeData = this.previewCtx.getImageData(rect.left, rect.top, rectWidth, rectHeight);
 
     // Get layer data for compositing
     const layerData = layerCtx.getImageData(rect.left, rect.top, rectWidth, rectHeight);
-
-    // Get selection mask for clipping
-    const selectionState = useSelectionStore.getState();
-    const selectionMask = selectionState.hasSelection ? selectionState.selectionMask : null;
 
     // Composite using Porter-Duff over
     for (let i = 0; i < strokeData.data.length; i += 4) {

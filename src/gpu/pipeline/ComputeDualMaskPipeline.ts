@@ -5,6 +5,7 @@
 import type { DabInstanceData, BoundingBox } from '../types';
 import { calculateEffectiveRadius } from '../types';
 import { erfLUT } from '@/utils/maskCache';
+import { safeWriteBuffer } from '../utils/safeGpuUpload';
 
 import computeShaderCode from '../shaders/computeDualMask.wgsl?raw';
 
@@ -15,8 +16,16 @@ const DAB_DATA_FLOATS = 12;
 
 const UNIFORM_BUFFER_SIZE = 32;
 
+// Keep a fixed-capacity uniform buffer to avoid unbounded growth on pathological inputs.
+const MAX_TILES_PER_BATCH = 256;
+
 function alignTo(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
+}
+
+function shouldLogUploadDebug(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as unknown as { __gpuBrushUploadDebug?: boolean }).__gpuBrushUploadDebug);
 }
 
 export class ComputeDualMaskPipeline {
@@ -27,9 +36,13 @@ export class ComputeDualMaskPipeline {
   private dabBuffer: GPUBuffer;
   private gaussianBuffer: GPUBuffer;
   private uniformStride: number;
-  private uniformCapacity = 1;
   private dabStride: number;
-  private dabBatchCapacity = 1;
+
+  // CPU-side scratch buffers (fixed size)
+  private uniformScratch: ArrayBuffer;
+  private uniformScratchView: DataView;
+  private dabScratch: ArrayBuffer;
+  private dabScratchView: Float32Array;
 
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
 
@@ -45,9 +58,11 @@ export class ComputeDualMaskPipeline {
     );
     this.uniformBuffer = device.createBuffer({
       label: 'Compute Dual Mask Uniforms',
-      size: this.uniformStride,
+      size: this.uniformStride * MAX_TILES_PER_BATCH,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    this.uniformScratch = new ArrayBuffer(this.uniformStride * MAX_TILES_PER_BATCH);
+    this.uniformScratchView = new DataView(this.uniformScratch);
 
     this.dabStride = alignTo(
       MAX_DABS_PER_BATCH * DAB_DATA_SIZE,
@@ -58,6 +73,8 @@ export class ComputeDualMaskPipeline {
       size: this.dabStride,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+    this.dabScratch = new ArrayBuffer(this.dabStride);
+    this.dabScratchView = new Float32Array(this.dabScratch);
 
     this.gaussianBuffer = device.createBuffer({
       label: 'Compute Dual Mask Gaussian LUT',
@@ -116,34 +133,6 @@ export class ComputeDualMaskPipeline {
     this.cachedBindGroups.clear();
   }
 
-  private ensureUniformCapacity(required: number): void {
-    if (required <= this.uniformCapacity) {
-      return;
-    }
-    this.uniformCapacity = Math.max(required, this.uniformCapacity * 2);
-    this.uniformBuffer.destroy();
-    this.uniformBuffer = this.device.createBuffer({
-      label: 'Compute Dual Mask Uniforms',
-      size: this.uniformCapacity * this.uniformStride,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.cachedBindGroups.clear();
-  }
-
-  private ensureDabCapacity(requiredBatches: number): void {
-    if (requiredBatches <= this.dabBatchCapacity) {
-      return;
-    }
-    this.dabBatchCapacity = Math.max(requiredBatches, this.dabBatchCapacity * 2);
-    this.dabBuffer.destroy();
-    this.dabBuffer = this.device.createBuffer({
-      label: 'Compute Dual Mask Dabs',
-      size: this.dabBatchCapacity * this.dabStride,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-    this.cachedBindGroups.clear();
-  }
-
   private buildTiles(bbox: BoundingBox): BoundingBox[] {
     const bboxPixels = bbox.width * bbox.height;
     if (bboxPixels <= MAX_PIXELS_PER_BATCH) {
@@ -192,106 +181,77 @@ export class ComputeDualMaskPipeline {
   ): boolean {
     if (dabs.length === 0) return true;
 
-    const batchSize = MAX_DABS_PER_BATCH;
-    const batchCount = Math.ceil(dabs.length / batchSize);
-    const batches: DabInstanceData[][] = [];
-
-    for (let i = 0; i < dabs.length; i += batchSize) {
-      batches.push(dabs.slice(i, i + batchSize));
-    }
-
-    const allDabsBbox = this.computePreciseBoundingBox(dabs);
-    const tilesPerBatch: BoundingBox[][] = [];
-    let dispatchCount = 0;
-
-    for (const batch of batches) {
-      const bbox = this.computePreciseBoundingBox(batch);
-      if (bbox.width <= 0 || bbox.height <= 0) {
-        tilesPerBatch.push([]);
-        continue;
+    // This pipeline is designed to process a single batch (<= 128 dabs).
+    // Callers should flush/segment to avoid exceeding MAX_DABS_PER_BATCH.
+    if (dabs.length > MAX_DABS_PER_BATCH) {
+      if (shouldLogUploadDebug()) {
+        console.warn('[ComputeDualMaskPipeline] Too many dabs for single dispatch', {
+          dabs: dabs.length,
+          max: MAX_DABS_PER_BATCH,
+        });
       }
-      const tiles = this.buildTiles(bbox);
-      tilesPerBatch.push(tiles);
-      dispatchCount += tiles.length;
+      return false;
     }
 
-    if (dispatchCount === 0) {
+    const bbox = this.computePreciseBoundingBox(dabs);
+    if (bbox.width <= 0 || bbox.height <= 0) {
       return true;
     }
 
-    this.ensureUniformCapacity(dispatchCount);
-    this.ensureDabCapacity(batchCount);
-
-    const dabData = new ArrayBuffer(this.dabStride * batchCount);
-    const dabView = new Float32Array(dabData);
-    for (let i = 0; i < batches.length; i++) {
-      const offset = (this.dabStride / 4) * i;
-      this.packDabDataInto(batches[i]!, dabView, offset);
-    }
-    this.device.queue.writeBuffer(this.dabBuffer, 0, dabData);
-
-    const uniformData = new ArrayBuffer(this.uniformStride * dispatchCount);
-    const uniformView = new DataView(uniformData);
-    let dispatchIndex = 0;
-
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i]!;
-      const tiles = tilesPerBatch[i]!;
-      for (const tile of tiles) {
-        this.writeUniformData(uniformView, dispatchIndex * this.uniformStride, tile, batch.length);
-        dispatchIndex++;
-      }
-    }
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
-
-    let currentInput = inputTexture;
-    let currentOutput = outputTexture;
-    let dispatchBase = 0;
-
-    for (let i = 0; i < batches.length; i++) {
-      const tiles = tilesPerBatch[i]!;
-      if (tiles.length === 0) {
-        continue;
-      }
-
-      const bindGroup = this.getOrCreateBindGroup(currentInput, currentOutput);
-      const pass = encoder.beginComputePass({ label: 'Compute Dual Mask Pass' });
-      pass.setPipeline(this.pipeline);
-
-      for (let t = 0; t < tiles.length; t++) {
-        const tile = tiles[t]!;
-        const uniformOffset = (dispatchBase + t) * this.uniformStride;
-        const dabOffset = i * this.dabStride;
-        pass.setBindGroup(0, bindGroup, [uniformOffset, dabOffset]);
-        pass.dispatchWorkgroups(Math.ceil(tile.width / 8), Math.ceil(tile.height / 8));
-      }
-
-      pass.end();
-      dispatchBase += tiles.length;
-
-      if (i + 1 < batches.length && allDabsBbox.width > 0 && allDabsBbox.height > 0) {
-        encoder.copyTextureToTexture(
-          { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
-          { texture: currentInput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
-          [allDabsBbox.width, allDabsBbox.height]
-        );
-
-        const temp = currentInput;
-        currentInput = currentOutput;
-        currentOutput = temp;
-      }
+    const tiles = this.buildTiles(bbox);
+    if (tiles.length === 0) {
+      return true;
     }
 
-    if (batchCount > 1 && batchCount % 2 === 0) {
-      if (allDabsBbox.width > 0 && allDabsBbox.height > 0) {
-        encoder.copyTextureToTexture(
-          { texture: currentOutput, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
-          { texture: outputTexture, origin: { x: allDabsBbox.x, y: allDabsBbox.y } },
-          [allDabsBbox.width, allDabsBbox.height]
-        );
+    if (tiles.length > MAX_TILES_PER_BATCH) {
+      if (shouldLogUploadDebug()) {
+        console.warn('[ComputeDualMaskPipeline] Too many tiles for fixed uniform buffer', {
+          tiles: tiles.length,
+          max: MAX_TILES_PER_BATCH,
+          bbox,
+        });
       }
+      return false;
     }
 
+    this.packDabDataInto(dabs, this.dabScratchView, 0);
+    safeWriteBuffer({
+      device: this.device,
+      dstBuffer: this.dabBuffer,
+      dstOffset: 0,
+      src: this.dabScratch,
+      srcOffset: 0,
+      size: dabs.length * DAB_DATA_SIZE,
+      label: 'ComputeDualMask dab upload',
+    });
+
+    for (let t = 0; t < tiles.length; t++) {
+      const tile = tiles[t]!;
+      this.writeUniformData(this.uniformScratchView, t * this.uniformStride, tile, dabs.length);
+    }
+
+    safeWriteBuffer({
+      device: this.device,
+      dstBuffer: this.uniformBuffer,
+      dstOffset: 0,
+      src: this.uniformScratch,
+      srcOffset: 0,
+      size: tiles.length * this.uniformStride,
+      label: 'ComputeDualMask uniform upload',
+    });
+
+    const bindGroup = this.getOrCreateBindGroup(inputTexture, outputTexture);
+    const pass = encoder.beginComputePass({ label: 'Compute Dual Mask Pass' });
+    pass.setPipeline(this.pipeline);
+
+    for (let t = 0; t < tiles.length; t++) {
+      const tile = tiles[t]!;
+      const uniformOffset = t * this.uniformStride;
+      pass.setBindGroup(0, bindGroup, [uniformOffset, 0]);
+      pass.dispatchWorkgroups(Math.ceil(tile.width / 8), Math.ceil(tile.height / 8));
+    }
+
+    pass.end();
     return true;
   }
 

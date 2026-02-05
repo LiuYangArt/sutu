@@ -37,22 +37,12 @@ export interface ScatterInput {
   dynamics: DynamicsInput;
 }
 
-/**
- * Apply scatter to a single dab position
- *
- * Returns array of scattered positions (length >= 1).
- * When scatter=0 and count=1, returns the original position.
- *
- * @param input - Input dab position and context
- * @param settings - Scatter settings
- * @param random - Random function for jitter (default: Math.random)
- * @returns Array of scattered dab positions
- */
-export function applyScatter(
+export function forEachScatter(
   input: ScatterInput,
   settings: ScatterSettings,
+  fn: (dab: ScatteredDab) => void,
   random: RandomFn = Math.random
-): ScatteredDab[] {
+): number {
   const { x, y, strokeAngle, diameter, dynamics } = input;
 
   // 1. Calculate effective scatter amount
@@ -71,8 +61,6 @@ export function applyScatter(
   const actualCount = Math.max(1, Math.round(baseCount + countOffset));
 
   // 3. Generate scattered positions
-  const results: ScatteredDab[] = [];
-
   // Perpendicular angle (90° from stroke direction)
   const perpAngle = strokeAngle + Math.PI / 2;
 
@@ -84,15 +72,33 @@ export function applyScatter(
     // Parallel offset (only if bothAxes is true)
     const paraOffset = settings.bothAxes ? (random() * 2 - 1) * scatterAmount : 0;
 
-    // Convert to canvas coordinates
-    // perpOffset moves perpendicular to stroke direction
-    // paraOffset moves along stroke direction
-    results.push({
+    fn({
       x: x + Math.cos(perpAngle) * perpOffset + Math.cos(strokeAngle) * paraOffset,
       y: y + Math.sin(perpAngle) * perpOffset + Math.sin(strokeAngle) * paraOffset,
     });
   }
 
+  return actualCount;
+}
+
+/**
+ * Apply scatter to a single dab position
+ *
+ * Returns array of scattered positions (length >= 1).
+ * When scatter=0 and count=1, returns the original position.
+ *
+ * @param input - Input dab position and context
+ * @param settings - Scatter settings
+ * @param random - Random function for jitter (default: Math.random)
+ * @returns Array of scattered dab positions
+ */
+export function applyScatter(
+  input: ScatterInput,
+  settings: ScatterSettings,
+  random: RandomFn = Math.random
+): ScatteredDab[] {
+  const results: ScatteredDab[] = [];
+  forEachScatter(input, settings, (dab) => results.push(dab), random);
   return results;
 }
 
