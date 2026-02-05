@@ -206,7 +206,7 @@ export function Canvas() {
 
     if (!gpuRendererRef.current) {
       gpuRendererRef.current = new GpuCanvasRenderer(device, gpuCanvas, {
-        tileSize: 256,
+        tileSize: 512,
         layerFormat: 'rgba8unorm',
       });
     }

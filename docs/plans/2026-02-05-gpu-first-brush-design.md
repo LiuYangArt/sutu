@@ -271,3 +271,14 @@
 
 - 4K tile 256（16x16 / 256 tiles / ~64MB 估算显存）
 - 4K tile 512（8x8 / 64 tiles / ~64MB 估算显存）
+
+### 12.4 M0 结论（基于当前数据）
+
+- **浏览器配额（Allocation Probe）**：4K 至少 ~2.0 GiB，8K 至少 ~8.0 GiB（均可连续分配 32 张）。  
+  **建议**：LRU 预算先取 60%~70% 的保守值，**5.0 GiB** 作为初始上限（后续可调）。
+- **格式选择（性能维度）**：`rgba8unorm` 与 `rgba8unorm-srgb` 的 create/clear 成本差异极小，性能不足以成为决定因素。  
+  **结论**：格式以视觉一致性（暗部 banding、叠加误差）为准，待视觉对比后锁定。
+- **格式选择（视觉对比）**：`linear-no-dither / linear+dither / srgb` 三图对比（1024 生成图案）肉眼无明显差异。  
+  **结论**：先锁定 `rgba8unorm (linear + dither)` 作为 layer 存储；`rgba8unorm-srgb` 暂不引入额外复杂度。
+- **Tile Size**：256/512 的总显存相近，但 512 调度与 LRU 开销更低。  
+  **建议**：M2 阶段先用 **512**，M3 再对比 256 的 cache miss 与帧耗时。

@@ -7,13 +7,13 @@
 
 ## Key Decisions
 - scratch 继续使用 GPUStrokeAccumulator 的全尺寸纹理
-- layer tiles 采用 `rgba8unorm`（M0 对比后最终确认）
+- layer tiles 采用 `rgba8unorm (linear + dither)`（三图对比无肉眼差异）
 - selection mask 以 GPU 纹理形式参与 display/commit
+- tile size 暂定 512
+- allocation probe 已有最小实现（window.__gpuM0Baseline）
 
 ## Open Questions
-- `rgba8unorm-srgb` 方案的渲染/commit 路径是否需要额外 pass？
-- tile size 256/512 的真实性能差异
-- allocation probe 的最小可行实现
+- tile size 256/512 的真实性能差异（后续对比确认）
 
 # Notes: GPU Dual Brush Implementation
 

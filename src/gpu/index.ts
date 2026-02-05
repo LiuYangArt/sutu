@@ -41,6 +41,7 @@ export { TextureAtlas } from './resources/TextureAtlas';
 
 // Benchmarks
 export { runM0Baseline } from './benchmarks/m0Baseline';
+export { runFormatCompare } from './benchmarks/formatCompare';
 
 // Pipeline
 export { BrushPipeline } from './pipeline/BrushPipeline';

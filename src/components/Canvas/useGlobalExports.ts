@@ -3,7 +3,7 @@ import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
-import { GPUContext, runM0Baseline } from '@/gpu';
+import { GPUContext, runFormatCompare, runM0Baseline } from '@/gpu';
 
 interface UseGlobalExportsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -48,6 +48,11 @@ export function useGlobalExports({
       __canvasRemoveLayer?: (id: string) => void;
       __canvasResize?: (options: ResizeCanvasOptions) => void;
       __gpuM0Baseline?: () => Promise<void>;
+      __gpuFormatCompare?: (options?: {
+        size?: number;
+        ditherStrength?: number;
+        includeLinearNoDither?: boolean;
+      }) => Promise<string[]>;
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -67,6 +72,45 @@ export function useGlobalExports({
       const result = await runM0Baseline(device);
       // eslint-disable-next-line no-console
       console.log('[M0Baseline] result', result);
+    };
+
+    win.__gpuFormatCompare = async (options): Promise<string[]> => {
+      const device = GPUContext.getInstance().device;
+      if (!device) {
+        console.warn('[FormatCompare] GPU device not available');
+        return [];
+      }
+
+      const result = await runFormatCompare(device, {
+        includeLinearNoDither: options?.includeLinearNoDither ?? true,
+        size: options?.size,
+        ditherStrength: options?.ditherStrength,
+      });
+
+      try {
+        const { mkdir, writeFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
+        const { join, tempDir } = await import('@tauri-apps/api/path');
+
+        const folder = 'paintboard-gpu-compare';
+        await mkdir(folder, { baseDir: BaseDirectory.Temp, recursive: true });
+        const tempRoot = await tempDir();
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+        const paths: string[] = [];
+        for (const image of result.images) {
+          const fileName = `${folder}/gpu-format-${stamp}-${image.name}.png`;
+          await writeFile(fileName, image.pngBytes, { baseDir: BaseDirectory.Temp });
+          const absPath = await join(tempRoot, fileName);
+          paths.push(absPath);
+        }
+
+        // eslint-disable-next-line no-console
+        console.log('[FormatCompare] saved', paths);
+        return paths;
+      } catch (error) {
+        console.warn('[FormatCompare] write temp files failed', error);
+        return [];
+      }
     };
 
     // Get single layer image data as Base64 PNG data URL
@@ -268,6 +312,7 @@ export function useGlobalExports({
       delete win.__canvasRemoveLayer;
       delete win.__canvasResize;
       delete win.__gpuM0Baseline;
+      delete win.__gpuFormatCompare;
     };
   }, [
     layerRendererRef,
