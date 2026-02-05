@@ -211,6 +211,10 @@ export function useBrushRenderer({
   const initialDirectionRef = useRef<number>(0);
   const lastDabPosRef = useRef<{ x: number; y: number } | null>(null);
 
+  // Stroke Opacity (Photoshop-like): applied when compositing stroke buffer to layer.
+  // We store it in a ref because endStroke() does not receive config.
+  const strokeOpacityRef = useRef<number>(1.0);
+
   // Initialize WebGPU backend
   useEffect(() => {
     if (!shouldUseGPU()) {
@@ -311,6 +315,7 @@ export function useBrushRenderer({
       prevSecondaryDabPosRef.current = null;
       initialDirectionRef.current = 0;
       lastDabPosRef.current = null;
+      strokeOpacityRef.current = 1.0;
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         gpuBufferRef.current.beginStroke();
@@ -346,6 +351,9 @@ export function useBrushRenderer({
 
       // Apply pressure curve
       const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
+
+      // Store stroke-level opacity (applied at endStroke/compositeToLayer)
+      strokeOpacityRef.current = Math.max(0, Math.min(1, config.opacity));
 
       // Calculate base size (pressure toggle)
       const size = config.pressureSizeEnabled ? config.size * adjustedPressure : config.size;
@@ -525,13 +533,17 @@ export function useBrushRenderer({
             dynamicsInput
           );
           dabFlow = transferResult.flow;
-          dabOpacity = transferResult.opacity;
+          const baseOpacity = strokeOpacityRef.current;
+          dabOpacity = baseOpacity > 1e-6 ? transferResult.opacity / baseOpacity : 0.0;
         } else {
           // Legacy pressure toggles (backward compatibility)
           dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
-          dabOpacity = config.pressureOpacityEnabled
-            ? config.opacity * dabPressure
-            : config.opacity;
+
+          const baseOpacity = strokeOpacityRef.current;
+          const computedOpacity = config.pressureOpacityEnabled
+            ? baseOpacity * dabPressure
+            : baseOpacity;
+          dabOpacity = baseOpacity > 1e-6 ? computedOpacity / baseOpacity : 0.0;
         }
 
         if (useShapeDynamics && config.shapeDynamics) {
@@ -679,7 +691,7 @@ export function useBrushRenderer({
 
             // 2. Sync atomic transaction: composite + clear in same JS task
             // This prevents browser paint between composite and clear (no flicker)
-            gpuBuffer.compositeToLayer(layerCtx, 1.0);
+            gpuBuffer.compositeToLayer(layerCtx, strokeOpacityRef.current);
             gpuBuffer.clear();
           } finally {
             finishingPromiseRef.current = null;
@@ -688,7 +700,7 @@ export function useBrushRenderer({
 
         await finishingPromiseRef.current;
       } else if (cpuBufferRef.current) {
-        cpuBufferRef.current.endStroke(layerCtx, 1.0);
+        cpuBufferRef.current.endStroke(layerCtx, strokeOpacityRef.current);
       }
     },
     [backend]
@@ -705,9 +717,9 @@ export function useBrushRenderer({
   }, [backend]);
 
   /**
-   * Get preview opacity (always 1.0 as opacity is baked into dabs)
+   * Get preview opacity (stroke-level opacity applied during compositing)
    */
-  const getPreviewOpacity = useCallback(() => 1.0, []);
+  const getPreviewOpacity = useCallback(() => strokeOpacityRef.current, []);
 
   /**
    * Check if stroke is active

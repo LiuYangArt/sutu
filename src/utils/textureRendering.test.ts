@@ -111,7 +111,10 @@ describe('calculateTextureInfluence', () => {
     expect(calculateTextureInfluence(0, 0, defaultSettings, mockPattern, 1.0, 1.0)).toBe(0.0);
 
     // (1,0) is White (1)
-    expect(calculateTextureInfluence(1, 0, defaultSettings, mockPattern, 1.0, 1.0)).toBe(1.0);
+    expect(calculateTextureInfluence(1, 0, defaultSettings, mockPattern, 1.0, 1.0)).toBeCloseTo(
+      1.0,
+      10
+    );
 
     // (0,1) is Gray (~0.5)
     expect(calculateTextureInfluence(0, 1, defaultSettings, mockPattern, 1.0, 1.0)).toBeCloseTo(
@@ -139,7 +142,7 @@ describe('calculateTextureInfluence', () => {
     expect(calculateTextureInfluence(0, 0, settings, mockPattern, 1.0, 1.0)).toBe(1.0);
 
     // (1,0) White (1) -> Multiplier 0.0
-    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0, 1.0)).toBe(0.0);
+    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0, 1.0)).toBeCloseTo(0.0, 10);
   });
 
   it('should handle Invert option', () => {
@@ -149,7 +152,7 @@ describe('calculateTextureInfluence', () => {
     expect(calculateTextureInfluence(0, 0, settings, mockPattern, 1.0, 1.0)).toBe(1.0);
 
     // (1,0) White (1) -> Inverted to Black (0) -> Multiplier 0.0
-    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0, 1.0)).toBe(0.0);
+    expect(calculateTextureInfluence(1, 0, settings, mockPattern, 1.0, 1.0)).toBeCloseTo(0.0, 10);
   });
 
   it('should handle Scale parameter', () => {

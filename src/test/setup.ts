@@ -1,5 +1,52 @@
 import '@testing-library/jest-dom/vitest';
 
+// Polyfill ImageData for jsdom environments where it's missing.
+// Supports both constructor overloads:
+// - new ImageData(width, height)
+// - new ImageData(Uint8ClampedArray, width, height)
+if (typeof globalThis.ImageData === 'undefined') {
+  class SimpleImageData {
+    width: number;
+    height: number;
+    data: Uint8ClampedArray;
+
+    constructor(width: number, height: number);
+    constructor(data: Uint8ClampedArray, width: number, height: number);
+    constructor(
+      dataOrWidth: Uint8ClampedArray | number,
+      widthOrHeight: number,
+      heightMaybe?: number
+    ) {
+      if (typeof dataOrWidth === 'number') {
+        const width = dataOrWidth;
+        const height = widthOrHeight;
+        this.width = width;
+        this.height = height;
+        this.data = new Uint8ClampedArray(width * height * 4);
+        return;
+      }
+
+      const data = dataOrWidth;
+      const width = widthOrHeight;
+      const height = heightMaybe ?? 0;
+      this.width = width;
+      this.height = height;
+
+      const expectedLen = width * height * 4;
+      if (data.length === expectedLen) {
+        this.data = data;
+      } else {
+        const next = new Uint8ClampedArray(expectedLen);
+        next.set(data.subarray(0, expectedLen));
+        this.data = next;
+      }
+    }
+  }
+
+  // @ts-expect-error - Injecting ImageData for jsdom fallback
+  globalThis.ImageData = SimpleImageData;
+}
+
 // Mock localStorage for zustand persist middleware
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
