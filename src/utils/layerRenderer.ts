@@ -108,6 +108,8 @@ export class LayerRenderer {
   private layerOrder: string[] = [];
   private compositeCanvas: HTMLCanvasElement;
   private compositeCtx: CanvasRenderingContext2D;
+  private previewLayerCanvas: HTMLCanvasElement;
+  private previewLayerCtx: CanvasRenderingContext2D;
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -123,6 +125,43 @@ export class LayerRenderer {
     });
     if (!ctx) throw new Error('Failed to create composite canvas context');
     this.compositeCtx = ctx;
+
+    // Scratch canvas for compositing active layer + stroke preview as a group
+    // This ensures layer opacity affects preview consistently (WYSIWYG).
+    this.previewLayerCanvas = document.createElement('canvas');
+    this.previewLayerCanvas.width = width;
+    this.previewLayerCanvas.height = height;
+    const previewCtx = this.previewLayerCanvas.getContext('2d', {
+      alpha: true,
+      willReadFrequently: true,
+    });
+    if (!previewCtx) throw new Error('Failed to create preview layer canvas context');
+    this.previewLayerCtx = previewCtx;
+  }
+
+  private composeLayerWithPreview(
+    layerCanvas: HTMLCanvasElement,
+    previewCanvas: HTMLCanvasElement,
+    previewOpacity: number
+  ): HTMLCanvasElement {
+    const opacity = Math.max(0, Math.min(1, previewOpacity));
+
+    // Copy layer content including transparent pixels
+    this.previewLayerCtx.save();
+    this.previewLayerCtx.globalCompositeOperation = 'copy';
+    this.previewLayerCtx.globalAlpha = 1;
+    this.previewLayerCtx.drawImage(layerCanvas, 0, 0);
+    this.previewLayerCtx.restore();
+
+    if (opacity > 0) {
+      this.previewLayerCtx.save();
+      this.previewLayerCtx.globalCompositeOperation = 'source-over';
+      this.previewLayerCtx.globalAlpha = opacity;
+      this.previewLayerCtx.drawImage(previewCanvas, 0, 0);
+      this.previewLayerCtx.restore();
+    }
+
+    return this.previewLayerCanvas;
   }
 
   /**
@@ -219,7 +258,8 @@ export class LayerRenderer {
 
   /**
    * Composite all visible layers to the output canvas.
-   * Optionally inserts a preview overlay after the active layer.
+   * Optionally composites a stroke preview into the active layer (display-only),
+   * so that layer opacity/blend mode is applied consistently (WYSIWYG).
    *
    * @param preview - Optional preview config to insert after active layer
    */
@@ -236,22 +276,17 @@ export class LayerRenderer {
       const layer = this.layers.get(id);
       if (!layer || !layer.visible) continue;
 
+      const hasPreview = preview && id === preview.activeLayerId && preview.opacity > 0;
+      const sourceCanvas = hasPreview
+        ? this.composeLayerWithPreview(layer.canvas, preview.canvas, preview.opacity)
+        : layer.canvas;
+
       // Draw the layer
       this.compositeCtx.save();
       this.compositeCtx.globalAlpha = layer.opacity / 100;
       this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
-      this.compositeCtx.drawImage(layer.canvas, 0, 0);
+      this.compositeCtx.drawImage(sourceCanvas, 0, 0);
       this.compositeCtx.restore();
-
-      // Insert preview after active layer (if provided)
-      if (preview && id === preview.activeLayerId && preview.opacity > 0) {
-        this.compositeCtx.save();
-        this.compositeCtx.globalAlpha = preview.opacity;
-        // Preview uses the same blend mode as the active layer
-        this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
-        this.compositeCtx.drawImage(preview.canvas, 0, 0);
-        this.compositeCtx.restore();
-      }
     }
 
     return this.compositeCanvas;
@@ -274,6 +309,10 @@ export class LayerRenderer {
     // Resize composite canvas
     this.compositeCanvas.width = width;
     this.compositeCanvas.height = height;
+
+    // Resize preview scratch canvas
+    this.previewLayerCanvas.width = width;
+    this.previewLayerCanvas.height = height;
 
     // Resize each layer canvas (note: this clears content)
     for (const layer of this.layers.values()) {
@@ -317,6 +356,10 @@ export class LayerRenderer {
     // Resize composite canvas
     this.compositeCanvas.width = newWidth;
     this.compositeCanvas.height = newHeight;
+
+    // Resize preview scratch canvas
+    this.previewLayerCanvas.width = newWidth;
+    this.previewLayerCanvas.height = newHeight;
 
     // Resize each layer canvas (note: this clears content)
     for (const layer of this.layers.values()) {
