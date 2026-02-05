@@ -272,6 +272,25 @@
 - 4K tile 256（16x16 / 256 tiles / ~64MB 估算显存）
 - 4K tile 512（8x8 / 64 tiles / ~64MB 估算显存）
 
+### 12.5 Tile Size 实测对比（4K，GPU 渲染 + LRU 模拟）
+
+**Run A**（canvas=4096, frames=20, budgetRatio=0.25, viewportTiles=4）
+- 256：upload **135.6ms** / renderCPU **0.52ms** / renderGPU **3.46ms**  
+  LRU miss **12.7%**（hits 4719 / misses 689 / evictions 625）
+- 512：upload **31.6ms** / renderCPU **0.155ms** / renderGPU **2.94ms**  
+  LRU miss **70.3%**（hits 238 / misses 562 / evictions 546）
+
+**Run B**（canvas=4096, frames=30, budgetRatio=0.20, viewportTiles=5）
+- 256：upload **102.7ms** / renderCPU **0.54ms** / renderGPU **3.52ms**  
+  LRU miss **26.2%**（hits 5317 / misses 1883 / evictions 1832）
+- 512：upload **25.2ms** / renderCPU **0.153ms** / renderGPU **3.23ms**  
+  LRU miss **100%**（hits 0 / misses 800 / evictions 788）
+
+**结论（阶段性）**：
+- **性能层面**：512 在 upload 与 render CPU/GPU 耗时上明显更低。  
+- **LRU 命中**：同预算比例下 256 显著更稳，512 在较小预算/较大视窗时 miss 很高。  
+- **M2 决策**：继续采用 **512**（调度/渲染开销更低），同时 **LRU 预算比例不能过低**，后续应结合实际 viewport 与显存预算调整。  
+
 ### 12.4 M0 结论（基于当前数据）
 
 - **浏览器配额（Allocation Probe）**：4K 至少 ~2.0 GiB，8K 至少 ~8.0 GiB（均可连续分配 32 张）。  

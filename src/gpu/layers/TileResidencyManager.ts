@@ -9,6 +9,7 @@ export class TileResidencyManager {
   private maxBytes: number;
   private usedBytes: number = 0;
   private entries: Map<string, TileResidencyEntry> = new Map();
+  private evictionCount: number = 0;
 
   constructor(maxBytes: number = Number.POSITIVE_INFINITY) {
     this.maxBytes = maxBytes;
@@ -62,6 +63,23 @@ export class TileResidencyManager {
   clear(): void {
     this.entries.clear();
     this.usedBytes = 0;
+    this.evictionCount = 0;
+  }
+
+  has(key: string): boolean {
+    return this.entries.has(key);
+  }
+
+  getEntryCount(): number {
+    return this.entries.size;
+  }
+
+  getEvictionCount(): number {
+    return this.evictionCount;
+  }
+
+  resetEvictionCount(): void {
+    this.evictionCount = 0;
   }
 
   private evictIfNeeded(): void {
@@ -72,6 +90,7 @@ export class TileResidencyManager {
       if (this.usedBytes <= this.maxBytes) break;
       this.entries.delete(entry.key);
       this.usedBytes = Math.max(0, this.usedBytes - entry.bytes);
+      this.evictionCount += 1;
       entry.onEvict();
     }
   }

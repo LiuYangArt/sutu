@@ -11,9 +11,9 @@
 - [x] Phase 5: Review and deliver
 
 ## Key Questions
-1. 单层 GPU 路径的 fallback/切换条件是否稳定？
-2. `rgba8unorm` linear + dither vs `rgba8unorm-srgb` 的最终选择？
-3. 256/512 tile size 的实际性能差异？
+1. 单层 GPU 路径的 fallback/切换条件是否稳定？（待持续观察）
+2. `rgba8unorm` linear + dither vs `rgba8unorm-srgb` 的最终选择？（已锁定：linear + dither）
+3. 256/512 tile size 的实际性能差异？（已对比：512更快但 LRU miss 更高）
 
 ## Decisions Made
 - 单层 GPU 可绘优先，多层可见回退 Canvas2D。
@@ -21,7 +21,7 @@
 - 选区与历史在 stroke end 做小范围 readback。
 - 格式选择：`rgba8unorm (linear + dither)`（三图对比无肉眼差异，先锁定）。
 - GPU 显示条件：`renderMode=gpu` 且 `currentTool=brush` 且 `visibleLayerCount<=1`，否则 fallback。
-- Tile size：暂定 512（基于调度开销判断，真实性能差异待后续对比）。
+- Tile size：暂定 512（性能更低开销；LRU miss 偏高，预算比例需保守）。
 
 ## Errors Encountered
 - None

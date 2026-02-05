@@ -3,7 +3,7 @@ import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
-import { GPUContext, runFormatCompare, runM0Baseline } from '@/gpu';
+import { GPUContext, runFormatCompare, runM0Baseline, runTileSizeCompare } from '@/gpu';
 
 interface UseGlobalExportsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -53,6 +53,13 @@ export function useGlobalExports({
         ditherStrength?: number;
         includeLinearNoDither?: boolean;
       }) => Promise<string[]>;
+      __gpuTileSizeCompare?: (options?: {
+        canvasSize?: number;
+        tileSizes?: number[];
+        frames?: number;
+        budgetRatio?: number;
+        viewportTiles?: number;
+      }) => Promise<unknown>;
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -111,6 +118,26 @@ export function useGlobalExports({
         console.warn('[FormatCompare] write temp files failed', error);
         return [];
       }
+    };
+
+    win.__gpuTileSizeCompare = async (options): Promise<unknown> => {
+      const device = GPUContext.getInstance().device;
+      if (!device) {
+        console.warn('[TileSizeCompare] GPU device not available');
+        return null;
+      }
+
+      const result = await runTileSizeCompare(device, {
+        canvasSize: options?.canvasSize,
+        tileSizes: options?.tileSizes,
+        frames: options?.frames,
+        budgetRatio: options?.budgetRatio,
+        viewportTiles: options?.viewportTiles,
+      });
+
+      // eslint-disable-next-line no-console
+      console.log('[TileSizeCompare] result', result);
+      return result;
     };
 
     // Get single layer image data as Base64 PNG data URL
@@ -313,6 +340,7 @@ export function useGlobalExports({
       delete win.__canvasResize;
       delete win.__gpuM0Baseline;
       delete win.__gpuFormatCompare;
+      delete win.__gpuTileSizeCompare;
     };
   }, [
     layerRendererRef,
