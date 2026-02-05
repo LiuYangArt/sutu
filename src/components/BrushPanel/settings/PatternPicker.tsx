@@ -184,7 +184,7 @@ export function PatternPreviewButton({
   onClick,
   size = 40,
 }: PatternPreviewButtonProps): JSX.Element {
-  const patternUrl = patternId ? getPatternThumbnailUrl(patternId, 48) : null;
+  const patternUrl = patternId ? getPatternThumbnailUrl(patternId, size) : null;
 
   return (
     <button

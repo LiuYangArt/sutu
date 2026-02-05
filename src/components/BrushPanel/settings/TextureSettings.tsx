@@ -47,7 +47,8 @@ export function TextureSettings(): JSX.Element {
   const { textureEnabled, textureSettings, setTextureSettings } = useToolStore();
   const [showPreview, setShowPreview] = useState(false);
   const patternId = textureSettings?.patternId;
-  const patternThumbUrl = patternId ? getPatternThumbnailUrl(patternId, 48) : null;
+  const previewSize = 40;
+  const patternThumbUrl = patternId ? getPatternThumbnailUrl(patternId, previewSize) : null;
   const patternFullUrl = patternId ? getPatternThumbnailUrl(patternId) : null;
 
   const disabled = !textureEnabled;
@@ -82,8 +83,8 @@ export function TextureSettings(): JSX.Element {
             className="pattern-preview"
             title={patternId ? 'Hover for preview' : 'No Pattern'}
             style={{
-              width: 40,
-              height: 40,
+              width: previewSize,
+              height: previewSize,
               border: '1px solid var(--color-border)',
               background: 'var(--color-bg-tertiary)',
               overflow: 'hidden',

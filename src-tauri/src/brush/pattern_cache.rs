@@ -406,6 +406,7 @@ pub fn cache_pattern_rgba(
     save_pattern_to_disk(&pattern_id, &pattern);
 
     // Generate and save thumbnails (persistent)
+    let mut thumbs = Vec::new();
     for &thumb_size in &THUMB_SIZES {
         let thumb_rgba = render_square_thumbnail_rgba(&data, width, height, thumb_size);
         let thumb = CachedPattern {
@@ -416,25 +417,16 @@ pub fn cache_pattern_rgba(
             mode: String::new(),
         };
         save_thumb_to_disk(&pattern_id, thumb_size, &thumb);
-
-        // Best-effort store into memory
-        let mut guard = PATTERN_CACHE.write();
-        if guard.is_none() {
-            *guard = Some(PatternCache::new());
-        }
-        if let Some(cache) = guard.as_mut() {
-            cache.insert_thumb_compressed(pattern_id.clone(), thumb_size, thumb);
-        }
+        thumbs.push((thumb_size, thumb));
     }
 
-    // Then store in memory cache
+    // Store in memory cache
     let mut guard = PATTERN_CACHE.write();
-    if guard.is_none() {
-        *guard = Some(PatternCache::new());
+    let cache = guard.get_or_insert_with(PatternCache::new);
+    for (thumb_size, thumb) in thumbs {
+        cache.insert_thumb_compressed(pattern_id.clone(), thumb_size, thumb);
     }
-    if let Some(cache) = guard.as_mut() {
-        cache.insert_compressed(pattern_id, pattern);
-    }
+    cache.insert_compressed(pattern_id, pattern);
 }
 
 /// Get pattern data from global cache (with disk fallback)
@@ -454,12 +446,8 @@ pub fn get_cached_pattern(pattern_id: &str) -> Option<CachedPattern> {
     if let Some(pattern) = load_pattern_from_disk(pattern_id) {
         // Store back to memory for faster future access
         let mut guard = PATTERN_CACHE.write();
-        if guard.is_none() {
-            *guard = Some(PatternCache::new());
-        }
-        if let Some(cache) = guard.as_mut() {
-            cache.insert(pattern_id.to_string(), pattern.clone());
-        }
+        let cache = guard.get_or_insert_with(PatternCache::new);
+        cache.insert(pattern_id.to_string(), pattern.clone());
         return Some(pattern);
     }
 
@@ -483,12 +471,8 @@ pub fn get_cached_pattern_thumb(pattern_id: &str, requested_size: u32) -> Option
     // Try disk thumbnail
     if let Some(thumb) = load_thumb_from_disk(pattern_id, size) {
         let mut guard = PATTERN_CACHE.write();
-        if guard.is_none() {
-            *guard = Some(PatternCache::new());
-        }
-        if let Some(cache) = guard.as_mut() {
-            cache.insert_thumb(pattern_id.to_string(), size, thumb.clone());
-        }
+        let cache = guard.get_or_insert_with(PatternCache::new);
+        cache.insert_thumb(pattern_id.to_string(), size, thumb.clone());
         return Some(thumb);
     }
 
@@ -518,12 +502,8 @@ pub fn get_cached_pattern_thumb(pattern_id: &str, requested_size: u32) -> Option
     save_thumb_to_disk(pattern_id, size, &thumb);
 
     let mut guard = PATTERN_CACHE.write();
-    if guard.is_none() {
-        *guard = Some(PatternCache::new());
-    }
-    if let Some(cache) = guard.as_mut() {
-        cache.insert_thumb(pattern_id.to_string(), size, thumb.clone());
-    }
+    let cache = guard.get_or_insert_with(PatternCache::new);
+    cache.insert_thumb(pattern_id.to_string(), size, thumb.clone());
 
     Some(thumb)
 }

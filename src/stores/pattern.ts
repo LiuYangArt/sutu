@@ -177,7 +177,7 @@ export const usePatternLibraryStore = create<PatternLibraryState>((set, get) => 
 // ============================================================================
 
 /** Get patterns filtered by search query */
-export const useFilteredPatterns = () => {
+export function useFilteredPatterns(): PatternResource[] {
   const patterns = usePatternLibraryStore((s) => s.patterns);
   const query = usePatternLibraryStore((s) => s.searchQuery);
 
@@ -187,10 +187,10 @@ export const useFilteredPatterns = () => {
   return patterns.filter(
     (p) => p.name.toLowerCase().includes(lowerQuery) || p.group?.toLowerCase().includes(lowerQuery)
   );
-};
+}
 
 /** Get patterns grouped by group name */
-export const useGroupedPatterns = (): PatternGroup[] => {
+export function useGroupedPatterns(): PatternGroup[] {
   const patterns = useFilteredPatterns();
 
   const groups = new Map<string, PatternResource[]>();
@@ -206,7 +206,7 @@ export const useGroupedPatterns = (): PatternGroup[] => {
   return Array.from(groups.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, patterns]) => ({ name, patterns }));
-};
+}
 
 /** Get pattern thumbnail URL */
 const THUMB_BUCKETS = [32, 48, 80] as const;
@@ -227,10 +227,10 @@ export function normalizePatternThumbSize(size: number): number {
 }
 
 /** Get pattern thumbnail URL (optional thumb size bucket) */
-export const getPatternThumbnailUrl = (id: string, thumbSize?: number): string => {
+export function getPatternThumbnailUrl(id: string, thumbSize?: number): string {
   if (thumbSize === undefined) {
     return `http://project.localhost/pattern/${id}`;
   }
   const normalized = normalizePatternThumbSize(thumbSize);
   return `http://project.localhost/pattern/${id}?thumb=${normalized}`;
-};
+}
