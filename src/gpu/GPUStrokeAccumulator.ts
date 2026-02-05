@@ -35,6 +35,7 @@ import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '
 import { patternManager } from '@/utils/patternManager';
 import { applyScatter } from '@/utils/scatterDynamics';
 import { getNoisePattern } from '@/utils/noiseTexture';
+import { alignTo, computeTextureCopyRectFromLogicalRect } from './utils/textureCopyRect';
 
 interface DebugRect {
   rect: Rect;
@@ -114,12 +115,9 @@ export class GPUStrokeAccumulator {
   // Using 64 as a conservative value to avoid triggering dispatchInBatches which has ping-pong bugs.
   private static readonly MAX_SAFE_BATCH_SIZE = 64;
 
-  // Readback buffer for GPU → CPU transfer
-  private readbackBuffer: GPUBuffer | null = null;
-  private readbackBytesPerRow: number = 0;
-
   // Preview readback buffer (separate to avoid conflicts)
   private previewReadbackBuffer: GPUBuffer | null = null;
+  private previewReadbackBufferSizeBytes: number = 0;
   private previewUpdatePending: boolean = false;
   private previewNeedsUpdate: boolean = false; // Flag to ensure final update
 
@@ -471,10 +469,15 @@ export class GPUStrokeAccumulator {
     try {
       const texW = this.pingPongBuffer.textureWidth;
       const texH = this.pingPongBuffer.textureHeight;
-      const size = this.readbackBytesPerRow * texH;
-      if (texW <= 0 || texH <= 0 || size <= 0) {
+      if (texW <= 0 || texH <= 0) {
         return;
       }
+
+      // Only read back a tiny region to warm driver paths without allocating huge buffers.
+      const copyWidth = Math.max(1, Math.min(16, texW));
+      const copyHeight = Math.max(1, Math.min(1, texH));
+      const bytesPerRow = 256; // >= 16px * 16B, and 256-byte aligned
+      const size = bytesPerRow * copyHeight;
 
       const buffer = this.device.createBuffer({
         label: 'Prewarm Dual Readback Buffer',
@@ -486,9 +489,9 @@ export class GPUStrokeAccumulator {
         label: 'Prewarm Dual Readback Encoder',
       });
       encoder.copyTextureToBuffer(
-        { texture: this.dualBlendTexture },
-        { buffer, bytesPerRow: this.readbackBytesPerRow },
-        [texW, texH]
+        { texture: this.dualBlendTexture, origin: { x: 0, y: 0 } },
+        { buffer, bytesPerRow },
+        [copyWidth, copyHeight]
       );
 
       this.device.queue.submit([encoder.finish()]);
@@ -509,33 +512,37 @@ export class GPUStrokeAccumulator {
   }
 
   private createReadbackBuffer(): void {
-    // Use actual texture dimensions (may be scaled)
-    const texW = this.pingPongBuffer.textureWidth;
-    const texH = this.pingPongBuffer.textureHeight;
-
-    // rgba32float = 16 bytes per pixel (4 channels * 4 bytes/channel)
-    // Rows must be aligned to 256 bytes
-    this.readbackBytesPerRow = Math.ceil((texW * 16) / 256) * 256;
-    const size = this.readbackBytesPerRow * texH;
-
-    this.readbackBuffer = this.device.createBuffer({
-      label: 'Stroke Readback Buffer',
-      size,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-
-    // Separate buffer for preview to avoid mapping conflicts
+    // Start with a tiny buffer and grow on demand based on dirty-rect readback size.
+    // This avoids allocating huge MAP_READ buffers for large canvases (e.g. 5000x3000).
+    const initialSize = 256;
+    this.previewReadbackBufferSizeBytes = initialSize;
     this.previewReadbackBuffer = this.device.createBuffer({
       label: 'Preview Readback Buffer',
-      size,
+      size: initialSize,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
   }
 
+  private ensurePreviewReadbackBufferCapacity(minBytes: number): void {
+    const required = Math.max(256, alignTo(minBytes, 256));
+    if (this.previewReadbackBuffer && required <= this.previewReadbackBufferSizeBytes) {
+      return;
+    }
+
+    this.previewReadbackBuffer?.destroy();
+    this.previewReadbackBuffer = this.device.createBuffer({
+      label: 'Preview Readback Buffer',
+      size: required,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+    this.previewReadbackBufferSizeBytes = required;
+  }
+
   /** Destroy and recreate readback buffers (after texture resize) */
   private recreateReadbackBuffers(): void {
-    this.readbackBuffer?.destroy();
     this.previewReadbackBuffer?.destroy();
+    this.previewReadbackBuffer = null;
+    this.previewReadbackBufferSizeBytes = 0;
     this.createReadbackBuffer();
   }
 
@@ -1427,9 +1434,19 @@ export class GPUStrokeAccumulator {
     // Try compute shader path first
     if (this.useComputeShader) {
       // Compute shader: batch all dabs in single dispatch
-      // IMPORTANT: Copy the ENTIRE source to dest before dispatch
-      // This ensures Compute Shader reads the accumulated result from previous flushes
-      this.pingPongBuffer.copySourceToDest(encoder);
+      // IMPORTANT: Copy source → dest for the accumulated dirty region before dispatch.
+      // This preserves results from previous flushes without paying full-canvas bandwidth.
+      const dr = this.dirtyRect;
+      const pad = 4;
+      const copyLeft = Math.floor(Math.max(0, dr.left - pad));
+      const copyTop = Math.floor(Math.max(0, dr.top - pad));
+      const copyRight = Math.ceil(Math.min(this.width, dr.right + pad));
+      const copyBottom = Math.ceil(Math.min(this.height, dr.bottom + pad));
+      const copyW = copyRight - copyLeft;
+      const copyH = copyBottom - copyTop;
+      if (copyW > 0 && copyH > 0) {
+        this.pingPongBuffer.copyRect(encoder, copyLeft, copyTop, copyW, copyH);
+      }
 
       // Single dispatch for all dabs
       const success = this.computeBrushPipeline.dispatch(
@@ -2063,22 +2080,6 @@ export class GPUStrokeAccumulator {
     this.currentPreviewPromise = (async () => {
       const updateStart = this.nowMs();
       try {
-        // Copy current texture to preview readback buffer
-        const encoder = this.device.createCommandEncoder();
-        const texW = this.pingPongBuffer.textureWidth;
-        const texH = this.pingPongBuffer.textureHeight;
-        // Use getPresentableTexture() to get the correct texture (with or without wet edge)
-        encoder.copyTextureToBuffer(
-          { texture: this.getPresentableTexture() },
-          { buffer: this.previewReadbackBuffer!, bytesPerRow: this.readbackBytesPerRow },
-          [texW, texH]
-        );
-        this.device.queue.submit([encoder.finish()]);
-
-        // Wait for GPU and map buffer
-        await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ);
-        const gpuData = new Float32Array(this.previewReadbackBuffer!.getMappedRange());
-
         // Get dirty rect bounds (in logical/canvas coordinates) - use integers
         const preferred = this.getPreviewUpdateRect();
         const rect = {
@@ -2093,61 +2094,106 @@ export class GPUStrokeAccumulator {
         const scale = this.currentRenderScale;
 
         if (rectWidth > 0 && rectHeight > 0) {
-          // Create ImageData for the dirty region (full resolution preview)
-          const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
-          const floatsPerRow = this.readbackBytesPerRow / 4;
-
-          // Get selection mask for real-time clipping during preview
-          const selectionState = useSelectionStore.getState();
-          const selectionMask = selectionState.hasSelection ? selectionState.selectionMask : null;
-
-          // Sample from scaled texture with bilinear-ish nearest neighbor
-          for (let py = 0; py < rectHeight; py++) {
-            for (let px = 0; px < rectWidth; px++) {
-              // Global canvas coordinates for this pixel
-              const globalX = rect.left + px;
-              const globalY = rect.top + py;
-
-              // Get selection mask alpha for anti-aliased blending
-              let maskBlend = 1.0;
-              if (selectionMask) {
-                if (
-                  globalX >= 0 &&
-                  globalX < selectionMask.width &&
-                  globalY >= 0 &&
-                  globalY < selectionMask.height
-                ) {
-                  const maskIdx = (globalY * selectionMask.width + globalX) * 4 + 3;
-                  const maskAlpha = selectionMask.data[maskIdx] ?? 0;
-                  if (maskAlpha === 0) continue; // Skip fully outside pixels
-                  maskBlend = maskAlpha / 255; // Use as blend factor for AA
-                } else {
-                  continue; // Skip pixels outside mask bounds
-                }
-              }
-
-              // Map preview pixel to texture pixel (nearest neighbor)
-              const texX = Math.floor(globalX * scale);
-              const texY = Math.floor(globalY * scale);
-              const srcIdx = texY * floatsPerRow + texX * 4;
-              const dstIdx = (py * rectWidth + px) * 4;
-
-              // Convert float (0-1) to uint8 (0-255), applying mask blend for AA
-              imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
-              imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
-              imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
-              imageData.data[dstIdx + 3] = Math.round((gpuData[srcIdx + 3] ?? 0) * 255 * maskBlend);
-            }
+          const texW = this.pingPongBuffer.textureWidth;
+          const texH = this.pingPongBuffer.textureHeight;
+          const copyRect = computeTextureCopyRectFromLogicalRect(rect, scale, texW, texH, 1);
+          if (copyRect.width <= 0 || copyRect.height <= 0) {
+            return;
           }
 
-          this.previewCtx.putImageData(imageData, rect.left, rect.top);
-          this.lastPreviewUpdateRect = rect;
-          this.lastPreviewUpdateSource = preferred.source;
-          this.previewUpdateCount += 1;
-          this.lastPreviewUpdateMs = this.nowMs() - updateStart;
-        }
+          // rgba32float = 16 bytes/pixel. bytesPerRow must be 256-byte aligned.
+          const bytesPerRow = alignTo(copyRect.width * 16, 256);
+          const copyBytes = bytesPerRow * copyRect.height;
+          this.ensurePreviewReadbackBufferCapacity(copyBytes);
 
-        this.previewReadbackBuffer!.unmap();
+          // Copy just the region we need from the presentable texture (raw / wet-edge / dual blend).
+          const encoder = this.device.createCommandEncoder();
+          encoder.copyTextureToBuffer(
+            {
+              texture: this.getPresentableTexture(),
+              origin: { x: copyRect.originX, y: copyRect.originY },
+            },
+            { buffer: this.previewReadbackBuffer!, bytesPerRow },
+            [copyRect.width, copyRect.height]
+          );
+          this.device.queue.submit([encoder.finish()]);
+
+          let mapped = false;
+          try {
+            await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ, 0, copyBytes);
+            mapped = true;
+            const gpuData = new Float32Array(
+              this.previewReadbackBuffer!.getMappedRange(0, copyBytes)
+            );
+            const floatsPerRow = bytesPerRow / 4;
+
+            // Create ImageData for the dirty region (full resolution preview)
+            const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
+
+            // Get selection mask for real-time clipping during preview
+            const selectionState = useSelectionStore.getState();
+            const selectionMask = selectionState.hasSelection ? selectionState.selectionMask : null;
+
+            // Sample from scaled texture with bilinear-ish nearest neighbor
+            for (let py = 0; py < rectHeight; py++) {
+              for (let px = 0; px < rectWidth; px++) {
+                // Global canvas coordinates for this pixel
+                const globalX = rect.left + px;
+                const globalY = rect.top + py;
+
+                // Get selection mask alpha for anti-aliased blending
+                let maskBlend = 1.0;
+                if (selectionMask) {
+                  if (
+                    globalX >= 0 &&
+                    globalX < selectionMask.width &&
+                    globalY >= 0 &&
+                    globalY < selectionMask.height
+                  ) {
+                    const maskIdx = (globalY * selectionMask.width + globalX) * 4 + 3;
+                    const maskAlpha = selectionMask.data[maskIdx] ?? 0;
+                    if (maskAlpha === 0) continue; // Skip fully outside pixels
+                    maskBlend = maskAlpha / 255; // Use as blend factor for AA
+                  } else {
+                    continue; // Skip pixels outside mask bounds
+                  }
+                }
+
+                // Map preview pixel to texture pixel (nearest neighbor)
+                const texX = Math.floor(globalX * scale) - copyRect.originX;
+                const texY = Math.floor(globalY * scale) - copyRect.originY;
+                if (texX < 0 || texY < 0 || texX >= copyRect.width || texY >= copyRect.height) {
+                  continue;
+                }
+
+                const srcIdx = texY * floatsPerRow + texX * 4;
+                const dstIdx = (py * rectWidth + px) * 4;
+
+                // Convert float (0-1) to uint8 (0-255), applying mask blend for AA
+                imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
+                imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
+                imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
+                imageData.data[dstIdx + 3] = Math.round(
+                  (gpuData[srcIdx + 3] ?? 0) * 255 * maskBlend
+                );
+              }
+            }
+
+            this.previewCtx.putImageData(imageData, rect.left, rect.top);
+            this.lastPreviewUpdateRect = rect;
+            this.lastPreviewUpdateSource = preferred.source;
+            this.previewUpdateCount += 1;
+            this.lastPreviewUpdateMs = this.nowMs() - updateStart;
+          } finally {
+            if (mapped) {
+              try {
+                this.previewReadbackBuffer!.unmap();
+              } catch {
+                // Ignore unmap errors
+              }
+            }
+          }
+        }
       } catch (e) {
         console.error('[GPUStrokeAccumulator] Preview update failed:', e);
       } finally {
@@ -2457,7 +2503,6 @@ export class GPUStrokeAccumulator {
     this.computeDualBlendPipeline.destroy();
     this.wetEdgePipeline.destroy();
     this.noiseTexture.destroy();
-    this.readbackBuffer?.destroy();
     this.previewReadbackBuffer?.destroy();
     this.profiler.destroy();
   }
