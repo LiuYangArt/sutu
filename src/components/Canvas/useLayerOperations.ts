@@ -258,6 +258,12 @@ export function useLayerOperations({
     const entry = undo();
     if (!entry) return;
 
+    if (entry.type === 'selection') {
+      entry.after = useSelectionStore.getState().createSnapshot();
+      useSelectionStore.getState().applySnapshot(entry.before);
+      return;
+    }
+
     const renderer = layerRendererRef.current;
     if (!renderer) return;
 
@@ -348,6 +354,13 @@ export function useLayerOperations({
   const handleRedo = useCallback(() => {
     const entry = redo();
     if (!entry) return;
+
+    if (entry.type === 'selection') {
+      if (entry.after) {
+        useSelectionStore.getState().applySnapshot(entry.after);
+      }
+      return;
+    }
 
     const renderer = layerRendererRef.current;
     if (!renderer) return;

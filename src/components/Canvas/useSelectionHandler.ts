@@ -1,5 +1,6 @@
 import { useCallback, useRef, useEffect, useState } from 'react';
-import { useSelectionStore, SelectionPoint } from '@/stores/selection';
+import { useSelectionStore, SelectionPoint, type SelectionSnapshot } from '@/stores/selection';
+import { useHistoryStore } from '@/stores/history';
 import { useDocumentStore } from '@/stores/document';
 import { ToolType } from '@/stores/tool';
 
@@ -81,6 +82,8 @@ export function useSelectionHandler({
   // Track if we started on existing selection (for click-to-deselect)
   const startedOnSelectionRef = useRef(false);
 
+  const selectionHistoryBeforeRef = useRef<SelectionSnapshot | null>(null);
+
   // Track drag in polygonal mode to switch back to freehand
   const polygonalDragStartRef = useRef<SelectionPoint | null>(null);
   const DRAG_THRESHOLD = 5; // pixels
@@ -106,9 +109,41 @@ export function useSelectionHandler({
   const currentToolRef = useRef(currentTool);
   currentToolRef.current = currentTool;
 
+  const captureBeforeIfNeeded = useCallback(() => {
+    if (selectionHistoryBeforeRef.current) return;
+    selectionHistoryBeforeRef.current = useSelectionStore.getState().createSnapshot();
+  }, []);
+
+  const finalizeHistoryIfChanged = useCallback(() => {
+    const before = selectionHistoryBeforeRef.current;
+    if (!before) return;
+
+    const after = useSelectionStore.getState().createSnapshot();
+    const changed =
+      (before.hasSelection || after.hasSelection) && before.selectionMask !== after.selectionMask;
+
+    if (changed) {
+      useHistoryStore.getState().pushSelection(before);
+    }
+
+    selectionHistoryBeforeRef.current = null;
+  }, []);
+
   // Listen for Alt key changes globally
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Escape') {
+        selectionHistoryBeforeRef.current = null;
+        isSelectingRef.current = false;
+        startPointRef.current = null;
+        lastPointRef.current = null;
+        polygonalDragStartRef.current = null;
+        isMouseDownRef.current = false;
+        hasDraggedRef.current = false;
+        startedOnSelectionRef.current = false;
+        return;
+      }
+
       if (e.code === 'AltLeft' || e.code === 'AltRight') {
         const tool = currentToolRef.current;
         // When Alt is pressed during lasso selection, anchor current position
@@ -145,6 +180,7 @@ export function useSelectionHandler({
           // Determine final lasso mode based on interaction history
           setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
           commitSelection(width, height);
+          finalizeHistoryIfChanged();
 
           // Reset all selection state
           isSelectingRef.current = false;
@@ -176,7 +212,7 @@ export function useSelectionHandler({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [addCreationPoint, commitSelection, setLassoMode]);
+  }, [addCreationPoint, commitSelection, finalizeHistoryIfChanged, setLassoMode]);
 
   const isSelectionToolActive = currentTool === 'select' || currentTool === 'lasso';
 
@@ -227,21 +263,25 @@ export function useSelectionHandler({
 
           if (isPointInSelection(canvasX, canvasY)) {
             // Clicked inside selection -> Start Move
+            captureBeforeIfNeeded();
             beginMove(point);
             return true;
           }
 
           // Clicked outside selection -> Deselect and Continue to Start New Selection
+          captureBeforeIfNeeded();
           deselectAll();
           startedOnSelectionRef.current = false;
         } else {
           // Lasso Polygonal Start -> Deselect and Continue
+          captureBeforeIfNeeded();
           deselectAll();
           startedOnSelectionRef.current = false;
         }
       }
 
       // Case 3: Start New Selection
+      captureBeforeIfNeeded();
       startPointRef.current = point;
       lastPointRef.current = point;
       isSelectingRef.current = true;
@@ -271,6 +311,7 @@ export function useSelectionHandler({
       isPointInSelection,
       beginMove,
       deselectAll,
+      captureBeforeIfNeeded,
       setSelectionMode,
     ]
   );
@@ -352,9 +393,12 @@ export function useSelectionHandler({
         const { width, height } = useDocumentStore.getState();
         // If no actual drag happened, it's a click - deselect
         if (!hasDraggedRef.current) {
+          captureBeforeIfNeeded();
           deselectAll();
+          finalizeHistoryIfChanged();
         } else {
           commitMove(width, height);
+          finalizeHistoryIfChanged();
         }
         hasDraggedRef.current = false;
         startedOnSelectionRef.current = false;
@@ -363,7 +407,9 @@ export function useSelectionHandler({
 
       // Click on existing selection without drag = deselect
       if (startedOnSelectionRef.current && !hasDraggedRef.current) {
+        captureBeforeIfNeeded();
         deselectAll();
+        finalizeHistoryIfChanged();
         hasDraggedRef.current = false;
         startedOnSelectionRef.current = false;
         return;
@@ -390,6 +436,7 @@ export function useSelectionHandler({
       // Update lasso mode based on usage history
       setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
       commitSelection(width, height);
+      finalizeHistoryIfChanged();
 
       isSelectingRef.current = false;
       startPointRef.current = null;
@@ -406,6 +453,8 @@ export function useSelectionHandler({
       commitSelection,
       commitMove,
       deselectAll,
+      captureBeforeIfNeeded,
+      finalizeHistoryIfChanged,
       setLassoMode,
     ]
   );
@@ -417,12 +466,13 @@ export function useSelectionHandler({
         const { width, height } = useDocumentStore.getState();
         setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
         commitSelection(width, height);
+        finalizeHistoryIfChanged();
         isSelectingRef.current = false;
         startPointRef.current = null;
         lastPointRef.current = null;
       }
     },
-    [currentTool, isCreating, commitSelection, setLassoMode]
+    [currentTool, isCreating, commitSelection, finalizeHistoryIfChanged, setLassoMode]
   );
 
   return {

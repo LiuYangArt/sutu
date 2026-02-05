@@ -1,5 +1,6 @@
 import { useEffect, useState, type MutableRefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
+import { useHistoryStore } from '@/stores/history';
 import { ToolType } from '@/stores/tool';
 import { stepBrushSizeBySliderProgress } from '@/utils/sliderScales';
 
@@ -55,6 +56,7 @@ export function useKeyboardShortcuts({
   panStartRef,
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
+  const pushSelection = useHistoryStore((s) => s.pushSelection);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -86,13 +88,33 @@ export function useKeyboardShortcuts({
           case 'KeyA': {
             // Ctrl+A: Select All
             e.preventDefault();
+            const selStore = useSelectionStore.getState();
+            const before = selStore.createSnapshot();
             selectAll(width, height);
+            const after = selStore.createSnapshot();
+
+            const changed =
+              (before.hasSelection || after.hasSelection) &&
+              before.selectionMask !== after.selectionMask;
+            if (changed) {
+              pushSelection(before);
+            }
             return;
           }
           case 'KeyD': {
             // Ctrl+D: Deselect
             e.preventDefault();
+            const selStore = useSelectionStore.getState();
+            const before = selStore.createSnapshot();
             deselectAll();
+            const after = selStore.createSnapshot();
+
+            const changed =
+              (before.hasSelection || after.hasSelection) &&
+              before.selectionMask !== after.selectionMask;
+            if (changed) {
+              pushSelection(before);
+            }
             return;
           }
           default:
@@ -206,6 +228,7 @@ export function useKeyboardShortcuts({
     cancelSelection,
     width,
     height,
+    pushSelection,
     panStartRef,
   ]);
 

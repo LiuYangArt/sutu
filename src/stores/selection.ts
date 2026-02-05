@@ -33,6 +33,17 @@ export interface SelectionBounds {
   height: number;
 }
 
+/**
+ * Immutable snapshot of selection core state for history.
+ * Note: Snapshot stores references (no deep clone). Selection updates should be immutable.
+ */
+export interface SelectionSnapshot {
+  hasSelection: boolean;
+  selectionMask: ImageData | null;
+  selectionPath: SelectionPoint[][];
+  bounds: SelectionBounds | null;
+}
+
 interface SelectionState {
   // Core selection data
   hasSelection: boolean;
@@ -88,6 +99,10 @@ interface SelectionState {
   isPointInSelection: (x: number, y: number) => boolean;
   isPointInBounds: (x: number, y: number) => boolean;
   getSelectionMaskForLayer: () => ImageData | null;
+
+  // History helpers (core state only)
+  createSnapshot: () => SelectionSnapshot;
+  applySnapshot: (snapshot: SelectionSnapshot | null) => void;
 }
 
 /**
@@ -491,5 +506,30 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   getSelectionMaskForLayer: () => {
     const state = get();
     return state.hasSelection ? state.selectionMask : null;
+  },
+
+  createSnapshot: () => {
+    const { hasSelection, selectionMask, selectionPath, bounds } = get();
+    return { hasSelection, selectionMask, selectionPath, bounds };
+  },
+
+  applySnapshot: (snapshot) => {
+    const hasSelection = snapshot?.hasSelection ?? false;
+    set({
+      hasSelection,
+      selectionMask: hasSelection ? (snapshot?.selectionMask ?? null) : null,
+      selectionPath: hasSelection ? (snapshot?.selectionPath ?? []) : [],
+      bounds: hasSelection ? (snapshot?.bounds ?? null) : null,
+
+      isCreating: false,
+      creationPoints: [],
+      previewPoint: null,
+      creationStart: null,
+
+      isMoving: false,
+      moveStartPoint: null,
+      originalPath: [],
+      originalBounds: null,
+    });
   },
 }));

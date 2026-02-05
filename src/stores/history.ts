@@ -1,10 +1,16 @@
 import { create } from 'zustand';
 import { Layer } from './document';
+import type { SelectionSnapshot } from './selection';
 
 /**
  * History entry types for unified timeline
  */
-export type HistoryEntry = StrokeEntry | AddLayerEntry | RemoveLayerEntry | ResizeCanvasEntry;
+export type HistoryEntry =
+  | StrokeEntry
+  | AddLayerEntry
+  | RemoveLayerEntry
+  | ResizeCanvasEntry
+  | SelectionEntry;
 
 interface StrokeEntry {
   type: 'stroke';
@@ -45,6 +51,13 @@ interface ResizeCanvasEntry {
   timestamp: number;
 }
 
+interface SelectionEntry {
+  type: 'selection';
+  before: SelectionSnapshot;
+  after?: SelectionSnapshot; // Filled during undo, used for redo
+  timestamp: number;
+}
+
 interface HistoryState {
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
@@ -70,6 +83,9 @@ interface HistoryState {
     beforeHeight: number,
     beforeLayers: ResizeCanvasLayerSnapshot[]
   ) => void;
+
+  // Push selection change operation (stores immutable snapshot references)
+  pushSelection: (before: SelectionSnapshot) => void;
 
   // Undo/Redo
   undo: () => HistoryEntry | null;
@@ -138,6 +154,14 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         beforeWidth,
         beforeHeight,
         beforeLayers: cloneLayerSnapshots(beforeLayers),
+        timestamp: Date.now(),
+      });
+    },
+
+    pushSelection: (before) => {
+      pushEntry({
+        type: 'selection',
+        before,
         timestamp: Date.now(),
       });
     },
