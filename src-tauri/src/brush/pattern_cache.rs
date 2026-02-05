@@ -12,7 +12,7 @@ use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Cached pattern texture data
 #[derive(Debug, Clone)]
@@ -204,14 +204,13 @@ fn render_square_thumbnail_rgba(src_rgba: &[u8], src_w: u32, src_h: u32, size: u
 
 /// Get the pattern cache directory path
 fn get_pattern_cache_dir() -> PathBuf {
-    let base = std::env::var("PAINTBOARD_TEST_DATA_DIR")
+    std::env::var("PAINTBOARD_TEST_DATA_DIR")
         .ok()
         .map(PathBuf::from)
         .or_else(dirs::data_dir)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("com.paintboard")
-        .join("pattern_cache");
-    base
+        .join("pattern_cache")
 }
 
 fn get_pattern_cache_thumb_dir(size: u32) -> PathBuf {
@@ -237,7 +236,7 @@ pub fn ensure_cache_dir() {
 /// - mode_len (4 bytes)
 /// - mode_bytes (variable)
 /// - compressed_data (rest)
-fn save_pattern_to_disk_in_dir(dir: &PathBuf, pattern_id: &str, pattern: &CachedPattern) {
+fn save_pattern_to_disk_in_dir(dir: &Path, pattern_id: &str, pattern: &CachedPattern) {
     let file_path = dir.join(format!("{}.bin", pattern_id));
 
     let result = (|| -> std::io::Result<()> {
@@ -270,7 +269,7 @@ fn save_pattern_to_disk_in_dir(dir: &PathBuf, pattern_id: &str, pattern: &Cached
 }
 
 /// Load pattern from disk
-fn load_pattern_from_disk_in_dir(dir: &PathBuf, pattern_id: &str) -> Option<CachedPattern> {
+fn load_pattern_from_disk_in_dir(dir: &Path, pattern_id: &str) -> Option<CachedPattern> {
     let file_path = dir.join(format!("{}.bin", pattern_id));
 
     if !file_path.exists() {
@@ -595,14 +594,14 @@ mod tests {
 
     #[test]
     fn thumb_disk_fallback_and_memory_hit() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().expect("failed to lock test mutex");
 
         let uniq = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX_EPOCH")
             .as_nanos();
         let base = std::env::temp_dir().join(format!("paintboard_pattern_cache_test_{}", uniq));
-        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&base).expect("failed to create test dir");
         std::env::set_var("PAINTBOARD_TEST_DATA_DIR", &base);
 
         init_pattern_cache();
@@ -629,7 +628,7 @@ mod tests {
         );
 
         // Delete thumb file again; second request should hit memory and NOT recreate file.
-        std::fs::remove_file(&thumb_path).unwrap();
+        std::fs::remove_file(&thumb_path).expect("failed to remove thumb file");
         let _t2 = get_cached_pattern_thumb(&pattern_id, 80).expect("thumb should hit memory");
         assert!(
             !thumb_path.exists(),
