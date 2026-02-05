@@ -44,6 +44,11 @@ export interface SelectionSnapshot {
   bounds: SelectionBounds | null;
 }
 
+export function didSelectionChange(before: SelectionSnapshot, after: SelectionSnapshot): boolean {
+  if (!before.hasSelection && !after.hasSelection) return false;
+  return before.selectionMask !== after.selectionMask;
+}
+
 interface SelectionState {
   // Core selection data
   hasSelection: boolean;

@@ -1,5 +1,10 @@
 import { useCallback, useRef, useEffect, useState } from 'react';
-import { useSelectionStore, SelectionPoint, type SelectionSnapshot } from '@/stores/selection';
+import {
+  useSelectionStore,
+  didSelectionChange,
+  SelectionPoint,
+  type SelectionSnapshot,
+} from '@/stores/selection';
 import { useHistoryStore } from '@/stores/history';
 import { useDocumentStore } from '@/stores/document';
 import { ToolType } from '@/stores/tool';
@@ -109,20 +114,28 @@ export function useSelectionHandler({
   const currentToolRef = useRef(currentTool);
   currentToolRef.current = currentTool;
 
-  const captureBeforeIfNeeded = useCallback(() => {
+  const resetGestureRefs = useCallback(function resetGestureRefs(): void {
+    selectionHistoryBeforeRef.current = null;
+    isSelectingRef.current = false;
+    startPointRef.current = null;
+    lastPointRef.current = null;
+    polygonalDragStartRef.current = null;
+    isMouseDownRef.current = false;
+    hasDraggedRef.current = false;
+    startedOnSelectionRef.current = false;
+  }, []);
+
+  const captureBeforeIfNeeded = useCallback(function captureBeforeIfNeeded(): void {
     if (selectionHistoryBeforeRef.current) return;
     selectionHistoryBeforeRef.current = useSelectionStore.getState().createSnapshot();
   }, []);
 
-  const finalizeHistoryIfChanged = useCallback(() => {
+  const finalizeHistoryIfChanged = useCallback(function finalizeHistoryIfChanged(): void {
     const before = selectionHistoryBeforeRef.current;
     if (!before) return;
 
     const after = useSelectionStore.getState().createSnapshot();
-    const changed =
-      (before.hasSelection || after.hasSelection) && before.selectionMask !== after.selectionMask;
-
-    if (changed) {
+    if (didSelectionChange(before, after)) {
       useHistoryStore.getState().pushSelection(before);
     }
 
@@ -133,14 +146,7 @@ export function useSelectionHandler({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Escape') {
-        selectionHistoryBeforeRef.current = null;
-        isSelectingRef.current = false;
-        startPointRef.current = null;
-        lastPointRef.current = null;
-        polygonalDragStartRef.current = null;
-        isMouseDownRef.current = false;
-        hasDraggedRef.current = false;
-        startedOnSelectionRef.current = false;
+        resetGestureRefs();
         return;
       }
 
@@ -212,7 +218,7 @@ export function useSelectionHandler({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [addCreationPoint, commitSelection, finalizeHistoryIfChanged, setLassoMode]);
+  }, [addCreationPoint, commitSelection, finalizeHistoryIfChanged, resetGestureRefs, setLassoMode]);
 
   const isSelectionToolActive = currentTool === 'select' || currentTool === 'lasso';
 

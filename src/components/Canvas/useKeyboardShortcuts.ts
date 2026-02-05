@@ -1,5 +1,5 @@
-import { useEffect, useState, type MutableRefObject } from 'react';
-import { useSelectionStore } from '@/stores/selection';
+import { useEffect, useState, useCallback, type MutableRefObject } from 'react';
+import { useSelectionStore, didSelectionChange } from '@/stores/selection';
 import { useHistoryStore } from '@/stores/history';
 import { ToolType } from '@/stores/tool';
 import { stepBrushSizeBySliderProgress } from '@/utils/sliderScales';
@@ -57,6 +57,18 @@ export function useKeyboardShortcuts({
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
   const pushSelection = useHistoryStore((s) => s.pushSelection);
+  const recordSelectionChange = useCallback(
+    (action: () => void): void => {
+      const selStore = useSelectionStore.getState();
+      const before = selStore.createSnapshot();
+      action();
+      const after = selStore.createSnapshot();
+      if (didSelectionChange(before, after)) {
+        pushSelection(before);
+      }
+    },
+    [pushSelection]
+  );
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -88,33 +100,13 @@ export function useKeyboardShortcuts({
           case 'KeyA': {
             // Ctrl+A: Select All
             e.preventDefault();
-            const selStore = useSelectionStore.getState();
-            const before = selStore.createSnapshot();
-            selectAll(width, height);
-            const after = selStore.createSnapshot();
-
-            const changed =
-              (before.hasSelection || after.hasSelection) &&
-              before.selectionMask !== after.selectionMask;
-            if (changed) {
-              pushSelection(before);
-            }
+            recordSelectionChange(() => selectAll(width, height));
             return;
           }
           case 'KeyD': {
             // Ctrl+D: Deselect
             e.preventDefault();
-            const selStore = useSelectionStore.getState();
-            const before = selStore.createSnapshot();
-            deselectAll();
-            const after = selStore.createSnapshot();
-
-            const changed =
-              (before.hasSelection || after.hasSelection) &&
-              before.selectionMask !== after.selectionMask;
-            if (changed) {
-              pushSelection(before);
-            }
+            recordSelectionChange(() => deselectAll());
             return;
           }
           default:
@@ -230,6 +222,7 @@ export function useKeyboardShortcuts({
     height,
     pushSelection,
     panStartRef,
+    recordSelectionChange,
   ]);
 
   return { spacePressed };
