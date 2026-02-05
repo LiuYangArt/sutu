@@ -255,19 +255,19 @@
 
 ### 12.1 纹理分配/clear 基线
 
-- 4K `rgba8unorm`：
-- 4K `rgba8unorm-srgb`：
-- 8K `rgba8unorm`：
-- 8K `rgba8unorm-srgb`：
+- 4K `rgba8unorm`：create 0.1ms / clear 4.3ms
+- 4K `rgba8unorm-srgb`：create ~0ms / clear 3.4ms
+- 8K `rgba8unorm`：create ~0ms / clear 6.8ms
+- 8K `rgba8unorm-srgb`：create ~0ms / clear 7.4ms
 
 ### 12.2 Allocation Probe（估算浏览器配额）
 
-- 4K `rgba8unorm`：
-- 4K `rgba8unorm-srgb`：
-- 8K `rgba8unorm`：
-- 8K `rgba8unorm-srgb`：
+- 4K `rgba8unorm`：allocated 32 / totalBytes 2,147,483,648 (~2.0 GiB)
+- 4K `rgba8unorm-srgb`：allocated 32 / totalBytes 2,147,483,648 (~2.0 GiB)
+- 8K `rgba8unorm`：allocated 32 / totalBytes 8,589,934,592 (~8.0 GiB)
+- 8K `rgba8unorm-srgb`：allocated 32 / totalBytes 8,589,934,592 (~8.0 GiB)
 
 ### 12.3 Tile Size 对比（256/512）
 
-- 4K tile 256（tilesX/Y/总数/估算显存）：
-- 4K tile 512（tilesX/Y/总数/估算显存）：
+- 4K tile 256（16x16 / 256 tiles / ~64MB 估算显存）
+- 4K tile 512（8x8 / 64 tiles / ~64MB 估算显存）
