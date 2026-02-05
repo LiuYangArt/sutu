@@ -293,6 +293,9 @@ impl PatternLibrary {
             return Err(format!("Pattern not found: {}", id));
         }
 
+        // Remove cached binary payloads (full + thumbnails)
+        pattern_cache::delete_cached_pattern(id);
+
         // Remove from all groups
         for group in self.index.groups.values_mut() {
             group.retain(|pid| pid != id);

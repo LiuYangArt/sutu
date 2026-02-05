@@ -29,8 +29,8 @@ pub use cache::{
 pub use engine::{BrushEngine, BrushSettings};
 pub use interpolation::{interpolate_catmull_rom, InterpolationMode};
 pub use pattern_cache::{
-    cache_pattern_rgba, clear_pattern_cache, get_cached_pattern, get_pattern_cache_stats,
-    init_pattern_cache, CachedPattern,
+    cache_pattern_rgba, clear_pattern_cache, delete_cached_pattern, get_cached_pattern,
+    get_cached_pattern_thumb, get_pattern_cache_stats, init_pattern_cache, CachedPattern,
 };
 pub use stamper::{BrushStamper, Dab, StamperConfig};
 pub use stroke_buffer::{Pixel, Rect, StrokeBuffer};

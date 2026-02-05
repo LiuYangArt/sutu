@@ -8,7 +8,7 @@
 //! 1. **Memory cache**: Fast access for current session
 //! 2. **Disk cache**: Persistent storage across sessions
 
-use lz4_flex::compress_prepend_size;
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -37,6 +37,8 @@ static PATTERN_CACHE: RwLock<Option<PatternCache>> = RwLock::new(None);
 pub struct PatternCache {
     /// Map of pattern_id -> cached texture data
     patterns: HashMap<String, CachedPattern>,
+    /// Map of pattern_id -> (thumb_size -> cached thumbnail)
+    thumbs: HashMap<String, HashMap<u32, CachedPattern>>,
 }
 
 impl PatternCache {
@@ -44,12 +46,21 @@ impl PatternCache {
     pub fn new() -> Self {
         Self {
             patterns: HashMap::new(),
+            thumbs: HashMap::new(),
         }
     }
 
     /// Insert a compressed pattern directly
     pub fn insert_compressed(&mut self, pattern_id: String, pattern: CachedPattern) {
         self.patterns.insert(pattern_id, pattern);
+    }
+
+    /// Insert a compressed thumbnail directly
+    pub fn insert_thumb_compressed(&mut self, pattern_id: String, size: u32, thumb: CachedPattern) {
+        self.thumbs
+            .entry(pattern_id)
+            .or_default()
+            .insert(size, thumb);
     }
 
     /// Store a pattern's RGBA texture data with LZ4 compression
@@ -90,14 +101,28 @@ impl PatternCache {
         self.patterns.get(pattern_id)
     }
 
+    /// Get a pattern thumbnail's cached data
+    pub fn get_thumb(&self, pattern_id: &str, size: u32) -> Option<&CachedPattern> {
+        self.thumbs.get(pattern_id).and_then(|m| m.get(&size))
+    }
+
     /// Insert a pattern directly (for loading from disk)
     pub fn insert(&mut self, pattern_id: String, pattern: CachedPattern) {
         self.patterns.insert(pattern_id, pattern);
     }
 
+    /// Insert a thumbnail directly (for loading from disk)
+    pub fn insert_thumb(&mut self, pattern_id: String, size: u32, thumb: CachedPattern) {
+        self.thumbs
+            .entry(pattern_id)
+            .or_default()
+            .insert(size, thumb);
+    }
+
     /// Clear all cached data
     pub fn clear(&mut self) {
         self.patterns.clear();
+        self.thumbs.clear();
     }
 
     /// Get number of cached patterns
@@ -114,16 +139,83 @@ impl PatternCache {
     pub fn total_size(&self) -> usize {
         self.patterns.values().map(|p| p.data.len()).sum()
     }
+
+    /// Remove a full pattern + all thumbnails
+    pub fn remove_pattern_and_thumbs(&mut self, pattern_id: &str) {
+        self.patterns.remove(pattern_id);
+        self.thumbs.remove(pattern_id);
+    }
 }
 
 // === Disk persistence ===
 
+const THUMB_SIZES: [u32; 3] = [32, 48, 80];
+
+fn normalize_thumb_size(size: u32) -> u32 {
+    let clamped = size.clamp(16, 256);
+    let mut best = THUMB_SIZES[0];
+    let mut best_diff = best.abs_diff(clamped);
+    for &s in &THUMB_SIZES[1..] {
+        let diff = s.abs_diff(clamped);
+        if diff < best_diff || (diff == best_diff && s > best) {
+            best = s;
+            best_diff = diff;
+        }
+    }
+    best
+}
+
+fn render_square_thumbnail_rgba(src_rgba: &[u8], src_w: u32, src_h: u32, size: u32) -> Vec<u8> {
+    let size_usize = size as usize;
+    let mut out = vec![0u8; size_usize * size_usize * 4];
+
+    if src_w == 0 || src_h == 0 || size == 0 {
+        return out;
+    }
+
+    let scale_w = size as f64 / src_w as f64;
+    let scale_h = size as f64 / src_h as f64;
+    let scale = scale_w.min(scale_h);
+
+    let new_w = ((src_w as f64) * scale).round().max(1.0) as u32;
+    let new_h = ((src_h as f64) * scale).round().max(1.0) as u32;
+
+    let off_x = (size - new_w) / 2;
+    let off_y = (size - new_h) / 2;
+
+    for y in 0..new_h {
+        let src_y = (y as u64 * src_h as u64 / new_h as u64) as u32;
+        for x in 0..new_w {
+            let src_x = (x as u64 * src_w as u64 / new_w as u64) as u32;
+
+            let src_i = ((src_y as usize) * (src_w as usize) + (src_x as usize)) * 4;
+            let dst_x = x + off_x;
+            let dst_y = y + off_y;
+            let dst_i = ((dst_y as usize) * size_usize + (dst_x as usize)) * 4;
+
+            if src_i + 3 < src_rgba.len() && dst_i + 3 < out.len() {
+                out[dst_i..dst_i + 4].copy_from_slice(&src_rgba[src_i..src_i + 4]);
+            }
+        }
+    }
+
+    out
+}
+
 /// Get the pattern cache directory path
 fn get_pattern_cache_dir() -> PathBuf {
-    dirs::data_dir()
+    let base = std::env::var("PAINTBOARD_TEST_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(dirs::data_dir)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("com.paintboard")
-        .join("pattern_cache")
+        .join("pattern_cache");
+    base
+}
+
+fn get_pattern_cache_thumb_dir(size: u32) -> PathBuf {
+    get_pattern_cache_dir().join(format!("thumb_{}", size))
 }
 
 /// Ensure cache directory exists
@@ -145,12 +237,11 @@ pub fn ensure_cache_dir() {
 /// - mode_len (4 bytes)
 /// - mode_bytes (variable)
 /// - compressed_data (rest)
-fn save_pattern_to_disk(pattern_id: &str, pattern: &CachedPattern) {
-    let dir = get_pattern_cache_dir();
+fn save_pattern_to_disk_in_dir(dir: &PathBuf, pattern_id: &str, pattern: &CachedPattern) {
     let file_path = dir.join(format!("{}.bin", pattern_id));
 
     let result = (|| -> std::io::Result<()> {
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(dir)?;
 
         let mut file = std::fs::File::create(&file_path)?;
         let name_bytes = pattern.name.as_bytes();
@@ -179,8 +270,8 @@ fn save_pattern_to_disk(pattern_id: &str, pattern: &CachedPattern) {
 }
 
 /// Load pattern from disk
-fn load_pattern_from_disk(pattern_id: &str) -> Option<CachedPattern> {
-    let file_path = get_pattern_cache_dir().join(format!("{}.bin", pattern_id));
+fn load_pattern_from_disk_in_dir(dir: &PathBuf, pattern_id: &str) -> Option<CachedPattern> {
+    let file_path = dir.join(format!("{}.bin", pattern_id));
 
     if !file_path.exists() {
         return None;
@@ -239,6 +330,26 @@ fn load_pattern_from_disk(pattern_id: &str) -> Option<CachedPattern> {
     }
 }
 
+fn save_pattern_to_disk(pattern_id: &str, pattern: &CachedPattern) {
+    let dir = get_pattern_cache_dir();
+    save_pattern_to_disk_in_dir(&dir, pattern_id, pattern);
+}
+
+fn load_pattern_from_disk(pattern_id: &str) -> Option<CachedPattern> {
+    let dir = get_pattern_cache_dir();
+    load_pattern_from_disk_in_dir(&dir, pattern_id)
+}
+
+fn save_thumb_to_disk(pattern_id: &str, size: u32, thumb: &CachedPattern) {
+    let dir = get_pattern_cache_thumb_dir(size);
+    save_pattern_to_disk_in_dir(&dir, pattern_id, thumb);
+}
+
+fn load_thumb_from_disk(pattern_id: &str, size: u32) -> Option<CachedPattern> {
+    let dir = get_pattern_cache_thumb_dir(size);
+    load_pattern_from_disk_in_dir(&dir, pattern_id)
+}
+
 // === Global cache operations ===
 
 /// Initialize the global pattern cache
@@ -295,6 +406,28 @@ pub fn cache_pattern_rgba(
     // Save to disk first (persistent)
     save_pattern_to_disk(&pattern_id, &pattern);
 
+    // Generate and save thumbnails (persistent)
+    for &thumb_size in &THUMB_SIZES {
+        let thumb_rgba = render_square_thumbnail_rgba(&data, width, height, thumb_size);
+        let thumb = CachedPattern {
+            data: compress_prepend_size(&thumb_rgba),
+            width: thumb_size,
+            height: thumb_size,
+            name: String::new(),
+            mode: String::new(),
+        };
+        save_thumb_to_disk(&pattern_id, thumb_size, &thumb);
+
+        // Best-effort store into memory
+        let mut guard = PATTERN_CACHE.write();
+        if guard.is_none() {
+            *guard = Some(PatternCache::new());
+        }
+        if let Some(cache) = guard.as_mut() {
+            cache.insert_thumb_compressed(pattern_id.clone(), thumb_size, thumb);
+        }
+    }
+
     // Then store in memory cache
     let mut guard = PATTERN_CACHE.write();
     if guard.is_none() {
@@ -334,6 +467,87 @@ pub fn get_cached_pattern(pattern_id: &str) -> Option<CachedPattern> {
     None
 }
 
+/// Get a square thumbnail (size will be normalized to a supported bucket)
+pub fn get_cached_pattern_thumb(pattern_id: &str, requested_size: u32) -> Option<CachedPattern> {
+    let size = normalize_thumb_size(requested_size);
+
+    // Try memory cache first
+    {
+        let guard = PATTERN_CACHE.read();
+        if let Some(cache) = guard.as_ref() {
+            if let Some(thumb) = cache.get_thumb(pattern_id, size) {
+                return Some(thumb.clone());
+            }
+        }
+    }
+
+    // Try disk thumbnail
+    if let Some(thumb) = load_thumb_from_disk(pattern_id, size) {
+        let mut guard = PATTERN_CACHE.write();
+        if guard.is_none() {
+            *guard = Some(PatternCache::new());
+        }
+        if let Some(cache) = guard.as_mut() {
+            cache.insert_thumb(pattern_id.to_string(), size, thumb.clone());
+        }
+        return Some(thumb);
+    }
+
+    // Thumb missing: fall back to full pattern (disk/memory), generate, persist, return
+    let full = get_cached_pattern(pattern_id)?;
+    let rgba = match decompress_size_prepended(&full.data) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to decompress pattern {} for thumb: {}",
+                pattern_id,
+                e
+            );
+            return None;
+        }
+    };
+
+    let thumb_rgba = render_square_thumbnail_rgba(&rgba, full.width, full.height, size);
+    let thumb = CachedPattern {
+        data: compress_prepend_size(&thumb_rgba),
+        width: size,
+        height: size,
+        name: String::new(),
+        mode: String::new(),
+    };
+
+    save_thumb_to_disk(pattern_id, size, &thumb);
+
+    let mut guard = PATTERN_CACHE.write();
+    if guard.is_none() {
+        *guard = Some(PatternCache::new());
+    }
+    if let Some(cache) = guard.as_mut() {
+        cache.insert_thumb(pattern_id.to_string(), size, thumb.clone());
+    }
+
+    Some(thumb)
+}
+
+/// Delete cached files and in-memory entries for a pattern (full + thumbnails)
+pub fn delete_cached_pattern(pattern_id: &str) {
+    // Remove from memory first
+    {
+        let mut guard = PATTERN_CACHE.write();
+        if let Some(cache) = guard.as_mut() {
+            cache.remove_pattern_and_thumbs(pattern_id);
+        }
+    }
+
+    // Remove disk files (best-effort)
+    let full_path = get_pattern_cache_dir().join(format!("{}.bin", pattern_id));
+    let _ = std::fs::remove_file(&full_path);
+    for &size in &THUMB_SIZES {
+        let p = get_pattern_cache_thumb_dir(size).join(format!("{}.bin", pattern_id));
+        let _ = std::fs::remove_file(&p);
+    }
+}
+
 /// Get cache statistics
 pub fn get_pattern_cache_stats() -> (usize, usize) {
     let guard = PATTERN_CACHE.read();
@@ -341,4 +555,88 @@ pub fn get_pattern_cache_stats() -> (usize, usize) {
         .as_ref()
         .map(|cache| (cache.len(), cache.total_size()))
         .unwrap_or((0, 0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn thumbnail_renderer_aspect_fit_and_padding() {
+        // 2x1 source: [Red, Green]
+        let src_w = 2;
+        let src_h = 1;
+        let src = vec![
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+        ];
+
+        let out = render_square_thumbnail_rgba(&src, src_w, src_h, 4);
+        assert_eq!(out.len(), 4 * 4 * 4);
+
+        // Top row should be transparent due to vertical padding (new_h=2, off_y=1)
+        assert_eq!(&out[0..4], &[0, 0, 0, 0]);
+
+        // Row 1, col 0..1 should sample red; col 2..3 should sample green
+        let row1 = 1usize;
+        let px = |x: usize, y: usize| {
+            let i = (y * 4 + x) * 4;
+            [out[i], out[i + 1], out[i + 2], out[i + 3]]
+        };
+        assert_eq!(px(0, row1), [255, 0, 0, 255]);
+        assert_eq!(px(1, row1), [255, 0, 0, 255]);
+        assert_eq!(px(2, row1), [0, 255, 0, 255]);
+        assert_eq!(px(3, row1), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn thumb_disk_fallback_and_memory_hit() {
+        let _guard = TEST_LOCK.lock().unwrap();
+
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("paintboard_pattern_cache_test_{}", uniq));
+        std::fs::create_dir_all(&base).unwrap();
+        std::env::set_var("PAINTBOARD_TEST_DATA_DIR", &base);
+
+        init_pattern_cache();
+
+        let pattern_id = "p1".to_string();
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, // row 0
+            0, 0, 255, 255, 255, 255, 255, 255, // row 1
+        ];
+        cache_pattern_rgba(pattern_id.clone(), rgba, 2, 2, "n".into(), "RGB".into());
+
+        // Remove thumb file to force fallback generation on first request
+        let size = normalize_thumb_size(80);
+        let thumb_path = get_pattern_cache_thumb_dir(size).join(format!("{}.bin", pattern_id));
+        let _ = std::fs::remove_file(&thumb_path);
+
+        clear_pattern_cache(); // clear memory to ensure we won't hit in-memory thumb
+
+        let t1 = get_cached_pattern_thumb(&pattern_id, 80).expect("thumb should be generated");
+        assert_eq!(t1.width, size);
+        assert!(
+            thumb_path.exists(),
+            "thumb file should be re-created on disk"
+        );
+
+        // Delete thumb file again; second request should hit memory and NOT recreate file.
+        std::fs::remove_file(&thumb_path).unwrap();
+        let _t2 = get_cached_pattern_thumb(&pattern_id, 80).expect("thumb should hit memory");
+        assert!(
+            !thumb_path.exists(),
+            "memory hit should not re-write thumb file"
+        );
+
+        std::env::remove_var("PAINTBOARD_TEST_DATA_DIR");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

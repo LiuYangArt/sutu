@@ -88,7 +88,7 @@ export function PatternPicker({
         >
           {selectedPattern ? (
             <LZ4Image
-              src={getPatternThumbnailUrl(selectedPattern.id)}
+              src={getPatternThumbnailUrl(selectedPattern.id, thumbnailSize)}
               alt={selectedPattern.name}
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
@@ -159,7 +159,7 @@ export function PatternPicker({
       >
         <div className="pattern-grid-thumbnail">
           <LZ4Image
-            src={getPatternThumbnailUrl(pattern.id)}
+            src={getPatternThumbnailUrl(pattern.id, thumbnailSize)}
             alt={pattern.name}
             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
           />
@@ -184,7 +184,7 @@ export function PatternPreviewButton({
   onClick,
   size = 40,
 }: PatternPreviewButtonProps): JSX.Element {
-  const patternUrl = patternId ? getPatternThumbnailUrl(patternId) : null;
+  const patternUrl = patternId ? getPatternThumbnailUrl(patternId, 48) : null;
 
   return (
     <button

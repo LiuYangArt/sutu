@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { LZ4Image } from '@/components/common/LZ4Image';
+import { getPatternThumbnailUrl } from '@/stores/pattern';
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { TEXTURE_SCALE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { TextureBlendMode } from '../types';
@@ -46,8 +47,8 @@ export function TextureSettings(): JSX.Element {
   const { textureEnabled, textureSettings, setTextureSettings } = useToolStore();
   const [showPreview, setShowPreview] = useState(false);
   const patternId = textureSettings?.patternId;
-  // Fix for Windows Tauri v2 custom protocol
-  const patternUrl = patternId ? `http://project.localhost/pattern/${patternId}` : null;
+  const patternThumbUrl = patternId ? getPatternThumbnailUrl(patternId, 48) : null;
+  const patternFullUrl = patternId ? getPatternThumbnailUrl(patternId) : null;
 
   const disabled = !textureEnabled;
   const depthControlSource = depthControlToSource(textureSettings.depthControl);
@@ -73,7 +74,7 @@ export function TextureSettings(): JSX.Element {
             position: 'relative',
             marginLeft: 'auto',
           }}
-          onMouseEnter={() => patternUrl && setShowPreview(true)}
+          onMouseEnter={() => patternFullUrl && setShowPreview(true)}
           onMouseLeave={() => setShowPreview(false)}
         >
           {/* Thumbnail container */}
@@ -90,12 +91,12 @@ export function TextureSettings(): JSX.Element {
               alignItems: 'center',
               justifyContent: 'center',
               borderRadius: '4px',
-              cursor: patternUrl ? 'pointer' : 'default',
+              cursor: patternThumbUrl ? 'pointer' : 'default',
             }}
           >
-            {patternUrl ? (
+            {patternThumbUrl ? (
               <LZ4Image
-                src={patternUrl}
+                src={patternThumbUrl}
                 style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                 alt="Pattern"
               />
@@ -107,7 +108,7 @@ export function TextureSettings(): JSX.Element {
           </div>
 
           {/* Hover preview popup - outside overflow container */}
-          {showPreview && patternUrl && (
+          {showPreview && patternFullUrl && (
             <div
               style={{
                 position: 'fixed',
@@ -123,7 +124,7 @@ export function TextureSettings(): JSX.Element {
               }}
             >
               <LZ4Image
-                src={patternUrl}
+                src={patternFullUrl}
                 style={{
                   width: 'auto',
                   height: 'auto',

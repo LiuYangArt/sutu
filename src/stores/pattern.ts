@@ -209,6 +209,28 @@ export const useGroupedPatterns = (): PatternGroup[] => {
 };
 
 /** Get pattern thumbnail URL */
-export const getPatternThumbnailUrl = (id: string): string => {
-  return `http://project.localhost/pattern/${id}`;
+const THUMB_BUCKETS = [32, 48, 80] as const;
+
+export function normalizePatternThumbSize(size: number): number {
+  if (!Number.isFinite(size)) return 48;
+  const clamped = Math.min(256, Math.max(16, Math.round(size)));
+  let best = THUMB_BUCKETS[0];
+  let bestDiff = Math.abs(best - clamped);
+  for (const s of THUMB_BUCKETS.slice(1)) {
+    const diff = Math.abs(s - clamped);
+    if (diff < bestDiff || (diff === bestDiff && s > best)) {
+      best = s;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
+/** Get pattern thumbnail URL (optional thumb size bucket) */
+export const getPatternThumbnailUrl = (id: string, thumbSize?: number): string => {
+  if (thumbSize === undefined) {
+    return `http://project.localhost/pattern/${id}`;
+  }
+  const normalized = normalizePatternThumbSize(thumbSize);
+  return `http://project.localhost/pattern/${id}?thumb=${normalized}`;
 };

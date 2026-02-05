@@ -32,6 +32,7 @@ export function PatternLibraryPanel({
   onClose,
   onSelect,
 }: PatternLibraryPanelProps): JSX.Element | null {
+  const patternCount = usePatternLibraryStore((s) => s.patterns.length);
   const {
     isLoading,
     error,
@@ -51,10 +52,10 @@ export function PatternLibraryPanel({
 
   // Load patterns on open
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && patternCount === 0) {
       loadPatterns();
     }
-  }, [isOpen, loadPatterns]);
+  }, [isOpen, patternCount, loadPatterns]);
 
   // Handle import
   const handleImport = useCallback(async () => {
@@ -218,7 +219,7 @@ export function PatternLibraryPanel({
                     >
                       <div className="pattern-thumbnail">
                         <LZ4Image
-                          src={getPatternThumbnailUrl(pattern.id)}
+                          src={getPatternThumbnailUrl(pattern.id, 80)}
                           alt={pattern.name}
                           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                         />
