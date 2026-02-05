@@ -1,26 +1,7 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useBrushRenderer, type BrushRenderConfig } from '../useBrushRenderer';
 import { StrokeAccumulator } from '@/utils/strokeBuffer';
-
-const ensureImageData = () => {
-  if (typeof globalThis.ImageData !== 'undefined') return;
-
-  class SimpleImageData {
-    width: number;
-    height: number;
-    data: Uint8ClampedArray;
-
-    constructor(width: number, height: number) {
-      this.width = width;
-      this.height = height;
-      this.data = new Uint8ClampedArray(width * height * 4);
-    }
-  }
-
-  // @ts-expect-error - Injecting ImageData for jsdom fallback
-  globalThis.ImageData = SimpleImageData;
-};
 
 describe('useBrushRenderer opacity pipeline', () => {
   let getContextSpy: ReturnType<typeof vi.spyOn>;
@@ -28,8 +9,6 @@ describe('useBrushRenderer opacity pipeline', () => {
   let endStrokeSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    ensureImageData();
-
     const mockCtx = {
       createImageData: (width: number, height: number) => new ImageData(width, height),
       clearRect: vi.fn(),

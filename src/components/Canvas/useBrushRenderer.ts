@@ -353,7 +353,9 @@ export function useBrushRenderer({
       const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
 
       // Store stroke-level opacity (applied at endStroke/compositeToLayer)
-      strokeOpacityRef.current = Math.max(0, Math.min(1, config.opacity));
+      const strokeOpacity = Math.max(0, Math.min(1, config.opacity));
+      strokeOpacityRef.current = strokeOpacity;
+      const hasStrokeOpacity = strokeOpacity > 1e-6;
 
       // Calculate base size (pressure toggle)
       const size = config.pressureSizeEnabled ? config.size * adjustedPressure : config.size;
@@ -527,23 +529,17 @@ export function useBrushRenderer({
         if (useTransfer && config.transfer) {
           // Use Transfer dynamics system (Photoshop-compatible)
           const transferResult = computeDabTransfer(
-            config.opacity,
+            strokeOpacity,
             config.flow,
             config.transfer,
             dynamicsInput
           );
           dabFlow = transferResult.flow;
-          const baseOpacity = strokeOpacityRef.current;
-          dabOpacity = baseOpacity > 1e-6 ? transferResult.opacity / baseOpacity : 0.0;
+          dabOpacity = hasStrokeOpacity ? transferResult.opacity / strokeOpacity : 0.0;
         } else {
           // Legacy pressure toggles (backward compatibility)
           dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
-
-          const baseOpacity = strokeOpacityRef.current;
-          const computedOpacity = config.pressureOpacityEnabled
-            ? baseOpacity * dabPressure
-            : baseOpacity;
-          dabOpacity = baseOpacity > 1e-6 ? computedOpacity / baseOpacity : 0.0;
+          dabOpacity = hasStrokeOpacity ? (config.pressureOpacityEnabled ? dabPressure : 1.0) : 0.0;
         }
 
         if (useShapeDynamics && config.shapeDynamics) {
