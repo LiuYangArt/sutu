@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGlobalExports } from '../useGlobalExports';
 import { useDocumentStore } from '@/stores/document';
+import { useViewportStore } from '@/stores/viewport';
+import { useToolStore } from '@/stores/tool';
 
 function cleanupGlobals(): void {
   const win = window as any;
@@ -31,6 +33,19 @@ describe('useGlobalExports', () => {
     // Reset document store to keep tests isolated, then set deterministic dimensions for thumbnails.
     useDocumentStore.getState().reset();
     useDocumentStore.setState({ width: 100, height: 80 });
+    useViewportStore.getState().resetZoom();
+    useToolStore.setState({
+      currentTool: 'eraser',
+      brushSize: 20,
+      brushFlow: 1,
+      brushOpacity: 1,
+      brushHardness: 100,
+      brushSpacing: 0.25,
+      pressureCurve: 'linear',
+      pressureSizeEnabled: false,
+      pressureFlowEnabled: false,
+      pressureOpacityEnabled: true,
+    });
 
     // JSDOM does not implement Canvas APIs. Stub minimal surface to avoid Not Implemented errors.
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
@@ -55,6 +70,10 @@ describe('useGlobalExports', () => {
         writable: true,
       });
     }
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+      cb(0);
+      return 1;
+    });
   });
 
   afterEach(() => {
@@ -174,7 +193,7 @@ describe('useGlobalExports', () => {
     expect(handleResizeCanvas).toHaveBeenCalledTimes(1);
     expect(startStrokeCapture).toHaveBeenCalledTimes(1);
     expect(stopStrokeCapture).toHaveBeenCalledTimes(1);
-    expect(getLastStrokeCapture).toHaveBeenCalledTimes(1);
+    expect(getLastStrokeCapture).toHaveBeenCalledTimes(2);
     expect(replayStrokeCapture).toHaveBeenCalledTimes(1);
     expect(downloadStrokeCapture).toHaveBeenCalledWith('case.json', undefined);
 
@@ -288,5 +307,90 @@ describe('useGlobalExports', () => {
     } finally {
       (globalThis as any).Image = OriginalImage as any;
     }
+  });
+
+  it('applies replay metadata context automatically before replay', async () => {
+    const layerRendererRef = { current: null } as any;
+    const replayCapture = {
+      version: 1 as const,
+      createdAt: new Date().toISOString(),
+      metadata: {
+        canvasWidth: 640,
+        canvasHeight: 480,
+        viewportScale: 0.75,
+        viewportOffsetX: 20,
+        viewportOffsetY: 30,
+        tool: {
+          currentTool: 'brush',
+          brushColor: '#123456',
+          brushSize: 77,
+          brushFlow: 0.6,
+          brushOpacity: 0.7,
+          brushHardness: 55,
+          brushSpacing: 0.4,
+          pressureCurve: 'hard',
+          pressureSizeEnabled: true,
+          pressureFlowEnabled: true,
+          pressureOpacityEnabled: false,
+        },
+      },
+      samples: [],
+    };
+
+    const replayStrokeCapture = vi.fn(async () => ({ events: 0, durationMs: 0 }));
+    const getLastStrokeCapture = vi.fn(() => replayCapture);
+    const handleResizeCanvas = vi.fn();
+
+    renderHook(() =>
+      useGlobalExports({
+        layerRendererRef,
+        compositeAndRender: vi.fn(),
+        fillActiveLayer: vi.fn(),
+        handleClearSelection: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        handleClearLayer: vi.fn(),
+        handleDuplicateLayer: vi.fn(),
+        handleRemoveLayer: vi.fn(),
+        handleResizeCanvas,
+        replayStrokeCapture,
+        getLastStrokeCapture,
+      })
+    );
+
+    const win = window as any;
+    await win.__strokeCaptureReplay(replayCapture);
+
+    expect(handleResizeCanvas).toHaveBeenCalledWith({
+      width: 640,
+      height: 480,
+      anchor: 'top-left',
+      scaleContent: false,
+      extensionColor: 'transparent',
+      resampleMode: 'nearest',
+    });
+
+    const viewport = useViewportStore.getState();
+    expect(viewport.scale).toBeCloseTo(0.75);
+    expect(viewport.offsetX).toBeCloseTo(20);
+    expect(viewport.offsetY).toBeCloseTo(30);
+
+    const tool = useToolStore.getState();
+    expect(tool.currentTool).toBe('brush');
+    expect(tool.brushColor).toBe('#123456');
+    expect(tool.brushSize).toBe(77);
+    expect(tool.brushFlow).toBeCloseTo(0.6);
+    expect(tool.brushOpacity).toBeCloseTo(0.7);
+    expect(tool.brushHardness).toBe(55);
+    expect(tool.brushSpacing).toBeCloseTo(0.4);
+    expect(tool.pressureCurve).toBe('hard');
+    expect(tool.pressureSizeEnabled).toBe(true);
+    expect(tool.pressureFlowEnabled).toBe(true);
+    expect(tool.pressureOpacityEnabled).toBe(false);
+
+    expect(replayStrokeCapture).toHaveBeenCalledWith(replayCapture, undefined);
+    expect(
+      (window.requestAnimationFrame as unknown as { mock: { calls: unknown[] } }).mock.calls.length
+    ).toBeGreaterThanOrEqual(3);
   });
 });

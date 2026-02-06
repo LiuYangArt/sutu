@@ -17,6 +17,9 @@ export interface StrokeCaptureMetadata {
   canvasWidth: number;
   canvasHeight: number;
   viewportScale: number;
+  viewportOffsetX?: number;
+  viewportOffsetY?: number;
+  activeLayerId?: string | null;
   tool: Record<string, unknown>;
 }
 
@@ -202,6 +205,15 @@ export class StrokeCaptureController {
     if (!capture) return null;
     const canvas = this.params.getCanvas();
     if (!canvas) return null;
+    const captureRoot = this.params.getCaptureRoot?.() ?? canvas;
+    const replayTarget = canvas;
+
+    if (captureRoot instanceof HTMLElement) {
+      if (captureRoot.tabIndex < 0) {
+        captureRoot.tabIndex = -1;
+      }
+      captureRoot.focus({ preventScroll: true });
+    }
 
     this.lastCapture = capture;
     const speed = Math.max(0.1, options.speed ?? 1);
@@ -220,8 +232,14 @@ export class StrokeCaptureController {
       const scale = this.params.getScale();
       if (!(scale > 0)) return;
       const rect = canvas.getBoundingClientRect();
-      const clientX = rect.left + sample.x * scale;
-      const clientY = rect.top + sample.y * scale;
+      const sourceWidth =
+        capture.metadata.canvasWidth > 0 ? capture.metadata.canvasWidth : canvas.width;
+      const sourceHeight =
+        capture.metadata.canvasHeight > 0 ? capture.metadata.canvasHeight : canvas.height;
+      const mappedX = sourceWidth > 0 ? (sample.x / sourceWidth) * canvas.width : sample.x;
+      const mappedY = sourceHeight > 0 ? (sample.y / sourceHeight) * canvas.height : sample.y;
+      const clientX = rect.left + mappedX * scale;
+      const clientY = rect.top + mappedY * scale;
       const pointerType = options.pointerTypeOverride ?? sample.pointerType;
       const pressure = type === 'pointerup' ? 0 : sample.pressure;
 
@@ -239,7 +257,7 @@ export class StrokeCaptureController {
         buttons: type === 'pointerup' ? 0 : sample.buttons,
         ...override,
       });
-      canvas.dispatchEvent(event);
+      replayTarget.dispatchEvent(event);
     };
 
     for (let i = 0; i < samples.length; i++) {

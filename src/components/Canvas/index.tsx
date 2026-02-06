@@ -189,8 +189,12 @@ export function Canvas() {
             canvasWidth: docState.width,
             canvasHeight: docState.height,
             viewportScale: viewportState.scale,
+            viewportOffsetX: viewportState.offsetX,
+            viewportOffsetY: viewportState.offsetY,
+            activeLayerId: docState.activeLayerId,
             tool: {
               currentTool: toolState.currentTool,
+              brushColor: toolState.brushColor,
               brushSize: toolState.brushSize,
               brushFlow: toolState.brushFlow,
               brushOpacity: toolState.brushOpacity,

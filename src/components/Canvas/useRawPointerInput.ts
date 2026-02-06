@@ -78,7 +78,8 @@ export function useRawPointerInput({
       const rect = canvas.getBoundingClientRect();
 
       // Process all coalesced events from raw update
-      const coalescedEvents = pe.getCoalescedEvents?.() ?? [pe];
+      const sampledEvents = pe.getCoalescedEvents?.();
+      const coalescedEvents = sampledEvents && sampledEvents.length > 0 ? sampledEvents : [pe];
 
       // Get tablet state for pressure resolution
       const tabletState = useTabletStore.getState();

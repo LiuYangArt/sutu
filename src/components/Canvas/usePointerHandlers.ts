@@ -103,6 +103,30 @@ export function usePointerHandlers({
   lastInputPosRef,
   latencyProfilerRef,
 }: UsePointerHandlersParams) {
+  const trySetPointerCapture = useCallback((target: Element, event: React.PointerEvent) => {
+    const native = event.nativeEvent as PointerEvent;
+    if (!native.isTrusted) return;
+    try {
+      (target as Element & { setPointerCapture(pointerId: number): void }).setPointerCapture(
+        event.pointerId
+      );
+    } catch {
+      // Ignore invalid pointer capture on platform/browser edge cases.
+    }
+  }, []);
+
+  const tryReleasePointerCapture = useCallback((target: Element, event: React.PointerEvent) => {
+    const native = event.nativeEvent as PointerEvent;
+    if (!native.isTrusted) return;
+    try {
+      (
+        target as Element & { releasePointerCapture(pointerId: number): void }
+      ).releasePointerCapture(event.pointerId);
+    } catch {
+      // Ignore invalid pointer release on platform/browser edge cases.
+    }
+  }, []);
+
   // Pick color from canvas at given coordinates
   const pickColorAt = useCallback(
     (canvasX: number, canvasY: number) => {
@@ -155,7 +179,7 @@ export function usePointerHandlers({
           y: e.clientY,
           startScale: scale,
         };
-        container.setPointerCapture(e.pointerId);
+        trySetPointerCapture(container, e);
         return;
       }
 
@@ -206,7 +230,7 @@ export function usePointerHandlers({
       if (isSelectionToolActive) {
         const handled = handleSelectionPointerDown(canvasX, canvasY, e.nativeEvent);
         if (handled) {
-          canvas.setPointerCapture(e.pointerId);
+          trySetPointerCapture(canvas, e);
           return;
         }
       }
@@ -223,7 +247,8 @@ export function usePointerHandlers({
       }
 
       // Start Drawing
-      canvas.setPointerCapture(e.pointerId);
+      trySetPointerCapture(canvas, e);
+      usingRawInput.current = false;
       isDrawingRef.current = true;
       strokeBufferRef.current?.reset();
 
@@ -291,11 +316,12 @@ export function usePointerHandlers({
       strokeBufferRef,
       strokeStateRef,
       pendingPointsRef,
-      inputQueueRef,
       pointIndexRef,
       pendingEndRef,
       lastInputPosRef,
       latencyProfilerRef,
+      trySetPointerCapture,
+      usingRawInput,
     ]
   );
 
@@ -303,9 +329,11 @@ export function usePointerHandlers({
     (e: React.PointerEvent) => {
       // 获取所有合并事件（包括被浏览器合并的中间事件）
       // 在 Release 模式下，浏览器会更激进地合并事件，导致采样点不足
-      const coalescedEvents = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() ?? [
-        e.nativeEvent,
-      ];
+      const nativeEvent = e.nativeEvent as PointerEvent;
+      const sampledEvents = nativeEvent.getCoalescedEvents?.();
+      // Synthetic replay events can report an empty coalesced list.
+      const coalescedEvents =
+        sampledEvents && sampledEvents.length > 0 ? sampledEvents : [nativeEvent];
 
       // 平移模式：只使用最后一个事件
       if (isPanning && panStartRef.current) {
@@ -479,7 +507,7 @@ export function usePointerHandlers({
         zoomStartRef.current = null;
         const container = containerRef.current;
         if (container) {
-          container.releasePointerCapture(e.pointerId);
+          tryReleasePointerCapture(container, e);
         }
         return;
       }
@@ -492,7 +520,7 @@ export function usePointerHandlers({
           const canvasX = (e.clientX - rect.left) / scale;
           const canvasY = (e.clientY - rect.top) / scale;
           handleSelectionPointerUp(canvasX, canvasY);
-          canvas.releasePointerCapture(e.pointerId);
+          tryReleasePointerCapture(canvas, e);
         }
         return;
       }
@@ -500,8 +528,9 @@ export function usePointerHandlers({
       // 结束绘画
       const canvas = canvasRef.current;
       if (canvas) {
-        canvas.releasePointerCapture(e.pointerId);
+        tryReleasePointerCapture(canvas, e);
       }
+      usingRawInput.current = false;
 
       // 完成当前笔触
       void finishCurrentStroke();
@@ -518,6 +547,8 @@ export function usePointerHandlers({
       panStartRef,
       isZoomingRef,
       zoomStartRef,
+      tryReleasePointerCapture,
+      usingRawInput,
     ]
   );
 

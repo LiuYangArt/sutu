@@ -1,5 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
+import { useViewportStore } from '@/stores/viewport';
+import { useToolStore, type ToolType, type PressureCurve } from '@/stores/tool';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
@@ -32,6 +34,69 @@ interface UseGlobalExportsParams {
     options?: StrokeReplayOptions
   ) => Promise<{ events: number; durationMs: number } | null>;
   downloadStrokeCapture?: (fileName?: string, capture?: StrokeCaptureData | string) => boolean;
+}
+
+const TOOL_TYPES = new Set<ToolType>([
+  'brush',
+  'eraser',
+  'eyedropper',
+  'move',
+  'select',
+  'lasso',
+  'zoom',
+]);
+
+const PRESSURE_CURVES = new Set<PressureCurve>(['linear', 'soft', 'hard', 'sCurve']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object';
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function isCssColor(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const s = value.trim();
+  if (!s) return false;
+  const hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+  const rgb = /^rgba?\([^)]+\)$/i;
+  return hex.test(s) || rgb.test(s);
+}
+
+function parseStrokeCaptureInput(
+  capture: StrokeCaptureData | string | undefined,
+  fallback: StrokeCaptureData | null
+): StrokeCaptureData | null {
+  if (!capture) return fallback;
+  if (typeof capture === 'string') {
+    try {
+      const parsed = JSON.parse(capture) as unknown;
+      if (
+        isRecord(parsed) &&
+        parsed.version === 1 &&
+        Array.isArray(parsed.samples) &&
+        isRecord(parsed.metadata)
+      ) {
+        return parsed as unknown as StrokeCaptureData;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  return capture;
+}
+
+function waitForAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 }
 
 export function useGlobalExports({
@@ -178,6 +243,141 @@ export function useGlobalExports({
     win.__gpuBrushDiagnostics = () => {
       return getGpuDiagnosticsSnapshot?.() ?? null;
     };
+
+    const applyReplayContext = async (capture: StrokeCaptureData): Promise<void> => {
+      const applied: string[] = [];
+      const warnings: string[] = [];
+      const metadata = capture.metadata;
+
+      const targetWidth = asFiniteNumber(metadata.canvasWidth);
+      const targetHeight = asFiniteNumber(metadata.canvasHeight);
+      if (targetWidth !== null && targetHeight !== null && targetWidth > 0 && targetHeight > 0) {
+        const doc = useDocumentStore.getState();
+        const roundedWidth = Math.round(targetWidth);
+        const roundedHeight = Math.round(targetHeight);
+        if (doc.width !== targetWidth || doc.height !== targetHeight) {
+          handleResizeCanvas({
+            width: roundedWidth,
+            height: roundedHeight,
+            anchor: 'top-left',
+            scaleContent: false,
+            extensionColor: 'transparent',
+            resampleMode: 'nearest',
+          });
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+        applied.push(`canvas ${roundedWidth}x${roundedHeight}`);
+      } else {
+        warnings.push('capture metadata missing valid canvas size');
+      }
+
+      if (typeof metadata.activeLayerId === 'string' && metadata.activeLayerId.length > 0) {
+        const doc = useDocumentStore.getState();
+        const exists = doc.layers.some((layer) => layer.id === metadata.activeLayerId);
+        if (exists) {
+          doc.setActiveLayer(metadata.activeLayerId);
+          applied.push(`activeLayer ${metadata.activeLayerId}`);
+        } else {
+          warnings.push(`capture activeLayerId not found: ${metadata.activeLayerId}`);
+        }
+      }
+
+      {
+        const doc = useDocumentStore.getState();
+        if (!doc.activeLayerId) {
+          const fallbackLayer = doc.layers.find((layer) => layer.visible) ?? doc.layers[0];
+          if (fallbackLayer) {
+            doc.setActiveLayer(fallbackLayer.id);
+            applied.push(`activeLayer ${fallbackLayer.id}`);
+          } else {
+            warnings.push('document has no available layer for replay');
+          }
+        }
+      }
+
+      const viewport = useViewportStore.getState();
+      const targetScale = asFiniteNumber(metadata.viewportScale);
+      if (targetScale !== null && targetScale > 0) {
+        viewport.setScale(targetScale);
+        applied.push(`zoom ${targetScale.toFixed(3)}`);
+      } else {
+        warnings.push('capture metadata missing valid viewportScale');
+      }
+
+      const targetOffsetX = asFiniteNumber(metadata.viewportOffsetX);
+      const targetOffsetY = asFiniteNumber(metadata.viewportOffsetY);
+      if (targetOffsetX !== null && targetOffsetY !== null) {
+        viewport.setOffset(targetOffsetX, targetOffsetY);
+        applied.push(`offset (${targetOffsetX.toFixed(1)}, ${targetOffsetY.toFixed(1)})`);
+      }
+
+      const toolStore = useToolStore.getState();
+      const toolMeta = isRecord(metadata.tool) ? metadata.tool : {};
+
+      const capturedTool = toolMeta.currentTool;
+      if (typeof capturedTool === 'string' && TOOL_TYPES.has(capturedTool as ToolType)) {
+        toolStore.setTool(capturedTool as ToolType);
+        applied.push(`tool ${capturedTool}`);
+      } else {
+        warnings.push('capture metadata missing valid tool.currentTool');
+      }
+
+      const brushColor = toolMeta.brushColor;
+      if (isCssColor(brushColor)) {
+        toolStore.setBrushColor(brushColor);
+      }
+
+      const brushSize = asFiniteNumber(toolMeta.brushSize);
+      if (brushSize !== null && brushSize > 0) {
+        toolStore.setCurrentSize(brushSize);
+      }
+      const brushFlow = asFiniteNumber(toolMeta.brushFlow);
+      if (brushFlow !== null) {
+        toolStore.setBrushFlow(brushFlow);
+      }
+      const brushOpacity = asFiniteNumber(toolMeta.brushOpacity);
+      if (brushOpacity !== null) {
+        toolStore.setBrushOpacity(brushOpacity);
+      }
+      const brushHardness = asFiniteNumber(toolMeta.brushHardness);
+      if (brushHardness !== null) {
+        toolStore.setBrushHardness(brushHardness);
+      }
+      const brushSpacing = asFiniteNumber(toolMeta.brushSpacing);
+      if (brushSpacing !== null) {
+        toolStore.setBrushSpacing(brushSpacing);
+      }
+
+      const pressureCurve = toolMeta.pressureCurve;
+      if (
+        typeof pressureCurve === 'string' &&
+        PRESSURE_CURVES.has(pressureCurve as PressureCurve)
+      ) {
+        toolStore.setPressureCurve(pressureCurve as PressureCurve);
+      }
+
+      const pressureSizeEnabled = asBoolean(toolMeta.pressureSizeEnabled);
+      const pressureFlowEnabled = asBoolean(toolMeta.pressureFlowEnabled);
+      const pressureOpacityEnabled = asBoolean(toolMeta.pressureOpacityEnabled);
+      useToolStore.setState((state) => ({
+        pressureSizeEnabled:
+          pressureSizeEnabled === null ? state.pressureSizeEnabled : pressureSizeEnabled,
+        pressureFlowEnabled:
+          pressureFlowEnabled === null ? state.pressureFlowEnabled : pressureFlowEnabled,
+        pressureOpacityEnabled:
+          pressureOpacityEnabled === null ? state.pressureOpacityEnabled : pressureOpacityEnabled,
+      }));
+
+      if (applied.length > 0) {
+        // eslint-disable-next-line no-console
+        console.info('[StrokeCapture] replay context applied', applied);
+      }
+      if (warnings.length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn('[StrokeCapture] replay context warnings', warnings);
+      }
+    };
+
     win.__strokeCaptureStart = () => {
       const started = startStrokeCapture?.() ?? false;
       if (started) {
@@ -201,7 +401,17 @@ export function useGlobalExports({
       return getLastStrokeCapture?.() ?? null;
     };
     win.__strokeCaptureReplay = async (capture, options) => {
-      const result = await replayStrokeCapture?.(capture, options);
+      const resolvedCapture = parseStrokeCaptureInput(capture, getLastStrokeCapture?.() ?? null);
+      if (!resolvedCapture) {
+        console.warn('[StrokeCapture] replay skipped: invalid capture input');
+        return null;
+      }
+
+      await applyReplayContext(resolvedCapture);
+      // Let React commit zoom/offset/tool updates before converting replay points to client coords.
+      await waitForAnimationFrame();
+      await waitForAnimationFrame();
+      const result = await replayStrokeCapture?.(resolvedCapture, options);
       // eslint-disable-next-line no-console
       console.log('[StrokeCapture] replay result', result);
       return result ?? null;
