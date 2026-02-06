@@ -66,9 +66,6 @@ export class GpuStrokeCommitCoordinator {
       };
     }
 
-    // Keep layer tiles in sync before commit so untouched dirty tiles keep original pixels.
-    this.gpuRenderer.syncLayerFromCanvas(layerId, layer.canvas, Number.NaN);
-
     const commitStart = performance.now();
     const dirtyTiles = this.gpuRenderer.commitStroke({
       layerId,
@@ -78,6 +75,7 @@ export class GpuStrokeCommitCoordinator {
       renderScale: prepareResult.scratch.renderScale,
       applyDither: true,
       ditherStrength: 1.0,
+      baseLayerCanvas: layer.canvas,
     });
     const commitMs = performance.now() - commitStart;
 

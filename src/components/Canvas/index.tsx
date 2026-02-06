@@ -413,13 +413,8 @@ export function Canvas() {
         timings: { prepareMs: 0, commitMs: 0, readbackMs: 0 },
       };
     }
-    const result = await coordinator.commit(activeLayerId);
-    if (result.committed) {
-      // Ensure GPU tile display path re-uploads updated layer content after dirty-tile readback.
-      markLayerDirty();
-    }
-    return result;
-  }, [activeLayerId, markLayerDirty]);
+    return coordinator.commit(activeLayerId);
+  }, [activeLayerId]);
 
   useGlobalExports({
     layerRendererRef,

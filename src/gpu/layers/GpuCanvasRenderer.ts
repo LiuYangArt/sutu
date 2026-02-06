@@ -25,6 +25,7 @@ interface CommitStrokeParams {
   renderScale: number;
   applyDither: boolean;
   ditherStrength: number;
+  baseLayerCanvas?: HTMLCanvasElement | null;
 }
 
 interface ReadbackTarget {
@@ -267,8 +268,14 @@ export class GpuCanvasRenderer {
   }
 
   syncLayerFromCanvas(layerId: string, canvas: HTMLCanvasElement, revision: number): void {
+    const prevRevision = this.layerRevisions.get(layerId);
+    if (prevRevision === revision) return;
     this.layerStore.uploadLayerFromCanvas(layerId, canvas);
     this.layerRevisions.set(layerId, revision);
+  }
+
+  syncLayerTilesFromCanvas(layerId: string, canvas: HTMLCanvasElement, tiles: TileCoord[]): void {
+    this.layerStore.uploadTilesFromCanvas(layerId, canvas, tiles);
   }
 
   renderFrame(params: RenderFrameParams): void {
@@ -336,7 +343,15 @@ export class GpuCanvasRenderer {
   }
 
   commitStroke(params: CommitStrokeParams): TileCoord[] {
-    const { layerId, scratchTexture, dirtyRect, strokeOpacity, renderScale, applyDither } = params;
+    const {
+      layerId,
+      scratchTexture,
+      dirtyRect,
+      strokeOpacity,
+      renderScale,
+      applyDither,
+      baseLayerCanvas,
+    } = params;
     const clampedOpacity = Math.max(0, Math.min(1, strokeOpacity));
     const ditherStrength = params.ditherStrength ?? DEFAULT_DITHER_STRENGTH;
     const tiles = this.getTilesForRect(dirtyRect);
@@ -354,7 +369,14 @@ export class GpuCanvasRenderer {
       const rect = this.layerStore.getTileRect(coord);
       if (rect.width <= 0 || rect.height <= 0) continue;
 
-      const existingTile = this.layerStore.getTile(layerId, coord);
+      let existingTile = this.layerStore.getTile(layerId, coord);
+      if (!existingTile && baseLayerCanvas) {
+        this.layerStore.uploadTilesFromCanvas(layerId, baseLayerCanvas, [coord], {
+          onlyMissing: true,
+        });
+        existingTile = this.layerStore.getTile(layerId, coord);
+      }
+
       if (existingTile) {
         const tempTexture = this.createTempTileTexture();
         const tempView = tempTexture.createView();

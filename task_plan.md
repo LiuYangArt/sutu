@@ -9,6 +9,7 @@
 - [x] Phase 3：LRU 预算接线（probe -> localStorage -> renderer）
 - [x] Phase 4：SelectionMask 改为 `r8unorm`
 - [x] Phase 5：验收模板回填到设计文档
+- [ ] Phase 6：5000x5000 性能收敛（去除整层高频上传 + 脏区上传）
 
 ## 已完成实现
 - 新增类型契约：`GpuScratchHandle` / `GpuStrokePrepareResult` / `GpuStrokeCommitResult`
@@ -35,10 +36,18 @@
 - GPU 显示条件：`renderMode=gpu && currentTool=brush && visibleLayerCount<=1`
 - readback 策略：仅 stroke end（dirty）与导出时执行
 
-## 下一步（验收执行）
-1. 跑一次 `window.__gpuM0Baseline()`，确认预算缓存写入。
-2. 按设计文档 13.2 的 4 个手动场景执行并记录结果。
-3. 在设计文档 13.3 模板中填写 PASS/FAIL 与阻塞项。
+## 下一步（性能优先）
+1. [x] 停掉渲染帧内的重复整层上传
+   - `syncLayerFromCanvas` 已恢复 revision guard。
+   - `commitStrokeGpu` 成功后不再强制 `markLayerDirty` 触发整层回传。
+2. [x] 上传策略补齐“按 tile 上传”能力
+   - 新增 `uploadTilesFromCanvas(..., { onlyMissing })`。
+   - `commitStroke` 支持 `baseLayerCanvas`，缺失 tile 时只补齐该 tile 的底图像素。
+3. [ ] 继续压缩 GPU path 的 CPU 参与
+   - 排查并移除非必要 `readback -> CPU layer -> 再回传` 的链路依赖。
+4. [ ] 补充性能验收
+   - 5000x5000 连续绘制 30s，记录平均帧时间、commit 耗时、dirtyTiles 数量。
+   - 对比改造前后数据并回填设计文档。
 
 ## Status
-**In Progress** - 代码补全已完成，待执行人工验收并回填结果
+**In Progress** - M2 功能链路已打通，当前进入 Phase 6 性能收敛

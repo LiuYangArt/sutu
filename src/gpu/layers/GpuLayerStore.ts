@@ -160,6 +160,18 @@ export class GpuLayerStore {
     }
   }
 
+  uploadTilesFromCanvas(
+    layerId: string,
+    canvas: HTMLCanvasElement,
+    tiles: TileCoord[],
+    options: { onlyMissing?: boolean } = {}
+  ): void {
+    for (const coord of tiles) {
+      if (options.onlyMissing && this.getTile(layerId, coord)) continue;
+      this.uploadTileFromCanvas(layerId, coord, canvas);
+    }
+  }
+
   uploadTileFromCanvas(layerId: string, coord: TileCoord, canvas: HTMLCanvasElement): void {
     const rect = this.getTileRect(coord);
     if (rect.width <= 0 || rect.height <= 0) return;
