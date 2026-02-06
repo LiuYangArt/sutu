@@ -56,11 +56,17 @@
   - Debug Panel 新增 `No-Readback Pilot` 按钮（开启后 commit readback 关闭；默认行为不变）。
   - Debug Panel 新增 `Run No-Readback Pilot Gate (30s)`（固定 `case-5000-04`，自动启停 pilot，输出验收报告）。
   - 试点模式下优先拦截 `Undo/Redo`（避免 CPU layer 强一致依赖导致的误判）。
+- 新增交互稳定性修复（2026-02-06）：
+  - 修复 `undo` 偶发一次撤销多笔（笔触收尾与历史入栈时序一致化）。
+  - 修复首次 `undo` 突发延迟（增加空闲期预同步，降低首个撤销抖动）。
+  - 修复 `brush/zoom/eyedropper` 快速切换时上一笔闪烁。
+  - 修复未抬笔切 `zoom` 并立即缩放时偶发丢笔。
+  - 吸色切换性能优化：优先 GPU 单像素采样，降低 CPU 同步路径触发概率。
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
 - Tile size：M2 先用 `512`
-- GPU 显示条件：`renderMode=gpu && currentTool=brush && visibleLayerCount<=1`
+- GPU 显示条件：`renderMode=gpu && currentTool in {brush, zoom, eyedropper} && visibleLayerCount<=1`
 - readback 策略：仅 stroke end（dirty）与导出时执行
 
 ## 下一步（先稳定，再性能）
@@ -82,7 +88,7 @@
    - [x] 已完成两轮试点复验并回填文档（`2026-02-06T14:06:20.517Z` / `2026-02-06T14:07:56.249Z`，均 PASS）。
    - 已修复：pointer-up 后延迟尾 dab（队列消费时序 + 收尾立即 flush/render）。
    - 已修复：GPU commit 路径补 finishing lock，避免新笔触提前清 scratch 导致偶发丢笔。
-   - 待确认：长时间回归是否仍出现“预览出现但提交丢失”。
+   - [x] 已修复：未抬笔切 `zoom` 并立即缩放导致偶发丢笔（工具切换先收笔 + 收尾不再绑定工具态）。
 5. [x] Phase 6B-1：性能门禁能力落地（DebugPanel）
    - 已新增 `Run Phase6B Perf Gate (30s)`，复用 replay 流程，自动输出 Frame/Commit/Diagnostics 三类报告。
    - 已新增全局接口：`window.__gpuBrushCommitMetrics()` / `window.__gpuBrushCommitMetricsReset()`。
@@ -98,7 +104,7 @@
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线冻结）/6B-3（两轮复验完成）+ 无 readback 试点三轮复验通过
+**In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复，当前处于 Phase 6A 封版门禁收尾 + Phase 6B 基线冻结/无 readback 路线推进
 
 ## Phase 6A 临时豁免决议（2026-02-06）
 - 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。
@@ -137,6 +143,9 @@
   - 三轮均值（含首轮）：`commit avg total 2.91ms`、`delta vs baseline A(62.27ms) = -59.36ms`。
 - [x] 压感策略实验回退后，用户手测确认压感恢复可用（2026-02-06）。
 - [x] Auto Gate 最新实测：PASS（`case-5000-04.json`，session=3，`startPressureFallbackCount=0`）。
+- [x] 用户回归确认：`undo/zoom/eyedropper` 当前可用，切换不再闪烁与明显卡顿（2026-02-06）。
+- [x] 已修复竞态：未抬笔切 `zoom` 并立即缩放导致偶发丢笔（工具切换统一先收笔 + 收尾按 stroke 状态执行）。
+- [x] 自动验证通过：`pnpm -s typecheck` + `pnpm -s test`（`31 passed / 204 passed`）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
 
 ### 本轮关键结论
