@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { RawInputPoint } from '@/stores/tablet';
-import {
-  getEffectiveInputData,
-  LARGE_CANVAS_MIN_START_PRESSURE,
-  resolvePointerDownPressure,
-} from '../inputUtils';
+import { getEffectiveInputData } from '../inputUtils';
 
 function createRawPoint(partial: Partial<RawInputPoint> = {}): RawInputPoint {
   return {
@@ -13,18 +9,14 @@ function createRawPoint(partial: Partial<RawInputPoint> = {}): RawInputPoint {
     pressure: partial.pressure ?? 0.5,
     tilt_x: partial.tilt_x ?? 0,
     tilt_y: partial.tilt_y ?? 0,
-    timestamp_ms: partial.timestamp_ms ?? performance.now(),
+    timestamp_ms: partial.timestamp_ms ?? 0,
   };
 }
 
 function createPointerEvent(
-  type: string,
-  init: PointerEventInit & { pointerType?: string } = {}
+  init: Partial<PointerEvent> & { pointerType?: string; pressure?: number } = {}
 ): PointerEvent {
   return {
-    type,
-    bubbles: true,
-    cancelable: true,
     pointerType: init.pointerType ?? 'pen',
     pressure: init.pressure ?? 0,
     tiltX: init.tiltX ?? 0,
@@ -32,90 +24,37 @@ function createPointerEvent(
   } as PointerEvent;
 }
 
-describe('inputUtils', () => {
-  it('resolvePointerDownPressure: 优先使用 WinTab 缓冲点', () => {
-    const evt = createPointerEvent('pointerdown', { pointerType: 'pen', pressure: 0.8 });
-    const bufferedPoints = [createRawPoint({ pressure: 0.42 })];
-    const currentPoint = createRawPoint({ pressure: 0.9 });
-
-    const result = resolvePointerDownPressure(evt, true, bufferedPoints, currentPoint, true);
-
-    expect(result.source).toBe('buffered');
-    expect(result.pressure).toBe(0.42);
+describe('inputUtils.getEffectiveInputData', () => {
+  it('非 WinTab 模式直接使用 PointerEvent', () => {
+    const evt = createPointerEvent({ pressure: 0.62, tiltX: 11, tiltY: -7 });
+    const result = getEffectiveInputData(evt, false, [], null);
+    expect(result).toEqual({ pressure: 0.62, tiltX: 11, tiltY: -7 });
   });
 
-  it('resolvePointerDownPressure: 缓冲为空时使用新鲜 currentPoint', () => {
-    const evt = createPointerEvent('pointerdown', { pointerType: 'pen', pressure: 0.7 });
-    const currentPoint = createRawPoint({
-      pressure: 0.31,
-      timestamp_ms: performance.now(),
-    });
-
-    const result = resolvePointerDownPressure(evt, true, [], currentPoint, true);
-
-    expect(result.source).toBe('current-point');
-    expect(result.pressure).toBe(0.31);
+  it('WinTab 优先使用 buffered 点', () => {
+    const evt = createPointerEvent({ pressure: 0.8, tiltX: 5, tiltY: 5 });
+    const buffered = [createRawPoint({ pressure: 0.33, tilt_x: 21, tilt_y: -12 })];
+    const current = createRawPoint({ pressure: 0.9, tilt_x: 30, tilt_y: 30 });
+    const result = getEffectiveInputData(evt, true, buffered, current);
+    expect(result).toEqual({ pressure: 0.33, tiltX: 21, tiltY: -12 });
   });
 
-  it('resolvePointerDownPressure: currentPoint 过期时回退到 PointerEvent pressure', () => {
-    const evt = createPointerEvent('pointerdown', { pointerType: 'pen', pressure: 0.66 });
-    const stalePoint = createRawPoint({
-      pressure: 0.99,
-      timestamp_ms: performance.now() - 300,
-    });
-
-    const result = resolvePointerDownPressure(evt, true, [], stalePoint, true);
-
-    expect(result.source).toBe('pointer-event');
-    expect(result.pressure).toBe(0.66);
+  it('WinTab 无 buffered 时回退 currentPoint', () => {
+    const evt = createPointerEvent({ pressure: 0.7, tiltX: 0, tiltY: 0 });
+    const current = createRawPoint({ pressure: 0.41, tilt_x: 8, tilt_y: 3 });
+    const result = getEffectiveInputData(evt, true, [], current);
+    expect(result).toEqual({ pressure: 0.41, tiltX: 8, tiltY: 3 });
   });
 
-  it('resolvePointerDownPressure: 大画布无可用压力时使用最小兜底', () => {
-    const evt = createPointerEvent('pointerdown', { pointerType: 'pen', pressure: 0 });
-    const stalePoint = createRawPoint({
-      pressure: 0.99,
-      timestamp_ms: performance.now() - 300,
-    });
-
-    const result = resolvePointerDownPressure(evt, true, [], stalePoint, true);
-
-    expect(result.source).toBe('large-canvas-floor');
-    expect(result.pressure).toBe(LARGE_CANVAS_MIN_START_PRESSURE);
-  });
-
-  it('getEffectiveInputData: WinTab 下 currentPoint 过期时回退到 PointerEvent', () => {
-    const evt = createPointerEvent('pointermove', {
-      pointerType: 'pen',
-      pressure: 0.55,
-      tiltX: 12,
-      tiltY: -6,
-    });
-    const stalePoint = createRawPoint({
-      pressure: 0.91,
-      tilt_x: 25,
-      tilt_y: 25,
-      timestamp_ms: performance.now() - 300,
-    });
-
-    const result = getEffectiveInputData(evt, true, [], stalePoint);
-
-    expect(result.source).toBe('pointer-event');
-    expect(result.pressure).toBe(0.55);
-    expect(result.tiltX).toBe(12);
-    expect(result.tiltY).toBe(-6);
-  });
-
-  it('getEffectiveInputData: WinTab 无可用压力时走 fallback', () => {
-    const evt = createPointerEvent('pointermove', {
-      pointerType: 'mouse',
-      pressure: 0,
-      tiltX: 0,
-      tiltY: 0,
-    });
-
+  it('WinTab pen 无可用数据时返回 0 压力', () => {
+    const evt = createPointerEvent({ pointerType: 'pen', pressure: 0, tiltX: 1, tiltY: 2 });
     const result = getEffectiveInputData(evt, true, [], null);
+    expect(result).toEqual({ pressure: 0, tiltX: 1, tiltY: 2 });
+  });
 
-    expect(result.source).toBe('fallback');
-    expect(result.pressure).toBe(0.5);
+  it('WinTab mouse 无可用数据时返回 0.5 压力兜底', () => {
+    const evt = createPointerEvent({ pointerType: 'mouse', pressure: 0, tiltX: 1, tiltY: 2 });
+    const result = getEffectiveInputData(evt, true, [], null);
+    expect(result).toEqual({ pressure: 0.5, tiltX: 1, tiltY: 2 });
   });
 });
