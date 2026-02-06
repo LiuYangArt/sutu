@@ -550,6 +550,69 @@
   - note: 最终封版仍受 6A 全量复验约束
 ```
 
+### 13.10.1 实测记录（2026-02-06，Run-2 / Run-3）
+
+- Run-2（`2026-02-06T13:16:47.269Z`）：
+  - Mode aggregate (enabled / A):
+    - rounds: `2`
+    - replayDuration / clearDuration: `77928ms / 484ms`
+    - frame avg/p95/p99: `17.18 / 23.50 / 60.70ms`
+    - commit avg readback/total: `60.10 / 62.57ms`
+    - commit avg dirtyTiles: `18.06`
+    - readback bypassed count: `0`
+    - stability: `uncapturedErrors=0`, `deviceLost=NO`
+  - Mode aggregate (disabled / B):
+    - rounds: `2`
+    - replayDuration / clearDuration: `77256ms / 451ms`
+    - frame avg/p95/p99: `16.68 / 18.80 / 34.90ms`
+    - commit avg readback/total: `1.64 / 4.18ms`
+    - commit avg dirtyTiles: `17.35`
+    - readback bypassed count: `111`
+    - stability: `uncapturedErrors=0`, `deviceLost=NO`
+  - Delta (B - A):
+    - commit avg readback: `-58.46ms`
+    - commit avg total: `-58.39ms`
+    - frame p95 / p99: `-4.70ms / -25.80ms`
+    - commit avg dirtyTiles: `-0.70`
+    - mode restored: `YES`
+  - Result: `Phase6B-3 Compare: PASS`
+
+- Run-3（`2026-02-06T13:21:12.318Z`）：
+  - Mode aggregate (enabled / A):
+    - rounds: `2`
+    - replayDuration / clearDuration: `77757ms / 369ms`
+    - frame avg/p95/p99: `17.11 / 18.50 / 60.30ms`
+    - commit avg readback/total: `58.80 / 61.96ms`
+    - commit avg dirtyTiles: `18.12`
+    - readback bypassed count: `0`
+    - stability: `uncapturedErrors=0`, `deviceLost=NO`
+  - Mode aggregate (disabled / B):
+    - rounds: `2`
+    - replayDuration / clearDuration: `77397ms / 354ms`
+    - frame avg/p95/p99: `16.67 / 17.60 / 32.90ms`
+    - commit avg readback/total: `0.00 / 3.34ms`
+    - commit avg dirtyTiles: `17.38`
+    - readback bypassed count: `112`
+    - stability: `uncapturedErrors=0`, `deviceLost=NO`
+  - Delta (B - A):
+    - commit avg readback: `-58.80ms`
+    - commit avg total: `-58.63ms`
+    - frame p95 / p99: `-0.90ms / -27.40ms`
+    - commit avg dirtyTiles: `-0.74`
+    - mode restored: `YES`
+  - Result: `Phase6B-3 Compare: PASS`
+
+- 跨轮汇总（2 runs mean）：
+  - Delta commit avg readback: `-58.63ms`
+  - Delta commit avg total: `-58.51ms`
+  - Delta frame p95: `-2.80ms`
+  - Delta frame p99: `-26.60ms`
+  - Delta commit avg dirtyTiles: `-0.72`
+  - 稳定性信号：两轮均 `uncapturedErrors=0`、`deviceLost=NO`、`mode restored=YES`
+
+- Conclusion:
+  - comparison-only / non-release evidence under 6A waiver
+
 ### 13.11 Phase 6B-3 工具落地记录（2026-02-06）
 
 - Scope:
@@ -566,4 +629,6 @@
   - `pnpm -s test -- useGlobalExports`: PASS
   - `pnpm -s test -- DebugPanel`: PASS
 - Current state:
-  - 工具可运行，待目标硬件执行一次实测并按 13.10 模板回填结果。
+  - 工具已在目标硬件完成两轮实测并回填（见 13.10.1）。
+  - 下一阶段进入 Debug-only 无 readback 试点（默认绘画行为保持不变）。
+  - 已新增 `Run No-Readback Pilot Gate (30s)`，用于固定 case 的试点验收与报告导出。

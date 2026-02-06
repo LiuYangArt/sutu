@@ -109,4 +109,37 @@ describe('GpuStrokeCommitCoordinator', () => {
       readbackBypassedCount: 0,
     });
   });
+
+  it('accumulates readbackBypassedCount across multiple disabled commits', async () => {
+    const commitStroke = vi.fn(() => [{ x: 0, y: 0 }]);
+    const readbackTilesToLayer = vi.fn(async () => undefined);
+    const gpuRenderer = {
+      commitStroke,
+      readbackTilesToLayer,
+    } as unknown as GpuCanvasRenderer;
+
+    const prepareStrokeEndGpu = vi.fn(async () => makeScratchPrepareResult());
+    const clearScratchGpu = vi.fn();
+    const getTargetLayer = vi.fn(
+      () => ({ canvas: {} as HTMLCanvasElement, ctx: {} as CanvasRenderingContext2D }) as const
+    );
+
+    const coordinator = new GpuStrokeCommitCoordinator({
+      gpuRenderer,
+      prepareStrokeEndGpu,
+      clearScratchGpu,
+      getTargetLayer,
+    });
+
+    coordinator.setReadbackMode('disabled');
+    await coordinator.commit('layer-1');
+    await coordinator.commit('layer-1');
+
+    const snapshot = coordinator.getCommitMetricsSnapshot();
+    expect(snapshot.attemptCount).toBe(2);
+    expect(snapshot.committedCount).toBe(2);
+    expect(snapshot.readbackMode).toBe('disabled');
+    expect(snapshot.readbackBypassedCount).toBe(2);
+    expect(readbackTilesToLayer).not.toHaveBeenCalled();
+  });
 });

@@ -57,6 +57,8 @@ declare global {
     __gpuBrushCommitMetricsReset?: () => boolean;
     __gpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
     __gpuBrushCommitReadbackModeSet?: (mode: GpuBrushCommitReadbackMode) => boolean;
+    __gpuBrushNoReadbackPilot?: () => boolean;
+    __gpuBrushNoReadbackPilotSet?: (enabled: boolean) => boolean;
     __gpuM0Baseline?: () => Promise<void>;
     __strokeCaptureStart?: () => boolean;
     __strokeCaptureStop?: () => StrokeCaptureData | null;
@@ -410,6 +412,19 @@ export function Canvas() {
     layerRevisionRef.current += 1;
   }, []);
 
+  const getGpuBrushNoReadbackPilot = useCallback((): boolean => {
+    return gpuCommitCoordinatorRef.current?.getReadbackMode() === 'disabled';
+  }, []);
+
+  const setGpuBrushNoReadbackPilot = useCallback((enabled: boolean): boolean => {
+    const coordinator = gpuCommitCoordinatorRef.current;
+    if (!coordinator) {
+      return false;
+    }
+    coordinator.setReadbackMode(enabled ? 'disabled' : 'enabled');
+    return true;
+  }, []);
+
   const {
     getGuideLine: getShiftLineGuide,
     updateCursor: updateShiftLineCursor,
@@ -490,6 +505,7 @@ export function Canvas() {
     height,
     compositeAndRender,
     markLayerDirty,
+    isNoReadbackPilotEnabled: getGpuBrushNoReadbackPilot,
   });
 
   const renderGpuFrame = useCallback(
@@ -572,6 +588,8 @@ export function Canvas() {
     resetGpuBrushCommitMetrics,
     getGpuBrushCommitReadbackMode,
     setGpuBrushCommitReadbackMode,
+    getGpuBrushNoReadbackPilot,
+    setGpuBrushNoReadbackPilot,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

@@ -33,6 +33,8 @@ interface UseGlobalExportsParams {
   resetGpuBrushCommitMetrics?: () => boolean;
   getGpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
   setGpuBrushCommitReadbackMode?: (mode: GpuBrushCommitReadbackMode) => boolean;
+  getGpuBrushNoReadbackPilot?: () => boolean;
+  setGpuBrushNoReadbackPilot?: (enabled: boolean) => boolean;
   startStrokeCapture?: () => boolean;
   stopStrokeCapture?: () => StrokeCaptureData | null;
   getLastStrokeCapture?: () => StrokeCaptureData | null;
@@ -123,6 +125,8 @@ export function useGlobalExports({
   resetGpuBrushCommitMetrics,
   getGpuBrushCommitReadbackMode,
   setGpuBrushCommitReadbackMode,
+  getGpuBrushNoReadbackPilot,
+  setGpuBrushNoReadbackPilot,
   startStrokeCapture,
   stopStrokeCapture,
   getLastStrokeCapture,
@@ -165,6 +169,8 @@ export function useGlobalExports({
       __gpuBrushCommitMetricsReset?: () => boolean;
       __gpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
       __gpuBrushCommitReadbackModeSet?: (mode: GpuBrushCommitReadbackMode) => boolean;
+      __gpuBrushNoReadbackPilot?: () => boolean;
+      __gpuBrushNoReadbackPilotSet?: (enabled: boolean) => boolean;
       __strokeCaptureStart?: () => boolean;
       __strokeCaptureStop?: () => StrokeCaptureData | null;
       __strokeCaptureLast?: () => StrokeCaptureData | null;
@@ -275,6 +281,13 @@ export function useGlobalExports({
     win.__gpuBrushCommitReadbackModeSet = (mode) => {
       if (mode !== 'enabled' && mode !== 'disabled') return false;
       return setGpuBrushCommitReadbackMode?.(mode) ?? false;
+    };
+    win.__gpuBrushNoReadbackPilot = () => {
+      return getGpuBrushNoReadbackPilot?.() ?? false;
+    };
+    win.__gpuBrushNoReadbackPilotSet = (enabled) => {
+      if (typeof enabled !== 'boolean') return false;
+      return setGpuBrushNoReadbackPilot?.(enabled) ?? false;
     };
 
     const applyReplayContext = async (capture: StrokeCaptureData): Promise<void> => {
@@ -660,6 +673,8 @@ export function useGlobalExports({
       delete win.__gpuBrushCommitMetricsReset;
       delete win.__gpuBrushCommitReadbackMode;
       delete win.__gpuBrushCommitReadbackModeSet;
+      delete win.__gpuBrushNoReadbackPilot;
+      delete win.__gpuBrushNoReadbackPilotSet;
       delete win.__strokeCaptureStart;
       delete win.__strokeCaptureStop;
       delete win.__strokeCaptureLast;
@@ -683,6 +698,8 @@ export function useGlobalExports({
     resetGpuBrushCommitMetrics,
     getGpuBrushCommitReadbackMode,
     setGpuBrushCommitReadbackMode,
+    getGpuBrushNoReadbackPilot,
+    setGpuBrushNoReadbackPilot,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

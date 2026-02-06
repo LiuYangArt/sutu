@@ -10,6 +10,8 @@ type TestWindow = Window & {
   __gpuBrushCommitMetricsReset?: () => boolean;
   __gpuBrushCommitReadbackMode?: () => 'enabled' | 'disabled';
   __gpuBrushCommitReadbackModeSet?: (mode: 'enabled' | 'disabled') => boolean;
+  __gpuBrushNoReadbackPilot?: () => boolean;
+  __gpuBrushNoReadbackPilotSet?: (enabled: boolean) => boolean;
   __strokeCaptureReplay?: (capture?: unknown) => Promise<unknown>;
   __canvasClearLayer?: () => void;
   showOpenFilePicker?: () => Promise<Array<{ getFile: () => Promise<File> }>>;
@@ -56,6 +58,8 @@ describe('DebugPanel', () => {
     (window as TestWindow).__gpuBrushCommitMetricsReset = vi.fn(() => true);
     (window as TestWindow).__gpuBrushCommitReadbackMode = vi.fn(() => 'enabled');
     (window as TestWindow).__gpuBrushCommitReadbackModeSet = vi.fn(() => true);
+    (window as TestWindow).__gpuBrushNoReadbackPilot = vi.fn(() => false);
+    (window as TestWindow).__gpuBrushNoReadbackPilotSet = vi.fn(() => true);
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       cb(0);
       return 1;
@@ -69,6 +73,8 @@ describe('DebugPanel', () => {
     delete (window as TestWindow).__gpuBrushCommitMetricsReset;
     delete (window as TestWindow).__gpuBrushCommitReadbackMode;
     delete (window as TestWindow).__gpuBrushCommitReadbackModeSet;
+    delete (window as TestWindow).__gpuBrushNoReadbackPilot;
+    delete (window as TestWindow).__gpuBrushNoReadbackPilotSet;
     delete (window as TestWindow).__strokeCaptureReplay;
     delete (window as TestWindow).__canvasClearLayer;
     delete (window as TestWindow).showOpenFilePicker;
@@ -150,6 +156,33 @@ describe('DebugPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Record 20-Stroke Manual Gate' }));
     expectLatestResultStatus('Phase6A Manual 20-Stroke', 'passed');
+  });
+
+  it('No-Readback Pilot 开关可切换并显示限制提示', async () => {
+    const user = userEvent.setup();
+    let pilotEnabled = false;
+    const getPilotSpy = vi.fn(() => pilotEnabled);
+    const setPilotSpy = vi.fn((enabled: boolean) => {
+      pilotEnabled = enabled;
+      return true;
+    });
+    (window as TestWindow).__gpuBrushNoReadbackPilot = getPilotSpy;
+    (window as TestWindow).__gpuBrushNoReadbackPilotSet = setPilotSpy;
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+
+    const pilotButton = screen.getByRole('button', { name: 'No-Readback Pilot: OFF' });
+    await user.click(pilotButton);
+
+    expect(setPilotSpy).toHaveBeenCalledWith(true);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'No-Readback Pilot: ON' })).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(
+        'Pilot enabled: Undo/Redo are blocked to avoid CPU-layer consistency mismatch.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('Results 支持一键复制报告到剪贴板', async () => {
@@ -315,8 +348,82 @@ describe('DebugPanel', () => {
 
     const firstFourModes = setModeSpy.mock.calls.slice(0, 4).map((call) => call[0]);
     expect(firstFourModes).toEqual(['enabled', 'disabled', 'disabled', 'enabled']);
+    const lastModeCall = setModeSpy.mock.calls[setModeSpy.mock.calls.length - 1];
+    expect(lastModeCall?.[0]).toBe('enabled');
     expect(replaySpy).toHaveBeenCalled();
     expect(clearLayerSpy).toHaveBeenCalled();
+  });
+
+  it('Phase6B-3 Compare 与 Pilot 共存时恢复到 disabled 模式', async () => {
+    const user = userEvent.setup();
+    const clearLayerSpy = vi.fn();
+    const replaySpy = vi.fn(async () => ({ events: 200, durationMs: 1000 }));
+    const resetDiagSpy = vi.fn(() => true);
+    const resetMetricsSpy = vi.fn(() => true);
+    let mode: 'enabled' | 'disabled' = 'disabled';
+    const getModeSpy = vi.fn(() => mode);
+    const setModeSpy = vi.fn((next: 'enabled' | 'disabled') => {
+      mode = next;
+      return true;
+    });
+
+    (window as TestWindow).__gpuBrushNoReadbackPilot = vi.fn(() => mode === 'disabled');
+    (window as TestWindow).__gpuBrushNoReadbackPilotSet = vi.fn((enabled: boolean) => {
+      mode = enabled ? 'disabled' : 'enabled';
+      return true;
+    });
+    (window as TestWindow).__canvasClearLayer = clearLayerSpy;
+    (window as TestWindow).__strokeCaptureReplay = replaySpy;
+    (window as TestWindow).__gpuBrushDiagnosticsReset = resetDiagSpy;
+    (window as TestWindow).__gpuBrushCommitMetricsReset = resetMetricsSpy;
+    (window as TestWindow).__gpuBrushCommitMetrics = vi.fn(() => ({
+      attemptCount: 3,
+      committedCount: 3,
+      avgPrepareMs: 1,
+      avgCommitMs: 2,
+      avgReadbackMs: mode === 'enabled' ? 4 : 0,
+      avgTotalMs: mode === 'enabled' ? 7 : 3,
+      maxTotalMs: 10,
+      totalDirtyTiles: 12,
+      avgDirtyTiles: 4,
+      maxDirtyTiles: 6,
+      lastCommitAtMs: 4567,
+      readbackMode: mode,
+      readbackBypassedCount: mode === 'enabled' ? 0 : 3,
+    }));
+    (window as TestWindow).__gpuBrushDiagnostics = vi.fn(() => ({
+      diagnosticsSessionId: 21,
+      uncapturedErrors: [],
+      deviceLost: false,
+    }));
+    (window as TestWindow).__gpuBrushCommitReadbackMode = getModeSpy;
+    (window as TestWindow).__gpuBrushCommitReadbackModeSet = setModeSpy;
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+        samples: [{ type: 'pointerdown', timeMs: 0 }],
+      }),
+    } as unknown as Response);
+
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      now += 40_000;
+      return now;
+    });
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run Phase6B-3 Readback A/B Compare' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('Phase6B-3 Readback A/B Compare', 'passed');
+    });
+    const lastModeCall = setModeSpy.mock.calls[setModeSpy.mock.calls.length - 1];
+    expect(lastModeCall?.[0]).toBe('disabled');
+    expect(screen.getByRole('button', { name: 'No-Readback Pilot: ON' })).toBeInTheDocument();
   });
 
   it('Phase6B-3 Readback A/B Compare 缺失 readback mode API 时失败', async () => {
@@ -328,6 +435,86 @@ describe('DebugPanel', () => {
 
     await waitFor(() => {
       expectLatestResultStatus('Phase6B-3 Readback A/B Compare', 'failed');
+    });
+  });
+
+  it('No-Readback Pilot Gate 在 API 可用时通过', async () => {
+    const user = userEvent.setup();
+    let pilotEnabled = false;
+    const getPilotSpy = vi.fn(() => pilotEnabled);
+    const setPilotSpy = vi.fn((enabled: boolean) => {
+      pilotEnabled = enabled;
+      return true;
+    });
+    const clearLayerSpy = vi.fn();
+    const replaySpy = vi.fn(async () => ({ events: 150, durationMs: 900 }));
+
+    (window as TestWindow).__gpuBrushNoReadbackPilot = getPilotSpy;
+    (window as TestWindow).__gpuBrushNoReadbackPilotSet = setPilotSpy;
+    (window as TestWindow).__canvasClearLayer = clearLayerSpy;
+    (window as TestWindow).__strokeCaptureReplay = replaySpy;
+    (window as TestWindow).__gpuBrushDiagnosticsReset = vi.fn(() => true);
+    (window as TestWindow).__gpuBrushCommitMetricsReset = vi.fn(() => true);
+    (window as TestWindow).__gpuBrushCommitMetrics = vi.fn(() => ({
+      attemptCount: 3,
+      committedCount: 3,
+      avgPrepareMs: 1,
+      avgCommitMs: 2,
+      avgReadbackMs: 0.2,
+      avgTotalMs: 3.2,
+      maxTotalMs: 8,
+      totalDirtyTiles: 10,
+      avgDirtyTiles: 3.3,
+      maxDirtyTiles: 5,
+      lastCommitAtMs: 1234,
+      readbackMode: 'disabled' as const,
+      readbackBypassedCount: 22,
+    }));
+    (window as TestWindow).__gpuBrushDiagnostics = vi.fn(() => ({
+      diagnosticsSessionId: 31,
+      uncapturedErrors: [],
+      deviceLost: false,
+    }));
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+        samples: [{ type: 'pointerdown', timeMs: 0 }],
+      }),
+    } as unknown as Response);
+
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      now += 40_000;
+      return now;
+    });
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run No-Readback Pilot Gate (30s)' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('No-Readback Pilot Gate (30s)', 'passed');
+    });
+
+    expect(setPilotSpy).toHaveBeenCalledWith(true);
+    const lastPilotCall = setPilotSpy.mock.calls[setPilotSpy.mock.calls.length - 1];
+    expect(lastPilotCall?.[0]).toBe(false);
+    expect(clearLayerSpy).toHaveBeenCalled();
+    expect(replaySpy).toHaveBeenCalled();
+  });
+
+  it('No-Readback Pilot Gate 缺失 pilot API 时失败', async () => {
+    const user = userEvent.setup();
+    delete (window as TestWindow).__gpuBrushNoReadbackPilotSet;
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run No-Readback Pilot Gate (30s)' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('No-Readback Pilot Gate (30s)', 'failed');
     });
   });
 

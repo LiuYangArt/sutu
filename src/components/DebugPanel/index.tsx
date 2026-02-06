@@ -89,6 +89,8 @@ type RAfFrameSamplingSummary = {
 const PHASE6B_TARGET_DURATION_MS = 30_000;
 const PHASE6B3_FIXED_CAPTURE_NAME = 'case-5000-04.json';
 const PHASE6B3_FIXED_CAPTURE_PATH = `/abr/${PHASE6B3_FIXED_CAPTURE_NAME}`;
+const PILOT_BASELINE_A_TOTAL_MS = 62.27;
+const PILOT_READBACK_NEAR_ZERO_MS = 2;
 const PHASE6B3_READBACK_SEQUENCE: GpuBrushCommitReadbackMode[] = [
   'enabled',
   'disabled',
@@ -653,6 +655,8 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [debugRectsEnabled, setDebugRectsEnabled] = useState(readDebugRectsFlag);
   const [batchUnionEnabled, setBatchUnionEnabled] = useState(readBatchUnionFlag);
   const [gpuDiagResetMessage, setGpuDiagResetMessage] = useState<string>('');
+  const [noReadbackPilotEnabled, setNoReadbackPilotEnabled] = useState(false);
+  const [noReadbackPilotMessage, setNoReadbackPilotMessage] = useState<string>('');
   const [phase6GateCaptureName, setPhase6GateCaptureName] = useState<string>('');
   const [manualGateChecklist, setManualGateChecklist] = useState<ManualGateChecklist>(
     DEFAULT_MANUAL_GATE_CHECKLIST
@@ -734,6 +738,39 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     } else {
       setGpuDiagResetMessage('GPU not ready, diagnostics not reset');
     }
+  }, []);
+
+  const refreshNoReadbackPilotState = useCallback(() => {
+    const getter = window.__gpuBrushNoReadbackPilot;
+    if (typeof getter === 'function') {
+      setNoReadbackPilotEnabled(Boolean(getter()));
+      return;
+    }
+    setNoReadbackPilotEnabled(false);
+  }, []);
+
+  useEffect(() => {
+    refreshNoReadbackPilotState();
+  }, [refreshNoReadbackPilotState]);
+
+  const toggleNoReadbackPilot = useCallback(() => {
+    const getter = window.__gpuBrushNoReadbackPilot;
+    const setter = window.__gpuBrushNoReadbackPilotSet;
+    if (typeof getter !== 'function' || typeof setter !== 'function') {
+      setNoReadbackPilotMessage('No-Readback Pilot API unavailable');
+      return;
+    }
+
+    const next = !getter();
+    const ok = setter(next);
+    if (!ok) {
+      setNoReadbackPilotMessage(`No-Readback Pilot ${next ? 'ON' : 'OFF'} failed`);
+      return;
+    }
+
+    const current = Boolean(getter());
+    setNoReadbackPilotEnabled(current);
+    setNoReadbackPilotMessage(`No-Readback Pilot ${current ? 'ON' : 'OFF'}`);
   }, []);
 
   const addResult = useCallback((name: string, status: TestStatus, report?: string) => {
@@ -1212,10 +1249,189 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
           // Ignore best-effort restore failure.
         }
       }
+      refreshNoReadbackPilotState();
       setRunningTest(null);
       setProgress(0);
     }
-  }, [runningTest, addResult]);
+  }, [runningTest, addResult, refreshNoReadbackPilotState]);
+
+  const runNoReadbackPilotGate = useCallback(async () => {
+    if (runningTest) return;
+    setRunningTest('pilot:no-readback-gate');
+    setProgress(0);
+    addResult('No-Readback Pilot Gate (30s)', 'running');
+
+    let originalPilotEnabled: boolean | null = null;
+
+    try {
+      const replay = window.__strokeCaptureReplay;
+      const clearLayer = window.__canvasClearLayer;
+      const getDiag = window.__gpuBrushDiagnostics;
+      const resetDiag = window.__gpuBrushDiagnosticsReset;
+      const getCommitMetrics = window.__gpuBrushCommitMetrics;
+      const resetCommitMetrics = window.__gpuBrushCommitMetricsReset;
+      const getReadbackMode = window.__gpuBrushCommitReadbackMode;
+      const getPilot = window.__gpuBrushNoReadbackPilot;
+      const setPilot = window.__gpuBrushNoReadbackPilotSet;
+
+      if (typeof replay !== 'function') {
+        throw new Error('Missing API: window.__strokeCaptureReplay');
+      }
+      if (typeof clearLayer !== 'function') {
+        throw new Error('Missing API: window.__canvasClearLayer');
+      }
+      if (typeof getDiag !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushDiagnostics');
+      }
+      if (typeof resetDiag !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushDiagnosticsReset');
+      }
+      if (typeof getCommitMetrics !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushCommitMetrics');
+      }
+      if (typeof resetCommitMetrics !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushCommitMetricsReset');
+      }
+      if (typeof getReadbackMode !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushCommitReadbackMode');
+      }
+      if (typeof getPilot !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushNoReadbackPilot');
+      }
+      if (typeof setPilot !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushNoReadbackPilotSet');
+      }
+
+      const captureResult = await loadFixedPhase6B3Capture();
+      if (!captureResult) {
+        addResult('No-Readback Pilot Gate (30s)', 'failed', 'Capture selection cancelled.');
+        return;
+      }
+      setPhase6GateCaptureName(captureResult.name);
+
+      originalPilotEnabled = Boolean(getPilot());
+      const didEnablePilot = setPilot(true) && Boolean(getPilot());
+      if (!didEnablePilot) {
+        throw new Error('Failed to enable No-Readback Pilot');
+      }
+      setNoReadbackPilotEnabled(true);
+      setNoReadbackPilotMessage('No-Readback Pilot ON');
+
+      diagnosticsRef.current?.reset();
+      const didResetDiag = resetDiag();
+      const didResetCommitMetrics = resetCommitMetrics();
+      const resetDiagSnapshot = asGpuDiagnosticsSnapshot(getDiag());
+
+      let replayElapsedMs = 0;
+      let clearElapsedMs = 0;
+      let replayCount = 0;
+      let clearPerRound = true;
+      const frameSlices: RAfFrameSlice[] = [];
+
+      while (replayElapsedMs < PHASE6B_TARGET_DURATION_MS) {
+        const clearStart = performance.now();
+        try {
+          clearLayer();
+        } catch {
+          clearPerRound = false;
+        }
+        await waitForAnimationFrame();
+        clearElapsedMs += performance.now() - clearStart;
+
+        const { result: replayDurationMs, frameSlice } = await sampleRafFramesDuringReplay(
+          async () => {
+            const replayStart = performance.now();
+            await replay(captureResult.capture);
+            return performance.now() - replayStart;
+          }
+        );
+        replayElapsedMs += replayDurationMs;
+        replayCount += 1;
+        frameSlices.push(frameSlice);
+
+        setProgress(Math.min(replayElapsedMs / PHASE6B_TARGET_DURATION_MS, 1));
+      }
+
+      const frameSummary = mergeRafFrameSlices(frameSlices);
+      const finalSnapshot = asGpuDiagnosticsSnapshot(getDiag());
+      const commitSnapshot = asGpuBrushCommitMetricsSnapshot(getCommitMetrics());
+      const uncapturedErrors = Array.isArray(finalSnapshot.uncapturedErrors)
+        ? finalSnapshot.uncapturedErrors
+        : [];
+      const deviceLost = Boolean(finalSnapshot.deviceLost);
+      const committedCount = commitSnapshot?.committedCount ?? 0;
+      const hasFrameSamples = frameSummary.sampleCount > 0;
+      const readbackMode = commitSnapshot?.readbackMode ?? 'enabled';
+      const readbackNearZero =
+        (commitSnapshot?.avgReadbackMs ?? Number.POSITIVE_INFINITY) <= PILOT_READBACK_NEAR_ZERO_MS;
+      const readbackBypassedCount = commitSnapshot?.readbackBypassedCount ?? 0;
+      const avgTotalMs = commitSnapshot?.avgTotalMs ?? 0;
+      const totalDeltaVsBaselineMs = avgTotalMs - PILOT_BASELINE_A_TOTAL_MS;
+      const totalImprovedVsBaseline = totalDeltaVsBaselineMs < 0;
+
+      const pilotRestored =
+        setPilot(originalPilotEnabled) && Boolean(getPilot()) === originalPilotEnabled;
+      setNoReadbackPilotEnabled(Boolean(getPilot()));
+
+      const passed =
+        didResetDiag &&
+        didResetCommitMetrics &&
+        clearPerRound &&
+        uncapturedErrors.length === 0 &&
+        !deviceLost &&
+        committedCount > 0 &&
+        hasFrameSamples &&
+        readbackMode === 'disabled' &&
+        readbackNearZero &&
+        readbackBypassedCount > 0 &&
+        totalImprovedVsBaseline &&
+        pilotRestored;
+
+      const report = [
+        `Capture: ${captureResult.name}`,
+        `Capture source: ${captureResult.source}`,
+        `Target replay-only duration: ${PHASE6B_TARGET_DURATION_MS}ms`,
+        `Replay duration: ${Math.round(replayElapsedMs)}ms`,
+        `Clear duration (excluded): ${Math.round(clearElapsedMs)}ms`,
+        `Replay loops: ${replayCount}`,
+        '',
+        `Reset diagnostics/metrics: ${didResetDiag ? 'OK' : 'FAILED'}/${didResetCommitMetrics ? 'OK' : 'FAILED'}`,
+        `clearPerRound: ${clearPerRound ? 'YES' : 'NO'}`,
+        `Diag session reset->run: ${resetDiagSnapshot.diagnosticsSessionId ?? '?'} -> ${finalSnapshot.diagnosticsSessionId ?? '?'}`,
+        `Stability: uncapturedErrors=${uncapturedErrors.length}, deviceLost=${deviceLost ? 'YES' : 'NO'}`,
+        '',
+        `Frame avg/p95/p99: ${frameSummary.avgMs.toFixed(2)} / ${frameSummary.p95Ms.toFixed(2)} / ${frameSummary.p99Ms.toFixed(2)}ms`,
+        `Commit attempts/committed: ${commitSnapshot?.attemptCount ?? 0} / ${committedCount}`,
+        `Commit avg readback/total: ${(commitSnapshot?.avgReadbackMs ?? 0).toFixed(2)} / ${avgTotalMs.toFixed(2)}ms`,
+        `Commit avg dirtyTiles: ${(commitSnapshot?.avgDirtyTiles ?? 0).toFixed(2)}`,
+        `Readback bypassed count: ${readbackBypassedCount}`,
+        `Commit readback mode: ${readbackMode}`,
+        '',
+        `Pilot acceptance (near-zero readback <= ${PILOT_READBACK_NEAR_ZERO_MS}ms): ${readbackNearZero ? 'YES' : 'NO'}`,
+        `Pilot acceptance (avg total improved vs baseline ${PILOT_BASELINE_A_TOTAL_MS.toFixed(2)}ms): ${totalImprovedVsBaseline ? 'YES' : 'NO'}`,
+        `Delta avg total vs baseline A: ${totalDeltaVsBaselineMs.toFixed(2)}ms`,
+        `Pilot restored: ${pilotRestored ? 'YES' : 'NO'}`,
+        '',
+        `No-Readback Pilot Gate: ${passed ? 'PASS' : 'FAIL'}`,
+        'Note: Pilot result remains non-release evidence under 6A waiver.',
+      ].join('\n');
+
+      addResult('No-Readback Pilot Gate (30s)', passed ? 'passed' : 'failed', report);
+    } catch (e) {
+      addResult('No-Readback Pilot Gate (30s)', 'failed', String(e));
+    } finally {
+      if (originalPilotEnabled !== null) {
+        try {
+          window.__gpuBrushNoReadbackPilotSet?.(originalPilotEnabled);
+        } catch {
+          // Ignore best-effort restore failure.
+        }
+      }
+      refreshNoReadbackPilotState();
+      setRunningTest(null);
+      setProgress(0);
+    }
+  }, [runningTest, addResult, refreshNoReadbackPilotState]);
 
   const recordPhase6ManualGate = useCallback(() => {
     const getDiag = window.__gpuBrushDiagnostics;
@@ -1511,6 +1727,26 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
           <div className="debug-button-row" style={{ marginTop: '8px' }}>
             <button
               className="debug-btn secondary"
+              onClick={runNoReadbackPilotGate}
+              disabled={!!runningTest}
+              title="Run fixed case-5000-04 with pilot enabled for 30s replay-only acceptance checks"
+            >
+              <span>Run No-Readback Pilot Gate (30s)</span>
+            </button>
+          </div>
+          <div className="debug-button-row" style={{ marginTop: '8px' }}>
+            <button
+              className={`debug-btn secondary ${noReadbackPilotEnabled ? 'active' : ''}`}
+              onClick={toggleNoReadbackPilot}
+              disabled={!!runningTest}
+              title="Debug-only pilot: disable stroke-end readback on live path. Undo/Redo are blocked while enabled."
+            >
+              <span>No-Readback Pilot: {noReadbackPilotEnabled ? 'ON' : 'OFF'}</span>
+            </button>
+          </div>
+          <div className="debug-button-row" style={{ marginTop: '8px' }}>
+            <button
+              className="debug-btn secondary"
               onClick={recordPhase6ManualGate}
               disabled={!!runningTest}
               title="Record final manual 20-stroke pressure gate result"
@@ -1518,6 +1754,16 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
               <span>Record 20-Stroke Manual Gate</span>
             </button>
           </div>
+          {noReadbackPilotEnabled && (
+            <div className="debug-note" style={{ marginTop: '6px' }}>
+              Pilot enabled: Undo/Redo are blocked to avoid CPU-layer consistency mismatch.
+            </div>
+          )}
+          {noReadbackPilotMessage && (
+            <div className="debug-note" style={{ marginTop: '6px' }}>
+              {noReadbackPilotMessage}
+            </div>
+          )}
           <div className="debug-note" style={{ marginTop: '8px' }}>
             Manual checklist:
           </div>

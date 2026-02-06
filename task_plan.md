@@ -51,6 +51,11 @@
   - `GpuStrokeCommitCoordinator` 新增 `setReadbackMode/getReadbackMode`，支持调试态禁用 readback。
   - 新增全局接口：`window.__gpuBrushCommitReadbackMode()` / `window.__gpuBrushCommitReadbackModeSet(mode)`。
   - Debug Panel 新增 `Run Phase6B-3 Readback A/B Compare`（固定 `case-5000-04`、`A->B->B->A`、每种模式 replay-only 30s、清层耗时单列、输出对比报告）。
+- 新增 Debug-only 无 readback 试点开关（2026-02-06）：
+  - 新增全局接口：`window.__gpuBrushNoReadbackPilot()` / `window.__gpuBrushNoReadbackPilotSet(enabled)`。
+  - Debug Panel 新增 `No-Readback Pilot` 按钮（开启后 commit readback 关闭；默认行为不变）。
+  - Debug Panel 新增 `Run No-Readback Pilot Gate (30s)`（固定 `case-5000-04`，自动启停 pilot，输出验收报告）。
+  - 试点模式下优先拦截 `Undo/Redo`（避免 CPU layer 强一致依赖导致的误判）。
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
@@ -72,6 +77,8 @@
    - `commitStroke` 支持 `baseLayerCanvas`，缺失 tile 时只补齐该 tile 的底图像素。
 4. [ ] 继续压缩 GPU path 的 CPU 参与（临时豁免下可先探索）
    - 排查并移除非必要 `readback -> CPU layer -> 再回传` 的链路依赖。
+   - [x] 已新增 Debug-only `No-Readback Pilot` 试点开关（默认路径不变）。
+   - [ ] 在目标硬件执行试点验收：连续绘制稳定性 + commit 指标 + 诊断信号。
    - 已修复：pointer-up 后延迟尾 dab（队列消费时序 + 收尾立即 flush/render）。
    - 已修复：GPU commit 路径补 finishing lock，避免新笔触提前清 scratch 导致偶发丢笔。
    - 待确认：长时间回归是否仍出现“预览出现但提交丢失”。
@@ -80,17 +87,17 @@
    - 已新增全局接口：`window.__gpuBrushCommitMetrics()` / `window.__gpuBrushCommitMetricsReset()`。
    - 已新增 commit 指标聚合：`attemptCount/committedCount/avg*/max*/dirtyTiles`。
 6. [ ] Phase 6B-2：5000x5000 基线冻结与回填
-   - 以 `case-5000-04` 冻结当前过渡态基线（含 `avg readbackMs`、frame p95/p99、dirtyTiles、稳定性信号）。
+   - 以 `case-5000-04` 冻结当前过渡态基线（A 组基线来自 6B-3 实测，含 `avg readbackMs`、frame p95/p99、dirtyTiles、稳定性信号）。
    - 回填到设计文档并标注“非封版预结论”。
 7. [ ] Phase 6B-3：无 readback 路线对比验证（优先）
    - [x] 对比执行器已落地：固定 `case-5000-04`，执行 `A->B->B->A`，按 replay-only 30s 采样并输出差异报告（无硬阈值）。
-   - [ ] 在目标硬件执行实测并回填设计文档 13.10（A/B 聚合、Delta、稳定性信号、非封版预结论）。
+   - [x] 在目标硬件执行两轮实测并回填设计文档 13.10（`2026-02-06`，两轮均 PASS，A/B 聚合 + Delta + 稳定性信号）。
 8. [ ] 多层可见性能说明与下一阶段
    - 当前 M2 仍是单层 GPU 显示（`visibleLayerCount <= 1`）。
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线冻结）/6B-3（对比工具已落地，待实测回填）
+**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线冻结）/6B-3（两轮复验已完成，进入无 readback 试点准备）
 
 ## Phase 6A 临时豁免决议（2026-02-06）
 - 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。
@@ -116,6 +123,9 @@
 - [x] 新增 Phase 6B-3 对比能力：`Run Phase6B-3 Readback A/B Compare`（固定 case、`A->B->B->A`、回放时段统计）。
 - [x] 新增 readback mode 调试接口：`__gpuBrushCommitReadbackMode` / `__gpuBrushCommitReadbackModeSet`。
 - [x] 新增自动检查通过：`pnpm -s typecheck`、`pnpm -s test -- GpuStrokeCommitCoordinator`、`pnpm -s test -- useGlobalExports`、`pnpm -s test -- DebugPanel`。
+- [x] 新增 6B-3 实测回填（`2026-02-06`，`13:16`/`13:21` 两轮）：
+  - 两轮均 `Phase6B-3 Compare: PASS`，且 `uncapturedErrors=0`、`deviceLost=NO`、`mode restored=YES`。
+  - Delta（B-A）跨轮均值：`commit avg readback -58.63ms`、`commit avg total -58.51ms`、`frame p95 -2.80ms`、`frame p99 -26.60ms`、`dirtyTiles -0.72`。
 - [x] 压感策略实验回退后，用户手测确认压感恢复可用（2026-02-06）。
 - [x] Auto Gate 最新实测：PASS（`case-5000-04.json`，session=3，`startPressureFallbackCount=0`）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。

@@ -13,6 +13,7 @@ interface UseLayerOperationsParams {
   height: number;
   compositeAndRender: () => void;
   markLayerDirty: () => void;
+  isNoReadbackPilotEnabled?: () => boolean;
 }
 
 /**
@@ -66,6 +67,7 @@ export function useLayerOperations({
   height,
   compositeAndRender,
   markLayerDirty,
+  isNoReadbackPilotEnabled,
 }: UseLayerOperationsParams) {
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
   const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
@@ -256,6 +258,12 @@ export function useLayerOperations({
 
   // Handle undo for all operation types
   const handleUndo = useCallback(() => {
+    if (isNoReadbackPilotEnabled?.()) {
+      // Pilot mode skips CPU-layer readback consistency, so history replay is intentionally blocked.
+      console.warn('[NoReadbackPilot] Undo is blocked while pilot mode is enabled.');
+      return;
+    }
+
     const entry = undo();
     if (!entry) return;
 
@@ -351,6 +359,7 @@ export function useLayerOperations({
     layers,
     compositeAndRender,
     markLayerDirty,
+    isNoReadbackPilotEnabled,
     updateThumbnail,
     updateThumbnailWithSize,
     layerRendererRef,
@@ -358,6 +367,12 @@ export function useLayerOperations({
 
   // Handle redo for all operation types
   const handleRedo = useCallback(() => {
+    if (isNoReadbackPilotEnabled?.()) {
+      // Pilot mode skips CPU-layer readback consistency, so history replay is intentionally blocked.
+      console.warn('[NoReadbackPilot] Redo is blocked while pilot mode is enabled.');
+      return;
+    }
+
     const entry = redo();
     if (!entry) return;
 
@@ -435,6 +450,7 @@ export function useLayerOperations({
     redo,
     compositeAndRender,
     markLayerDirty,
+    isNoReadbackPilotEnabled,
     updateThumbnail,
     updateThumbnailWithSize,
     layerRendererRef,
