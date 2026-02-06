@@ -346,29 +346,35 @@ export function useStrokeProcessor({
       // Batch process all queued points (with soft limit)
       const queue = inputQueueRef.current;
       if (queue.length > 0) {
-        processedAnyPoints = true;
-        // Visual Lag: measure distance from last queued point (newest input)
-        // to last rendered point (before this batch)
-        const lastQueuedPoint = queue[queue.length - 1]!;
-        const renderedPosBefore = lastRenderedPosRef.current;
-        if (renderedPosBefore) {
-          lagometerRef.current.measure(renderedPosBefore, lastQueuedPoint);
+        const canConsumeQueue = currentTool === 'brush' && strokeStateRef.current === 'active';
+        if (!canConsumeQueue) {
+          // Drop stale points captured around stroke end to prevent late tail dabs.
+          inputQueueRef.current = [];
+        } else {
+          processedAnyPoints = true;
+          // Visual Lag: measure distance from last queued point (newest input)
+          // to last rendered point (before this batch)
+          const lastQueuedPoint = queue[queue.length - 1]!;
+          const renderedPosBefore = lastRenderedPosRef.current;
+          if (renderedPosBefore) {
+            lagometerRef.current.measure(renderedPosBefore, lastQueuedPoint);
+          }
+
+          const count = Math.min(queue.length, MAX_POINTS_PER_FRAME);
+
+          // Drain and process points
+          for (let i = 0; i < count; i++) {
+            const p = queue[i]!;
+            processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
+          }
+
+          // Clear processed points from queue
+          inputQueueRef.current = count === queue.length ? [] : queue.slice(count);
+
+          flushPending();
+
+          needsRenderRef.current = true;
         }
-
-        const count = Math.min(queue.length, MAX_POINTS_PER_FRAME);
-
-        // Drain and process points
-        for (let i = 0; i < count; i++) {
-          const p = queue[i]!;
-          processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
-        }
-
-        // Clear processed points from queue
-        inputQueueRef.current = count === queue.length ? [] : queue.slice(count);
-
-        flushPending();
-
-        needsRenderRef.current = true;
       }
 
       // Build-up tick: stationary hold behavior (CPU/GPU)
@@ -528,11 +534,21 @@ export function useStrokeProcessor({
     if (currentTool === 'brush') {
       // Process any remaining points in queue before finalizing
       const remainingQueue = inputQueueRef.current;
+      let processedTailQueue = false;
       if (remainingQueue.length > 0) {
         for (const p of remainingQueue) {
           processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
         }
         inputQueueRef.current = [];
+        processedTailQueue = true;
+      }
+
+      // Flush/render tail points immediately so pointer-up does not show delayed late dabs.
+      if (processedTailQueue) {
+        flushPending();
+        if (useGpuDisplay) {
+          renderGpuFrame(true);
+        }
       }
 
       if (useGpuDisplay && commitStrokeGpu) {
@@ -575,12 +591,19 @@ export function useStrokeProcessor({
 
     isDrawingRef.current = false;
     strokeStateRef.current = 'idle';
+    pendingPointsRef.current = [];
+    inputQueueRef.current = [];
+    pendingEndRef.current = false;
     lastRenderedPosRef.current = null;
     window.__strokeDiagnostics?.onStrokeEnd();
   }, [
     currentTool,
     inputQueueRef,
+    pendingPointsRef,
+    pendingEndRef,
     processSinglePoint,
+    flushPending,
+    renderGpuFrame,
     useGpuDisplay,
     commitStrokeGpu,
     getActiveLayerCtx,
@@ -633,6 +656,7 @@ export function useStrokeProcessor({
 
       // Check if cancelled or state changed during await
       if (strokeStateRef.current !== 'starting') {
+        pendingPointsRef.current = [];
         return;
       }
 
@@ -692,6 +716,8 @@ export function useStrokeProcessor({
       // Reset state on error to avoid sticking in 'starting'
       strokeStateRef.current = 'idle';
       pendingPointsRef.current = [];
+      inputQueueRef.current = [];
+      pendingEndRef.current = false;
       isDrawingRef.current = false;
     }
   }, [
@@ -704,6 +730,7 @@ export function useStrokeProcessor({
     getBrushConfig,
     strokeStateRef,
     pendingPointsRef,
+    inputQueueRef,
     pendingEndRef,
     isDrawingRef,
   ]);
