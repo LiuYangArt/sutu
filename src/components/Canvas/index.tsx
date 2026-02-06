@@ -105,6 +105,35 @@ function parseTileCoordKey(key: string): { x: number; y: number } | null {
   return { x, y };
 }
 
+function isSingleLayerGpuPathAvailable(
+  brushBackend: string,
+  gpuAvailable: boolean,
+  visibleLayerCount: number
+): boolean {
+  return brushBackend === 'gpu' && gpuAvailable && visibleLayerCount <= 1;
+}
+
+function resolveGpuHistoryBudgetBytes(residencyBudgetBytes: number): number {
+  return Math.min(
+    MAX_GPU_HISTORY_BUDGET_BYTES,
+    Math.max(
+      MIN_GPU_HISTORY_BUDGET_BYTES,
+      Math.floor(residencyBudgetBytes * GPU_HISTORY_BUDGET_RATIO)
+    )
+  );
+}
+
+function parseTrackedTileCoordKeys(tileKeys: Set<string>): Array<{ x: number; y: number }> {
+  const tiles: Array<{ x: number; y: number }> = [];
+  for (const key of tileKeys) {
+    const coord = parseTileCoordKey(key);
+    if (coord) {
+      tiles.push(coord);
+    }
+  }
+  return tiles;
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -351,19 +380,19 @@ export function Canvas() {
     benchmarkProfiler: latencyProfilerRef.current,
   });
 
-  const gpuDisplayActive = useMemo(
-    () =>
-      brushBackend === 'gpu' &&
-      gpuAvailable &&
-      (currentTool === 'brush' || currentTool === 'zoom' || currentTool === 'eyedropper') &&
-      visibleLayerCount <= 1,
-    [brushBackend, gpuAvailable, currentTool, visibleLayerCount]
-  );
-
-  const gpuHistoryEnabled = useMemo(
-    () => brushBackend === 'gpu' && gpuAvailable && visibleLayerCount <= 1,
+  const singleLayerGpuPathAvailable = useMemo(
+    () => isSingleLayerGpuPathAvailable(brushBackend, gpuAvailable, visibleLayerCount),
     [brushBackend, gpuAvailable, visibleLayerCount]
   );
+
+  const gpuDisplayActive = useMemo(
+    () =>
+      singleLayerGpuPathAvailable &&
+      (currentTool === 'brush' || currentTool === 'zoom' || currentTool === 'eyedropper'),
+    [singleLayerGpuPathAvailable, currentTool]
+  );
+
+  const gpuHistoryEnabled = singleLayerGpuPathAvailable;
 
   const collectLiveGpuHistoryEntries = useCallback(
     (entries: HistoryEntry[], liveIds: Set<string>) => {
@@ -403,13 +432,7 @@ export function Canvas() {
 
     const budgetInfo = loadResidencyBudget();
     gpuRendererRef.current.setResidencyBudgetBytes(budgetInfo.budgetBytes);
-    const historyBudgetBytes = Math.min(
-      MAX_GPU_HISTORY_BUDGET_BYTES,
-      Math.max(
-        MIN_GPU_HISTORY_BUDGET_BYTES,
-        Math.floor(budgetInfo.budgetBytes * GPU_HISTORY_BUDGET_RATIO)
-      )
-    );
+    const historyBudgetBytes = resolveGpuHistoryBudgetBytes(budgetInfo.budgetBytes);
     if (!gpuStrokeHistoryStoreRef.current) {
       gpuStrokeHistoryStoreRef.current = new GpuStrokeHistoryStore({
         device,
@@ -582,13 +605,7 @@ export function Canvas() {
       const trackedTileKeys = pendingGpuCpuSyncTilesRef.current.get(layerId);
       if (!trackedTileKeys || trackedTileKeys.size === 0) return false;
 
-      const tiles: Array<{ x: number; y: number }> = [];
-      for (const key of trackedTileKeys) {
-        const coord = parseTileCoordKey(key);
-        if (coord) {
-          tiles.push(coord);
-        }
-      }
+      const tiles = parseTrackedTileCoordKeys(trackedTileKeys);
       if (tiles.length === 0) {
         pendingGpuCpuSyncTilesRef.current.delete(layerId);
         return false;
@@ -656,19 +673,26 @@ export function Canvas() {
     return gpuCommitCoordinatorRef.current?.getReadbackMode() === 'disabled';
   }, []);
 
-  const setGpuBrushNoReadbackPilot = useCallback(
-    (enabled: boolean): boolean => {
+  const setGpuCommitReadbackMode = useCallback(
+    (mode: GpuBrushCommitReadbackMode): boolean => {
       const coordinator = gpuCommitCoordinatorRef.current;
       if (!coordinator) {
         return false;
       }
-      coordinator.setReadbackMode(enabled ? 'disabled' : 'enabled');
-      if (!enabled) {
+      coordinator.setReadbackMode(mode);
+      if (mode === 'enabled') {
         void syncAllPendingGpuLayersToCpu();
       }
       return true;
     },
     [syncAllPendingGpuLayersToCpu]
+  );
+
+  const setGpuBrushNoReadbackPilot = useCallback(
+    (enabled: boolean): boolean => {
+      return setGpuCommitReadbackMode(enabled ? 'disabled' : 'enabled');
+    },
+    [setGpuCommitReadbackMode]
   );
 
   const {
@@ -894,17 +918,9 @@ export function Canvas() {
 
   const setGpuBrushCommitReadbackMode = useCallback(
     (mode: GpuBrushCommitReadbackMode): boolean => {
-      const coordinator = gpuCommitCoordinatorRef.current;
-      if (!coordinator) {
-        return false;
-      }
-      coordinator.setReadbackMode(mode);
-      if (mode === 'enabled') {
-        void syncAllPendingGpuLayersToCpu();
-      }
-      return true;
+      return setGpuCommitReadbackMode(mode);
     },
-    [syncAllPendingGpuLayersToCpu]
+    [setGpuCommitReadbackMode]
   );
 
   const sampleGpuPixelColor = useCallback(

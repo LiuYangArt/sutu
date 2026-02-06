@@ -124,19 +124,9 @@ export class GpuStrokeHistoryStore {
     coord: TileCoord,
     sourceTexture: GPUTexture | null
   ): boolean {
-    const entry = this.activeStrokes.get(entryId);
-    if (!entry || entry.mode !== 'gpu' || entry.layerId !== layerId) return false;
-
-    const key = coordKey(coord);
-    let pair = entry.tiles.get(key);
-    if (!pair) {
-      pair = {
-        coord,
-        beforeTexture: null,
-        afterTexture: null,
-      };
-      entry.tiles.set(key, pair);
-    }
+    const entry = this.getActiveGpuStroke(entryId, layerId);
+    if (!entry) return false;
+    const pair = this.getOrCreateTileSnapshotPair(entry, coord);
     if (pair.beforeTexture !== null || sourceTexture === null) {
       return true;
     }
@@ -160,19 +150,9 @@ export class GpuStrokeHistoryStore {
     coord: TileCoord,
     sourceTexture: GPUTexture | null
   ): boolean {
-    const entry = this.activeStrokes.get(entryId);
-    if (!entry || entry.mode !== 'gpu' || entry.layerId !== layerId) return false;
-
-    const key = coordKey(coord);
-    let pair = entry.tiles.get(key);
-    if (!pair) {
-      pair = {
-        coord,
-        beforeTexture: null,
-        afterTexture: null,
-      };
-      entry.tiles.set(key, pair);
-    }
+    const entry = this.getActiveGpuStroke(entryId, layerId);
+    if (!entry) return false;
+    const pair = this.getOrCreateTileSnapshotPair(entry, coord);
     if (pair.afterTexture !== null || sourceTexture === null) {
       return true;
     }
@@ -278,6 +258,31 @@ export class GpuStrokeHistoryStore {
       format: this.layerFormat,
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
     });
+  }
+
+  private getActiveGpuStroke(entryId: string, layerId: string): ActiveStrokeEntry | null {
+    const entry = this.activeStrokes.get(entryId);
+    if (!entry || entry.mode !== 'gpu' || entry.layerId !== layerId) {
+      return null;
+    }
+    return entry;
+  }
+
+  private getOrCreateTileSnapshotPair(
+    entry: ActiveStrokeEntry,
+    coord: TileCoord
+  ): StrokeTileSnapshotPair {
+    const key = coordKey(coord);
+    const existing = entry.tiles.get(key);
+    if (existing) return existing;
+
+    const created: StrokeTileSnapshotPair = {
+      coord,
+      beforeTexture: null,
+      afterTexture: null,
+    };
+    entry.tiles.set(key, created);
+    return created;
   }
 
   private destroyTilePairs(tiles: Map<string, StrokeTileSnapshotPair>): void {

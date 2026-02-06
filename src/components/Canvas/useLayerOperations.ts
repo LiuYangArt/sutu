@@ -1,7 +1,12 @@
 import { useCallback, useRef, type RefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
-import { createHistoryEntryId, type StrokeSnapshotMode, useHistoryStore } from '@/stores/history';
+import {
+  createHistoryEntryId,
+  type PushStrokeParams,
+  type StrokeSnapshotMode,
+  useHistoryStore,
+} from '@/stores/history';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
 
@@ -37,6 +42,22 @@ type PendingStrokeHistory =
       entryId: string;
       snapshotMode: 'gpu';
     };
+
+function toPushStrokeParams(pending: PendingStrokeHistory): PushStrokeParams {
+  if (pending.snapshotMode === 'gpu') {
+    return {
+      layerId: pending.layerId,
+      entryId: pending.entryId,
+      snapshotMode: 'gpu',
+    };
+  }
+  return {
+    layerId: pending.layerId,
+    entryId: pending.entryId,
+    snapshotMode: 'cpu',
+    beforeImage: pending.beforeImage,
+  };
+}
 
 /**
  * Helper to fill a layer using a selection mask (anti-aliased)
@@ -137,20 +158,17 @@ export function useLayerOperations({
       const renderer = layerRendererRef.current;
       if (!renderer || !activeLayerId) return;
 
-      let fallbackEntryId: string | null = null;
-      if (preferGpuHistory && gpuHistoryEnabled && beginGpuStrokeHistory) {
-        const gpuEntry = beginGpuStrokeHistory(activeLayerId);
-        if (gpuEntry) {
-          fallbackEntryId = gpuEntry.entryId;
-          if (gpuEntry.snapshotMode === 'gpu') {
-            beforeImageRef.current = {
-              layerId: activeLayerId,
-              entryId: gpuEntry.entryId,
-              snapshotMode: 'gpu',
-            };
-            return;
-          }
-        }
+      const gpuEntry =
+        preferGpuHistory && gpuHistoryEnabled && beginGpuStrokeHistory
+          ? beginGpuStrokeHistory(activeLayerId)
+          : null;
+      if (gpuEntry?.snapshotMode === 'gpu') {
+        beforeImageRef.current = {
+          layerId: activeLayerId,
+          entryId: gpuEntry.entryId,
+          snapshotMode: 'gpu',
+        };
+        return;
       }
 
       await syncGpuLayerForHistory?.(activeLayerId);
@@ -159,7 +177,7 @@ export function useLayerOperations({
       if (imageData) {
         beforeImageRef.current = {
           layerId: activeLayerId,
-          entryId: fallbackEntryId ?? createHistoryEntryId(),
+          entryId: gpuEntry?.entryId ?? createHistoryEntryId(),
           snapshotMode: 'cpu',
           beforeImage: imageData,
         };
@@ -179,20 +197,7 @@ export function useLayerOperations({
     const pending = beforeImageRef.current;
     if (!pending) return;
 
-    if (pending.snapshotMode === 'gpu') {
-      pushStroke({
-        layerId: pending.layerId,
-        entryId: pending.entryId,
-        snapshotMode: 'gpu',
-      });
-    } else {
-      pushStroke({
-        layerId: pending.layerId,
-        entryId: pending.entryId,
-        snapshotMode: 'cpu',
-        beforeImage: pending.beforeImage,
-      });
-    }
+    pushStroke(toPushStrokeParams(pending));
     beforeImageRef.current = null;
   }, [pushStroke]);
 

@@ -11,12 +11,14 @@
   - 单层 GPU 可绘 + commit 闭环可用。
   - 单层 no-readback 已接入双轨历史：GPU 脏 tile 快照优先，预算超限自动回退 CPU 历史。
   - CPU 笔刷路径保持原行为（未引入 GPU 历史分支）。
+  - 已完成一轮 code simplifier 收敛（`Canvas/index.tsx`、`useLayerOperations.ts`、`GpuStrokeHistoryStore.ts`、`GpuStrokeCommitCoordinator.ts`），仅做可维护性优化，不改行为。
   - `undo` 一次撤多笔问题已修复。
   - `brush/zoom/eyedropper` 切换闪烁与切换卡顿已修复。
   - “未抬笔切 `zoom` 并立即缩放导致丢笔”已修复。
   - 全量自动测试通过（`vitest: 31 passed / 204 passed`）。
 - `M2` 当前剩余：
   - 保留 `Phase 6A` 封版前全量复验要求（3 轮 replay + 手工门禁）；按 2026-02-06 当日决议，今日不再追加重复复测。
+  - 代码收敛阶段继续沿用“当日不追加重复复测”口径，仅在封版前窗口执行统一复验。
   - 无 readback 路线继续按 gate 数据推进（当前为非封版预结论）。
   - 多层 GPU 历史与多层合成仍在 `M3` 范围，本轮不纳入代码实现。
 

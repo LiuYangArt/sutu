@@ -69,6 +69,12 @@
   - `commitStroke`/`GpuStrokeCommitCoordinator.commit` 已支持 historyCapture 透传并自动 `finalizeStroke`。
   - `useLayerOperations` 已接入双轨分支：GPU 路径优先 apply 快照，失败再走 CPU 兜底。
   - CPU 笔刷路径保持不变（新逻辑受 GPU 单层条件保护）。
+- 新增本轮代码收敛（2026-02-06，code simplifier）：
+  - `Canvas/index.tsx` 抽取单层 GPU 条件、历史预算计算、readback mode 设置与 tile key 解析公共逻辑。
+  - `useLayerOperations.ts` 收敛 `captureBeforeImage/saveStrokeToHistory` 的双轨分支重复代码。
+  - `GpuStrokeHistoryStore.ts` 抽取 active stroke/tile pair 公共私有方法，减少 before/after 捕获重复。
+  - `GpuStrokeCommitCoordinator.ts` 收敛 early-exit result 生成逻辑。
+  - 以上均为可维护性优化，不改变既有行为与外部接口语义。
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
@@ -116,6 +122,7 @@
 - 不再执行新增稳定性回归测试（含 3 轮 replay 与 20 笔手工短测）。
 - 现有结论保持不变：6A 维持 `PARTIAL PASS`，所有性能结论继续标注“非封版预结论”。
 - 封版前仍需回到 6A 全量门禁复验。
+- 本轮代码收敛按该决议执行：不追加重复回归测试，仅更新实现与文档状态。
 
 ## Phase 6A 临时豁免决议（2026-02-06）
 - 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。

@@ -140,6 +140,15 @@ export class GpuStrokeCommitCoordinator {
     this.metrics.lastCommitAtMs = performance.now();
   }
 
+  private createEarlyExitResult(prepareMs: number, dirtyRect: Rect | null): GpuStrokeCommitResult {
+    const result = {
+      ...emptyCommitResult(dirtyRect),
+      timings: { prepareMs, commitMs: 0, readbackMs: 0 },
+    };
+    this.recordCommitSample(result);
+    return result;
+  }
+
   async commit(
     layerId: string | null,
     options: GpuStrokeCommitOptions = {}
@@ -159,24 +168,14 @@ export class GpuStrokeCommitCoordinator {
 
       if (!layerId || !prepareResult.scratch || !hasDrawableDirtyRect(prepareResult.dirtyRect)) {
         this.clearScratchGpu();
-        const result = {
-          ...emptyCommitResult(prepareResult.dirtyRect),
-          timings: { prepareMs, commitMs: 0, readbackMs: 0 },
-        };
-        this.recordCommitSample(result);
-        return result;
+        return this.createEarlyExitResult(prepareMs, prepareResult.dirtyRect);
       }
 
       const layer = this.getTargetLayer(layerId);
       if (!layer) {
         this.clearScratchGpu();
         console.warn('[GpuStrokeCommitCoordinator] Missing target layer', { layerId });
-        const result = {
-          ...emptyCommitResult(prepareResult.dirtyRect),
-          timings: { prepareMs, commitMs: 0, readbackMs: 0 },
-        };
-        this.recordCommitSample(result);
-        return result;
+        return this.createEarlyExitResult(prepareMs, prepareResult.dirtyRect);
       }
 
       const commitStart = performance.now();
