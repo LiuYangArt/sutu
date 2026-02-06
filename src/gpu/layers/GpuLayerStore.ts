@@ -165,8 +165,6 @@ export class GpuLayerStore {
     if (rect.width <= 0 || rect.height <= 0) return;
 
     const handle = this.getOrCreateTile(layerId, coord);
-    this.clearTile(handle.texture);
-
     this.device.queue.copyExternalImageToTexture(
       {
         source: canvas,
@@ -187,7 +185,7 @@ export class GpuLayerStore {
   }
 
   private createTileTexture(): GPUTexture {
-    const texture = this.device.createTexture({
+    return this.device.createTexture({
       label: 'Layer Tile',
       size: [this._tileSize, this._tileSize],
       format: this._format,
@@ -197,24 +195,5 @@ export class GpuLayerStore {
         GPUTextureUsage.COPY_SRC |
         GPUTextureUsage.COPY_DST,
     });
-
-    this.clearTile(texture);
-    return texture;
-  }
-
-  private clearTile(texture: GPUTexture): void {
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: texture.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    });
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
   }
 }

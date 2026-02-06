@@ -3,7 +3,13 @@ import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
-import { GPUContext, runFormatCompare, runM0Baseline, runTileSizeCompare } from '@/gpu';
+import {
+  GPUContext,
+  persistResidencyBudgetFromProbe,
+  runFormatCompare,
+  runM0Baseline,
+  runTileSizeCompare,
+} from '@/gpu';
 
 interface UseGlobalExportsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -16,6 +22,7 @@ interface UseGlobalExportsParams {
   handleDuplicateLayer: (from: string, to: string) => void;
   handleRemoveLayer: (id: string) => void;
   handleResizeCanvas: (options: ResizeCanvasOptions) => void;
+  getGpuDiagnosticsSnapshot?: () => unknown;
 }
 
 export function useGlobalExports({
@@ -29,6 +36,7 @@ export function useGlobalExports({
   handleDuplicateLayer,
   handleRemoveLayer,
   handleResizeCanvas,
+  getGpuDiagnosticsSnapshot,
 }: UseGlobalExportsParams): void {
   useEffect(() => {
     const win = window as Window & {
@@ -60,6 +68,7 @@ export function useGlobalExports({
         budgetRatio?: number;
         viewportTiles?: number;
       }) => Promise<unknown>;
+      __gpuBrushDiagnostics?: () => unknown;
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -77,8 +86,9 @@ export function useGlobalExports({
         return;
       }
       const result = await runM0Baseline(device);
+      const residency = persistResidencyBudgetFromProbe(result.allocationProbe, 0.6);
       // eslint-disable-next-line no-console
-      console.log('[M0Baseline] result', result);
+      console.log('[M0Baseline] result', { ...result, residencyBudget: residency });
     };
 
     win.__gpuFormatCompare = async (options): Promise<string[]> => {
@@ -138,6 +148,10 @@ export function useGlobalExports({
       // eslint-disable-next-line no-console
       console.log('[TileSizeCompare] result', result);
       return result;
+    };
+
+    win.__gpuBrushDiagnostics = () => {
+      return getGpuDiagnosticsSnapshot?.() ?? null;
     };
 
     // Get single layer image data as Base64 PNG data URL
@@ -341,6 +355,7 @@ export function useGlobalExports({
       delete win.__gpuM0Baseline;
       delete win.__gpuFormatCompare;
       delete win.__gpuTileSizeCompare;
+      delete win.__gpuBrushDiagnostics;
     };
   }, [
     layerRendererRef,
@@ -353,5 +368,6 @@ export function useGlobalExports({
     handleDuplicateLayer,
     handleRemoveLayer,
     handleResizeCanvas,
+    getGpuDiagnosticsSnapshot,
   ]);
 }

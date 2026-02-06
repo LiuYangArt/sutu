@@ -159,6 +159,39 @@ Dual Brush 额外引入：
    - 是否开启 selection（selection 相关逻辑会让 `updatePreview()` 的 CPU loop 更慢）
    - 发生 `maxBufferSize` 时是否刚好在切换 Dual Brush / Pattern / 纹理（排除超大 `writeTexture`）
 
+### 已落地的诊断入口（2026-02-06）
+
+代码侧已补充以下证据链日志：
+- preview readback：`rect/copyRect/bytesPerRow/copyBytes/maxBufferSize/copyRatio/mapMs/totalMs/pendingMs`
+- dual secondary：`dispatchCount` 与 `copySourceToDest` 累计统计
+- submit 追踪：记录最近 submit label，用于关联 uncaptured error
+- `device uncapturederror`：结构化记录并附最近 submit 历史
+
+控制台用法：
+```js
+window.__gpuBrushDiag = true
+window.__gpuBrushDiagCopyBytesThreshold = 64 * 1024 * 1024
+window.__gpuBrushDiagPendingMsThreshold = 300
+```
+
+复现后抓取快照：
+```js
+window.__gpuBrushDiagnostics()
+```
+
+### 首轮证据（2026-02-06，1080p 小样本）
+
+用户提供的诊断快照显示：
+- `uncapturedErrors = []`，未出现 validation/device lost
+- `preview copyBytes = 54,272`（远低于 `maxBufferSize = 512MiB`）
+- `preview mapMs ≈ 798ms`，`totalMs ≈ 798ms`
+- 同窗口内 submit 顺序：`Dual Mask Batch Encoder -> Dual Blend Encoder -> Preview Readback Encoder`
+
+阶段性结论：
+- 当前这次样本 **不是** `maxBufferSize` 触发点。
+- `mapAsync` 大延迟发生在极小 readback 下，优先指向 **GPU 队列阻塞/排队等待**，而非 copy 字节量本身。
+- 该样本仍是小画布，需继续采集 4K/8K 与长时间连续绘制证据，才能锁定大画布问题主因。
+
 ## 可行的缓解/修复方向（不在本次落地）
 
 ### 短期（止血：先不崩）

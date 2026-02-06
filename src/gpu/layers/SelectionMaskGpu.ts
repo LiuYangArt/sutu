@@ -1,20 +1,14 @@
+import { alignTo } from '../utils/textureCopyRect';
+
 export class SelectionMaskGpu {
   private device: GPUDevice;
   private texture: GPUTexture | null = null;
   private view: GPUTextureView | null = null;
   private width: number = 0;
   private height: number = 0;
-  private maskCanvas: HTMLCanvasElement;
-  private maskCtx: CanvasRenderingContext2D;
 
   constructor(device: GPUDevice) {
     this.device = device;
-    this.maskCanvas = document.createElement('canvas');
-    const ctx = this.maskCanvas.getContext('2d');
-    if (!ctx) {
-      throw new Error('[SelectionMaskGpu] Failed to create mask canvas context');
-    }
-    this.maskCtx = ctx;
   }
 
   getTextureView(): GPUTextureView | null {
@@ -36,20 +30,30 @@ export class SelectionMaskGpu {
       this.texture = this.device.createTexture({
         label: 'Selection Mask',
         size: [mask.width, mask.height],
-        format: 'rgba8unorm',
+        format: 'r8unorm',
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
       this.view = this.texture.createView();
       this.width = mask.width;
       this.height = mask.height;
-      this.maskCanvas.width = mask.width;
-      this.maskCanvas.height = mask.height;
     }
 
-    this.maskCtx.putImageData(mask, 0, 0);
-    this.device.queue.copyExternalImageToTexture(
-      { source: this.maskCanvas },
+    const bytesPerRow = alignTo(mask.width, 256);
+    const upload = new Uint8Array(bytesPerRow * mask.height);
+    const src = mask.data;
+
+    for (let y = 0; y < mask.height; y += 1) {
+      const rowOffset = y * bytesPerRow;
+      const srcRow = y * mask.width * 4;
+      for (let x = 0; x < mask.width; x += 1) {
+        upload[rowOffset + x] = src[srcRow + x * 4 + 3] ?? 0;
+      }
+    }
+
+    this.device.queue.writeTexture(
       { texture: this.texture! },
+      upload,
+      { bytesPerRow, rowsPerImage: mask.height },
       { width: mask.width, height: mask.height }
     );
   }

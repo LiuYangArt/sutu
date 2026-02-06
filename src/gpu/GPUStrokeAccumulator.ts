@@ -43,6 +43,20 @@ interface DebugRect {
   color: string;
 }
 
+interface GpuDiagnosticEvent {
+  kind: string;
+  atMs: number;
+  payload: Record<string, unknown>;
+}
+
+interface GpuUncapturedErrorSnapshot {
+  atMs: number;
+  message: string;
+  name: string;
+  constructorName: string;
+  recentSubmitLabel: string | null;
+}
+
 export class GPUStrokeAccumulator {
   private device: GPUDevice;
   private pingPongBuffer: PingPongBuffer;
@@ -103,6 +117,8 @@ export class GPUStrokeAccumulator {
   private previewUpdateCount: number = 0;
   private previewUpdateSkipCount: number = 0;
   private pendingPreviewRect: Rect | null = null;
+  private previewPendingSinceMs: number | null = null;
+  private lastPreviewPendingWarnMs: number = 0;
 
   // Preview canvas for compatibility with existing rendering system
   private previewCanvas: HTMLCanvasElement;
@@ -128,6 +144,7 @@ export class GPUStrokeAccumulator {
 
   // Device lost state tracking (optimization 3)
   private deviceLost: boolean = false;
+  private uncapturedErrorHandler: ((event: Event) => void) | null = null;
 
   // Cached color blend mode to avoid redundant updates
   private cachedColorBlendMode: ColorBlendMode = 'linear';
@@ -140,6 +157,21 @@ export class GPUStrokeAccumulator {
 
   // Performance timing
   private cpuTimer: CPUTimer = new CPUTimer();
+
+  // Runtime diagnostics (for postmortem evidence)
+  private diagnosticEvents: GpuDiagnosticEvent[] = [];
+  private uncapturedErrors: GpuUncapturedErrorSnapshot[] = [];
+  private submitHistory: Array<{ label: string; atMs: number }> = [];
+  private lastSubmitLabel: string | null = null;
+  private lastSubmitAtMs: number | null = null;
+  private dualMaskCopyCount: number = 0;
+  private dualMaskCopyPixels: number = 0;
+  private previewMaxCopyBytes: number = 0;
+  private diagDualMaskCopyCount: number = 0;
+  private diagDualMaskCopyPixels: number = 0;
+  private diagPreviewUpdateCount: number = 0;
+  private diagPreviewSkipCount: number = 0;
+  private diagPreviewMaxCopyBytes: number = 0;
 
   // Wet Edge post-processing (stroke-level effect)
   private wetEdgePipeline: ComputeWetEdgePipeline;
@@ -218,6 +250,33 @@ export class GPUStrokeAccumulator {
       console.warn('[GPUStrokeAccumulator] GPU device lost:', info.message);
       this.deviceLost = true;
     });
+
+    this.uncapturedErrorHandler = (event: Event) => {
+      const gpuEvent = event as GPUUncapturedErrorEvent;
+      const errorInfo = this.serializeError(gpuEvent.error);
+      const snapshot: GpuUncapturedErrorSnapshot = {
+        atMs: this.nowMs(),
+        message: errorInfo.message,
+        name: errorInfo.name,
+        constructorName: errorInfo.constructorName,
+        recentSubmitLabel: this.lastSubmitLabel,
+      };
+      this.uncapturedErrors.push(snapshot);
+      if (this.uncapturedErrors.length > 20) {
+        this.uncapturedErrors.shift();
+      }
+      this.pushDiagnosticEvent(
+        'uncaptured-error',
+        {
+          ...snapshot,
+          recentSubmits: this.submitHistory.slice(-5),
+          previewPendingMs:
+            this.previewPendingSinceMs === null ? 0 : this.nowMs() - this.previewPendingSinceMs,
+        },
+        true
+      );
+    };
+    this.device.addEventListener('uncapturederror', this.uncapturedErrorHandler);
 
     this.prewarmPipelines();
     this.initializePresentableTextures();
@@ -750,6 +809,8 @@ export class GPUStrokeAccumulator {
     this.previewUpdateCount = 0;
     this.previewUpdateSkipCount = 0;
     this.pendingPreviewRect = null;
+    this.previewPendingSinceMs = null;
+    this.lastPreviewPendingWarnMs = 0;
     this.dualDirtyRect = {
       left: this.width,
       top: this.height,
@@ -767,6 +828,9 @@ export class GPUStrokeAccumulator {
     this.dualBrushMode = null;
     this.dualPostPending = false;
     this.fallbackRequest = null;
+    this.dualMaskCopyCount = 0;
+    this.dualMaskCopyPixels = 0;
+    this.previewMaxCopyBytes = 0;
     this.dualMaskBuffer.clear(this.device);
   }
 
@@ -1268,6 +1332,104 @@ export class GPUStrokeAccumulator {
     return Date.now();
   }
 
+  private shouldLogDiagnostics(): boolean {
+    if (typeof window === 'undefined') return false;
+    return Boolean((window as unknown as { __gpuBrushDiag?: boolean }).__gpuBrushDiag);
+  }
+
+  private getDiagnosticCopyBytesThreshold(): number {
+    if (typeof window === 'undefined') {
+      return 64 * 1024 * 1024;
+    }
+    const value = (window as unknown as { __gpuBrushDiagCopyBytesThreshold?: number })
+      .__gpuBrushDiagCopyBytesThreshold;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    return 64 * 1024 * 1024;
+  }
+
+  private getDiagnosticPendingThresholdMs(): number {
+    if (typeof window === 'undefined') {
+      return 300;
+    }
+    const value = (window as unknown as { __gpuBrushDiagPendingMsThreshold?: number })
+      .__gpuBrushDiagPendingMsThreshold;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    return 300;
+  }
+
+  private rectArea(rect: Rect | null): number {
+    if (!rect) return 0;
+    return Math.max(0, rect.right - rect.left) * Math.max(0, rect.bottom - rect.top);
+  }
+
+  private serializeError(error: unknown): {
+    name: string;
+    message: string;
+    constructorName: string;
+  } {
+    if (error instanceof Error) {
+      return {
+        name: error.name,
+        message: error.message,
+        constructorName: error.constructor?.name ?? 'Error',
+      };
+    }
+    if (typeof error === 'object' && error !== null) {
+      const maybeObj = error as {
+        name?: unknown;
+        message?: unknown;
+        constructor?: { name?: string };
+      };
+      return {
+        name: typeof maybeObj.name === 'string' ? maybeObj.name : 'UnknownError',
+        message: typeof maybeObj.message === 'string' ? maybeObj.message : String(error),
+        constructorName: maybeObj.constructor?.name ?? 'Object',
+      };
+    }
+    return {
+      name: 'UnknownError',
+      message: String(error),
+      constructorName: typeof error,
+    };
+  }
+
+  private pushDiagnosticEvent(
+    kind: string,
+    payload: Record<string, unknown>,
+    forceLog: boolean = false
+  ): void {
+    const event: GpuDiagnosticEvent = { kind, atMs: this.nowMs(), payload };
+    this.diagnosticEvents.push(event);
+    if (this.diagnosticEvents.length > 40) {
+      this.diagnosticEvents.shift();
+    }
+
+    if (forceLog || this.shouldLogDiagnostics()) {
+      const logFn = forceLog ? console.error : console.warn;
+      logFn(`[GPUStrokeAccumulator][Diag] ${kind}`, payload);
+    }
+  }
+
+  private recordSubmit(label: string): void {
+    const atMs = this.nowMs();
+    this.lastSubmitLabel = label;
+    this.lastSubmitAtMs = atMs;
+    this.submitHistory.push({ label, atMs });
+    if (this.submitHistory.length > 20) {
+      this.submitHistory.shift();
+    }
+  }
+
+  private submitEncoder(encoder: GPUCommandEncoder, label: string): void {
+    const commandBuffer = encoder.finish();
+    this.recordSubmit(label);
+    this.device.queue.submit([commandBuffer]);
+  }
+
   private addPendingPreviewRect(rect: Rect | null): void {
     if (!rect || !this.hasDirtyRect(rect)) return;
     if (!this.pendingPreviewRect) {
@@ -1295,6 +1457,20 @@ export class GPUStrokeAccumulator {
     }
     this.addPendingPreviewRect(rect);
     this.previewNeedsUpdate = true;
+    if (this.previewUpdatePending && this.previewPendingSinceMs !== null) {
+      const pendingMs = this.nowMs() - this.previewPendingSinceMs;
+      const thresholdMs = this.getDiagnosticPendingThresholdMs();
+      if (pendingMs >= thresholdMs && pendingMs - this.lastPreviewPendingWarnMs >= thresholdMs) {
+        this.lastPreviewPendingWarnMs = pendingMs;
+        this.pushDiagnosticEvent('preview-pending-long', {
+          pendingMs,
+          mapState: this.previewReadbackBuffer?.mapState ?? 'unknown',
+          pendingRectArea: this.rectArea(this.pendingPreviewRect),
+          previewNeedsUpdate: this.previewNeedsUpdate,
+          previewUpdatePending: this.previewUpdatePending,
+        });
+      }
+    }
     if (!this.previewUpdatePending) {
       void this.updatePreview();
     }
@@ -1529,7 +1705,7 @@ export class GPUStrokeAccumulator {
         }
 
         void this.profiler.resolveTimestamps(encoder);
-        this.device.queue.submit([encoder.finish()]);
+        this.submitEncoder(encoder, 'Brush Batch Encoder');
 
         const cpuTime = this.cpuTimer.stop();
         this.profiler.recordFrame({
@@ -1638,7 +1814,7 @@ export class GPUStrokeAccumulator {
     }
 
     void this.profiler.resolveTimestamps(encoder);
-    this.device.queue.submit([encoder.finish()]);
+    this.submitEncoder(encoder, 'Brush Batch Encoder');
 
     const cpuTime = this.cpuTimer.stop();
     this.profiler.recordFrame({
@@ -1734,7 +1910,7 @@ export class GPUStrokeAccumulator {
         }
 
         void this.profiler.resolveTimestamps(encoder);
-        this.device.queue.submit([encoder.finish()]);
+        this.submitEncoder(encoder, 'Texture Brush Batch Encoder');
 
         const cpuTime = this.cpuTimer.stop();
         this.profiler.recordFrame({
@@ -1844,7 +2020,7 @@ export class GPUStrokeAccumulator {
     }
 
     void this.profiler.resolveTimestamps(encoder);
-    this.device.queue.submit([encoder.finish()]);
+    this.submitEncoder(encoder, 'Texture Brush Batch Encoder');
 
     const cpuTime = this.cpuTimer.stop();
     this.profiler.recordFrame({
@@ -1872,10 +2048,27 @@ export class GPUStrokeAccumulator {
         this.dualMaskBuffer.textureWidth,
         this.dualMaskBuffer.textureHeight
       );
+      const dispatchCount = Math.ceil(allDabs.length / maxDabsPerDispatch);
+      this.dualMaskCopyCount += dispatchCount;
+      this.dualMaskCopyPixels +=
+        dispatchCount * this.dualMaskBuffer.textureWidth * this.dualMaskBuffer.textureHeight;
+      this.diagDualMaskCopyCount += dispatchCount;
+      this.diagDualMaskCopyPixels +=
+        dispatchCount * this.dualMaskBuffer.textureWidth * this.dualMaskBuffer.textureHeight;
       this.lastDualBatchRect = this.rectFromBbox(dualBbox, this.currentRenderScale);
       this.lastDualBatchLabel = 'dual-batch';
       this.addPendingPreviewRect(this.lastDualBatchRect);
       this.secondaryInstanceBuffer.clear();
+
+      this.pushDiagnosticEvent('dual-secondary-flush', {
+        kind: 'parametric',
+        dabs: allDabs.length,
+        dispatchCount,
+        bbox: dualBbox,
+        textureWidth: this.dualMaskBuffer.textureWidth,
+        textureHeight: this.dualMaskBuffer.textureHeight,
+        cumulativeCopyCount: this.dualMaskCopyCount,
+      });
 
       if (this.shouldLogUploadDebug()) {
         const estimatedUploadBytes = allDabs.length * 48;
@@ -1911,7 +2104,7 @@ export class GPUStrokeAccumulator {
         }
 
         this.dualMaskBuffer.swap();
-        this.device.queue.submit([encoder.finish()]);
+        this.submitEncoder(encoder, 'Dual Mask Batch Encoder');
         didFlush = true;
       }
     }
@@ -1936,10 +2129,27 @@ export class GPUStrokeAccumulator {
         this.dualMaskBuffer.textureWidth,
         this.dualMaskBuffer.textureHeight
       );
+      const dispatchCount = Math.ceil(allDabs.length / maxDabsPerDispatch);
+      this.dualMaskCopyCount += dispatchCount;
+      this.dualMaskCopyPixels +=
+        dispatchCount * this.dualMaskBuffer.textureWidth * this.dualMaskBuffer.textureHeight;
+      this.diagDualMaskCopyCount += dispatchCount;
+      this.diagDualMaskCopyPixels +=
+        dispatchCount * this.dualMaskBuffer.textureWidth * this.dualMaskBuffer.textureHeight;
       this.lastDualBatchRect = this.rectFromBbox(dualTextureBbox, this.currentRenderScale);
       this.lastDualBatchLabel = 'dual-texture-batch';
       this.addPendingPreviewRect(this.lastDualBatchRect);
       this.secondaryTextureInstanceBuffer.clear();
+
+      this.pushDiagnosticEvent('dual-secondary-flush', {
+        kind: 'texture',
+        dabs: allDabs.length,
+        dispatchCount,
+        bbox: dualTextureBbox,
+        textureWidth: this.dualMaskBuffer.textureWidth,
+        textureHeight: this.dualMaskBuffer.textureHeight,
+        cumulativeCopyCount: this.dualMaskCopyCount,
+      });
 
       if (this.shouldLogUploadDebug()) {
         const estimatedUploadBytes = allDabs.length * 48;
@@ -1975,7 +2185,7 @@ export class GPUStrokeAccumulator {
         }
 
         this.dualMaskBuffer.swap();
-        this.device.queue.submit([encoder.finish()]);
+        this.submitEncoder(encoder, 'Dual Texture Mask Batch Encoder');
         didFlush = true;
       }
     }
@@ -1995,6 +2205,13 @@ export class GPUStrokeAccumulator {
 
     const encoder = this.device.createCommandEncoder({
       label: 'Dual Blend Encoder',
+    });
+
+    this.pushDiagnosticEvent('dual-blend-dispatch', {
+      mode: this.dualBrushMode,
+      rectWidth: Math.max(0, rect.right - rect.left),
+      rectHeight: Math.max(0, rect.bottom - rect.top),
+      renderScale: this.currentRenderScale,
     });
 
     this.computeDualBlendPipeline.dispatch(
@@ -2022,7 +2239,7 @@ export class GPUStrokeAccumulator {
       this.endWetEdgeDebug('dual', wetDebug.start, wetDebug.label);
     }
 
-    this.device.queue.submit([encoder.finish()]);
+    this.submitEncoder(encoder, 'Dual Blend Encoder');
 
     this.requestPreviewUpdate(null);
   }
@@ -2147,19 +2364,28 @@ export class GPUStrokeAccumulator {
 
     // Optimization 5: If buffer is pending, mark retry instead of silent skip
     if (this.previewReadbackBuffer.mapState !== 'unmapped') {
-      console.warn('[GPUStrokeAccumulator] Buffer is not unmapped, will retry');
+      const pendingMs =
+        this.previewPendingSinceMs === null ? 0 : this.nowMs() - this.previewPendingSinceMs;
+      this.pushDiagnosticEvent('preview-buffer-busy', {
+        mapState: this.previewReadbackBuffer.mapState,
+        pendingMs,
+        pendingRectArea: this.rectArea(this.pendingPreviewRect),
+      });
       this.previewNeedsUpdate = true; // Ensure next call will retry
       this.previewUpdateSkipCount++;
+      this.diagPreviewSkipCount++;
       return;
     }
 
     this.previewUpdatePending = true;
     this.previewNeedsUpdate = false;
+    this.previewPendingSinceMs = this.nowMs();
 
     // Store the promise for concurrent access
 
     this.currentPreviewPromise = (async () => {
       const updateStart = this.nowMs();
+      let previewDiagContext: Record<string, unknown> = {};
       try {
         // Get dirty rect bounds (in logical/canvas coordinates) - use integers
         const preferred = this.getPreviewUpdateRect();
@@ -2185,6 +2411,31 @@ export class GPUStrokeAccumulator {
           // rgba32float = 16 bytes/pixel. bytesPerRow must be 256-byte aligned.
           const bytesPerRow = alignTo(copyRect.width * 16, 256);
           const copyBytes = bytesPerRow * copyRect.height;
+          this.previewMaxCopyBytes = Math.max(this.previewMaxCopyBytes, copyBytes);
+          this.diagPreviewMaxCopyBytes = Math.max(this.diagPreviewMaxCopyBytes, copyBytes);
+          const maxBufferSize = this.device.limits.maxBufferSize;
+          const copyRatio = maxBufferSize > 0 ? copyBytes / maxBufferSize : 0;
+          previewDiagContext = {
+            source: preferred.source,
+            rectWidth,
+            rectHeight,
+            copyOriginX: copyRect.originX,
+            copyOriginY: copyRect.originY,
+            copyWidth: copyRect.width,
+            copyHeight: copyRect.height,
+            bytesPerRow,
+            copyBytes,
+            maxBufferSize,
+            copyRatio,
+            renderScale: scale,
+          };
+          if (
+            copyBytes >= this.getDiagnosticCopyBytesThreshold() ||
+            copyRatio >= 0.8 ||
+            rectWidth * rectHeight >= 2_000_000
+          ) {
+            this.pushDiagnosticEvent('preview-copy-large', previewDiagContext);
+          }
           this.ensurePreviewReadbackBufferCapacity(copyBytes);
 
           // Copy just the region we need from the presentable texture (raw / wet-edge / dual blend).
@@ -2197,9 +2448,10 @@ export class GPUStrokeAccumulator {
             { buffer: this.previewReadbackBuffer!, bytesPerRow },
             [copyRect.width, copyRect.height]
           );
-          this.device.queue.submit([encoder.finish()]);
+          this.submitEncoder(encoder, 'Preview Readback Encoder');
 
           let mapped = false;
+          const mapStart = this.nowMs();
           try {
             await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ, 0, copyBytes);
             mapped = true;
@@ -2264,7 +2516,20 @@ export class GPUStrokeAccumulator {
             this.lastPreviewUpdateRect = rect;
             this.lastPreviewUpdateSource = preferred.source;
             this.previewUpdateCount += 1;
+            this.diagPreviewUpdateCount += 1;
             this.lastPreviewUpdateMs = this.nowMs() - updateStart;
+            const mapMs = this.nowMs() - mapStart;
+            if (
+              this.lastPreviewUpdateMs >= this.getDiagnosticPendingThresholdMs() ||
+              copyBytes >= this.getDiagnosticCopyBytesThreshold()
+            ) {
+              this.pushDiagnosticEvent('preview-update-timing', {
+                ...previewDiagContext,
+                mapMs,
+                totalMs: this.lastPreviewUpdateMs,
+                pendingRectArea: this.rectArea(this.pendingPreviewRect),
+              });
+            }
           } finally {
             if (mapped) {
               try {
@@ -2277,10 +2542,23 @@ export class GPUStrokeAccumulator {
         }
       } catch (e) {
         this.previewNeedsUpdate = true;
+        this.pushDiagnosticEvent(
+          'preview-update-failed',
+          {
+            ...previewDiagContext,
+            mapState: this.previewReadbackBuffer?.mapState ?? 'unknown',
+            pendingMs:
+              this.previewPendingSinceMs === null ? 0 : this.nowMs() - this.previewPendingSinceMs,
+            error: this.serializeError(e),
+          },
+          true
+        );
         console.error('[GPUStrokeAccumulator] Preview update failed:', e);
       } finally {
         this.currentPreviewPromise = null;
         this.previewUpdatePending = false;
+        this.previewPendingSinceMs = null;
+        this.lastPreviewPendingWarnMs = 0;
         // If more updates were requested while we were updating, do another round
         if (this.previewNeedsUpdate) {
           void this.updatePreview();
@@ -2574,6 +2852,47 @@ export class GPUStrokeAccumulator {
     return this.profiler.getSummary();
   }
 
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      canvas: {
+        width: this.width,
+        height: this.height,
+        renderScale: this.currentRenderScale,
+        previewReadbackEnabled: this.previewReadbackEnabled,
+      },
+      preview: {
+        strokeUpdateCount: this.previewUpdateCount,
+        strokeSkipCount: this.previewUpdateSkipCount,
+        totalUpdateCount: this.diagPreviewUpdateCount,
+        totalSkipCount: this.diagPreviewSkipCount,
+        lastSource: this.lastPreviewUpdateSource,
+        lastMs: this.lastPreviewUpdateMs,
+        strokeMaxCopyBytes: this.previewMaxCopyBytes,
+        totalMaxCopyBytes: this.diagPreviewMaxCopyBytes,
+        pending: this.previewUpdatePending,
+        pendingMs:
+          this.previewPendingSinceMs === null ? 0 : this.nowMs() - this.previewPendingSinceMs,
+      },
+      dual: {
+        strokeMaskCopyCount: this.dualMaskCopyCount,
+        strokeMaskCopyPixels: this.dualMaskCopyPixels,
+        totalMaskCopyCount: this.diagDualMaskCopyCount,
+        totalMaskCopyPixels: this.diagDualMaskCopyPixels,
+        lastPrimaryBatchLabel: this.lastPrimaryBatchLabel,
+        lastDualBatchLabel: this.lastDualBatchLabel,
+      },
+      submit: {
+        lastLabel: this.lastSubmitLabel,
+        lastAtMs: this.lastSubmitAtMs,
+        recent: this.submitHistory.slice(-8),
+      },
+      uncapturedErrors: this.uncapturedErrors.slice(-8),
+      events: this.diagnosticEvents.slice(-20),
+      fallbackRequest: this.fallbackRequest,
+      deviceLost: this.deviceLost,
+    };
+  }
+
   /**
    * Get the presentable texture for preview/composite.
    * Returns the display texture (with wet edge applied) if wet edge is enabled,
@@ -2608,6 +2927,10 @@ export class GPUStrokeAccumulator {
    * Release all GPU resources
    */
   destroy(): void {
+    if (this.uncapturedErrorHandler) {
+      this.device.removeEventListener('uncapturederror', this.uncapturedErrorHandler);
+      this.uncapturedErrorHandler = null;
+    }
     this.pingPongBuffer.destroy();
     this.instanceBuffer.destroy();
     this.brushPipeline.destroy();

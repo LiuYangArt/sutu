@@ -37,6 +37,8 @@ import {
   shouldUseGPU,
   reportGPUFallback,
   type RenderBackend,
+  type GpuScratchHandle,
+  type GpuStrokePrepareResult,
 } from '@/gpu';
 import {
   computeDabShape,
@@ -173,11 +175,20 @@ export interface UseBrushRendererResult {
   gpuAvailable: boolean;
   getDebugRects: () => Array<{ rect: Rect; label: string; color: string }> | null;
   setGpuPreviewReadbackEnabled: (enabled: boolean) => void;
+  getScratchHandle: () => GpuScratchHandle | null;
+  prepareStrokeEndGpu: () => Promise<GpuStrokePrepareResult>;
+  clearScratchGpu: () => void;
+  /** @deprecated Use getScratchHandle instead. */
   getGpuScratchTexture: () => GPUTexture | null;
+  /** @deprecated Use prepareStrokeEndGpu instead. */
   prepareEndStrokeGpu: () => Promise<void>;
+  /** @deprecated Use clearScratchGpu instead. */
   clearGpuScratch: () => void;
+  /** @deprecated Use prepareStrokeEndGpu() result.dirtyRect instead. */
   getGpuDirtyRect: () => Rect | null;
+  /** @deprecated Use getScratchHandle() result.renderScale instead. */
   getGpuRenderScale: () => number;
+  getGpuDiagnosticsSnapshot: () => unknown;
 }
 
 export function useBrushRenderer({
@@ -746,21 +757,58 @@ export function useBrushRenderer({
     gpuBufferRef.current?.setPreviewReadbackEnabled(enabled);
   }, []);
 
-  const getGpuScratchTexture = useCallback(() => {
-    return gpuBufferRef.current?.getScratchTexture() ?? null;
-  }, []);
-
-  const prepareEndStrokeGpu = useCallback(async () => {
+  const getScratchHandle = useCallback((): GpuScratchHandle | null => {
     if (backend === 'gpu' && gpuBufferRef.current) {
-      await gpuBufferRef.current.prepareEndStroke();
+      const texture = gpuBufferRef.current.getScratchTexture();
+      if (!texture) return null;
+      return {
+        texture,
+        renderScale: gpuBufferRef.current.getRenderScale(),
+      };
     }
+    return null;
   }, [backend]);
 
-  const clearGpuScratch = useCallback(() => {
+  const prepareStrokeEndGpu = useCallback(async (): Promise<GpuStrokePrepareResult> => {
+    if (backend === 'gpu' && gpuBufferRef.current) {
+      await gpuBufferRef.current.prepareEndStroke();
+      const texture = gpuBufferRef.current.getScratchTexture();
+      return {
+        dirtyRect: gpuBufferRef.current.getDirtyRect(),
+        strokeOpacity: strokeOpacityRef.current,
+        scratch: texture
+          ? {
+              texture,
+              renderScale: gpuBufferRef.current.getRenderScale(),
+            }
+          : null,
+      };
+    }
+    return {
+      dirtyRect: null,
+      strokeOpacity: strokeOpacityRef.current,
+      scratch: null,
+    };
+  }, [backend]);
+
+  const clearScratchGpu = useCallback(() => {
     if (backend === 'gpu' && gpuBufferRef.current) {
       gpuBufferRef.current.clear();
     }
   }, [backend]);
+
+  // Backward-compatible aliases during API transition.
+  const getGpuScratchTexture = useCallback(() => {
+    return getScratchHandle()?.texture ?? null;
+  }, [getScratchHandle]);
+
+  const prepareEndStrokeGpu = useCallback(async () => {
+    await prepareStrokeEndGpu();
+  }, [prepareStrokeEndGpu]);
+
+  const clearGpuScratch = useCallback(() => {
+    clearScratchGpu();
+  }, [clearScratchGpu]);
 
   const getGpuDirtyRect = useCallback(() => {
     if (backend === 'gpu' && gpuBufferRef.current) {
@@ -775,6 +823,10 @@ export function useBrushRenderer({
     }
     return 1.0;
   }, [backend]);
+
+  const getGpuDiagnosticsSnapshot = useCallback(() => {
+    return gpuBufferRef.current?.getDiagnosticSnapshot() ?? null;
+  }, []);
 
   /**
    * Flush pending dabs to GPU (called once per frame by RAF loop)
@@ -811,10 +863,14 @@ export function useBrushRenderer({
     backend,
     gpuAvailable,
     setGpuPreviewReadbackEnabled,
+    getScratchHandle,
+    prepareStrokeEndGpu,
+    clearScratchGpu,
     getGpuScratchTexture,
     prepareEndStrokeGpu,
     clearGpuScratch,
     getGpuDirtyRect,
     getGpuRenderScale,
+    getGpuDiagnosticsSnapshot,
   };
 }

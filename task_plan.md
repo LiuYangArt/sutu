@@ -1,30 +1,44 @@
-# Task Plan: GPU-First M2 (Single-Layer Paintable)
+# Task Plan: GPU-First M2（单层可绘）
 
 ## Goal
-以“GPU tile layer + 全尺寸 scratch + 无实时 readback”为核心路径，完成 M0 基线验证与 M2 单层可绘交付，并保持选区与历史在 stroke end 的小范围 readback。
+按 `docs/plans/2026-02-05-gpu-first-brush-design.md` 完成 M2 单层 GPU 可绘闭环，并保留多层 Canvas2D fallback。
 
-## Phases
-- [x] Phase 1: Plan and setup
-- [x] Phase 2: M0 baseline + benchmarks
-- [x] Phase 3: Tile layer + GPU display
-- [x] Phase 4: GPU commit + selection + dirty readback
-- [x] Phase 5: Review and deliver
+## Phases（补全计划执行）
+- [x] Phase 1：接口契约收口
+- [x] Phase 2：引入 `GpuStrokeCommitCoordinator`
+- [x] Phase 3：LRU 预算接线（probe -> localStorage -> renderer）
+- [x] Phase 4：SelectionMask 改为 `r8unorm`
+- [x] Phase 5：验收模板回填到设计文档
 
-## Key Questions
-1. 单层 GPU 路径的 fallback/切换条件是否稳定？（待持续观察）
-2. `rgba8unorm` linear + dither vs `rgba8unorm-srgb` 的最终选择？（已锁定：linear + dither）
-3. 256/512 tile size 的实际性能差异？（已对比：512更快但 LRU miss 更高）
+## 已完成实现
+- 新增类型契约：`GpuScratchHandle` / `GpuStrokePrepareResult` / `GpuStrokeCommitResult`
+- `useBrushRenderer` 收口为：
+  - `getScratchHandle()`
+  - `prepareStrokeEndGpu()`
+  - `clearScratchGpu()`
+- 旧接口兼容别名仍保留一周期：
+  - `getGpuScratchTexture()`
+  - `prepareEndStrokeGpu()`
+  - `clearGpuScratch()`
+  - `getGpuDirtyRect()`
+  - `getGpuRenderScale()`
+- 新增 `GpuStrokeCommitCoordinator`，`Canvas/index.tsx` 不再直接拼 commit/readback 流程。
+- 新增 `ResidencyBudget`：
+  - `__gpuM0Baseline()` 后缓存预算（ratio=0.6）
+  - `GpuCanvasRenderer` 初始化读取缓存并设置 budget
+- Selection mask 已从 `rgba8unorm` 切到 `r8unorm`，shader 读取 `mask.r`。
+- 设计文档新增“M2 验收记录模板”。
 
-## Decisions Made
-- 单层 GPU 可绘优先，多层可见回退 Canvas2D。
-- scratch 全尺寸保留，后续再 tile 化。
-- 选区与历史在 stroke end 做小范围 readback。
-- 格式选择：`rgba8unorm (linear + dither)`（三图对比无肉眼差异，先锁定）。
-- GPU 显示条件：`renderMode=gpu` 且 `currentTool=brush` 且 `visibleLayerCount<=1`，否则 fallback。
-- Tile size：暂定 512（性能更低开销；LRU miss 偏高，预算比例需保守）。
+## 已确认决策
+- Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
+- Tile size：M2 先用 `512`
+- GPU 显示条件：`renderMode=gpu && currentTool=brush && visibleLayerCount<=1`
+- readback 策略：仅 stroke end（dirty）与导出时执行
 
-## Errors Encountered
-- None
+## 下一步（验收执行）
+1. 跑一次 `window.__gpuM0Baseline()`，确认预算缓存写入。
+2. 按设计文档 13.2 的 4 个手动场景执行并记录结果。
+3. 在设计文档 13.3 模板中填写 PASS/FAIL 与阻塞项。
 
 ## Status
-**Completed** - 交付说明已补齐
+**In Progress** - 代码补全已完成，待执行人工验收并回填结果

@@ -7,6 +7,7 @@
 import type { Rect } from '@/utils/strokeBuffer';
 import type { BrushTexture } from '@/stores/tool';
 import type { TextureSettings, TextureBlendMode } from '@/components/BrushPanel/types';
+import type { TileCoord } from './layers/GpuLayerStore';
 
 /**
  * Dab instance data for GPU instancing
@@ -74,6 +75,28 @@ export interface BoundingBox {
  * Render backend type
  */
 export type RenderBackend = 'gpu' | 'canvas2d';
+
+export interface GpuScratchHandle {
+  texture: GPUTexture;
+  renderScale: number;
+}
+
+export interface GpuStrokePrepareResult {
+  dirtyRect: Rect | null;
+  strokeOpacity: number;
+  scratch: GpuScratchHandle | null;
+}
+
+export interface GpuStrokeCommitResult {
+  committed: boolean;
+  dirtyRect: Rect | null;
+  dirtyTiles: TileCoord[];
+  timings: {
+    prepareMs: number;
+    commitMs: number;
+    readbackMs: number;
+  };
+}
 
 /**
  * GPU Stroke Accumulator interface

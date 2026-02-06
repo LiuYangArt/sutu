@@ -6,7 +6,7 @@ import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
-import type { RenderBackend } from '@/gpu';
+import type { GpuStrokeCommitResult, RenderBackend } from '@/gpu';
 
 const MAX_POINTS_PER_FRAME = 80;
 // Photoshop Build-up (Airbrush) rate tuning:
@@ -48,7 +48,7 @@ interface UseStrokeProcessorParams {
   brushBackend: RenderBackend;
   useGpuDisplay: boolean;
   renderGpuFrame: (showScratch: boolean) => void;
-  commitStrokeGpu?: () => Promise<void>;
+  commitStrokeGpu?: () => Promise<GpuStrokeCommitResult>;
   getBrushConfig: () => BrushRenderConfig;
   getShiftLineGuide: () => {
     start: { x: number; y: number };

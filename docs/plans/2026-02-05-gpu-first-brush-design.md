@@ -301,3 +301,51 @@
   **结论**：先锁定 `rgba8unorm (linear + dither)` 作为 layer 存储；`rgba8unorm-srgb` 暂不引入额外复杂度。
 - **Tile Size**：256/512 的总显存相近，但 512 调度与 LRU 开销更低。  
   **建议**：M2 阶段先用 **512**，M3 再对比 256 的 cache miss 与帧耗时。
+
+## 13. M2 验收记录模板（补全）
+
+> 目标：统一“自动 + 手动”验收入口，记录通过/阻塞信息，避免口头结论不可复现。
+
+### 13.1 自动检查（每次改动后）
+
+- `pnpm -s check:all`（必须通过；允许既有 warning，不新增 error）
+- `window.__gpuM0Baseline()`（确认可执行并写入 residency budget 缓存）
+- `window.__gpuTileSizeCompare({...})`（可选，针对预算/viewport 调参）
+
+### 13.2 手动验收场景（M2 最小集）
+
+1. 单层 4K 连续绘制 30s  
+   期望：无 WebGPU ValidationError / device lost，输入无明显抖动。
+2. 选区绘制（含边缘）  
+   期望：仅选区内修改，边缘无越界污染。
+3. 撤销/重做  
+   期望：dirty tile readback 后历史回滚正确。
+4. 多层可见 fallback  
+   期望：自动切 Canvas2D，视觉结果正确。
+
+### 13.3 验收结果记录（复制填写）
+
+```md
+#### M2 Acceptance Run - YYYY-MM-DD HH:mm
+
+- Build/Checks:
+  - `pnpm -s check:all`: PASS/FAIL
+- Environment:
+  - GPU:
+  - Canvas size:
+  - Render mode:
+- Case 1 (Single-layer 4K 30s): PASS/FAIL
+  - Notes:
+- Case 2 (Selection bounds/AA): PASS/FAIL
+  - Notes:
+- Case 3 (Undo/Redo): PASS/FAIL
+  - Notes:
+- Case 4 (Multi-layer fallback): PASS/FAIL
+  - Notes:
+- Resource/Performance:
+  - Residency budget bytes:
+  - Dirty tiles per commit (sample):
+- Final:
+  - Overall: PASS/FAIL
+  - Blockers:
+```

@@ -20,7 +20,13 @@ import { SelectionOverlay } from './SelectionOverlay';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
-import { GPUContext, GpuCanvasRenderer } from '@/gpu';
+import {
+  GPUContext,
+  GpuCanvasRenderer,
+  GpuStrokeCommitCoordinator,
+  loadResidencyBudget,
+  type GpuStrokeCommitResult,
+} from '@/gpu';
 
 import './Canvas.css';
 
@@ -37,6 +43,10 @@ declare global {
     ) => Promise<void>;
     __gpuBrushDebugRects?: boolean;
     __gpuBrushUseBatchUnionRect?: boolean;
+    __gpuBrushDiag?: boolean;
+    __gpuBrushDiagCopyBytesThreshold?: number;
+    __gpuBrushDiagPendingMsThreshold?: number;
+    __gpuBrushDiagnostics?: () => unknown;
     __gpuM0Baseline?: () => Promise<void>;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
@@ -59,6 +69,8 @@ export function Canvas() {
   const layerRendererRef = useRef<LayerRenderer | null>(null);
   const strokeBufferRef = useRef(new StrokeBuffer());
   const gpuRendererRef = useRef<GpuCanvasRenderer | null>(null);
+  const gpuCommitCoordinatorRef = useRef<GpuStrokeCommitCoordinator | null>(null);
+  const residencyBudgetLoggedRef = useRef(false);
   const layerRevisionRef = useRef(0);
   const lagometerRef = useRef(new LagometerMonitor());
   const fpsCounterRef = useRef(new FPSCounter());
@@ -180,11 +192,11 @@ export function Canvas() {
     backend: brushBackend,
     gpuAvailable,
     setGpuPreviewReadbackEnabled,
-    getGpuScratchTexture,
-    prepareEndStrokeGpu,
-    clearGpuScratch,
-    getGpuDirtyRect,
+    getScratchHandle,
+    prepareStrokeEndGpu,
+    clearScratchGpu,
     getGpuRenderScale,
+    getGpuDiagnosticsSnapshot,
   } = useBrushRenderer({
     width,
     height,
@@ -211,8 +223,41 @@ export function Canvas() {
       });
     }
 
+    const budgetInfo = loadResidencyBudget();
+    gpuRendererRef.current.setResidencyBudgetBytes(budgetInfo.budgetBytes);
+    if (!residencyBudgetLoggedRef.current) {
+      const budgetMb = (budgetInfo.budgetBytes / (1024 * 1024)).toFixed(0);
+      if (budgetInfo.source === 'probe') {
+        const maxProbeGb = ((budgetInfo.maxAllocationBytes ?? 0) / (1024 * 1024 * 1024)).toFixed(2);
+        // eslint-disable-next-line no-console
+        console.info(
+          `[GpuCanvasRenderer] Residency budget from probe: ${budgetMb} MB (probe max ${maxProbeGb} GiB)`
+        );
+      } else {
+        // eslint-disable-next-line no-console
+        console.info(`[GpuCanvasRenderer] Residency budget fallback: ${budgetMb} MB`);
+      }
+      residencyBudgetLoggedRef.current = true;
+    }
+
     gpuRendererRef.current.resize(width, height);
   }, [gpuAvailable, width, height]);
+
+  useEffect(() => {
+    const gpuRenderer = gpuRendererRef.current;
+    if (!gpuRenderer) return;
+
+    gpuCommitCoordinatorRef.current = new GpuStrokeCommitCoordinator({
+      gpuRenderer,
+      prepareStrokeEndGpu,
+      clearScratchGpu,
+      getTargetLayer: (layerId: string) => {
+        const layer = layerRendererRef.current?.getLayer(layerId);
+        if (!layer) return null;
+        return { canvas: layer.canvas, ctx: layer.ctx };
+      },
+    });
+  }, [prepareStrokeEndGpu, clearScratchGpu]);
 
   useEffect(() => {
     setGpuPreviewReadbackEnabled(!gpuDisplayActive);
@@ -296,11 +341,8 @@ export function Canvas() {
         strokeOpacity: 1,
         renderScale: getGpuRenderScale(),
       });
-
       const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, docWidth, docHeight);
-      }
+      if (ctx) ctx.clearRect(0, 0, docWidth, docHeight);
       return;
     }
 
@@ -348,67 +390,36 @@ export function Canvas() {
 
       gpuRenderer.syncLayerFromCanvas(activeLayerId, layer.canvas, layerRevisionRef.current);
 
-      const scratchTexture = showScratch ? getGpuScratchTexture() : null;
+      const scratchHandle = showScratch ? getScratchHandle() : null;
       const strokeOpacity = showScratch ? getPreviewOpacity() : 1;
 
       gpuRenderer.renderFrame({
         layerId: activeLayerId,
-        scratchTexture,
+        scratchTexture: scratchHandle?.texture ?? null,
         strokeOpacity,
-        renderScale: getGpuRenderScale(),
+        renderScale: scratchHandle?.renderScale ?? getGpuRenderScale(),
       });
     },
-    [activeLayerId, getGpuScratchTexture, getPreviewOpacity, getGpuRenderScale]
+    [activeLayerId, getScratchHandle, getPreviewOpacity, getGpuRenderScale]
   );
 
-  const commitStrokeGpu = useCallback(async () => {
-    const gpuRenderer = gpuRendererRef.current;
-    const renderer = layerRendererRef.current;
-    if (!gpuRenderer || !renderer || !activeLayerId) return;
-
-    const scratchTexture = getGpuScratchTexture();
-    const dirtyRect = getGpuDirtyRect();
-    if (
-      !scratchTexture ||
-      !dirtyRect ||
-      dirtyRect.right <= dirtyRect.left ||
-      dirtyRect.bottom <= dirtyRect.top
-    ) {
-      clearGpuScratch();
-      return;
+  const commitStrokeGpu = useCallback(async (): Promise<GpuStrokeCommitResult> => {
+    const coordinator = gpuCommitCoordinatorRef.current;
+    if (!coordinator) {
+      return {
+        committed: false,
+        dirtyRect: null,
+        dirtyTiles: [],
+        timings: { prepareMs: 0, commitMs: 0, readbackMs: 0 },
+      };
     }
-
-    await prepareEndStrokeGpu();
-
-    const tiles = gpuRenderer.commitStroke({
-      layerId: activeLayerId,
-      scratchTexture,
-      dirtyRect,
-      strokeOpacity: getPreviewOpacity(),
-      renderScale: getGpuRenderScale(),
-      applyDither: true,
-      ditherStrength: 1.0,
-    });
-
-    clearGpuScratch();
-
-    const layer = renderer.getLayer(activeLayerId);
-    if (layer) {
-      await gpuRenderer.readbackTilesToLayer({
-        layerId: activeLayerId,
-        tiles,
-        targetCtx: layer.ctx,
-      });
+    const result = await coordinator.commit(activeLayerId);
+    if (result.committed) {
+      // Ensure GPU tile display path re-uploads updated layer content after dirty-tile readback.
+      markLayerDirty();
     }
-  }, [
-    activeLayerId,
-    getGpuScratchTexture,
-    getGpuDirtyRect,
-    prepareEndStrokeGpu,
-    clearGpuScratch,
-    getPreviewOpacity,
-    getGpuRenderScale,
-  ]);
+    return result;
+  }, [activeLayerId, markLayerDirty]);
 
   useGlobalExports({
     layerRendererRef,
@@ -421,6 +432,7 @@ export function Canvas() {
     handleDuplicateLayer,
     handleRemoveLayer,
     handleResizeCanvas,
+    getGpuDiagnosticsSnapshot,
   });
 
   // Initialize document and layer renderer

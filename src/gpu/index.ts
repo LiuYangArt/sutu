@@ -16,6 +16,9 @@ export type {
   RenderBackend,
   IGPUStrokeAccumulator,
   GPUDabParams,
+  GpuScratchHandle,
+  GpuStrokePrepareResult,
+  GpuStrokeCommitResult,
 } from './types';
 
 export {
@@ -53,3 +56,10 @@ export { GpuCanvasRenderer } from './layers/GpuCanvasRenderer';
 export { GpuLayerStore } from './layers/GpuLayerStore';
 export { TileResidencyManager } from './layers/TileResidencyManager';
 export { SelectionMaskGpu } from './layers/SelectionMaskGpu';
+export { GpuStrokeCommitCoordinator } from './layers/GpuStrokeCommitCoordinator';
+export {
+  clampResidencyBudgetBytes,
+  computeResidencyBudgetFromProbe,
+  loadResidencyBudget,
+  persistResidencyBudgetFromProbe,
+} from './layers/ResidencyBudget';

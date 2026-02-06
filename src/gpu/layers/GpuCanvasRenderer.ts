@@ -34,19 +34,17 @@ interface ReadbackTarget {
 }
 
 const DEFAULT_DITHER_STRENGTH = 1.0;
+const UNIFORM_STRUCT_BYTES = 48;
+const INITIAL_UNIFORM_SLOTS = 1024;
 
-function createSolidTexture1x1Unorm(
-  device: GPUDevice,
-  label: string,
-  rgba: [number, number, number, number]
-): GPUTexture {
+function createSolidMaskTexture1x1(device: GPUDevice, label: string, value: number): GPUTexture {
   const texture = device.createTexture({
     label,
     size: [1, 1],
-    format: 'rgba8unorm',
+    format: 'r8unorm',
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   });
-  device.queue.writeTexture({ texture }, new Uint8Array(rgba), { bytesPerRow: 4 }, [1, 1]);
+  device.queue.writeTexture({ texture }, new Uint8Array([value]), { bytesPerRow: 1 }, [1, 1]);
   return texture;
 }
 
@@ -110,6 +108,8 @@ export class GpuCanvasRenderer {
 
   private uniformBuffer: GPUBuffer;
   private uniformData: ArrayBuffer;
+  private uniformStride: number;
+  private uniformSlots: number;
   private bindGroupLayout: GPUBindGroupLayout;
   private pipelineLayout: GPUPipelineLayout;
   private displayPipeline: GPURenderPipeline;
@@ -161,16 +161,25 @@ export class GpuCanvasRenderer {
 
     this.selectionMask = new SelectionMaskGpu(device);
 
-    this.uniformData = new ArrayBuffer(48);
-    this.uniformBuffer = device.createBuffer({
-      label: 'Tile Composite Uniforms',
-      size: this.uniformData.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    this.uniformData = new ArrayBuffer(UNIFORM_STRUCT_BYTES);
+    this.uniformStride = alignTo(
+      UNIFORM_STRUCT_BYTES,
+      device.limits.minUniformBufferOffsetAlignment
+    );
+    this.uniformSlots = INITIAL_UNIFORM_SLOTS;
+    this.uniformBuffer = this.createUniformBuffer(this.uniformSlots);
 
     this.bindGroupLayout = device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: {
+            type: 'uniform',
+            hasDynamicOffset: true,
+            minBindingSize: UNIFORM_STRUCT_BYTES,
+          },
+        },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         {
           binding: 2,
@@ -214,11 +223,7 @@ export class GpuCanvasRenderer {
       primitive: { topology: 'triangle-list' },
     });
 
-    this.whiteMaskTexture = createSolidTexture1x1Unorm(
-      device,
-      'Selection Mask Fallback',
-      [255, 255, 255, 255]
-    );
+    this.whiteMaskTexture = createSolidMaskTexture1x1(device, 'Selection Mask Fallback', 255);
     this.whiteMaskView = this.whiteMaskTexture.createView();
 
     this.transparentLayerTexture = createSolidTextureUnorm(
@@ -257,9 +262,11 @@ export class GpuCanvasRenderer {
     this.selectionMask.update(mask);
   }
 
+  setResidencyBudgetBytes(maxBytes: number): void {
+    this.residency.setBudgetBytes(maxBytes);
+  }
+
   syncLayerFromCanvas(layerId: string, canvas: HTMLCanvasElement, revision: number): void {
-    const last = this.layerRevisions.get(layerId);
-    if (last === revision) return;
     this.layerStore.uploadLayerFromCanvas(layerId, canvas);
     this.layerRevisions.set(layerId, revision);
   }
@@ -267,6 +274,7 @@ export class GpuCanvasRenderer {
   renderFrame(params: RenderFrameParams): void {
     const { layerId, scratchTexture, strokeOpacity, renderScale } = params;
     const clampedOpacity = Math.max(0, Math.min(1, strokeOpacity));
+    this.ensureUniformBufferCapacity(this.visibleTiles.length);
     const view = this.context.getCurrentTexture().createView();
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -284,6 +292,7 @@ export class GpuCanvasRenderer {
 
     const scratchView = scratchTexture ? scratchTexture.createView() : this.transparentScratchView;
     const selectionView = this.selectionMask.getTextureView() ?? this.whiteMaskView;
+    let drawIndex = 0;
 
     for (const coord of this.visibleTiles) {
       const rect = this.layerStore.getTileRect(coord);
@@ -292,7 +301,7 @@ export class GpuCanvasRenderer {
       const tile = this.layerStore.getTile(layerId, coord);
       const tileView = tile ? tile.view : this.transparentLayerView;
 
-      this.writeUniforms({
+      const uniformOffset = this.writeUniforms(drawIndex, {
         canvasWidth: this.width,
         canvasHeight: this.height,
         tileOriginX: rect.originX,
@@ -308,7 +317,7 @@ export class GpuCanvasRenderer {
       const bindGroup = this.device.createBindGroup({
         layout: this.bindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: this.uniformBuffer } },
+          { binding: 0, resource: { buffer: this.uniformBuffer, size: UNIFORM_STRUCT_BYTES } },
           { binding: 1, resource: tileView },
           { binding: 2, resource: scratchView },
           { binding: 3, resource: selectionView },
@@ -317,8 +326,9 @@ export class GpuCanvasRenderer {
 
       pass.setViewport(rect.originX, rect.originY, rect.width, rect.height, 0, 1);
       pass.setScissorRect(rect.originX, rect.originY, rect.width, rect.height);
-      pass.setBindGroup(0, bindGroup);
+      pass.setBindGroup(0, bindGroup, [uniformOffset]);
       pass.draw(6, 1, 0, 0);
+      drawIndex += 1;
     }
 
     pass.end();
@@ -332,10 +342,13 @@ export class GpuCanvasRenderer {
     const tiles = this.getTilesForRect(dirtyRect);
     if (tiles.length === 0) return [];
 
+    this.ensureUniformBufferCapacity(tiles.length);
     const scratchView = scratchTexture.createView();
     const selectionView = this.selectionMask.getTextureView() ?? this.whiteMaskView;
 
     const encoder = this.device.createCommandEncoder();
+    const tempTexturesToDestroy: GPUTexture[] = [];
+    let drawIndex = 0;
 
     for (const coord of tiles) {
       const rect = this.layerStore.getTileRect(coord);
@@ -357,13 +370,14 @@ export class GpuCanvasRenderer {
           renderScale,
           applyDither,
           ditherStrength,
+          uniformIndex: drawIndex,
         });
 
         encoder.copyTextureToTexture({ texture: tempTexture }, { texture: existingTile.texture }, [
           this.tileSize,
           this.tileSize,
         ]);
-        tempTexture.destroy();
+        tempTexturesToDestroy.push(tempTexture);
       } else {
         const newTile = this.layerStore.getOrCreateTile(layerId, coord);
         this.renderCompositePass({
@@ -377,11 +391,16 @@ export class GpuCanvasRenderer {
           renderScale,
           applyDither,
           ditherStrength,
+          uniformIndex: drawIndex,
         });
       }
+      drawIndex += 1;
     }
 
     this.device.queue.submit([encoder.finish()]);
+    for (const texture of tempTexturesToDestroy) {
+      texture.destroy();
+    }
     return tiles;
   }
 
@@ -444,6 +463,7 @@ export class GpuCanvasRenderer {
     renderScale: number;
     applyDither: boolean;
     ditherStrength: number;
+    uniformIndex: number;
   }): void {
     const {
       encoder,
@@ -456,9 +476,10 @@ export class GpuCanvasRenderer {
       renderScale,
       applyDither,
       ditherStrength,
+      uniformIndex,
     } = args;
 
-    this.writeUniforms({
+    const uniformOffset = this.writeUniforms(uniformIndex, {
       canvasWidth: this.width,
       canvasHeight: this.height,
       tileOriginX: tileRect.originX,
@@ -474,7 +495,7 @@ export class GpuCanvasRenderer {
     const bindGroup = this.device.createBindGroup({
       layout: this.bindGroupLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        { binding: 0, resource: { buffer: this.uniformBuffer, size: UNIFORM_STRUCT_BYTES } },
         { binding: 1, resource: tileView },
         { binding: 2, resource: scratchView },
         { binding: 3, resource: selectionView },
@@ -493,25 +514,29 @@ export class GpuCanvasRenderer {
     });
 
     pass.setPipeline(this.commitPipeline);
-    pass.setBindGroup(0, bindGroup);
+    pass.setBindGroup(0, bindGroup, [uniformOffset]);
     pass.setViewport(0, 0, tileRect.width, tileRect.height, 0, 1);
     pass.setScissorRect(0, 0, tileRect.width, tileRect.height);
     pass.draw(6, 1, 0, 0);
     pass.end();
   }
 
-  private writeUniforms(args: {
-    canvasWidth: number;
-    canvasHeight: number;
-    tileOriginX: number;
-    tileOriginY: number;
-    positionOriginX: number;
-    positionOriginY: number;
-    strokeOpacity: number;
-    applyDither: boolean;
-    ditherStrength: number;
-    renderScale: number;
-  }): void {
+  private writeUniforms(
+    index: number,
+    args: {
+      canvasWidth: number;
+      canvasHeight: number;
+      tileOriginX: number;
+      tileOriginY: number;
+      positionOriginX: number;
+      positionOriginY: number;
+      strokeOpacity: number;
+      applyDither: boolean;
+      ditherStrength: number;
+      renderScale: number;
+    }
+  ): number {
+    const offset = index * this.uniformStride;
     const view = new DataView(this.uniformData);
     view.setUint32(0, args.canvasWidth, true);
     view.setUint32(4, args.canvasHeight, true);
@@ -523,7 +548,28 @@ export class GpuCanvasRenderer {
     view.setUint32(28, args.applyDither ? 1 : 0, true);
     view.setFloat32(32, args.ditherStrength, true);
     view.setFloat32(36, args.renderScale, true);
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
+    this.device.queue.writeBuffer(this.uniformBuffer, offset, this.uniformData);
+    return offset;
+  }
+
+  private createUniformBuffer(slots: number): GPUBuffer {
+    const size = Math.max(this.uniformStride, this.uniformStride * slots);
+    return this.device.createBuffer({
+      label: 'Tile Composite Uniforms',
+      size,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  private ensureUniformBufferCapacity(drawCount: number): void {
+    if (drawCount <= this.uniformSlots) return;
+    let nextSlots = this.uniformSlots;
+    while (nextSlots < drawCount) {
+      nextSlots *= 2;
+    }
+    this.uniformBuffer.destroy();
+    this.uniformSlots = nextSlots;
+    this.uniformBuffer = this.createUniformBuffer(this.uniformSlots);
   }
 
   private rebuildVisibleTiles(): void {
