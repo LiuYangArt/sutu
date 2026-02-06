@@ -67,3 +67,25 @@
 
 ## Status
 **In Progress** - M2 功能链路已打通，当前处于 Phase 6A（稳定性回归门禁）
+
+## 最新检查点（2026-02-06）
+- [x] `case-5000-04.json` 已可稳定回放并在画布正确出图（`__strokeCaptureReplay` 可用）。
+- [x] 回放 1px 细线问题已修复（回放事件不再被 WinTab 实时流错误覆盖）。
+- [x] 录制压感路径已修复关键大小写问题（`backend: wintab` 识别）。
+- [ ] 稳定性 Gate 未通过：`__gpuBrushDiagnostics().uncapturedErrors` 仍有启动阶段 `GPUValidationError` 记录（超大 staging buffer 6.41GB > 512MB）。
+
+### 本轮关键结论
+- 当前“能画、能回放”已恢复，主链路可继续推进。
+- 诊断里的报错集中在启动/预热相关 submit（`GPU Startup Init Encoder` / `Prewarm Dual Readback Encoder` / `Dual Blend Encoder`），不是本次回放时即时新增的绘制报错，但会污染门禁判断，必须清理。
+- M2 单层目标下，Dual 预热路径不是必需项，可降级为按需启用或直接禁用预热。
+
+### 接下来按顺序做（不并行）
+1. [ ] 清理启动期 Dual 预热大缓冲报错
+   - 定位 `GPUStrokeAccumulator` 启动路径（`initializePresentableTextures` / `prewarmDualReadback` / Dual blend 初始化）。
+   - M2 范围内对 Dual 预热做条件化：大画布或单层模式跳过 Dual 预热提交。
+2. [ ] 诊断数据分代/清理
+   - 增加“仅看当前会话”的错误视图，避免历史 `uncapturedErrors` 干扰当前判断。
+   - 增加一个 reset 接口（例如 `__gpuBrushDiagnosticsReset()`）。
+3. [ ] 回归验收（自动回放 + 手工抽检）
+   - 用 `case-5000-04.json` 连续回放 3 轮，确认无新增 validation error。
+   - 手工压感短测（20 笔）确认起笔/行笔无 1px 伪迹。

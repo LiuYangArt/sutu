@@ -349,3 +349,27 @@
   - Overall: PASS/FAIL
   - Blockers:
 ```
+
+### 13.4 验收记录（2026-02-06 Replay/稳定性检查点）
+
+- Build/Checks:
+  - `pnpm -s typecheck`: PASS
+  - 关键文件 `eslint`: PASS
+- Environment:
+  - Canvas: `5000x5000`
+  - Render mode: GPU（单层）
+  - Replay case: `abr/case-5000-04.json`
+- Replay:
+  - `__strokeCaptureReplay`：PASS（可稳定出图，事件回放成功）
+  - 已修复问题：回放阶段 1px 细线（压感被实时流污染）  
+- Diagnostics (`window.__gpuBrushDiagnostics()`):
+  - 当前绘制链路可运行，`previewReadbackEnabled=false`（符合 M2 预期）
+  - 存在启动阶段历史 `GPUValidationError` 记录：
+    - `Buffer size (6410240000) exceeds max (536870912)`
+    - submit label 涉及 `GPU Startup Init Encoder` / `Prewarm Dual Readback Encoder` / `Dual Blend Encoder`
+  - 判断：属于启动/预热路径风险，需在 M2 单层路径下做条件化关闭或按需启用。
+- Final:
+  - Overall: **PARTIAL PASS**
+  - Blockers:
+    - 启动期 Dual 预热触发超大 staging buffer 报错，污染稳定性门禁
+    - 需补“诊断分代/重置”能力，避免历史错误干扰当前结论
