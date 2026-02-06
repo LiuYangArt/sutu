@@ -474,6 +474,60 @@ export class GpuCanvasRenderer {
     }
   }
 
+  async sampleLayerPixel(
+    layerId: string,
+    canvasX: number,
+    canvasY: number
+  ): Promise<[number, number, number, number] | null> {
+    const pixelX = Math.floor(canvasX);
+    const pixelY = Math.floor(canvasY);
+    if (pixelX < 0 || pixelX >= this.width || pixelY < 0 || pixelY >= this.height) {
+      return null;
+    }
+
+    const tileCoord = {
+      x: Math.floor(pixelX / this.tileSize),
+      y: Math.floor(pixelY / this.tileSize),
+    };
+    const tile = this.layerStore.getTile(layerId, tileCoord);
+    if (!tile) {
+      return [0, 0, 0, 0];
+    }
+
+    const tileRect = this.layerStore.getTileRect(tileCoord);
+    const localX = pixelX - tileRect.originX;
+    const localY = pixelY - tileRect.originY;
+    if (localX < 0 || localX >= tileRect.width || localY < 0 || localY >= tileRect.height) {
+      return [0, 0, 0, 0];
+    }
+
+    const bytesPerRow = alignTo(4, 256);
+    const readbackBuffer = this.device.createBuffer({
+      label: 'Pixel Readback',
+      size: bytesPerRow,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    try {
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture: tile.texture, origin: { x: localX, y: localY } },
+        { buffer: readbackBuffer, bytesPerRow },
+        [1, 1]
+      );
+      this.device.queue.submit([encoder.finish()]);
+
+      await readbackBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(readbackBuffer.getMappedRange());
+      return [mapped[0] ?? 0, mapped[1] ?? 0, mapped[2] ?? 0, mapped[3] ?? 0];
+    } finally {
+      if (readbackBuffer.mapState === 'mapped') {
+        readbackBuffer.unmap();
+      }
+      readbackBuffer.destroy();
+    }
+  }
+
   private renderCompositePass(args: {
     encoder: GPUCommandEncoder;
     targetView: GPUTextureView;

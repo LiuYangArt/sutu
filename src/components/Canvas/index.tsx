@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { useToolStore, ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
 import { useDocumentStore } from '@/stores/document';
@@ -122,6 +122,9 @@ export function Canvas() {
   const pendingGpuCpuSyncTilesRef = useRef<Map<string, Set<string>>>(new Map());
   const prevGpuDisplayActiveRef = useRef(false);
   const prevGpuDisplayLayerIdRef = useRef<string | null>(null);
+  const pendingGpuCpuSyncLayerRef = useRef<string | null>(null);
+  const pendingGpuCpuSyncRafRef = useRef<number | null>(null);
+  const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -337,7 +340,10 @@ export function Canvas() {
 
   const gpuDisplayActive = useMemo(
     () =>
-      brushBackend === 'gpu' && gpuAvailable && currentTool === 'brush' && visibleLayerCount <= 1,
+      brushBackend === 'gpu' &&
+      gpuAvailable &&
+      (currentTool === 'brush' || currentTool === 'zoom' || currentTool === 'eyedropper') &&
+      visibleLayerCount <= 1,
     [brushBackend, gpuAvailable, currentTool, visibleLayerCount]
   );
 
@@ -494,6 +500,48 @@ export function Canvas() {
     return synced;
   }, [syncGpuLayerToCpu]);
 
+  const schedulePendingGpuCpuSync = useCallback(
+    (layerId: string) => {
+      pendingGpuCpuSyncLayerRef.current = layerId;
+      if (pendingGpuCpuSyncRafRef.current !== null) return;
+
+      const run = async () => {
+        pendingGpuCpuSyncRafRef.current = null;
+        const targetLayerId = pendingGpuCpuSyncLayerRef.current;
+        if (!targetLayerId) return;
+
+        if (isDrawingRef.current) {
+          pendingGpuCpuSyncRafRef.current = requestAnimationFrame(() => {
+            void run();
+          });
+          return;
+        }
+
+        await syncGpuLayerToCpu(targetLayerId);
+        const stillPending = pendingGpuCpuSyncTilesRef.current.get(targetLayerId);
+        if (stillPending && stillPending.size > 0) {
+          pendingGpuCpuSyncRafRef.current = requestAnimationFrame(() => {
+            void run();
+          });
+        }
+      };
+
+      pendingGpuCpuSyncRafRef.current = requestAnimationFrame(() => {
+        void run();
+      });
+    },
+    [syncGpuLayerToCpu]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (pendingGpuCpuSyncRafRef.current !== null) {
+        cancelAnimationFrame(pendingGpuCpuSyncRafRef.current);
+        pendingGpuCpuSyncRafRef.current = null;
+      }
+    };
+  }, []);
+
   const getGpuBrushNoReadbackPilot = useCallback((): boolean => {
     return gpuCommitCoordinatorRef.current?.getReadbackMode() === 'disabled';
   }, []);
@@ -637,9 +685,10 @@ export function Canvas() {
       coordinator.getReadbackMode() === 'disabled'
     ) {
       trackPendingGpuCpuSyncTiles(activeLayerId, result.dirtyTiles);
+      schedulePendingGpuCpuSync(activeLayerId);
     }
     return result;
-  }, [activeLayerId, trackPendingGpuCpuSyncTiles]);
+  }, [activeLayerId, trackPendingGpuCpuSyncTiles, schedulePendingGpuCpuSync]);
 
   const getGpuBrushCommitMetricsSnapshot = useCallback((): GpuBrushCommitMetricsSnapshot | null => {
     return gpuCommitCoordinatorRef.current?.getCommitMetricsSnapshot() ?? null;
@@ -673,20 +722,49 @@ export function Canvas() {
     [syncAllPendingGpuLayersToCpu]
   );
 
+  const sampleGpuPixelColor = useCallback(
+    async (canvasX: number, canvasY: number): Promise<string | null> => {
+      const gpuRenderer = gpuRendererRef.current;
+      if (!gpuRenderer || !activeLayerId) return null;
+      const rgba = await gpuRenderer.sampleLayerPixel(activeLayerId, canvasX, canvasY);
+      if (!rgba) return null;
+      const [r, g, b, a] = rgba;
+      if ((a ?? 0) <= 0) return '#000000';
+      return `#${(r ?? 0).toString(16).padStart(2, '0')}${(g ?? 0)
+        .toString(16)
+        .padStart(2, '0')}${(b ?? 0).toString(16).padStart(2, '0')}`;
+    },
+    [activeLayerId]
+  );
+
   useEffect(() => {
     const prevActive = prevGpuDisplayActiveRef.current;
     const prevLayerId = prevGpuDisplayLayerIdRef.current;
     if (prevActive && prevLayerId && (!gpuDisplayActive || prevLayerId !== activeLayerId)) {
+      if (!gpuDisplayActive) {
+        setKeepGpuCanvasVisible(true);
+      }
       void (async () => {
-        const synced = await syncGpuLayerToCpu(prevLayerId);
-        if (synced && !gpuDisplayActive) {
-          compositeAndRender();
+        try {
+          const synced = await syncGpuLayerToCpu(prevLayerId);
+          if (synced && !gpuDisplayActive) {
+            compositeAndRender();
+          }
+        } finally {
+          if (!gpuDisplayActive) {
+            setKeepGpuCanvasVisible(false);
+          }
         }
       })();
+    }
+    if (gpuDisplayActive) {
+      setKeepGpuCanvasVisible(false);
     }
     prevGpuDisplayActiveRef.current = gpuDisplayActive;
     prevGpuDisplayLayerIdRef.current = activeLayerId;
   }, [gpuDisplayActive, activeLayerId, syncGpuLayerToCpu, compositeAndRender]);
+
+  const showGpuCanvas = gpuDisplayActive || keepGpuCanvasVisible;
 
   useGlobalExports({
     layerRendererRef,
@@ -1010,6 +1088,8 @@ export function Canvas() {
     containerRef,
     canvasRef,
     layerRendererRef,
+    useGpuDisplay: gpuDisplayActive,
+    sampleGpuPixelColor,
     currentTool,
     scale,
     spacePressed,
@@ -1082,7 +1162,7 @@ export function Canvas() {
           height={height}
           className="gpu-canvas"
           data-testid="gpu-canvas"
-          style={{ display: gpuDisplayActive ? 'block' : 'none' }}
+          style={{ display: showGpuCanvas ? 'block' : 'none' }}
         />
         <canvas
           ref={canvasRef}

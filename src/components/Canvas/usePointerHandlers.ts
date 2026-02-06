@@ -19,6 +19,8 @@ interface UsePointerHandlersParams {
   containerRef: RefObject<HTMLDivElement | null>;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   layerRendererRef: RefObject<LayerRenderer | null>;
+  useGpuDisplay: boolean;
+  sampleGpuPixelColor?: (canvasX: number, canvasY: number) => Promise<string | null>;
   currentTool: ToolType;
   scale: number;
   spacePressed: boolean;
@@ -69,6 +71,8 @@ export function usePointerHandlers({
   containerRef,
   canvasRef,
   layerRendererRef,
+  useGpuDisplay,
+  sampleGpuPixelColor,
   currentTool,
   scale,
   spacePressed,
@@ -132,17 +136,24 @@ export function usePointerHandlers({
 
   // Pick color from canvas at given coordinates
   const pickColorAt = useCallback(
-    (canvasX: number, canvasY: number) => {
+    async (canvasX: number, canvasY: number) => {
+      const x = Math.floor(canvasX);
+      const y = Math.floor(canvasY);
+      if (x < 0 || x >= width || y < 0 || y >= height) return;
+
+      if (useGpuDisplay && sampleGpuPixelColor) {
+        const gpuHex = await sampleGpuPixelColor(x, y);
+        if (gpuHex) {
+          setBrushColor(gpuHex);
+          return;
+        }
+      }
+
       const compositeCanvas = layerRendererRef.current?.composite();
       const fallbackCanvas = canvasRef.current;
       const sourceCanvas = compositeCanvas ?? fallbackCanvas;
       const ctx = sourceCanvas?.getContext('2d', { willReadFrequently: true });
       if (!sourceCanvas || !ctx) return;
-
-      const x = Math.floor(canvasX);
-      const y = Math.floor(canvasY);
-
-      if (x < 0 || x >= width || y < 0 || y >= height) return;
 
       const pixel = ctx.getImageData(x, y, 1, 1).data;
       const r = pixel[0] ?? 0;
@@ -154,7 +165,7 @@ export function usePointerHandlers({
         .padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
       setBrushColor(hex);
     },
-    [width, height, setBrushColor, layerRendererRef, canvasRef]
+    [width, height, useGpuDisplay, sampleGpuPixelColor, setBrushColor, layerRendererRef, canvasRef]
   );
 
   // Handle pointer down events
@@ -233,7 +244,7 @@ export function usePointerHandlers({
 
       // Handle Eyedropper
       if (currentTool === 'eyedropper') {
-        pickColorAt(canvasX, canvasY);
+        void pickColorAt(canvasX, canvasY);
         return;
       }
 
@@ -325,6 +336,8 @@ export function usePointerHandlers({
       containerRef,
       canvasRef,
       layerRendererRef,
+      useGpuDisplay,
+      sampleGpuPixelColor,
       panStartRef,
       isZoomingRef,
       zoomStartRef,
@@ -340,6 +353,8 @@ export function usePointerHandlers({
       height,
       trySetPointerCapture,
       usingRawInput,
+      sampleGpuPixelColor,
+      useGpuDisplay,
     ]
   );
 
