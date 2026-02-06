@@ -38,13 +38,14 @@
   - 启动期 Dual 预热条件化跳过（`width*height >= 16_000_000` 或 `maxBufferSize <= 536_870_912`）
   - `GPUStrokeAccumulator.resetDiagnostics()` + 诊断分代字段（`diagnosticsSessionId` / `resetAtMs`）
   - 全局接口 `window.__gpuBrushDiagnosticsReset()`（Debug Panel 按钮接线）
-- 新增 Phase 6A 收敛改动（大画布分层，2026-02-06）：
+- 新增 Phase 6A 门禁整合改动（2026-02-06）：
   - `Run Phase6A Auto Gate` 支持每轮 replay 前清层并等待 1 帧，结果写入 `clearPerRound`
   - `Record 20-Stroke Manual Gate` 改为 checklist + 诊断联合判定（不再仅 confirm）
-  - `5000x5000` 大画布起笔压力保护（buffer > fresh currentPoint <=80ms > PointerEvent > `0.03`）
-  - 统一 `currentPoint` 新鲜度判断，禁止陈旧点覆盖事件压力
   - 诊断统计新增 `startPressureFallbackCount`
-  - 已补测试：`inputUtils`、`DebugPanel` 新门禁流程
+- 压感策略实验（已回退，见 postmortem）：
+  - 大画布起笔保护与 `currentPoint` 新鲜度策略曾上线，但造成手绘压感回归
+  - 已回退至基线输入路径，用户实测“压感已恢复”
+  - 保留 Debug Panel 门禁与诊断框架，作为后续稳定性验证工具
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
@@ -86,7 +87,8 @@
 - [x] 启动期 Dual 预热报错解阻实现已落地（条件化跳过 + 诊断事件记录）。
 - [x] 诊断分代/重置能力已落地（含 Debug Panel 按钮）。
 - [x] 自动检查通过：`pnpm -s typecheck`、`pnpm -s test -- useGlobalExports`、`pnpm -s test -- startupPrewarmPolicy`、`pnpm -s test -- DebugPanel`。
-- [x] 新增检查通过：`pnpm -s test -- inputUtils`（覆盖大画布起笔压力决策与陈旧点回退）。
+- [x] 新增检查通过：`pnpm -s test -- inputUtils`（已回到基线输入行为断言）。
+- [x] 压感策略实验回退后，用户手测确认压感恢复可用（2026-02-06）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
 
 ### 本轮关键结论
