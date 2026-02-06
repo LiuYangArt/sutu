@@ -4,6 +4,7 @@ import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark';
 import { StrokeBuffer, Point as BufferPoint } from '@/utils/interpolation';
+import { LayerRenderer } from '@/utils/layerRenderer';
 import { getEffectiveInputData } from './inputUtils';
 import type { RawInputPoint } from '@/stores/tablet';
 
@@ -17,6 +18,7 @@ interface QueuedPoint {
 interface UsePointerHandlersParams {
   containerRef: RefObject<HTMLDivElement | null>;
   canvasRef: RefObject<HTMLCanvasElement | null>;
+  layerRendererRef: RefObject<LayerRenderer | null>;
   currentTool: ToolType;
   scale: number;
   spacePressed: boolean;
@@ -32,7 +34,7 @@ interface UsePointerHandlersParams {
   height: number;
   layers: Layer[];
   activeLayerId: string | null;
-  captureBeforeImage: () => void;
+  captureBeforeImage: () => Promise<void>;
   initializeBrushStroke: () => Promise<void>;
   drawPoints: (points: RawInputPoint[]) => void;
   finishCurrentStroke: () => Promise<void>;
@@ -66,6 +68,7 @@ interface UsePointerHandlersParams {
 export function usePointerHandlers({
   containerRef,
   canvasRef,
+  layerRendererRef,
   currentTool,
   scale,
   spacePressed,
@@ -130,9 +133,11 @@ export function usePointerHandlers({
   // Pick color from canvas at given coordinates
   const pickColorAt = useCallback(
     (canvasX: number, canvasY: number) => {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d', { willReadFrequently: true });
-      if (!canvas || !ctx) return;
+      const compositeCanvas = layerRendererRef.current?.composite();
+      const fallbackCanvas = canvasRef.current;
+      const sourceCanvas = compositeCanvas ?? fallbackCanvas;
+      const ctx = sourceCanvas?.getContext('2d', { willReadFrequently: true });
+      if (!sourceCanvas || !ctx) return;
 
       const x = Math.floor(canvasX);
       const y = Math.floor(canvasY);
@@ -149,7 +154,7 @@ export function usePointerHandlers({
         .padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
       setBrushColor(hex);
     },
-    [width, height, setBrushColor, canvasRef]
+    [width, height, setBrushColor, layerRendererRef, canvasRef]
   );
 
   // Handle pointer down events
@@ -255,14 +260,11 @@ export function usePointerHandlers({
       // Start Drawing
       trySetPointerCapture(canvas, e);
       usingRawInput.current = false;
-      isDrawingRef.current = true;
-      strokeBufferRef.current?.reset();
-
-      // Capture layer state before stroke starts (for undo)
-      captureBeforeImage();
 
       // Brush Tool: Use State Machine Logic
       if (currentTool === 'brush') {
+        isDrawingRef.current = true;
+        strokeBufferRef.current?.reset();
         const idx = pointIndexRef.current++;
         latencyProfilerRef.current.markInputReceived(idx, e.nativeEvent as PointerEvent);
 
@@ -270,13 +272,20 @@ export function usePointerHandlers({
         pendingPointsRef.current = [{ x: canvasX, y: canvasY, pressure, pointIndex: idx }];
         pendingEndRef.current = false;
 
-        // Start initialization (fire-and-forget)
+        // 先抓撤销基线，再初始化 GPU 笔触。
+        // 避免 beforeImage 过旧导致一次撤销回退多笔。
         window.__strokeDiagnostics?.onStrokeStart();
-        void initializeBrushStroke();
+        void (async () => {
+          await captureBeforeImage();
+          await initializeBrushStroke();
+        })();
         return;
       }
 
       // Eraser/Other Tools: Legacy Logic
+      isDrawingRef.current = true;
+      strokeBufferRef.current?.reset();
+      void captureBeforeImage();
       const point: BufferPoint = {
         x: constrainedDown.x,
         y: constrainedDown.y,
@@ -315,6 +324,7 @@ export function usePointerHandlers({
       constrainShiftLinePoint,
       containerRef,
       canvasRef,
+      layerRendererRef,
       panStartRef,
       isZoomingRef,
       zoomStartRef,

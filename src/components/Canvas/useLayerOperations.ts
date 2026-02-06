@@ -93,10 +93,12 @@ export function useLayerOperations({
     [width, height, updateThumbnailWithSize]
   );
 
-  // Save beforeImage at stroke start
-  const captureBeforeImage = useCallback(() => {
+  // 起笔前保存 beforeImage。
+  // no-readback 下必须先同步待刷新的 GPU tiles，否则一次撤销会跨越多笔。
+  const captureBeforeImage = useCallback(async (): Promise<void> => {
     const renderer = layerRendererRef.current;
     if (!renderer || !activeLayerId) return;
+    await syncGpuLayerForHistory?.(activeLayerId);
 
     const imageData = renderer.getLayerImageData(activeLayerId);
     if (imageData) {
@@ -469,7 +471,7 @@ export function useLayerOperations({
       if (!renderer) return;
 
       // Capture state before clearing for undo
-      captureBeforeImage();
+      await captureBeforeImage();
 
       // Clear the layer
       renderer.clearLayer(activeLayerId, useDocumentStore.getState().backgroundFillColor);

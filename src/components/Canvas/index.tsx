@@ -677,11 +677,16 @@ export function Canvas() {
     const prevActive = prevGpuDisplayActiveRef.current;
     const prevLayerId = prevGpuDisplayLayerIdRef.current;
     if (prevActive && prevLayerId && (!gpuDisplayActive || prevLayerId !== activeLayerId)) {
-      void syncGpuLayerToCpu(prevLayerId);
+      void (async () => {
+        const synced = await syncGpuLayerToCpu(prevLayerId);
+        if (synced && !gpuDisplayActive) {
+          compositeAndRender();
+        }
+      })();
     }
     prevGpuDisplayActiveRef.current = gpuDisplayActive;
     prevGpuDisplayLayerIdRef.current = activeLayerId;
-  }, [gpuDisplayActive, activeLayerId, syncGpuLayerToCpu]);
+  }, [gpuDisplayActive, activeLayerId, syncGpuLayerToCpu, compositeAndRender]);
 
   useGlobalExports({
     layerRendererRef,
@@ -1004,6 +1009,7 @@ export function Canvas() {
   const { handlePointerDown, handlePointerMove, handlePointerUp } = usePointerHandlers({
     containerRef,
     canvasRef,
+    layerRendererRef,
     currentTool,
     scale,
     spacePressed,
