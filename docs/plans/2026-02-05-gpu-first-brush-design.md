@@ -435,3 +435,18 @@
   - Next:
     - 继续推进 6A 其余稳定性门禁项
     - 压感优化延后并独立验证（避免污染性能阶段结论）
+
+### 13.8 决议记录（2026-02-06 临时豁免：选项 2）
+
+- Decision:
+  - 对 `Phase 6A` 采用临时豁免策略：先推进后续任务，压感细头问题后置专项处理。
+- Scope:
+  - 允许执行：Phase 6B 性能探索、非压感阻塞项优化、数据采集与链路减负实验。
+  - 不允许宣称：M2 稳定性封版通过。
+- Guardrail:
+  - 6A 状态保持 `PARTIAL PASS`，直到 manual checklist 全项通过。
+  - 所有性能结果标记为“预结论/非封版”。
+  - 最终发布前必须回到 6A 全量复验并通过。
+- Latest signal:
+  - Auto Gate：PASS（`case-5000-04.json`，`uncapturedErrors=0`，`deviceLost=NO`，`startPressureFallbackCount=0`）。
+  - Manual Gate：第一条“无起笔细头”仍可能不满足。

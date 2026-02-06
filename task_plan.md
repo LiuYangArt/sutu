@@ -11,7 +11,7 @@
 - [x] Phase 4：SelectionMask 改为 `r8unorm`
 - [x] Phase 5：验收模板回填到设计文档
 - [ ] Phase 6A：稳定性回归门禁（压感/丢笔触/消失）
-- [ ] Phase 6B：5000x5000 性能收敛（在 6A 通过后执行）
+- [ ] Phase 6B：5000x5000 性能收敛（临时豁免模式可先做探索，结论不封版）
 
 ## 已完成实现
 - 新增类型契约：`GpuScratchHandle` / `GpuStrokePrepareResult` / `GpuStrokeCommitResult`
@@ -65,7 +65,7 @@
 3. [x] 上传策略补齐“按 tile 上传”能力
    - 新增 `uploadTilesFromCanvas(..., { onlyMissing })`。
    - `commitStroke` 支持 `baseLayerCanvas`，缺失 tile 时只补齐该 tile 的底图像素。
-4. [ ] 继续压缩 GPU path 的 CPU 参与（仅在稳定性 Gate 通过后）
+4. [ ] 继续压缩 GPU path 的 CPU 参与（临时豁免下可先探索）
    - 排查并移除非必要 `readback -> CPU layer -> 再回传` 的链路依赖。
    - 已修复：pointer-up 后延迟尾 dab（队列消费时序 + 收尾立即 flush/render）。
    - 已修复：GPU commit 路径补 finishing lock，避免新笔触提前清 scratch 导致偶发丢笔。
@@ -80,6 +80,16 @@
 ## Status
 **In Progress** - M2 功能链路已打通，当前处于 Phase 6A（稳定性回归门禁）
 
+## Phase 6A 临时豁免决议（2026-02-06）
+- 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。
+- 当前判断：
+  - Auto Gate：PASS（`uncapturedErrors=0`、`deviceLost=NO`、`startPressureFallbackCount=0`）。
+  - Manual checklist：第一条“无起笔细头”暂不满足。
+- 执行规则：
+  - 允许进入后续任务（含 Phase 6B 探索）。
+  - `Phase 6A` 不勾选通过，所有性能结论标注“非封版”。
+  - 最终封版前必须回到 6A 完整门禁并复验通过。
+
 ## 最新检查点（2026-02-06，Phase 6A 实施后）
 - [x] `case-5000-04.json` 已可稳定回放并在画布正确出图（`__strokeCaptureReplay` 可用）。
 - [x] 回放 1px 细线问题已修复（回放事件不再被 WinTab 实时流错误覆盖）。
@@ -89,6 +99,7 @@
 - [x] 自动检查通过：`pnpm -s typecheck`、`pnpm -s test -- useGlobalExports`、`pnpm -s test -- startupPrewarmPolicy`、`pnpm -s test -- DebugPanel`。
 - [x] 新增检查通过：`pnpm -s test -- inputUtils`（已回到基线输入行为断言）。
 - [x] 压感策略实验回退后，用户手测确认压感恢复可用（2026-02-06）。
+- [x] Auto Gate 最新实测：PASS（`case-5000-04.json`，session=3，`startPressureFallbackCount=0`）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
 
 ### 本轮关键结论
@@ -106,3 +117,4 @@
 3. [ ] 回归验收（自动回放 + 手工抽检）
    - 用 `Run Phase6A Auto Gate` 选择 `case-5000-04.json`，确认每轮清层且 `Auto Gate: PASS`。
    - 手工压感短测（20 笔）勾选 checklist 后再点 `Record 20-Stroke Manual Gate`，确认 `Manual Gate: PASS`。
+   - 临时豁免期间：若仅第一条“无起笔细头”未通过，可继续推进后续项，但不得宣告 6A 通过。
