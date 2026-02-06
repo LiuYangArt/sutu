@@ -30,6 +30,10 @@ interface DebugRect {
   color: string;
 }
 
+function isBrushStrokeState(state: string): boolean {
+  return state === 'active' || state === 'finishing';
+}
+
 interface UseStrokeProcessorParams {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -533,10 +537,7 @@ export function useStrokeProcessor({
     // 清理 WinTab 缓冲区
     clearPointBuffer();
 
-    const isBrushStroke =
-      strokeStateRef.current === 'active' ||
-      strokeStateRef.current === 'finishing' ||
-      isStrokeActive();
+    const isBrushStroke = isBrushStrokeState(strokeStateRef.current) || isStrokeActive();
 
     // For brush tool, composite stroke buffer to layer with opacity ceiling
     if (isBrushStroke) {

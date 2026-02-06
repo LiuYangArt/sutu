@@ -338,9 +338,6 @@ export function usePointerHandlers({
       constrainShiftLinePoint,
       containerRef,
       canvasRef,
-      layerRendererRef,
-      useGpuDisplay,
-      sampleGpuPixelColor,
       panStartRef,
       isZoomingRef,
       zoomStartRef,
@@ -352,12 +349,8 @@ export function usePointerHandlers({
       pendingEndRef,
       lastInputPosRef,
       latencyProfilerRef,
-      width,
-      height,
       trySetPointerCapture,
       usingRawInput,
-      sampleGpuPixelColor,
-      useGpuDisplay,
     ]
   );
 

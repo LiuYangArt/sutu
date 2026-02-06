@@ -81,6 +81,10 @@ declare global {
 
 type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number };
 
+function isLineTool(tool: ToolType | null): boolean {
+  return tool === 'brush' || tool === 'eraser';
+}
+
 function tileCoordKey(x: number, y: number): string {
   return `${x},${y}`;
 }
@@ -1048,9 +1052,7 @@ export function Canvas() {
 
   useEffect(() => {
     const prevTool = previousLineToolRef.current;
-    const wasLineTool = prevTool === 'brush' || prevTool === 'eraser';
-    const isLineTool = currentTool === 'brush' || currentTool === 'eraser';
-    if (wasLineTool && !isLineTool && isDrawingRef.current) {
+    if (isLineTool(prevTool) && !isLineTool(currentTool) && isDrawingRef.current) {
       void finishCurrentStroke();
     }
     previousLineToolRef.current = currentTool;
