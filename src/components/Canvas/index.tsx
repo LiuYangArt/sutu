@@ -5,6 +5,7 @@ import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { useHistoryStore } from '@/stores/history';
 import { useSettingsStore } from '@/stores/settings';
+import { useTabletStore } from '@/stores/tablet';
 import { useSelectionHandler } from './useSelectionHandler';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
@@ -181,6 +182,29 @@ export function Canvas() {
         getCanvas: () => canvasRef.current,
         getCaptureRoot: () => containerRef.current,
         getScale: () => useViewportStore.getState().scale,
+        getLiveInputOverride: (event) => {
+          // WinTab backend often reports PointerEvent pressure as a constant mouse-like value.
+          // For recording/replay fidelity, capture pressure/tilt from tablet stream when available.
+          if (!event.isTrusted) return null;
+          if (event.type !== 'pointerdown' && event.type !== 'pointermove') return null;
+
+          const tablet = useTabletStore.getState();
+          const isWinTabActive =
+            tablet.isStreaming &&
+            typeof tablet.backend === 'string' &&
+            tablet.backend.toLowerCase() === 'wintab';
+          if (!isWinTabActive) return null;
+
+          const pt = tablet.currentPoint;
+          if (!pt) return null;
+
+          return {
+            pressure: pt.pressure,
+            tiltX: pt.tilt_x,
+            tiltY: pt.tilt_y,
+            pointerType: 'pen',
+          };
+        },
         getMetadata: () => {
           const docState = useDocumentStore.getState();
           const toolState = useToolStore.getState();

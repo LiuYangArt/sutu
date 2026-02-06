@@ -398,7 +398,10 @@ export function useStrokeProcessor({
 
             let pressure = lastPressureRef.current;
             const tabletState = useTabletStore.getState();
-            const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
+            const isWinTabActive =
+              tabletState.isStreaming &&
+              typeof tabletState.backend === 'string' &&
+              tabletState.backend.toLowerCase() === 'wintab';
             if (isWinTabActive) {
               const pt = tabletState.currentPoint;
               if (pt) {

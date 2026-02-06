@@ -83,7 +83,10 @@ export function useRawPointerInput({
 
       // Get tablet state for pressure resolution
       const tabletState = useTabletStore.getState();
-      const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
+      const isWinTabActive =
+        tabletState.isStreaming &&
+        typeof tabletState.backend === 'string' &&
+        tabletState.backend.toLowerCase() === 'wintab';
       const bufferedPoints = isWinTabActive ? drainPointBuffer() : [];
 
       for (const evt of coalescedEvents) {

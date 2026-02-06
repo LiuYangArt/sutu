@@ -40,6 +40,12 @@ interface StrokeCaptureControllerParams {
   getCaptureRoot?: () => HTMLElement | null;
   getScale: () => number;
   getMetadata: () => StrokeCaptureMetadata;
+  getLiveInputOverride?: (event: PointerEvent) => {
+    pressure?: number;
+    tiltX?: number;
+    tiltY?: number;
+    pointerType?: string;
+  } | null;
 }
 
 interface ReplayResult {
@@ -63,6 +69,11 @@ function isValidCaptureData(value: unknown): value is StrokeCaptureData {
   if (!value || typeof value !== 'object') return false;
   const data = value as Partial<StrokeCaptureData>;
   return data.version === 1 && Array.isArray(data.samples) && !!data.metadata;
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
 
 export class StrokeCaptureController {
@@ -107,15 +118,38 @@ export class StrokeCaptureController {
         return;
       }
 
+      const override = this.params.getLiveInputOverride?.(event) ?? null;
+      const overridePressure =
+        override && typeof override.pressure === 'number' && Number.isFinite(override.pressure)
+          ? clampUnit(override.pressure)
+          : null;
+      const overrideTiltX =
+        override && typeof override.tiltX === 'number' && Number.isFinite(override.tiltX)
+          ? override.tiltX
+          : null;
+      const overrideTiltY =
+        override && typeof override.tiltY === 'number' && Number.isFinite(override.tiltY)
+          ? override.tiltY
+          : null;
+      const overridePointerType =
+        override && typeof override.pointerType === 'string' && override.pointerType.length > 0
+          ? override.pointerType
+          : null;
+
+      let pressure = overridePressure ?? clampUnit(event.pressure ?? 0);
+      if (eventType === 'pointerup' || eventType === 'pointercancel') {
+        pressure = 0;
+      }
+
       this.samples.push({
         type: eventType,
         timeMs: Math.max(0, performance.now() - this.startedAtMs),
         x,
         y,
-        pressure: event.pressure ?? 0,
-        tiltX: event.tiltX ?? 0,
-        tiltY: event.tiltY ?? 0,
-        pointerType: event.pointerType || 'pen',
+        pressure,
+        tiltX: overrideTiltX ?? event.tiltX ?? 0,
+        tiltY: overrideTiltY ?? event.tiltY ?? 0,
+        pointerType: overridePointerType ?? (event.pointerType || 'pen'),
         pointerId,
         buttons: event.buttons ?? 0,
       });

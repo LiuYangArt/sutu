@@ -195,8 +195,14 @@ export function usePointerHandlers({
       }
       if (currentTool === 'brush' || currentTool === 'eraser') {
         const tabletState = useTabletStore.getState();
-        const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
-        if (isWinTabActive) {
+        const isWinTabActive =
+          tabletState.isStreaming &&
+          typeof tabletState.backend === 'string' &&
+          tabletState.backend.toLowerCase() === 'wintab';
+        // Synthetic replay events are not trusted; keep captured pressure instead of
+        // overriding with live WinTab stream.
+        const shouldUseWinTab = isWinTabActive && pe.isTrusted;
+        if (shouldUseWinTab) {
           // Use buffered WinTab points when available; avoid using currentPoint at pointerdown
           // because it can be stale (previous stroke), causing an overly heavy first dab.
           const bufferedPoints = drainPointBuffer();
@@ -403,9 +409,15 @@ export function usePointerHandlers({
       }
 
       const tabletState = useTabletStore.getState();
-      const isWinTabActive = tabletState.isStreaming && tabletState.backend === 'WinTab';
+      const isWinTabActive =
+        tabletState.isStreaming &&
+        typeof tabletState.backend === 'string' &&
+        tabletState.backend.toLowerCase() === 'wintab';
+      // Replay events should consume recorded pressure/tilt and must not be polluted
+      // by current tablet stream state.
+      const shouldUseWinTab = isWinTabActive && (e.nativeEvent as PointerEvent).isTrusted;
       // Drain input buffer once per frame/event-batch (outside the loop)
-      const bufferedPoints = isWinTabActive ? drainPointBuffer() : [];
+      const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
 
       // 遍历所有合并事件，恢复完整输入轨迹
       for (const evt of coalescedEvents) {
@@ -416,7 +428,7 @@ export function usePointerHandlers({
         // Resolve input pressure/tilt (handling WinTab buffering if active)
         const { pressure, tiltX, tiltY } = getEffectiveInputData(
           evt,
-          isWinTabActive,
+          shouldUseWinTab,
           bufferedPoints,
           tabletState.currentPoint
         );
