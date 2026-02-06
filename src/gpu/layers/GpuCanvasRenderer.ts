@@ -2,6 +2,7 @@ import tileCompositeShader from '../shaders/tileComposite.wgsl?raw';
 import { GpuLayerStore, type TileCoord, type TileRect } from './GpuLayerStore';
 import { TileResidencyManager } from './TileResidencyManager';
 import { SelectionMaskGpu } from './SelectionMaskGpu';
+import type { GpuStrokeHistoryStore, GpuStrokeHistoryTileApplyItem } from './GpuStrokeHistoryStore';
 import { alignTo } from '../utils/textureCopyRect';
 import type { Rect } from '@/utils/strokeBuffer';
 
@@ -26,6 +27,12 @@ interface CommitStrokeParams {
   applyDither: boolean;
   ditherStrength: number;
   baseLayerCanvas?: HTMLCanvasElement | null;
+  historyCapture?: CommitStrokeHistoryCapture;
+}
+
+interface CommitStrokeHistoryCapture {
+  entryId: string;
+  store: GpuStrokeHistoryStore;
 }
 
 interface ReadbackTarget {
@@ -53,13 +60,14 @@ function createSolidTextureUnorm(
   device: GPUDevice,
   label: string,
   size: number,
-  rgba: [number, number, number, number]
+  rgba: [number, number, number, number],
+  extraUsage: GPUTextureUsageFlags = 0
 ): GPUTexture {
   const texture = device.createTexture({
     label,
     size: [size, size],
     format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | extraUsage,
   });
 
   const encoder = device.createCommandEncoder();
@@ -231,7 +239,8 @@ export class GpuCanvasRenderer {
       device,
       'Layer Fallback',
       this.tileSize,
-      [0, 0, 0, 0]
+      [0, 0, 0, 0],
+      GPUTextureUsage.COPY_SRC
     );
     this.transparentLayerView = this.transparentLayerTexture.createView();
 
@@ -351,6 +360,7 @@ export class GpuCanvasRenderer {
       renderScale,
       applyDither,
       baseLayerCanvas,
+      historyCapture,
     } = params;
     const clampedOpacity = Math.max(0, Math.min(1, strokeOpacity));
     const ditherStrength = params.ditherStrength ?? DEFAULT_DITHER_STRENGTH;
@@ -377,6 +387,14 @@ export class GpuCanvasRenderer {
         existingTile = this.layerStore.getTile(layerId, coord);
       }
 
+      historyCapture?.store.captureBeforeTile(
+        historyCapture.entryId,
+        encoder,
+        layerId,
+        coord,
+        existingTile?.texture ?? this.transparentLayerTexture
+      );
+
       if (existingTile) {
         const tempTexture = this.createTempTileTexture();
         const tempView = tempTexture.createView();
@@ -399,6 +417,13 @@ export class GpuCanvasRenderer {
           this.tileSize,
           this.tileSize,
         ]);
+        historyCapture?.store.captureAfterTile(
+          historyCapture.entryId,
+          encoder,
+          layerId,
+          coord,
+          existingTile.texture
+        );
         tempTexturesToDestroy.push(tempTexture);
       } else {
         const newTile = this.layerStore.getOrCreateTile(layerId, coord);
@@ -415,6 +440,13 @@ export class GpuCanvasRenderer {
           ditherStrength,
           uniformIndex: drawIndex,
         });
+        historyCapture?.store.captureAfterTile(
+          historyCapture.entryId,
+          encoder,
+          layerId,
+          coord,
+          newTile.texture
+        );
       }
       drawIndex += 1;
     }
@@ -424,6 +456,36 @@ export class GpuCanvasRenderer {
       texture.destroy();
     }
     return tiles;
+  }
+
+  applyHistoryTiles(params: {
+    layerId: string;
+    tiles: GpuStrokeHistoryTileApplyItem[];
+  }): TileCoord[] {
+    const { layerId, tiles } = params;
+    if (tiles.length === 0) return [];
+
+    const encoder = this.device.createCommandEncoder();
+    const appliedTiles: TileCoord[] = [];
+
+    for (const item of tiles) {
+      const rect = this.layerStore.getTileRect(item.coord);
+      if (rect.width <= 0 || rect.height <= 0) continue;
+
+      const targetTile = this.layerStore.getOrCreateTile(layerId, item.coord);
+      const sourceTexture = item.texture ?? this.transparentLayerTexture;
+      encoder.copyTextureToTexture({ texture: sourceTexture }, { texture: targetTile.texture }, [
+        this.tileSize,
+        this.tileSize,
+        1,
+      ]);
+      appliedTiles.push(item.coord);
+    }
+
+    if (appliedTiles.length > 0) {
+      this.device.queue.submit([encoder.finish()]);
+    }
+    return appliedTiles;
   }
 
   async readbackTilesToLayer(params: ReadbackTarget): Promise<void> {

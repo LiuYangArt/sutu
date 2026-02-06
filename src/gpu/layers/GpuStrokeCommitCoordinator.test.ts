@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GpuStrokePrepareResult } from '../types';
 import type { GpuCanvasRenderer } from './GpuCanvasRenderer';
 import { GpuStrokeCommitCoordinator } from './GpuStrokeCommitCoordinator';
+import type { GpuStrokeHistoryStore } from './GpuStrokeHistoryStore';
 
 function makeScratchPrepareResult(): GpuStrokePrepareResult {
   return {
@@ -141,5 +142,47 @@ describe('GpuStrokeCommitCoordinator', () => {
     expect(snapshot.readbackMode).toBe('disabled');
     expect(snapshot.readbackBypassedCount).toBe(2);
     expect(readbackTilesToLayer).not.toHaveBeenCalled();
+  });
+
+  it('forwards history capture params and finalizes history entry', async () => {
+    const commitStroke = vi.fn(() => [{ x: 0, y: 0 }]);
+    const readbackTilesToLayer = vi.fn(async () => undefined);
+    const gpuRenderer = {
+      commitStroke,
+      readbackTilesToLayer,
+    } as unknown as GpuCanvasRenderer;
+
+    const prepareStrokeEndGpu = vi.fn(async () => makeScratchPrepareResult());
+    const clearScratchGpu = vi.fn();
+    const getTargetLayer = vi.fn(
+      () => ({ canvas: {} as HTMLCanvasElement, ctx: {} as CanvasRenderingContext2D }) as const
+    );
+    const historyStore = {
+      finalizeStroke: vi.fn(),
+    } as unknown as GpuStrokeHistoryStore;
+
+    const coordinator = new GpuStrokeCommitCoordinator({
+      gpuRenderer,
+      prepareStrokeEndGpu,
+      clearScratchGpu,
+      getTargetLayer,
+    });
+    coordinator.setReadbackMode('disabled');
+
+    const result = await coordinator.commit('layer-1', {
+      historyEntryId: 'history-entry-1',
+      historyStore,
+    });
+
+    expect(result.committed).toBe(true);
+    expect(commitStroke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        historyCapture: {
+          entryId: 'history-entry-1',
+          store: historyStore,
+        },
+      })
+    );
+    expect(historyStore.finalizeStroke).toHaveBeenCalledWith('history-entry-1');
   });
 });

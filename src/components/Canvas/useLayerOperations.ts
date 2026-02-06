@@ -1,7 +1,7 @@
 import { useCallback, useRef, type RefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
-import { useHistoryStore } from '@/stores/history';
+import { createHistoryEntryId, type StrokeSnapshotMode, useHistoryStore } from '@/stores/history';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
 
@@ -14,7 +14,29 @@ interface UseLayerOperationsParams {
   compositeAndRender: () => void;
   markLayerDirty: () => void;
   syncGpuLayerForHistory?: (layerId: string) => Promise<boolean>;
+  gpuHistoryEnabled?: boolean;
+  beginGpuStrokeHistory?: (
+    layerId: string
+  ) => { entryId: string; snapshotMode: StrokeSnapshotMode } | null;
+  applyGpuStrokeHistory?: (
+    entryId: string,
+    direction: 'undo' | 'redo',
+    layerId: string
+  ) => Promise<boolean>;
 }
+
+type PendingStrokeHistory =
+  | {
+      layerId: string;
+      entryId: string;
+      snapshotMode: 'cpu';
+      beforeImage: ImageData;
+    }
+  | {
+      layerId: string;
+      entryId: string;
+      snapshotMode: 'gpu';
+    };
 
 /**
  * Helper to fill a layer using a selection mask (anti-aliased)
@@ -68,12 +90,27 @@ export function useLayerOperations({
   compositeAndRender,
   markLayerDirty,
   syncGpuLayerForHistory,
+  gpuHistoryEnabled = false,
+  beginGpuStrokeHistory,
+  applyGpuStrokeHistory,
 }: UseLayerOperationsParams) {
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
   const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
 
   // Store beforeImage when stroke starts
-  const beforeImageRef = useRef<{ layerId: string; imageData: ImageData } | null>(null);
+  const beforeImageRef = useRef<PendingStrokeHistory | null>(null);
+
+  const pushCpuStrokeHistory = useCallback(
+    (layerId: string, beforeImage: ImageData, entryId: string = createHistoryEntryId()) => {
+      pushStroke({
+        layerId,
+        entryId,
+        snapshotMode: 'cpu',
+        beforeImage,
+      });
+    },
+    [pushStroke]
+  );
 
   // Update layer thumbnail
   const updateThumbnailWithSize = useCallback(
@@ -95,23 +132,67 @@ export function useLayerOperations({
 
   // 起笔前保存 beforeImage。
   // no-readback 下必须先同步待刷新的 GPU tiles，否则一次撤销会跨越多笔。
-  const captureBeforeImage = useCallback(async (): Promise<void> => {
-    const renderer = layerRendererRef.current;
-    if (!renderer || !activeLayerId) return;
-    await syncGpuLayerForHistory?.(activeLayerId);
+  const captureBeforeImage = useCallback(
+    async (preferGpuHistory = true): Promise<void> => {
+      const renderer = layerRendererRef.current;
+      if (!renderer || !activeLayerId) return;
 
-    const imageData = renderer.getLayerImageData(activeLayerId);
-    if (imageData) {
-      beforeImageRef.current = { layerId: activeLayerId, imageData };
-    }
-  }, [activeLayerId, layerRendererRef]);
+      let fallbackEntryId: string | null = null;
+      if (preferGpuHistory && gpuHistoryEnabled && beginGpuStrokeHistory) {
+        const gpuEntry = beginGpuStrokeHistory(activeLayerId);
+        if (gpuEntry) {
+          fallbackEntryId = gpuEntry.entryId;
+          if (gpuEntry.snapshotMode === 'gpu') {
+            beforeImageRef.current = {
+              layerId: activeLayerId,
+              entryId: gpuEntry.entryId,
+              snapshotMode: 'gpu',
+            };
+            return;
+          }
+        }
+      }
+
+      await syncGpuLayerForHistory?.(activeLayerId);
+
+      const imageData = renderer.getLayerImageData(activeLayerId);
+      if (imageData) {
+        beforeImageRef.current = {
+          layerId: activeLayerId,
+          entryId: fallbackEntryId ?? createHistoryEntryId(),
+          snapshotMode: 'cpu',
+          beforeImage: imageData,
+        };
+      }
+    },
+    [
+      activeLayerId,
+      beginGpuStrokeHistory,
+      gpuHistoryEnabled,
+      layerRendererRef,
+      syncGpuLayerForHistory,
+    ]
+  );
 
   // Push stroke to history using beforeImage
   const saveStrokeToHistory = useCallback(() => {
-    if (!beforeImageRef.current) return;
+    const pending = beforeImageRef.current;
+    if (!pending) return;
 
-    const { layerId, imageData } = beforeImageRef.current;
-    pushStroke(layerId, imageData);
+    if (pending.snapshotMode === 'gpu') {
+      pushStroke({
+        layerId: pending.layerId,
+        entryId: pending.entryId,
+        snapshotMode: 'gpu',
+      });
+    } else {
+      pushStroke({
+        layerId: pending.layerId,
+        entryId: pending.entryId,
+        snapshotMode: 'cpu',
+        beforeImage: pending.beforeImage,
+      });
+    }
     beforeImageRef.current = null;
   }, [pushStroke]);
 
@@ -186,7 +267,7 @@ export function useLayerOperations({
         }
 
         // Save to history
-        pushStroke(activeLayerId, beforeImage);
+        pushCpuStrokeHistory(activeLayerId, beforeImage);
 
         // Update thumbnail and re-render
         markLayerDirty();
@@ -199,7 +280,7 @@ export function useLayerOperations({
       layers,
       width,
       height,
-      pushStroke,
+      pushCpuStrokeHistory,
       markLayerDirty,
       updateThumbnail,
       compositeAndRender,
@@ -250,7 +331,7 @@ export function useLayerOperations({
       ctx.restore();
 
       // Save to history
-      pushStroke(activeLayerId, beforeImage);
+      pushCpuStrokeHistory(activeLayerId, beforeImage);
 
       // Update thumbnail and re-render
       markLayerDirty();
@@ -262,7 +343,7 @@ export function useLayerOperations({
     layers,
     width,
     height,
-    pushStroke,
+    pushCpuStrokeHistory,
     markLayerDirty,
     updateThumbnail,
     compositeAndRender,
@@ -294,11 +375,29 @@ export function useLayerOperations({
 
       switch (entry.type) {
         case 'stroke': {
+          const gpuApplied =
+            entry.snapshotMode === 'gpu' &&
+            (await applyGpuStrokeHistory?.(entry.entryId, 'undo', entry.layerId));
+          if (gpuApplied) {
+            compositeAndRender();
+            markLayerDirty();
+            updateThumbnail(entry.layerId);
+            break;
+          }
+
           await syncGpuLayerForHistory?.(entry.layerId);
           // Save current state (afterImage) for redo before restoring
           const currentImageData = renderer.getLayerImageData(entry.layerId);
           if (currentImageData) {
             entry.afterImage = currentImageData;
+          }
+          if (!entry.beforeImage) {
+            console.warn('[History] Missing CPU beforeImage for undo fallback', {
+              layerId: entry.layerId,
+              entryId: entry.entryId,
+              snapshotMode: entry.snapshotMode,
+            });
+            break;
           }
           renderer.setLayerImageData(entry.layerId, entry.beforeImage);
           compositeAndRender();
@@ -366,6 +465,7 @@ export function useLayerOperations({
     })();
   }, [
     undo,
+    applyGpuStrokeHistory,
     layers,
     compositeAndRender,
     markLayerDirty,
@@ -393,6 +493,16 @@ export function useLayerOperations({
 
       switch (entry.type) {
         case 'stroke': {
+          const gpuApplied =
+            entry.snapshotMode === 'gpu' &&
+            (await applyGpuStrokeHistory?.(entry.entryId, 'redo', entry.layerId));
+          if (gpuApplied) {
+            compositeAndRender();
+            markLayerDirty();
+            updateThumbnail(entry.layerId);
+            break;
+          }
+
           // Restore afterImage (saved during undo)
           if (entry.afterImage) {
             renderer.setLayerImageData(entry.layerId, entry.afterImage);
@@ -454,6 +564,7 @@ export function useLayerOperations({
     })();
   }, [
     redo,
+    applyGpuStrokeHistory,
     compositeAndRender,
     markLayerDirty,
     updateThumbnail,
@@ -465,13 +576,11 @@ export function useLayerOperations({
   const handleClearLayer = useCallback(() => {
     if (!activeLayerId) return;
     void (async () => {
-      await syncGpuLayerForHistory?.(activeLayerId);
-
       const renderer = layerRendererRef.current;
       if (!renderer) return;
 
       // Capture state before clearing for undo
-      await captureBeforeImage();
+      await captureBeforeImage(false);
 
       // Clear the layer
       renderer.clearLayer(activeLayerId, useDocumentStore.getState().backgroundFillColor);
@@ -489,7 +598,6 @@ export function useLayerOperations({
     compositeAndRender,
     markLayerDirty,
     updateThumbnail,
-    syncGpuLayerForHistory,
     layerRendererRef,
   ]);
 

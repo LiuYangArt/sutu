@@ -9,13 +9,16 @@
 - `M1`：已完成（tile 基础设施与单层显示链路可运行）。
 - `M2`：主链路完成并进入稳定性收敛：
   - 单层 GPU 可绘 + commit 闭环可用。
+  - 单层 no-readback 已接入双轨历史：GPU 脏 tile 快照优先，预算超限自动回退 CPU 历史。
+  - CPU 笔刷路径保持原行为（未引入 GPU 历史分支）。
   - `undo` 一次撤多笔问题已修复。
   - `brush/zoom/eyedropper` 切换闪烁与切换卡顿已修复。
   - “未抬笔切 `zoom` 并立即缩放导致丢笔”已修复。
   - 全量自动测试通过（`vitest: 31 passed / 204 passed`）。
 - `M2` 当前剩余：
-  - 继续保留 `Phase 6A` 封版前全量复验要求（3 轮 replay + 手工门禁）。
+  - 保留 `Phase 6A` 封版前全量复验要求（3 轮 replay + 手工门禁）；按 2026-02-06 当日决议，今日不再追加重复复测。
   - 无 readback 路线继续按 gate 数据推进（当前为非封版预结论）。
+  - 多层 GPU 历史与多层合成仍在 `M3` 范围，本轮不纳入代码实现。
 
 ## 1. 目标与成功标准
 
@@ -715,3 +718,16 @@
 
 - Note:
   - Pilot gate result is still `comparison-only / non-release evidence under 6A waiver`.
+
+### 13.13 决议记录（2026-02-06，当日复测止损与文档收口）
+
+- Decision:
+  - 停止 2026-02-06 当日新增稳定性复测，不再追加 `Phase 6A` 的 3 轮 replay 与 20 笔手工短测。
+- Why:
+  - 当日已完成多轮 gate 与试点对比，继续重复测试的边际收益低于文档收口与后续开发推进收益。
+- Scope:
+  - 允许：继续推进 6B 基线冻结、无 readback 路线与非压感阻塞项。
+  - 不允许：将 6A 状态由 `PARTIAL PASS` 升级为通过。
+- Guardrail:
+  - 维持“非封版预结论”标记。
+  - 封版前必须回到 6A 全量门禁并复验通过。

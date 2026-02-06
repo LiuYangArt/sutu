@@ -11,7 +11,12 @@ describe('HistoryStore - resizeCanvas', () => {
 
     // Create redo stack first
     const img = new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1);
-    store.pushStroke('layer_a', img);
+    store.pushStroke({
+      layerId: 'layer_a',
+      entryId: 'stroke-test-1',
+      snapshotMode: 'cpu',
+      beforeImage: img,
+    });
     store.undo();
     expect(store.canRedo()).toBe(true);
 

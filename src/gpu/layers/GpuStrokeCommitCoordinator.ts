@@ -6,6 +6,7 @@ import type {
   GpuStrokePrepareResult,
 } from '../types';
 import type { GpuCanvasRenderer } from './GpuCanvasRenderer';
+import type { GpuStrokeHistoryStore } from './GpuStrokeHistoryStore';
 
 function hasDrawableDirtyRect(rect: Rect | null): rect is Rect {
   return Boolean(rect && rect.right > rect.left && rect.bottom > rect.top);
@@ -31,6 +32,11 @@ export interface GpuStrokeCommitCoordinatorOptions {
   getTargetLayer: (
     layerId: string
   ) => { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null;
+}
+
+export interface GpuStrokeCommitOptions {
+  historyEntryId?: string | null;
+  historyStore?: GpuStrokeHistoryStore | null;
 }
 
 interface GpuCommitMetricsAccumulatorState {
@@ -134,73 +140,95 @@ export class GpuStrokeCommitCoordinator {
     this.metrics.lastCommitAtMs = performance.now();
   }
 
-  async commit(layerId: string | null): Promise<GpuStrokeCommitResult> {
-    const prepareStart = performance.now();
-    const prepareResult = await this.prepareStrokeEndGpu();
-    const prepareMs = performance.now() - prepareStart;
-
-    if (!layerId || !prepareResult.scratch || !hasDrawableDirtyRect(prepareResult.dirtyRect)) {
-      this.clearScratchGpu();
-      const result = {
-        ...emptyCommitResult(prepareResult.dirtyRect),
-        timings: { prepareMs, commitMs: 0, readbackMs: 0 },
-      };
-      this.recordCommitSample(result);
-      return result;
-    }
-
-    const layer = this.getTargetLayer(layerId);
-    if (!layer) {
-      this.clearScratchGpu();
-      console.warn('[GpuStrokeCommitCoordinator] Missing target layer', { layerId });
-      const result = {
-        ...emptyCommitResult(prepareResult.dirtyRect),
-        timings: { prepareMs, commitMs: 0, readbackMs: 0 },
-      };
-      this.recordCommitSample(result);
-      return result;
-    }
-
-    const commitStart = performance.now();
-    const dirtyTiles = this.gpuRenderer.commitStroke({
-      layerId,
-      scratchTexture: prepareResult.scratch.texture,
-      dirtyRect: prepareResult.dirtyRect,
-      strokeOpacity: prepareResult.strokeOpacity,
-      renderScale: prepareResult.scratch.renderScale,
-      applyDither: true,
-      ditherStrength: 1.0,
-      baseLayerCanvas: layer.canvas,
-    });
-    const commitMs = performance.now() - commitStart;
-
-    let readbackMs = 0;
-    if (dirtyTiles.length > 0 && this.readbackMode === 'enabled') {
-      const readbackStart = performance.now();
-      await this.gpuRenderer.readbackTilesToLayer({
-        layerId,
-        tiles: dirtyTiles,
-        targetCtx: layer.ctx,
-      });
-      readbackMs = performance.now() - readbackStart;
-    } else if (dirtyTiles.length > 0) {
-      this.metrics.readbackBypassedCount += 1;
-    }
-
-    this.clearScratchGpu();
-
-    const result = {
-      committed: dirtyTiles.length > 0,
-      dirtyRect: prepareResult.dirtyRect,
-      dirtyTiles,
-      timings: {
-        prepareMs,
-        commitMs,
-        readbackMs,
-      },
+  async commit(
+    layerId: string | null,
+    options: GpuStrokeCommitOptions = {}
+  ): Promise<GpuStrokeCommitResult> {
+    const historyEntryId = options.historyEntryId ?? null;
+    const historyStore = options.historyStore ?? null;
+    const finalizeHistory = () => {
+      if (historyStore && historyEntryId) {
+        historyStore.finalizeStroke(historyEntryId);
+      }
     };
 
-    this.recordCommitSample(result);
-    return result;
+    try {
+      const prepareStart = performance.now();
+      const prepareResult = await this.prepareStrokeEndGpu();
+      const prepareMs = performance.now() - prepareStart;
+
+      if (!layerId || !prepareResult.scratch || !hasDrawableDirtyRect(prepareResult.dirtyRect)) {
+        this.clearScratchGpu();
+        const result = {
+          ...emptyCommitResult(prepareResult.dirtyRect),
+          timings: { prepareMs, commitMs: 0, readbackMs: 0 },
+        };
+        this.recordCommitSample(result);
+        return result;
+      }
+
+      const layer = this.getTargetLayer(layerId);
+      if (!layer) {
+        this.clearScratchGpu();
+        console.warn('[GpuStrokeCommitCoordinator] Missing target layer', { layerId });
+        const result = {
+          ...emptyCommitResult(prepareResult.dirtyRect),
+          timings: { prepareMs, commitMs: 0, readbackMs: 0 },
+        };
+        this.recordCommitSample(result);
+        return result;
+      }
+
+      const commitStart = performance.now();
+      const dirtyTiles = this.gpuRenderer.commitStroke({
+        layerId,
+        scratchTexture: prepareResult.scratch.texture,
+        dirtyRect: prepareResult.dirtyRect,
+        strokeOpacity: prepareResult.strokeOpacity,
+        renderScale: prepareResult.scratch.renderScale,
+        applyDither: true,
+        ditherStrength: 1.0,
+        baseLayerCanvas: layer.canvas,
+        historyCapture:
+          historyStore && historyEntryId
+            ? {
+                entryId: historyEntryId,
+                store: historyStore,
+              }
+            : undefined,
+      });
+      const commitMs = performance.now() - commitStart;
+
+      let readbackMs = 0;
+      if (dirtyTiles.length > 0 && this.readbackMode === 'enabled') {
+        const readbackStart = performance.now();
+        await this.gpuRenderer.readbackTilesToLayer({
+          layerId,
+          tiles: dirtyTiles,
+          targetCtx: layer.ctx,
+        });
+        readbackMs = performance.now() - readbackStart;
+      } else if (dirtyTiles.length > 0) {
+        this.metrics.readbackBypassedCount += 1;
+      }
+
+      this.clearScratchGpu();
+
+      const result = {
+        committed: dirtyTiles.length > 0,
+        dirtyRect: prepareResult.dirtyRect,
+        dirtyTiles,
+        timings: {
+          prepareMs,
+          commitMs,
+          readbackMs,
+        },
+      };
+
+      this.recordCommitSample(result);
+      return result;
+    } finally {
+      finalizeHistory();
+    }
   }
 }

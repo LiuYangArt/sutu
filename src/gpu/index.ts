@@ -59,6 +59,14 @@ export { GpuLayerStore } from './layers/GpuLayerStore';
 export { TileResidencyManager } from './layers/TileResidencyManager';
 export { SelectionMaskGpu } from './layers/SelectionMaskGpu';
 export { GpuStrokeCommitCoordinator } from './layers/GpuStrokeCommitCoordinator';
+export { GpuStrokeHistoryStore } from './layers/GpuStrokeHistoryStore';
+export type {
+  GpuStrokeHistoryDirection,
+  GpuStrokeHistorySnapshotMode,
+  GpuStrokeHistoryApplyPayload,
+  GpuStrokeHistoryStats,
+  GpuStrokeHistoryTileApplyItem,
+} from './layers/GpuStrokeHistoryStore';
 export {
   clampResidencyBudgetBytes,
   computeResidencyBudgetFromProbe,

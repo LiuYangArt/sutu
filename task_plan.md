@@ -10,8 +10,9 @@
 - [x] Phase 3：LRU 预算接线（probe -> localStorage -> renderer）
 - [x] Phase 4：SelectionMask 改为 `r8unorm`
 - [x] Phase 5：验收模板回填到设计文档
-- [ ] Phase 6A：稳定性回归门禁（压感/丢笔触/消失）
+- [ ] Phase 6A：稳定性回归门禁（压感/丢笔触/消失，封版前窗口复验；今日不再追加复测）
 - [ ] Phase 6B：5000x5000 性能收敛（门禁能力已落地；策略切换为“冻结基线 + 无 readback 对比优先”）
+- [x] Phase 6C：单层 GPU 双轨历史（GPU 脏 tile 快照 + CPU 历史兜底）
 
 ## 已完成实现
 - 新增类型契约：`GpuScratchHandle` / `GpuStrokePrepareResult` / `GpuStrokeCommitResult`
@@ -62,6 +63,12 @@
   - 修复 `brush/zoom/eyedropper` 快速切换时上一笔闪烁。
   - 修复未抬笔切 `zoom` 并立即缩放时偶发丢笔。
   - 吸色切换性能优化：优先 GPU 单像素采样，降低 CPU 同步路径触发概率。
+- 新增单层 GPU 双轨历史落地（2026-02-06）：
+  - `StrokeEntry` 扩展为 `entryId + snapshotMode(cpu|gpu)`，`pushStroke` 改为对象签名。
+  - 新增 `GpuStrokeHistoryStore`（脏 tile before/after 快照、budget、prune、stats）。
+  - `commitStroke`/`GpuStrokeCommitCoordinator.commit` 已支持 historyCapture 透传并自动 `finalizeStroke`。
+  - `useLayerOperations` 已接入双轨分支：GPU 路径优先 apply 快照，失败再走 CPU 兜底。
+  - CPU 笔刷路径保持不变（新逻辑受 GPU 单层条件保护）。
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
@@ -70,11 +77,9 @@
 - readback 策略：仅 stroke end（dirty）与导出时执行
 
 ## 下一步（先稳定，再性能）
-1. [ ] 稳定性 Gate（必须先过）
-   - 5000x5000 单层连续 100 笔：无丢笔触、无“预览出现后消失”
-   - 压感起笔/行笔连续：无异常 1px 细线伪迹
-   - 无 `GPUValidationError` / device lost
-   - 抬笔后无延迟补 dab
+1. [ ] 稳定性 Gate（封版前执行；今日暂停新增复测）
+   - 当日决议：不再追加 3 轮 replay 与 20 笔手工复测，维持现有证据集。
+   - 状态口径：继续保持 `PARTIAL PASS`，不宣告 6A 通过。
 2. [x] 停掉渲染帧内的重复整层上传
    - `syncLayerFromCanvas` 已恢复 revision guard。
    - `commitStrokeGpu` 成功后不再强制 `markLayerDirty` 触发整层回传。
@@ -83,6 +88,7 @@
    - `commitStroke` 支持 `baseLayerCanvas`，缺失 tile 时只补齐该 tile 的底图像素。
 4. [ ] 继续压缩 GPU path 的 CPU 参与（临时豁免下可先探索）
    - 排查并移除非必要 `readback -> CPU layer -> 再回传` 的链路依赖。
+   - [x] 已完成单层双轨历史一期：起笔前不再强制 CPU `beforeImage` 同步（预算允许时走 GPU 快照）。
    - [x] 已新增 Debug-only `No-Readback Pilot` 试点开关（默认路径不变）。
    - [x] 在目标硬件完成首轮试点验收（`2026-02-06T13:59:59.399Z`，`No-Readback Pilot Gate: PASS`）。
    - [x] 已完成两轮试点复验并回填文档（`2026-02-06T14:06:20.517Z` / `2026-02-06T14:07:56.249Z`，均 PASS）。
@@ -93,10 +99,10 @@
    - 已新增 `Run Phase6B Perf Gate (30s)`，复用 replay 流程，自动输出 Frame/Commit/Diagnostics 三类报告。
    - 已新增全局接口：`window.__gpuBrushCommitMetrics()` / `window.__gpuBrushCommitMetricsReset()`。
    - 已新增 commit 指标聚合：`attemptCount/committedCount/avg*/max*/dirtyTiles`。
-6. [ ] Phase 6B-2：5000x5000 基线冻结与回填
+6. [x] Phase 6B-2：5000x5000 基线冻结与回填
    - 以 `case-5000-04` 冻结当前过渡态基线（A 组基线来自 6B-3 实测，含 `avg readbackMs`、frame p95/p99、dirtyTiles、稳定性信号）。
    - 回填到设计文档并标注“非封版预结论”。
-7. [ ] Phase 6B-3：无 readback 路线对比验证（优先）
+7. [x] Phase 6B-3：无 readback 路线对比验证（优先）
    - [x] 对比执行器已落地：固定 `case-5000-04`，执行 `A->B->B->A`，按 replay-only 30s 采样并输出差异报告（无硬阈值）。
    - [x] 在目标硬件执行两轮实测并回填设计文档 13.10（`2026-02-06`，两轮均 PASS，A/B 聚合 + Delta + 稳定性信号）。
 8. [ ] 多层可见性能说明与下一阶段
@@ -104,7 +110,12 @@
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复，当前处于 Phase 6A 封版门禁收尾 + Phase 6B 基线冻结/无 readback 路线推进
+**In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复；按 2026-02-06 当日决议停止追加复测，维持 Phase 6A `PARTIAL PASS`；Phase 6B-2/6B-3 已完成，当前进入 6B 后续落地与多层阶段说明整理
+
+## 今日决议（2026-02-06）
+- 不再执行新增稳定性回归测试（含 3 轮 replay 与 20 笔手工短测）。
+- 现有结论保持不变：6A 维持 `PARTIAL PASS`，所有性能结论继续标注“非封版预结论”。
+- 封版前仍需回到 6A 全量门禁复验。
 
 ## Phase 6A 临时豁免决议（2026-02-06）
 - 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。
@@ -133,6 +144,9 @@
 - [x] 新增 6B-3 实测回填（`2026-02-06`，`13:16`/`13:21` 两轮）：
   - 两轮均 `Phase6B-3 Compare: PASS`，且 `uncapturedErrors=0`、`deviceLost=NO`、`mode restored=YES`。
   - Delta（B-A）跨轮均值：`commit avg readback -58.63ms`、`commit avg total -58.51ms`、`frame p95 -2.80ms`、`frame p99 -26.60ms`、`dirtyTiles -0.72`。
+- [x] 6B-2 基线冻结与文档回填已完成（2026-02-06）：
+  - 过渡态 A 组基线与 No-Readback Pilot 三轮结果已写入设计文档（13.10.1 / 13.12）。
+  - 统一标注为“非封版预结论”，与 6A 临时豁免口径一致。
 - [x] 新增 No-Readback Pilot Gate 首轮验收（`2026-02-06T13:59:59.399Z`）：
   - `No-Readback Pilot Gate: PASS`，且 `uncapturedErrors=0`、`deviceLost=NO`、`pilot restored=YES`。
   - commit：`avg readback/total = 0.00 / 2.61ms`，`readbackBypassedCount=56`，`mode=disabled`。
@@ -146,7 +160,7 @@
 - [x] 用户回归确认：`undo/zoom/eyedropper` 当前可用，切换不再闪烁与明显卡顿（2026-02-06）。
 - [x] 已修复竞态：未抬笔切 `zoom` 并立即缩放导致偶发丢笔（工具切换统一先收笔 + 收尾按 stroke 状态执行）。
 - [x] 自动验证通过：`pnpm -s typecheck` + `pnpm -s test`（`31 passed / 204 passed`）。
-- [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
+- [ ] 稳定性 Gate 待封版前手工复验（3 轮 replay + 20 笔压感短测；今日暂停新增复测）。
 
 ### 本轮关键结论
 - 当前“能画、能回放”已恢复，主链路可继续推进。
@@ -169,7 +183,26 @@
 2. [x] 诊断数据分代/清理
    - `uncapturedErrors` / `events` / `submitHistory` 可通过 reset 进入新会话统计。
    - `window.__gpuBrushDiagnosticsReset()` 已可直接触发（Debug Panel）。
-3. [ ] 回归验收（自动回放 + 手工抽检）
-   - 用 `Run Phase6A Auto Gate` 选择 `case-5000-04.json`，确认每轮清层且 `Auto Gate: PASS`。
-   - 手工压感短测（20 笔）勾选 checklist 后再点 `Record 20-Stroke Manual Gate`，确认 `Manual Gate: PASS`。
-   - 临时豁免期间：若仅第一条“无起笔细头”未通过，可继续推进后续项，但不得宣告 6A 通过。
+3. [x] Phase 6B-2：基线冻结与回填
+   - A 组基线、B 组对比与 Pilot 三轮结果已沉淀到设计文档。
+4. [x] Phase 6B-3：无 readback 路线对比验证
+   - 工具、实测与 Delta 结论均已回填并可复查。
+5. [ ] 6B 后续：继续压缩 GPU 路径中的 CPU 参与
+   - 拆分并排查必须保留的 `readback -> CPU layer -> 再回传` 依赖，形成“可删除/暂保留”清单。
+   - 先落地低风险链路减负（不改公开行为），再评估默认路径切换条件。
+   - [x] 依赖清单已完成（2026-02-06，单层 no-readback 现状）：
+     - `热路径已达成`：单层 GPU `commit` 默认 `readbackMode=disabled`，抬笔提交不再阻塞同步 readback。
+     - `必须保留（当前）`：
+       - `captureBeforeImage -> syncGpuLayerForHistory`（起笔前同步待回写 tile，保证 undo 基线正确，不跨笔撤销）。
+       - `handleUndo/handleRedo/clear/fill` 相关历史路径前的 `syncGpuLayerForHistory`（历史栈仍以 CPU `ImageData` 为事实源）。
+     - `条件保留（模式切换一致性）`：
+       - `syncGpuLayerToCpu` 在 GPU 显示退出或图层切换时执行一次，确保 Canvas2D fallback 画面一致。
+       - 关闭 pilot / 手动切回 `readbackMode=enabled` 时的 `syncAllPendingGpuLayersToCpu` 补齐。
+     - `候选移除（下一阶段）`：
+       - 调试态 `readbackMode=enabled` 主分支与对应全局切换 API（仅 A/B 与门禁工具使用，非默认绘画链路）。
+       - 自动调度 `schedulePendingGpuCpuSync` 的“每笔后异步回写”策略（待历史链路去 CPU 化后替换）。
+6. [ ] 多层可见性能说明与下一阶段方案
+   - 补齐“单层 GPU / 多层 fallback”边界说明与用户可见影响。
+   - 输出 M3 入口条件与最小实现范围（tile 化多层合成路径）。
+7. [ ] 回归验收（自动回放 + 手工抽检，封版前窗口执行）
+   - 6A 仍保持 `PARTIAL PASS`，最终发布前必须完成全量门禁复验。

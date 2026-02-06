@@ -12,12 +12,23 @@ export type HistoryEntry =
   | ResizeCanvasEntry
   | SelectionEntry;
 
-interface StrokeEntry {
+export type StrokeSnapshotMode = 'cpu' | 'gpu';
+
+export interface StrokeEntry {
   type: 'stroke';
   layerId: string;
-  beforeImage: ImageData;
+  entryId: string;
+  snapshotMode: StrokeSnapshotMode;
+  beforeImage?: ImageData;
   afterImage?: ImageData; // Filled during undo, used for redo
   timestamp: number;
+}
+
+export interface PushStrokeParams {
+  layerId: string;
+  entryId: string;
+  snapshotMode: StrokeSnapshotMode;
+  beforeImage?: ImageData;
 }
 
 interface AddLayerEntry {
@@ -63,8 +74,8 @@ interface HistoryState {
   redoStack: HistoryEntry[];
   maxHistorySize: number;
 
-  // Push stroke operation (with beforeImage)
-  pushStroke: (layerId: string, beforeImage: ImageData) => void;
+  // Push stroke operation (CPU/GPU dual-track snapshots)
+  pushStroke: (params: PushStrokeParams) => void;
 
   // Push layer add operation
   pushAddLayer: (layerId: string, layerMeta: Layer, layerIndex: number) => void;
@@ -104,6 +115,11 @@ function cloneLayerSnapshots(layers: ResizeCanvasLayerSnapshot[]): ResizeCanvasL
   return layers.map((l) => ({ layerId: l.layerId, imageData: cloneImageData(l.imageData) }));
 }
 
+export function createHistoryEntryId(prefix: string = 'stroke'): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${Date.now()}-${random}`;
+}
+
 export const useHistoryStore = create<HistoryState>((set, get) => {
   // Helper to push entry and manage stack size
   function pushEntry(entry: HistoryEntry) {
@@ -118,11 +134,20 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
     redoStack: [],
     maxHistorySize: 50,
 
-    pushStroke: (layerId, beforeImage) => {
+    pushStroke: ({ layerId, entryId, snapshotMode, beforeImage }) => {
+      if (snapshotMode === 'cpu' && !beforeImage) {
+        console.warn('[HistoryStore] Missing beforeImage for CPU stroke entry', {
+          layerId,
+          entryId,
+        });
+        return;
+      }
       pushEntry({
         type: 'stroke',
         layerId,
-        beforeImage: cloneImageData(beforeImage),
+        entryId,
+        snapshotMode,
+        beforeImage: beforeImage ? cloneImageData(beforeImage) : undefined,
         timestamp: Date.now(),
       });
     },

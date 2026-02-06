@@ -3,7 +3,7 @@ import { useToolStore, ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
 import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
-import { useHistoryStore } from '@/stores/history';
+import { createHistoryEntryId, type HistoryEntry, useHistoryStore } from '@/stores/history';
 import { useSettingsStore } from '@/stores/settings';
 import { useTabletStore } from '@/stores/tablet';
 import { useSelectionHandler } from './useSelectionHandler';
@@ -26,6 +26,7 @@ import {
   GPUContext,
   GpuCanvasRenderer,
   GpuStrokeCommitCoordinator,
+  GpuStrokeHistoryStore,
   loadResidencyBudget,
   type GpuBrushCommitReadbackMode,
   type GpuBrushCommitMetricsSnapshot,
@@ -81,6 +82,12 @@ declare global {
 
 type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number };
 
+const GPU_TILE_SIZE = 512;
+const GPU_LAYER_FORMAT: GPUTextureFormat = 'rgba8unorm';
+const MIN_GPU_HISTORY_BUDGET_BYTES = 256 * 1024 * 1024;
+const MAX_GPU_HISTORY_BUDGET_BYTES = 1024 * 1024 * 1024;
+const GPU_HISTORY_BUDGET_RATIO = 0.2;
+
 function isLineTool(tool: ToolType | null): boolean {
   return tool === 'brush' || tool === 'eraser';
 }
@@ -109,6 +116,8 @@ export function Canvas() {
   const strokeBufferRef = useRef(new StrokeBuffer());
   const gpuRendererRef = useRef<GpuCanvasRenderer | null>(null);
   const gpuCommitCoordinatorRef = useRef<GpuStrokeCommitCoordinator | null>(null);
+  const gpuStrokeHistoryStoreRef = useRef<GpuStrokeHistoryStore | null>(null);
+  const pendingGpuHistoryEntryIdRef = useRef<string | null>(null);
   const residencyBudgetLoggedRef = useRef(false);
   const layerRevisionRef = useRef(0);
   const lagometerRef = useRef(new LagometerMonitor());
@@ -351,6 +360,34 @@ export function Canvas() {
     [brushBackend, gpuAvailable, currentTool, visibleLayerCount]
   );
 
+  const gpuHistoryEnabled = useMemo(
+    () => brushBackend === 'gpu' && gpuAvailable && visibleLayerCount <= 1,
+    [brushBackend, gpuAvailable, visibleLayerCount]
+  );
+
+  const collectLiveGpuHistoryEntries = useCallback(
+    (entries: HistoryEntry[], liveIds: Set<string>) => {
+      for (const entry of entries) {
+        if (entry.type !== 'stroke') continue;
+        if (entry.snapshotMode !== 'gpu') continue;
+        if (!entry.entryId) continue;
+        liveIds.add(entry.entryId);
+      }
+    },
+    []
+  );
+
+  const pruneGpuStrokeHistory = useCallback(() => {
+    const historyStore = gpuStrokeHistoryStoreRef.current;
+    if (!historyStore) return;
+
+    const { undoStack, redoStack } = useHistoryStore.getState();
+    const liveIds = new Set<string>();
+    collectLiveGpuHistoryEntries(undoStack, liveIds);
+    collectLiveGpuHistoryEntries(redoStack, liveIds);
+    historyStore.pruneExcept(liveIds);
+  }, [collectLiveGpuHistoryEntries]);
+
   useEffect(() => {
     if (!gpuAvailable) return;
     const device = GPUContext.getInstance().device;
@@ -359,13 +396,32 @@ export function Canvas() {
 
     if (!gpuRendererRef.current) {
       gpuRendererRef.current = new GpuCanvasRenderer(device, gpuCanvas, {
-        tileSize: 512,
-        layerFormat: 'rgba8unorm',
+        tileSize: GPU_TILE_SIZE,
+        layerFormat: GPU_LAYER_FORMAT,
       });
     }
 
     const budgetInfo = loadResidencyBudget();
     gpuRendererRef.current.setResidencyBudgetBytes(budgetInfo.budgetBytes);
+    const historyBudgetBytes = Math.min(
+      MAX_GPU_HISTORY_BUDGET_BYTES,
+      Math.max(
+        MIN_GPU_HISTORY_BUDGET_BYTES,
+        Math.floor(budgetInfo.budgetBytes * GPU_HISTORY_BUDGET_RATIO)
+      )
+    );
+    if (!gpuStrokeHistoryStoreRef.current) {
+      gpuStrokeHistoryStoreRef.current = new GpuStrokeHistoryStore({
+        device,
+        tileSize: GPU_TILE_SIZE,
+        layerFormat: GPU_LAYER_FORMAT,
+        budgetBytes: historyBudgetBytes,
+      });
+    } else {
+      gpuStrokeHistoryStoreRef.current.setBudgetBytes(historyBudgetBytes);
+    }
+    pruneGpuStrokeHistory();
+
     if (!residencyBudgetLoggedRef.current) {
       const budgetMb = (budgetInfo.budgetBytes / (1024 * 1024)).toFixed(0);
       if (budgetInfo.source === 'probe') {
@@ -382,7 +438,7 @@ export function Canvas() {
     }
 
     gpuRendererRef.current.resize(width, height);
-  }, [gpuAvailable, width, height]);
+  }, [gpuAvailable, width, height, pruneGpuStrokeHistory]);
 
   useEffect(() => {
     const gpuRenderer = gpuRendererRef.current;
@@ -411,6 +467,29 @@ export function Canvas() {
       gpuRendererRef.current.setSelectionMask(selectionMask ?? null);
     }
   }, [selectionMask]);
+
+  useEffect(() => {
+    pruneGpuStrokeHistory();
+    const unsubscribe = useHistoryStore.subscribe(() => {
+      pruneGpuStrokeHistory();
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [pruneGpuStrokeHistory]);
+
+  useEffect(() => {
+    return () => {
+      gpuStrokeHistoryStoreRef.current?.clear();
+      gpuStrokeHistoryStoreRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!gpuHistoryEnabled) {
+      pendingGpuHistoryEntryIdRef.current = null;
+    }
+  }, [gpuHistoryEnabled]);
 
   // Tablet store: We use getState() directly in event handlers for real-time data
   // No need to subscribe to state changes here since we sync-read in handlers
@@ -455,42 +534,69 @@ export function Canvas() {
     []
   );
 
-  const syncGpuLayerToCpu = useCallback(async (layerId: string): Promise<boolean> => {
-    const gpuRenderer = gpuRendererRef.current;
-    const renderer = layerRendererRef.current;
-    if (!gpuRenderer || !renderer) return false;
+  const syncGpuLayerTilesToCpu = useCallback(
+    async (layerId: string, tiles: Array<{ x: number; y: number }>): Promise<boolean> => {
+      if (tiles.length === 0) return false;
 
-    const layer = renderer.getLayer(layerId);
-    if (!layer) return false;
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return false;
 
-    const trackedTileKeys = pendingGpuCpuSyncTilesRef.current.get(layerId);
-    if (!trackedTileKeys || trackedTileKeys.size === 0) return false;
+      const layer = renderer.getLayer(layerId);
+      if (!layer) return false;
 
-    const tiles: Array<{ x: number; y: number }> = [];
-    for (const key of trackedTileKeys) {
-      const coord = parseTileCoordKey(key);
-      if (coord) {
-        tiles.push(coord);
+      try {
+        await gpuRenderer.readbackTilesToLayer({
+          layerId,
+          tiles,
+          targetCtx: layer.ctx,
+        });
+
+        const trackedTileKeys = pendingGpuCpuSyncTilesRef.current.get(layerId);
+        if (trackedTileKeys) {
+          for (const tile of tiles) {
+            trackedTileKeys.delete(tileCoordKey(tile.x, tile.y));
+          }
+          if (trackedTileKeys.size === 0) {
+            pendingGpuCpuSyncTilesRef.current.delete(layerId);
+          }
+        }
+        return true;
+      } catch (error) {
+        console.warn('[NoReadback] Failed to sync GPU tiles to CPU layer', { layerId, error });
+        return false;
       }
-    }
-    if (tiles.length === 0) {
-      pendingGpuCpuSyncTilesRef.current.delete(layerId);
-      return false;
-    }
+    },
+    []
+  );
 
-    try {
-      await gpuRenderer.readbackTilesToLayer({
-        layerId,
-        tiles,
-        targetCtx: layer.ctx,
-      });
-      pendingGpuCpuSyncTilesRef.current.delete(layerId);
-      return true;
-    } catch (error) {
-      console.warn('[NoReadback] Failed to sync GPU tiles to CPU layer', { layerId, error });
-      return false;
-    }
-  }, []);
+  const syncGpuLayerToCpu = useCallback(
+    async (layerId: string): Promise<boolean> => {
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return false;
+
+      const layer = renderer.getLayer(layerId);
+      if (!layer) return false;
+
+      const trackedTileKeys = pendingGpuCpuSyncTilesRef.current.get(layerId);
+      if (!trackedTileKeys || trackedTileKeys.size === 0) return false;
+
+      const tiles: Array<{ x: number; y: number }> = [];
+      for (const key of trackedTileKeys) {
+        const coord = parseTileCoordKey(key);
+        if (coord) {
+          tiles.push(coord);
+        }
+      }
+      if (tiles.length === 0) {
+        pendingGpuCpuSyncTilesRef.current.delete(layerId);
+        return false;
+      }
+      return syncGpuLayerTilesToCpu(layerId, tiles);
+    },
+    [syncGpuLayerTilesToCpu]
+  );
 
   const syncAllPendingGpuLayersToCpu = useCallback(async (): Promise<number> => {
     const layerIds = Array.from(pendingGpuCpuSyncTilesRef.current.keys());
@@ -625,6 +731,62 @@ export function Canvas() {
     ctx.drawImage(compositeCanvas, 0, 0);
   }, [activeLayerId, getGpuRenderScale, gpuDisplayActive]);
 
+  const beginGpuStrokeHistory = useCallback(
+    (layerId: string): { entryId: string; snapshotMode: 'cpu' | 'gpu' } | null => {
+      if (!gpuHistoryEnabled) {
+        pendingGpuHistoryEntryIdRef.current = null;
+        return null;
+      }
+
+      const historyStore = gpuStrokeHistoryStoreRef.current;
+      if (!historyStore) {
+        pendingGpuHistoryEntryIdRef.current = null;
+        return null;
+      }
+
+      const entryId = createHistoryEntryId();
+      const snapshotMode = historyStore.beginStroke(entryId, layerId);
+      pendingGpuHistoryEntryIdRef.current = snapshotMode === 'gpu' ? entryId : null;
+      return { entryId, snapshotMode };
+    },
+    [gpuHistoryEnabled]
+  );
+
+  const applyGpuStrokeHistory = useCallback(
+    async (entryId: string, direction: 'undo' | 'redo', layerId: string): Promise<boolean> => {
+      if (!gpuHistoryEnabled) return false;
+
+      const historyStore = gpuStrokeHistoryStoreRef.current;
+      const gpuRenderer = gpuRendererRef.current;
+      if (!historyStore || !gpuRenderer) return false;
+
+      const applyPayload = historyStore.apply(entryId, direction);
+      if (!applyPayload || applyPayload.layerId !== layerId) {
+        return false;
+      }
+
+      try {
+        const appliedTiles = gpuRenderer.applyHistoryTiles({
+          layerId: applyPayload.layerId,
+          tiles: applyPayload.tiles,
+        });
+        if (appliedTiles.length === 0) return false;
+
+        await syncGpuLayerTilesToCpu(applyPayload.layerId, appliedTiles);
+        return true;
+      } catch (error) {
+        console.warn('[GpuStrokeHistory] Failed to apply history snapshot', {
+          entryId,
+          direction,
+          layerId,
+          error,
+        });
+        return false;
+      }
+    },
+    [gpuHistoryEnabled, syncGpuLayerTilesToCpu]
+  );
+
   const {
     updateThumbnail,
     captureBeforeImage,
@@ -646,6 +808,9 @@ export function Canvas() {
     compositeAndRender,
     markLayerDirty,
     syncGpuLayerForHistory: syncGpuLayerToCpu,
+    gpuHistoryEnabled,
+    beginGpuStrokeHistory,
+    applyGpuStrokeHistory,
   });
 
   const renderGpuFrame = useCallback(
@@ -675,6 +840,7 @@ export function Canvas() {
   const commitStrokeGpu = useCallback(async (): Promise<GpuStrokeCommitResult> => {
     const coordinator = gpuCommitCoordinatorRef.current;
     if (!coordinator) {
+      pendingGpuHistoryEntryIdRef.current = null;
       return {
         committed: false,
         dirtyRect: null,
@@ -682,7 +848,22 @@ export function Canvas() {
         timings: { prepareMs: 0, commitMs: 0, readbackMs: 0 },
       };
     }
-    const result = await coordinator.commit(activeLayerId);
+    const historyStore = gpuStrokeHistoryStoreRef.current;
+    const historyEntryId = gpuHistoryEnabled ? pendingGpuHistoryEntryIdRef.current : null;
+    const commitOptions =
+      historyStore && historyEntryId
+        ? {
+            historyEntryId,
+            historyStore,
+          }
+        : undefined;
+
+    let result: GpuStrokeCommitResult;
+    try {
+      result = await coordinator.commit(activeLayerId, commitOptions);
+    } finally {
+      pendingGpuHistoryEntryIdRef.current = null;
+    }
     if (
       activeLayerId &&
       result.dirtyTiles.length > 0 &&
@@ -692,7 +873,7 @@ export function Canvas() {
       schedulePendingGpuCpuSync(activeLayerId);
     }
     return result;
-  }, [activeLayerId, trackPendingGpuCpuSyncTiles, schedulePendingGpuCpuSync]);
+  }, [activeLayerId, gpuHistoryEnabled, trackPendingGpuCpuSyncTiles, schedulePendingGpuCpuSync]);
 
   const getGpuBrushCommitMetricsSnapshot = useCallback((): GpuBrushCommitMetricsSnapshot | null => {
     return gpuCommitCoordinatorRef.current?.getCommitMetricsSnapshot() ?? null;
