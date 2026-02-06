@@ -218,6 +218,8 @@ export function useBrushRenderer({
   // When stroke 2 starts during stroke 1's await prepareEndStroke(),
   // stroke 2's clear() would wipe stroke 1's previewCanvas before composite.
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
+  const gpuCommitLockActiveRef = useRef(false);
+  const gpuCommitLockResolveRef = useRef<(() => void) | null>(null);
   const strokeCancelledRef = useRef(false);
   const dualBrushTextureIdRef = useRef<string | null>(null);
 
@@ -769,33 +771,59 @@ export function useBrushRenderer({
     return null;
   }, [backend]);
 
+  const releaseGpuCommitLock = useCallback(() => {
+    if (!gpuCommitLockActiveRef.current) return;
+    gpuCommitLockActiveRef.current = false;
+    const resolve = gpuCommitLockResolveRef.current;
+    gpuCommitLockResolveRef.current = null;
+    resolve?.();
+    finishingPromiseRef.current = null;
+  }, []);
+
   const prepareStrokeEndGpu = useCallback(async (): Promise<GpuStrokePrepareResult> => {
     if (backend === 'gpu' && gpuBufferRef.current) {
-      await gpuBufferRef.current.prepareEndStroke();
-      const texture = gpuBufferRef.current.getScratchTexture();
-      return {
-        dirtyRect: gpuBufferRef.current.getDirtyRect(),
-        strokeOpacity: strokeOpacityRef.current,
-        scratch: texture
-          ? {
-              texture,
-              renderScale: gpuBufferRef.current.getRenderScale(),
-            }
-          : null,
-      };
+      // Align GPU commit path with legacy endStroke lock to prevent tailgating.
+      if (!gpuCommitLockActiveRef.current && !finishingPromiseRef.current) {
+        gpuCommitLockActiveRef.current = true;
+        finishingPromiseRef.current = new Promise<void>((resolve) => {
+          gpuCommitLockResolveRef.current = resolve;
+        });
+      }
+
+      try {
+        await gpuBufferRef.current.prepareEndStroke();
+        const texture = gpuBufferRef.current.getScratchTexture();
+        return {
+          dirtyRect: gpuBufferRef.current.getDirtyRect(),
+          strokeOpacity: strokeOpacityRef.current,
+          scratch: texture
+            ? {
+                texture,
+                renderScale: gpuBufferRef.current.getRenderScale(),
+              }
+            : null,
+        };
+      } catch (error) {
+        releaseGpuCommitLock();
+        throw error;
+      }
     }
     return {
       dirtyRect: null,
       strokeOpacity: strokeOpacityRef.current,
       scratch: null,
     };
-  }, [backend]);
+  }, [backend, releaseGpuCommitLock]);
 
   const clearScratchGpu = useCallback(() => {
-    if (backend === 'gpu' && gpuBufferRef.current) {
-      gpuBufferRef.current.clear();
+    try {
+      if (backend === 'gpu' && gpuBufferRef.current) {
+        gpuBufferRef.current.clear();
+      }
+    } finally {
+      releaseGpuCommitLock();
     }
-  }, [backend]);
+  }, [backend, releaseGpuCommitLock]);
 
   // Backward-compatible aliases during API transition.
   const getGpuScratchTexture = useCallback(() => {
