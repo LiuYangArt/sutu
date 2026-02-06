@@ -12,6 +12,7 @@ import {
   runFormatCompare,
   runM0Baseline,
   runTileSizeCompare,
+  type GpuBrushCommitMetricsSnapshot,
 } from '@/gpu';
 
 interface UseGlobalExportsParams {
@@ -27,6 +28,8 @@ interface UseGlobalExportsParams {
   handleResizeCanvas: (options: ResizeCanvasOptions) => void;
   getGpuDiagnosticsSnapshot?: () => unknown;
   resetGpuDiagnostics?: () => boolean;
+  getGpuBrushCommitMetricsSnapshot?: () => GpuBrushCommitMetricsSnapshot | null;
+  resetGpuBrushCommitMetrics?: () => boolean;
   startStrokeCapture?: () => boolean;
   stopStrokeCapture?: () => StrokeCaptureData | null;
   getLastStrokeCapture?: () => StrokeCaptureData | null;
@@ -113,6 +116,8 @@ export function useGlobalExports({
   handleResizeCanvas,
   getGpuDiagnosticsSnapshot,
   resetGpuDiagnostics,
+  getGpuBrushCommitMetricsSnapshot,
+  resetGpuBrushCommitMetrics,
   startStrokeCapture,
   stopStrokeCapture,
   getLastStrokeCapture,
@@ -151,6 +156,8 @@ export function useGlobalExports({
       }) => Promise<unknown>;
       __gpuBrushDiagnostics?: () => unknown;
       __gpuBrushDiagnosticsReset?: () => boolean;
+      __gpuBrushCommitMetrics?: () => GpuBrushCommitMetricsSnapshot | null;
+      __gpuBrushCommitMetricsReset?: () => boolean;
       __strokeCaptureStart?: () => boolean;
       __strokeCaptureStop?: () => StrokeCaptureData | null;
       __strokeCaptureLast?: () => StrokeCaptureData | null;
@@ -248,6 +255,12 @@ export function useGlobalExports({
     };
     win.__gpuBrushDiagnosticsReset = () => {
       return resetGpuDiagnostics?.() ?? false;
+    };
+    win.__gpuBrushCommitMetrics = () => {
+      return getGpuBrushCommitMetricsSnapshot?.() ?? null;
+    };
+    win.__gpuBrushCommitMetricsReset = () => {
+      return resetGpuBrushCommitMetrics?.() ?? false;
     };
 
     const applyReplayContext = async (capture: StrokeCaptureData): Promise<void> => {
@@ -629,6 +642,8 @@ export function useGlobalExports({
       delete win.__gpuTileSizeCompare;
       delete win.__gpuBrushDiagnostics;
       delete win.__gpuBrushDiagnosticsReset;
+      delete win.__gpuBrushCommitMetrics;
+      delete win.__gpuBrushCommitMetricsReset;
       delete win.__strokeCaptureStart;
       delete win.__strokeCaptureStop;
       delete win.__strokeCaptureLast;
@@ -648,6 +663,8 @@ export function useGlobalExports({
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
+    getGpuBrushCommitMetricsSnapshot,
+    resetGpuBrushCommitMetrics,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

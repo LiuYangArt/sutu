@@ -27,6 +27,7 @@ import {
   GpuCanvasRenderer,
   GpuStrokeCommitCoordinator,
   loadResidencyBudget,
+  type GpuBrushCommitMetricsSnapshot,
   type GpuStrokeCommitResult,
 } from '@/gpu';
 
@@ -51,6 +52,8 @@ declare global {
     __gpuBrushDiagPendingMsThreshold?: number;
     __gpuBrushDiagnostics?: () => unknown;
     __gpuBrushDiagnosticsReset?: () => boolean;
+    __gpuBrushCommitMetrics?: () => GpuBrushCommitMetricsSnapshot | null;
+    __gpuBrushCommitMetricsReset?: () => boolean;
     __gpuM0Baseline?: () => Promise<void>;
     __strokeCaptureStart?: () => boolean;
     __strokeCaptureStop?: () => StrokeCaptureData | null;
@@ -523,6 +526,19 @@ export function Canvas() {
     return coordinator.commit(activeLayerId);
   }, [activeLayerId]);
 
+  const getGpuBrushCommitMetricsSnapshot = useCallback((): GpuBrushCommitMetricsSnapshot | null => {
+    return gpuCommitCoordinatorRef.current?.getCommitMetricsSnapshot() ?? null;
+  }, []);
+
+  const resetGpuBrushCommitMetrics = useCallback((): boolean => {
+    const coordinator = gpuCommitCoordinatorRef.current;
+    if (!coordinator) {
+      return false;
+    }
+    coordinator.resetCommitMetrics();
+    return true;
+  }, []);
+
   useGlobalExports({
     layerRendererRef,
     compositeAndRender,
@@ -536,6 +552,8 @@ export function Canvas() {
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
+    getGpuBrushCommitMetricsSnapshot,
+    resetGpuBrushCommitMetrics,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

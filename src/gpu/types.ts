@@ -98,6 +98,20 @@ export interface GpuStrokeCommitResult {
   };
 }
 
+export interface GpuBrushCommitMetricsSnapshot {
+  attemptCount: number;
+  committedCount: number;
+  avgPrepareMs: number;
+  avgCommitMs: number;
+  avgReadbackMs: number;
+  avgTotalMs: number;
+  maxTotalMs: number;
+  totalDirtyTiles: number;
+  avgDirtyTiles: number;
+  maxDirtyTiles: number;
+  lastCommitAtMs: number | null;
+}
+
 /**
  * GPU Stroke Accumulator interface
  * Mirrors the CPU StrokeAccumulator API for seamless switching

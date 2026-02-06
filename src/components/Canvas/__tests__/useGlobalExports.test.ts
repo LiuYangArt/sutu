@@ -24,6 +24,8 @@ function cleanupGlobals(): void {
   delete win.__gpuTileSizeCompare;
   delete win.__gpuBrushDiagnostics;
   delete win.__gpuBrushDiagnosticsReset;
+  delete win.__gpuBrushCommitMetrics;
+  delete win.__gpuBrushCommitMetricsReset;
   delete win.__strokeCaptureStart;
   delete win.__strokeCaptureStop;
   delete win.__strokeCaptureLast;
@@ -127,6 +129,20 @@ describe('useGlobalExports', () => {
     const downloadStrokeCapture = vi.fn(() => true);
     const getGpuDiagnosticsSnapshot = vi.fn(() => ({ ok: true }));
     const resetGpuDiagnostics = vi.fn();
+    const getGpuBrushCommitMetricsSnapshot = vi.fn(() => ({
+      attemptCount: 1,
+      committedCount: 1,
+      avgPrepareMs: 0,
+      avgCommitMs: 0,
+      avgReadbackMs: 0,
+      avgTotalMs: 0,
+      maxTotalMs: 0,
+      totalDirtyTiles: 0,
+      avgDirtyTiles: 0,
+      maxDirtyTiles: 0,
+      lastCommitAtMs: 1,
+    }));
+    const resetGpuBrushCommitMetrics = vi.fn(() => true);
 
     const { unmount } = renderHook(() =>
       useGlobalExports({
@@ -142,6 +158,8 @@ describe('useGlobalExports', () => {
         handleResizeCanvas,
         getGpuDiagnosticsSnapshot,
         resetGpuDiagnostics,
+        getGpuBrushCommitMetricsSnapshot,
+        resetGpuBrushCommitMetrics,
         startStrokeCapture,
         stopStrokeCapture,
         getLastStrokeCapture,
@@ -165,6 +183,8 @@ describe('useGlobalExports', () => {
     expect(typeof win.__getThumbnail).toBe('function');
     expect(typeof win.__gpuBrushDiagnostics).toBe('function');
     expect(typeof win.__gpuBrushDiagnosticsReset).toBe('function');
+    expect(typeof win.__gpuBrushCommitMetrics).toBe('function');
+    expect(typeof win.__gpuBrushCommitMetricsReset).toBe('function');
     expect(typeof win.__strokeCaptureStart).toBe('function');
     expect(typeof win.__strokeCaptureStop).toBe('function');
     expect(typeof win.__strokeCaptureLast).toBe('function');
@@ -193,6 +213,8 @@ describe('useGlobalExports', () => {
       win.__strokeCaptureDownload('case.json');
       win.__gpuBrushDiagnostics();
       win.__gpuBrushDiagnosticsReset();
+      win.__gpuBrushCommitMetrics();
+      win.__gpuBrushCommitMetricsReset();
     });
     await win.__strokeCaptureReplay(capture);
 
@@ -211,6 +233,8 @@ describe('useGlobalExports', () => {
     expect(downloadStrokeCapture).toHaveBeenCalledWith('case.json', undefined);
     expect(getGpuDiagnosticsSnapshot).toHaveBeenCalledTimes(1);
     expect(resetGpuDiagnostics).toHaveBeenCalledTimes(1);
+    expect(getGpuBrushCommitMetricsSnapshot).toHaveBeenCalledTimes(1);
+    expect(resetGpuBrushCommitMetrics).toHaveBeenCalledTimes(1);
 
     await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
     await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
@@ -236,6 +260,8 @@ describe('useGlobalExports', () => {
     expect(win.__canvasResize).toBeUndefined();
     expect(win.__gpuBrushDiagnostics).toBeUndefined();
     expect(win.__gpuBrushDiagnosticsReset).toBeUndefined();
+    expect(win.__gpuBrushCommitMetrics).toBeUndefined();
+    expect(win.__gpuBrushCommitMetricsReset).toBeUndefined();
     expect(win.__strokeCaptureStart).toBeUndefined();
     expect(win.__strokeCaptureStop).toBeUndefined();
     expect(win.__strokeCaptureLast).toBeUndefined();

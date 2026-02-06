@@ -1,5 +1,9 @@
 import type { Rect } from '@/utils/strokeBuffer';
-import type { GpuStrokeCommitResult, GpuStrokePrepareResult } from '../types';
+import type {
+  GpuBrushCommitMetricsSnapshot,
+  GpuStrokeCommitResult,
+  GpuStrokePrepareResult,
+} from '../types';
 import type { GpuCanvasRenderer } from './GpuCanvasRenderer';
 
 function hasDrawableDirtyRect(rect: Rect | null): rect is Rect {
@@ -28,6 +32,34 @@ export interface GpuStrokeCommitCoordinatorOptions {
   ) => { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null;
 }
 
+interface GpuCommitMetricsAccumulatorState {
+  attemptCount: number;
+  committedCount: number;
+  totalPrepareMs: number;
+  totalCommitMs: number;
+  totalReadbackMs: number;
+  totalElapsedMs: number;
+  maxElapsedMs: number;
+  totalDirtyTiles: number;
+  maxDirtyTiles: number;
+  lastCommitAtMs: number | null;
+}
+
+function createEmptyCommitMetricsState(): GpuCommitMetricsAccumulatorState {
+  return {
+    attemptCount: 0,
+    committedCount: 0,
+    totalPrepareMs: 0,
+    totalCommitMs: 0,
+    totalReadbackMs: 0,
+    totalElapsedMs: 0,
+    maxElapsedMs: 0,
+    totalDirtyTiles: 0,
+    maxDirtyTiles: 0,
+    lastCommitAtMs: null,
+  };
+}
+
 export class GpuStrokeCommitCoordinator {
   private gpuRenderer: GpuCanvasRenderer;
   private prepareStrokeEndGpu: () => Promise<GpuStrokePrepareResult>;
@@ -35,12 +67,57 @@ export class GpuStrokeCommitCoordinator {
   private getTargetLayer: (
     layerId: string
   ) => { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null;
+  private metrics: GpuCommitMetricsAccumulatorState = createEmptyCommitMetricsState();
 
   constructor(options: GpuStrokeCommitCoordinatorOptions) {
     this.gpuRenderer = options.gpuRenderer;
     this.prepareStrokeEndGpu = options.prepareStrokeEndGpu;
     this.clearScratchGpu = options.clearScratchGpu;
     this.getTargetLayer = options.getTargetLayer;
+  }
+
+  getCommitMetricsSnapshot(): GpuBrushCommitMetricsSnapshot {
+    const attempts = this.metrics.attemptCount;
+    const avgOrZero = (total: number) => (attempts > 0 ? total / attempts : 0);
+
+    return {
+      attemptCount: attempts,
+      committedCount: this.metrics.committedCount,
+      avgPrepareMs: avgOrZero(this.metrics.totalPrepareMs),
+      avgCommitMs: avgOrZero(this.metrics.totalCommitMs),
+      avgReadbackMs: avgOrZero(this.metrics.totalReadbackMs),
+      avgTotalMs: avgOrZero(this.metrics.totalElapsedMs),
+      maxTotalMs: this.metrics.maxElapsedMs,
+      totalDirtyTiles: this.metrics.totalDirtyTiles,
+      avgDirtyTiles: avgOrZero(this.metrics.totalDirtyTiles),
+      maxDirtyTiles: this.metrics.maxDirtyTiles,
+      lastCommitAtMs: this.metrics.lastCommitAtMs,
+    };
+  }
+
+  resetCommitMetrics(): void {
+    this.metrics = createEmptyCommitMetricsState();
+  }
+
+  private recordCommitSample(result: GpuStrokeCommitResult): void {
+    const { prepareMs, commitMs, readbackMs } = result.timings;
+    const totalMs = prepareMs + commitMs + readbackMs;
+    const dirtyTiles = result.dirtyTiles.length;
+
+    this.metrics.attemptCount += 1;
+    if (result.committed) {
+      this.metrics.committedCount += 1;
+    }
+
+    this.metrics.totalPrepareMs += prepareMs;
+    this.metrics.totalCommitMs += commitMs;
+    this.metrics.totalReadbackMs += readbackMs;
+    this.metrics.totalElapsedMs += totalMs;
+    this.metrics.maxElapsedMs = Math.max(this.metrics.maxElapsedMs, totalMs);
+
+    this.metrics.totalDirtyTiles += dirtyTiles;
+    this.metrics.maxDirtyTiles = Math.max(this.metrics.maxDirtyTiles, dirtyTiles);
+    this.metrics.lastCommitAtMs = performance.now();
   }
 
   async commit(layerId: string | null): Promise<GpuStrokeCommitResult> {
@@ -50,20 +127,24 @@ export class GpuStrokeCommitCoordinator {
 
     if (!layerId || !prepareResult.scratch || !hasDrawableDirtyRect(prepareResult.dirtyRect)) {
       this.clearScratchGpu();
-      return {
+      const result = {
         ...emptyCommitResult(prepareResult.dirtyRect),
         timings: { prepareMs, commitMs: 0, readbackMs: 0 },
       };
+      this.recordCommitSample(result);
+      return result;
     }
 
     const layer = this.getTargetLayer(layerId);
     if (!layer) {
       this.clearScratchGpu();
       console.warn('[GpuStrokeCommitCoordinator] Missing target layer', { layerId });
-      return {
+      const result = {
         ...emptyCommitResult(prepareResult.dirtyRect),
         timings: { prepareMs, commitMs: 0, readbackMs: 0 },
       };
+      this.recordCommitSample(result);
+      return result;
     }
 
     const commitStart = performance.now();
@@ -92,7 +173,7 @@ export class GpuStrokeCommitCoordinator {
 
     this.clearScratchGpu();
 
-    return {
+    const result = {
       committed: dirtyTiles.length > 0,
       dirtyRect: prepareResult.dirtyRect,
       dirtyTiles,
@@ -102,5 +183,8 @@ export class GpuStrokeCommitCoordinator {
         readbackMs,
       },
     };
+
+    this.recordCommitSample(result);
+    return result;
   }
 }

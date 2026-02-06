@@ -33,6 +33,7 @@ import {
   type FPSCounter,
   type LagometerMonitor,
 } from '@/benchmark';
+import type { GpuBrushCommitMetricsSnapshot } from '@/gpu';
 import { runLatencyBenchmark } from '@/utils/LatencyTest';
 import './DebugPanel.css';
 
@@ -77,11 +78,102 @@ type GpuBrushDiagnosticsSnapshot = {
   deviceLost?: boolean;
 };
 
+type RAfFrameSamplingSummary = {
+  sampleCount: number;
+  avgMs: number;
+  p95Ms: number;
+  p99Ms: number;
+  droppedFrames: number;
+};
+
+const PHASE6B_TARGET_DURATION_MS = 30_000;
+
 function asGpuDiagnosticsSnapshot(value: unknown): GpuBrushDiagnosticsSnapshot {
   if (!value || typeof value !== 'object') {
     return {};
   }
   return value as GpuBrushDiagnosticsSnapshot;
+}
+
+function asGpuBrushCommitMetricsSnapshot(value: unknown): GpuBrushCommitMetricsSnapshot | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return value as GpuBrushCommitMetricsSnapshot;
+}
+
+function percentile(sortedValues: number[], ratio: number): number {
+  if (sortedValues.length === 0) return 0;
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil(sortedValues.length * ratio) - 1)
+  );
+  return sortedValues[index] ?? 0;
+}
+
+function summarizeRafFrames(frameTimes: number[], frameCount: number): RAfFrameSamplingSummary {
+  if (frameCount === 0) {
+    return {
+      sampleCount: 0,
+      avgMs: 0,
+      p95Ms: 0,
+      p99Ms: 0,
+      droppedFrames: 0,
+    };
+  }
+
+  if (frameTimes.length === 0) {
+    return {
+      sampleCount: frameCount,
+      avgMs: 0,
+      p95Ms: 0,
+      p99Ms: 0,
+      droppedFrames: 0,
+    };
+  }
+
+  const sorted = [...frameTimes].sort((a, b) => a - b);
+  const sum = frameTimes.reduce((acc, value) => acc + value, 0);
+
+  return {
+    sampleCount: frameCount,
+    avgMs: sum / frameTimes.length,
+    p95Ms: percentile(sorted, 0.95),
+    p99Ms: percentile(sorted, 0.99),
+    droppedFrames: frameTimes.filter((value) => value > 33).length,
+  };
+}
+
+function startRafFrameSampler(): { stop: () => Promise<RAfFrameSamplingSummary> } {
+  let active = true;
+  const frameTimes: number[] = [];
+  let frameCount = 0;
+  let lastMs: number | null = null;
+  let stopPromise: Promise<RAfFrameSamplingSummary> | null = null;
+
+  const loopPromise = (async (): Promise<RAfFrameSamplingSummary> => {
+    while (active) {
+      await waitForAnimationFrame();
+      frameCount += 1;
+      const now = performance.now();
+      if (lastMs !== null) {
+        frameTimes.push(now - lastMs);
+      }
+      lastMs = now;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
+    return summarizeRafFrames(frameTimes, frameCount);
+  })();
+
+  return {
+    stop: () => {
+      if (stopPromise) return stopPromise;
+      active = false;
+      stopPromise = loopPromise;
+      return stopPromise;
+    },
+  };
 }
 
 async function pickStrokeCaptureFromFile(): Promise<{
@@ -492,6 +584,147 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     }
   }, [runningTest, addResult]);
 
+  const runPhase6BPerfGate = useCallback(async () => {
+    if (runningTest) return;
+    setRunningTest('phase6b:perf');
+    setProgress(0);
+    addResult('Phase6B Perf Gate (30s)', 'running');
+
+    let stopFrameSampler: (() => Promise<RAfFrameSamplingSummary>) | null = null;
+
+    try {
+      const replay = window.__strokeCaptureReplay;
+      const clearLayer = window.__canvasClearLayer;
+      const getDiag = window.__gpuBrushDiagnostics;
+      const resetDiag = window.__gpuBrushDiagnosticsReset;
+      const getCommitMetrics = window.__gpuBrushCommitMetrics;
+      const resetCommitMetrics = window.__gpuBrushCommitMetricsReset;
+
+      if (typeof replay !== 'function') {
+        throw new Error('Missing API: window.__strokeCaptureReplay');
+      }
+      if (typeof clearLayer !== 'function') {
+        throw new Error('Missing API: window.__canvasClearLayer');
+      }
+      if (typeof getDiag !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushDiagnostics');
+      }
+      if (typeof resetDiag !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushDiagnosticsReset');
+      }
+      if (typeof getCommitMetrics !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushCommitMetrics');
+      }
+      if (typeof resetCommitMetrics !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushCommitMetricsReset');
+      }
+
+      diagnosticsRef.current?.reset();
+      const didResetDiag = resetDiag();
+      const didResetCommitMetrics = resetCommitMetrics();
+      const resetDiagSnapshot = asGpuDiagnosticsSnapshot(getDiag());
+
+      const picked = await pickStrokeCaptureFromFile();
+      if (!picked) {
+        addResult('Phase6B Perf Gate (30s)', 'failed', 'Capture selection cancelled.');
+        return;
+      }
+      setPhase6GateCaptureName(picked.name);
+
+      const sampler = startRafFrameSampler();
+      stopFrameSampler = sampler.stop;
+
+      const gateStartMs = performance.now();
+      let elapsedMs = 0;
+      let rounds = 0;
+      let clearPerRound = true;
+
+      while (elapsedMs < PHASE6B_TARGET_DURATION_MS) {
+        rounds += 1;
+        try {
+          clearLayer();
+        } catch {
+          clearPerRound = false;
+        }
+
+        await waitForAnimationFrame();
+        await replay(picked.capture);
+
+        elapsedMs = performance.now() - gateStartMs;
+        setProgress(Math.min(elapsedMs / PHASE6B_TARGET_DURATION_MS, 1));
+      }
+
+      const frameSummary = await sampler.stop();
+      stopFrameSampler = null;
+      const finalSnapshot = asGpuDiagnosticsSnapshot(getDiag());
+      const commitSnapshot = asGpuBrushCommitMetricsSnapshot(getCommitMetrics());
+      const uncapturedErrors = Array.isArray(finalSnapshot.uncapturedErrors)
+        ? finalSnapshot.uncapturedErrors
+        : [];
+      const deviceLost = Boolean(finalSnapshot.deviceLost);
+      const committedCount = commitSnapshot?.committedCount ?? 0;
+      const hasFrameSamples = frameSummary.sampleCount > 0;
+
+      const passed =
+        didResetDiag &&
+        didResetCommitMetrics &&
+        clearPerRound &&
+        uncapturedErrors.length === 0 &&
+        !deviceLost &&
+        committedCount > 0 &&
+        hasFrameSamples;
+
+      const report = [
+        `Capture: ${picked.name}`,
+        `Duration target: ${PHASE6B_TARGET_DURATION_MS}ms`,
+        `Duration actual: ${Math.round(elapsedMs)}ms`,
+        `Rounds: ${rounds}`,
+        `Reset diagnostics: ${didResetDiag ? 'OK' : 'FAILED'}`,
+        `Reset commit metrics: ${didResetCommitMetrics ? 'OK' : 'FAILED'}`,
+        `clearPerRound: ${clearPerRound ? 'YES' : 'NO'}`,
+        `Diag session after reset: ${resetDiagSnapshot.diagnosticsSessionId ?? '?'}`,
+        `Diag session after run: ${finalSnapshot.diagnosticsSessionId ?? '?'}`,
+        `Uncaptured errors: ${uncapturedErrors.length}`,
+        `Device lost: ${deviceLost ? 'YES' : 'NO'}`,
+        '',
+        `Frame samples: ${frameSummary.sampleCount}`,
+        `Frame avg: ${frameSummary.avgMs.toFixed(2)}ms`,
+        `Frame p95: ${frameSummary.p95Ms.toFixed(2)}ms`,
+        `Frame p99: ${frameSummary.p99Ms.toFixed(2)}ms`,
+        `Frame dropped(>33ms): ${frameSummary.droppedFrames}`,
+        '',
+        `Commit attempts: ${commitSnapshot?.attemptCount ?? 0}`,
+        `Commit committed: ${commitSnapshot?.committedCount ?? 0}`,
+        `Commit avg prepare: ${(commitSnapshot?.avgPrepareMs ?? 0).toFixed(2)}ms`,
+        `Commit avg gpu: ${(commitSnapshot?.avgCommitMs ?? 0).toFixed(2)}ms`,
+        `Commit avg readback: ${(commitSnapshot?.avgReadbackMs ?? 0).toFixed(2)}ms`,
+        `Commit avg total: ${(commitSnapshot?.avgTotalMs ?? 0).toFixed(2)}ms`,
+        `Commit max total: ${(commitSnapshot?.maxTotalMs ?? 0).toFixed(2)}ms`,
+        `Commit total dirtyTiles: ${commitSnapshot?.totalDirtyTiles ?? 0}`,
+        `Commit avg dirtyTiles: ${(commitSnapshot?.avgDirtyTiles ?? 0).toFixed(2)}`,
+        `Commit max dirtyTiles: ${commitSnapshot?.maxDirtyTiles ?? 0}`,
+        `Commit lastAtMs: ${commitSnapshot?.lastCommitAtMs ?? 'N/A'}`,
+        '',
+        `Phase6B Gate: ${passed ? 'PASS' : 'FAIL'}`,
+        'Note: 6A 临时豁免期间，性能结论为非封版预结论。',
+      ].join('\n');
+
+      addResult('Phase6B Perf Gate (30s)', passed ? 'passed' : 'failed', report);
+    } catch (e) {
+      addResult('Phase6B Perf Gate (30s)', 'failed', String(e));
+    } finally {
+      if (stopFrameSampler) {
+        try {
+          await stopFrameSampler();
+        } catch {
+          // Ignore cleanup errors from sampler.
+        }
+      }
+      setRunningTest(null);
+      setProgress(0);
+    }
+  }, [runningTest, addResult]);
+
   const recordPhase6ManualGate = useCallback(() => {
     const getDiag = window.__gpuBrushDiagnostics;
     if (typeof getDiag !== 'function') {
@@ -744,6 +977,16 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
               title="Reset diagnostics, replay selected case 3 times, and auto-check uncaptured errors"
             >
               <span>Run Phase6A Auto Gate</span>
+            </button>
+          </div>
+          <div className="debug-button-row" style={{ marginTop: '8px' }}>
+            <button
+              className="debug-btn secondary"
+              onClick={runPhase6BPerfGate}
+              disabled={!!runningTest}
+              title="Run 30s replay-based perf gate with frame + commit + diagnostics report"
+            >
+              <span>Run Phase6B Perf Gate (30s)</span>
             </button>
           </div>
           <div className="debug-button-row" style={{ marginTop: '8px' }}>

@@ -11,7 +11,7 @@
 - [x] Phase 4：SelectionMask 改为 `r8unorm`
 - [x] Phase 5：验收模板回填到设计文档
 - [ ] Phase 6A：稳定性回归门禁（压感/丢笔触/消失）
-- [ ] Phase 6B：5000x5000 性能收敛（临时豁免模式可先做探索，结论不封版）
+- [ ] Phase 6B：5000x5000 性能收敛（拆分为门禁能力落地 + 数据回填，临时豁免模式结论不封版）
 
 ## 已完成实现
 - 新增类型契约：`GpuScratchHandle` / `GpuStrokePrepareResult` / `GpuStrokeCommitResult`
@@ -70,15 +70,19 @@
    - 已修复：pointer-up 后延迟尾 dab（队列消费时序 + 收尾立即 flush/render）。
    - 已修复：GPU commit 路径补 finishing lock，避免新笔触提前清 scratch 导致偶发丢笔。
    - 待确认：长时间回归是否仍出现“预览出现但提交丢失”。
-5. [ ] 补充性能验收
-   - 5000x5000 连续绘制 30s，记录平均帧时间、commit 耗时、dirtyTiles 数量。
-   - 对比改造前后数据并回填设计文档。
-6. [ ] 多层可见性能说明与下一阶段
+5. [x] Phase 6B-1：性能门禁能力落地（DebugPanel）
+   - 已新增 `Run Phase6B Perf Gate (30s)`，复用 replay 流程，自动输出 Frame/Commit/Diagnostics 三类报告。
+   - 已新增全局接口：`window.__gpuBrushCommitMetrics()` / `window.__gpuBrushCommitMetricsReset()`。
+   - 已新增 commit 指标聚合：`attemptCount/committedCount/avg*/max*/dirtyTiles`。
+6. [ ] Phase 6B-2：5000x5000 基线数据回填
+   - 运行 `Run Phase6B Perf Gate (30s)`，记录平均帧时间、p95/p99、commit 耗时、dirtyTiles。
+   - 对比改造前后数据并回填设计文档（标注“非封版预结论”）。
+7. [ ] 多层可见性能说明与下一阶段
    - 当前 M2 仍是单层 GPU 显示（`visibleLayerCount <= 1`）。
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通，当前处于 Phase 6A（稳定性回归门禁）
+**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线数据回填）
 
 ## Phase 6A 临时豁免决议（2026-02-06）
 - 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。
@@ -98,6 +102,9 @@
 - [x] 诊断分代/重置能力已落地（含 Debug Panel 按钮）。
 - [x] 自动检查通过：`pnpm -s typecheck`、`pnpm -s test -- useGlobalExports`、`pnpm -s test -- startupPrewarmPolicy`、`pnpm -s test -- DebugPanel`。
 - [x] 新增检查通过：`pnpm -s test -- inputUtils`（已回到基线输入行为断言）。
+- [x] 新增 Phase 6B 门禁能力：`Run Phase6B Perf Gate (30s)`（含 Frame/Commit/Diagnostics 报告）。
+- [x] 新增 commit 指标接口：`__gpuBrushCommitMetrics` / `__gpuBrushCommitMetricsReset`。
+- [x] 新增自动检查通过：`pnpm -s test -- GpuStrokeCommitCoordinator`。
 - [x] 压感策略实验回退后，用户手测确认压感恢复可用（2026-02-06）。
 - [x] Auto Gate 最新实测：PASS（`case-5000-04.json`，session=3，`startPressureFallbackCount=0`）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
