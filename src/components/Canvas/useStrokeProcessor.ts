@@ -346,7 +346,7 @@ export function useStrokeProcessor({
       // Batch process all queued points (with soft limit)
       const queue = inputQueueRef.current;
       if (queue.length > 0) {
-        const canConsumeQueue = currentTool === 'brush' && strokeStateRef.current === 'active';
+        const canConsumeQueue = strokeStateRef.current === 'active';
         if (!canConsumeQueue) {
           // Drop stale points captured around stroke end to prevent late tail dabs.
           inputQueueRef.current = [];
@@ -533,8 +533,13 @@ export function useStrokeProcessor({
     // 清理 WinTab 缓冲区
     clearPointBuffer();
 
+    const isBrushStroke =
+      strokeStateRef.current === 'active' ||
+      strokeStateRef.current === 'finishing' ||
+      isStrokeActive();
+
     // For brush tool, composite stroke buffer to layer with opacity ceiling
-    if (currentTool === 'brush') {
+    if (isBrushStroke) {
       // Process any remaining points in queue before finalizing
       const remainingQueue = inputQueueRef.current;
       let processedTailQueue = false;
@@ -578,10 +583,11 @@ export function useStrokeProcessor({
       }
     }
 
-    if (currentTool === 'brush' || currentTool === 'eraser') {
+    if (isBrushStroke || currentTool === 'eraser') {
       const fallbackPos = lastRenderedPosRef.current ?? lastInputPosRef.current;
-      const lastPos =
-        currentTool === 'brush' ? (getLastDabPosition() ?? fallbackPos) : lastInputPosRef.current;
+      const lastPos = isBrushStroke
+        ? (getLastDabPosition() ?? fallbackPos)
+        : lastInputPosRef.current;
       onShiftLineStrokeEnd(lastPos ?? null);
     }
     lastInputPosRef.current = null;
@@ -618,6 +624,7 @@ export function useStrokeProcessor({
     activeLayerId,
     updateThumbnail,
     getLastDabPosition,
+    isStrokeActive,
     onShiftLineStrokeEnd,
     lastRenderedPosRef,
     lastInputPosRef,

@@ -189,6 +189,9 @@ export function usePointerHandlers({
 
       // Handle Zoom tool
       if (currentTool === 'zoom') {
+        if (isDrawingRef.current) {
+          void finishCurrentStroke();
+        }
         isZoomingRef.current = true;
         zoomStartRef.current = {
           x: e.clientX,

@@ -1044,6 +1044,18 @@ export function Canvas() {
     updateThumbnail,
   });
 
+  const previousLineToolRef = useRef<ToolType | null>(currentTool);
+
+  useEffect(() => {
+    const prevTool = previousLineToolRef.current;
+    const wasLineTool = prevTool === 'brush' || prevTool === 'eraser';
+    const isLineTool = currentTool === 'brush' || currentTool === 'eraser';
+    if (wasLineTool && !isLineTool && isDrawingRef.current) {
+      void finishCurrentStroke();
+    }
+    previousLineToolRef.current = currentTool;
+  }, [currentTool, finishCurrentStroke]);
+
   // Alt eyedropper switching - must be after finishCurrentStroke to avoid TDZ
   useAltEyedropper(previousToolRef, finishCurrentStroke);
 
