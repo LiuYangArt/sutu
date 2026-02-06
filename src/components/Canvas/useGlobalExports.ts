@@ -35,6 +35,8 @@ interface UseGlobalExportsParams {
   setGpuBrushCommitReadbackMode?: (mode: GpuBrushCommitReadbackMode) => boolean;
   getGpuBrushNoReadbackPilot?: () => boolean;
   setGpuBrushNoReadbackPilot?: (enabled: boolean) => boolean;
+  syncGpuLayerToCpu?: (layerId: string) => Promise<boolean>;
+  syncAllGpuLayersToCpu?: () => Promise<number>;
   startStrokeCapture?: () => boolean;
   stopStrokeCapture?: () => StrokeCaptureData | null;
   getLastStrokeCapture?: () => StrokeCaptureData | null;
@@ -127,6 +129,8 @@ export function useGlobalExports({
   setGpuBrushCommitReadbackMode,
   getGpuBrushNoReadbackPilot,
   setGpuBrushNoReadbackPilot,
+  syncGpuLayerToCpu,
+  syncAllGpuLayersToCpu,
   startStrokeCapture,
   stopStrokeCapture,
   getLastStrokeCapture,
@@ -468,6 +472,7 @@ export function useGlobalExports({
 
     // Get single layer image data as Base64 PNG data URL
     win.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
+      await syncGpuLayerToCpu?.(layerId);
       if (!layerRendererRef.current) return undefined;
       const layer = layerRendererRef.current.getLayer(layerId);
       if (!layer) return undefined;
@@ -478,6 +483,7 @@ export function useGlobalExports({
 
     // Get flattened (composited) image
     win.__getFlattenedImage = async (): Promise<string | undefined> => {
+      await syncAllGpuLayersToCpu?.();
       if (!layerRendererRef.current) return undefined;
       const compositeCanvas = layerRendererRef.current.composite();
       return compositeCanvas.toDataURL('image/png');
@@ -485,6 +491,7 @@ export function useGlobalExports({
 
     // Get thumbnail (256x256)
     win.__getThumbnail = async (): Promise<string | undefined> => {
+      await syncAllGpuLayersToCpu?.();
       if (!layerRendererRef.current) return undefined;
       const compositeCanvas = layerRendererRef.current.composite();
 
@@ -700,6 +707,8 @@ export function useGlobalExports({
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
+    syncGpuLayerToCpu,
+    syncAllGpuLayersToCpu,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

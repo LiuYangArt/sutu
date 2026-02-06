@@ -13,7 +13,7 @@ interface UseLayerOperationsParams {
   height: number;
   compositeAndRender: () => void;
   markLayerDirty: () => void;
-  isNoReadbackPilotEnabled?: () => boolean;
+  syncGpuLayerForHistory?: (layerId: string) => Promise<boolean>;
 }
 
 /**
@@ -67,7 +67,7 @@ export function useLayerOperations({
   height,
   compositeAndRender,
   markLayerDirty,
-  isNoReadbackPilotEnabled,
+  syncGpuLayerForHistory,
 }: UseLayerOperationsParams) {
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
   const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
@@ -153,39 +153,44 @@ export function useLayerOperations({
   // Fill active layer with a color (Alt+Backspace shortcut)
   const fillActiveLayer = useCallback(
     (color: string) => {
-      const renderer = layerRendererRef.current;
-      if (!renderer || !activeLayerId) return;
+      if (!activeLayerId) return;
+      void (async () => {
+        await syncGpuLayerForHistory?.(activeLayerId);
 
-      // Check if layer is locked
-      const layerState = layers.find((l) => l.id === activeLayerId);
-      if (!layerState || layerState.locked) return;
+        const renderer = layerRendererRef.current;
+        if (!renderer) return;
 
-      const layer = renderer.getLayer(activeLayerId);
-      if (!layer) return;
+        // Check if layer is locked
+        const layerState = layers.find((l) => l.id === activeLayerId);
+        if (!layerState || layerState.locked) return;
 
-      // Capture before image for undo
-      const beforeImage = renderer.getLayerImageData(activeLayerId);
-      if (!beforeImage) return;
+        const layer = renderer.getLayer(activeLayerId);
+        if (!layer) return;
 
-      // Check for active selection
-      const { hasSelection, selectionMask } = useSelectionStore.getState();
+        // Capture before image for undo
+        const beforeImage = renderer.getLayerImageData(activeLayerId);
+        if (!beforeImage) return;
 
-      if (hasSelection && selectionMask) {
-        fillWithMask(layer.ctx, selectionMask, color, width, height);
-      } else if (!hasSelection) {
-        // Only fill if NO selection. If hasSelection is true but no mask (shouldn't happen), do nothing safely
-        // Fill the entire layer
-        layer.ctx.fillStyle = color;
-        layer.ctx.fillRect(0, 0, width, height);
-      }
+        // Check for active selection
+        const { hasSelection, selectionMask } = useSelectionStore.getState();
 
-      // Save to history
-      pushStroke(activeLayerId, beforeImage);
+        if (hasSelection && selectionMask) {
+          fillWithMask(layer.ctx, selectionMask, color, width, height);
+        } else if (!hasSelection) {
+          // Only fill if NO selection. If hasSelection is true but no mask (shouldn't happen), do nothing safely
+          // Fill the entire layer
+          layer.ctx.fillStyle = color;
+          layer.ctx.fillRect(0, 0, width, height);
+        }
 
-      // Update thumbnail and re-render
-      markLayerDirty();
-      updateThumbnail(activeLayerId);
-      compositeAndRender();
+        // Save to history
+        pushStroke(activeLayerId, beforeImage);
+
+        // Update thumbnail and re-render
+        markLayerDirty();
+        updateThumbnail(activeLayerId);
+        compositeAndRender();
+      })();
     },
     [
       activeLayerId,
@@ -196,54 +201,60 @@ export function useLayerOperations({
       markLayerDirty,
       updateThumbnail,
       compositeAndRender,
+      syncGpuLayerForHistory,
       layerRendererRef,
     ]
   );
 
   // Clear selection content from active layer
   const handleClearSelection = useCallback(() => {
-    const renderer = layerRendererRef.current;
-    if (!renderer || !activeLayerId) return;
+    if (!activeLayerId) return;
+    void (async () => {
+      await syncGpuLayerForHistory?.(activeLayerId);
 
-    // Check if layer is locked
-    const layerState = layers.find((l) => l.id === activeLayerId);
-    if (!layerState || layerState.locked) return;
+      const renderer = layerRendererRef.current;
+      if (!renderer) return;
 
-    const layer = renderer.getLayer(activeLayerId);
-    if (!layer) return;
+      // Check if layer is locked
+      const layerState = layers.find((l) => l.id === activeLayerId);
+      if (!layerState || layerState.locked) return;
 
-    // Check for active selection
-    const { hasSelection, selectionMask } = useSelectionStore.getState();
-    if (!hasSelection || !selectionMask) return;
+      const layer = renderer.getLayer(activeLayerId);
+      if (!layer) return;
 
-    // Capture before image for undo
-    const beforeImage = renderer.getLayerImageData(activeLayerId);
-    if (!beforeImage) return;
+      // Check for active selection
+      const { hasSelection, selectionMask } = useSelectionStore.getState();
+      if (!hasSelection || !selectionMask) return;
 
-    // Create temp canvas for the mask
-    const maskCanvas = document.createElement('canvas');
-    maskCanvas.width = width;
-    maskCanvas.height = height;
-    const maskCtx = maskCanvas.getContext('2d');
-    if (!maskCtx) return;
+      // Capture before image for undo
+      const beforeImage = renderer.getLayerImageData(activeLayerId);
+      if (!beforeImage) return;
 
-    // Put the mask data
-    maskCtx.putImageData(selectionMask, 0, 0);
+      // Create temp canvas for the mask
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = width;
+      maskCanvas.height = height;
+      const maskCtx = maskCanvas.getContext('2d');
+      if (!maskCtx) return;
 
-    // Composite: Destination-Out to erase where mask is defined
-    const ctx = layer.ctx;
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.drawImage(maskCanvas, 0, 0);
-    ctx.restore();
+      // Put the mask data
+      maskCtx.putImageData(selectionMask, 0, 0);
 
-    // Save to history
-    pushStroke(activeLayerId, beforeImage);
+      // Composite: Destination-Out to erase where mask is defined
+      const ctx = layer.ctx;
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.drawImage(maskCanvas, 0, 0);
+      ctx.restore();
 
-    // Update thumbnail and re-render
-    markLayerDirty();
-    updateThumbnail(activeLayerId);
-    compositeAndRender();
+      // Save to history
+      pushStroke(activeLayerId, beforeImage);
+
+      // Update thumbnail and re-render
+      markLayerDirty();
+      updateThumbnail(activeLayerId);
+      compositeAndRender();
+    })();
   }, [
     activeLayerId,
     layers,
@@ -253,113 +264,110 @@ export function useLayerOperations({
     markLayerDirty,
     updateThumbnail,
     compositeAndRender,
+    syncGpuLayerForHistory,
     layerRendererRef,
   ]);
 
   // Handle undo for all operation types
   const handleUndo = useCallback(() => {
-    if (isNoReadbackPilotEnabled?.()) {
-      // Pilot mode skips CPU-layer readback consistency, so history replay is intentionally blocked.
-      console.warn('[NoReadbackPilot] Undo is blocked while pilot mode is enabled.');
-      return;
-    }
-
-    const entry = undo();
-    if (!entry) return;
-
-    if (entry.type === 'selection') {
-      entry.after = useSelectionStore.getState().createSnapshot();
-      useSelectionStore.getState().applySnapshot(entry.before);
-      return;
-    }
-
-    const renderer = layerRendererRef.current;
-    if (!renderer) return;
-
-    switch (entry.type) {
-      case 'stroke': {
-        // Check if layer still exists, skip if not
-        const layerExists = layers.some((l) => l.id === entry.layerId);
-        if (!layerExists) {
-          // Layer was deleted, skip this undo and try next
-          handleUndo();
-          return;
-        }
-
-        // Save current state (afterImage) for redo before restoring
-        const currentImageData = renderer.getLayerImageData(entry.layerId);
-        if (currentImageData) {
-          entry.afterImage = currentImageData;
-        }
-        renderer.setLayerImageData(entry.layerId, entry.beforeImage);
-        compositeAndRender();
-        markLayerDirty();
-        updateThumbnail(entry.layerId);
-        break;
+    void (async () => {
+      let entry = undo();
+      while (
+        entry &&
+        entry.type === 'stroke' &&
+        !layers.some((l) => l.id === (entry as { layerId: string }).layerId)
+      ) {
+        entry = undo();
       }
-      case 'resizeCanvas': {
-        const docState = useDocumentStore.getState();
-        const afterWidth = docState.width;
-        const afterHeight = docState.height;
+      if (!entry) return;
 
-        const afterLayers = snapshotLayers(renderer, docState.layers);
-        if (!afterLayers) return;
+      if (entry.type === 'selection') {
+        entry.after = useSelectionStore.getState().createSnapshot();
+        useSelectionStore.getState().applySnapshot(entry.before);
+        return;
+      }
 
-        entry.after = { width: afterWidth, height: afterHeight, layers: afterLayers };
+      const renderer = layerRendererRef.current;
+      if (!renderer) return;
 
-        renderer.resize(entry.beforeWidth, entry.beforeHeight);
-        for (const layer of entry.beforeLayers) {
-          renderer.setLayerImageData(layer.layerId, layer.imageData);
+      switch (entry.type) {
+        case 'stroke': {
+          await syncGpuLayerForHistory?.(entry.layerId);
+          // Save current state (afterImage) for redo before restoring
+          const currentImageData = renderer.getLayerImageData(entry.layerId);
+          if (currentImageData) {
+            entry.afterImage = currentImageData;
+          }
+          renderer.setLayerImageData(entry.layerId, entry.beforeImage);
+          compositeAndRender();
+          markLayerDirty();
+          updateThumbnail(entry.layerId);
+          break;
         }
+        case 'resizeCanvas': {
+          const docState = useDocumentStore.getState();
+          const afterWidth = docState.width;
+          const afterHeight = docState.height;
 
-        useDocumentStore.setState({ width: entry.beforeWidth, height: entry.beforeHeight });
-        useSelectionStore.getState().deselectAll();
+          const afterLayers = snapshotLayers(renderer, docState.layers);
+          if (!afterLayers) return;
 
-        compositeAndRender();
-        markLayerDirty();
-        for (const layer of docState.layers) {
-          updateThumbnailWithSize(layer.id, entry.beforeWidth, entry.beforeHeight);
+          entry.after = { width: afterWidth, height: afterHeight, layers: afterLayers };
+
+          renderer.resize(entry.beforeWidth, entry.beforeHeight);
+          for (const layer of entry.beforeLayers) {
+            renderer.setLayerImageData(layer.layerId, layer.imageData);
+          }
+
+          useDocumentStore.setState({ width: entry.beforeWidth, height: entry.beforeHeight });
+          useSelectionStore.getState().deselectAll();
+
+          compositeAndRender();
+          markLayerDirty();
+          for (const layer of docState.layers) {
+            updateThumbnailWithSize(layer.id, entry.beforeWidth, entry.beforeHeight);
+          }
+          break;
         }
-        break;
+        case 'addLayer': {
+          // Undo add = remove the layer
+          const { removeLayer } = useDocumentStore.getState();
+          renderer.removeLayer(entry.layerId);
+          removeLayer(entry.layerId);
+          compositeAndRender();
+          markLayerDirty();
+          break;
+        }
+        case 'removeLayer': {
+          // Undo remove = restore the layer
+          // Insert layer back at original index
+          useDocumentStore.setState((state) => {
+            const newLayers = [...state.layers];
+            newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
+            return { layers: newLayers, activeLayerId: entry.layerId };
+          });
+          // Recreate in renderer and restore content
+          renderer.createLayer(entry.layerId, {
+            visible: entry.layerMeta.visible,
+            opacity: entry.layerMeta.opacity,
+            blendMode: entry.layerMeta.blendMode,
+            isBackground: entry.layerMeta.isBackground,
+          });
+          renderer.setLayerImageData(entry.layerId, entry.imageData);
+          renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
+          compositeAndRender();
+          markLayerDirty();
+          updateThumbnail(entry.layerId);
+          break;
+        }
       }
-      case 'addLayer': {
-        // Undo add = remove the layer
-        const { removeLayer } = useDocumentStore.getState();
-        renderer.removeLayer(entry.layerId);
-        removeLayer(entry.layerId);
-        compositeAndRender();
-        markLayerDirty();
-        break;
-      }
-      case 'removeLayer': {
-        // Undo remove = restore the layer
-        // Insert layer back at original index
-        useDocumentStore.setState((state) => {
-          const newLayers = [...state.layers];
-          newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
-          return { layers: newLayers, activeLayerId: entry.layerId };
-        });
-        // Recreate in renderer and restore content
-        renderer.createLayer(entry.layerId, {
-          visible: entry.layerMeta.visible,
-          opacity: entry.layerMeta.opacity,
-          blendMode: entry.layerMeta.blendMode,
-          isBackground: entry.layerMeta.isBackground,
-        });
-        renderer.setLayerImageData(entry.layerId, entry.imageData);
-        renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
-        compositeAndRender();
-        markLayerDirty();
-        updateThumbnail(entry.layerId);
-        break;
-      }
-    }
+    })();
   }, [
     undo,
     layers,
     compositeAndRender,
     markLayerDirty,
-    isNoReadbackPilotEnabled,
+    syncGpuLayerForHistory,
     updateThumbnail,
     updateThumbnailWithSize,
     layerRendererRef,
@@ -367,90 +375,85 @@ export function useLayerOperations({
 
   // Handle redo for all operation types
   const handleRedo = useCallback(() => {
-    if (isNoReadbackPilotEnabled?.()) {
-      // Pilot mode skips CPU-layer readback consistency, so history replay is intentionally blocked.
-      console.warn('[NoReadbackPilot] Redo is blocked while pilot mode is enabled.');
-      return;
-    }
+    void (async () => {
+      const entry = redo();
+      if (!entry) return;
 
-    const entry = redo();
-    if (!entry) return;
-
-    if (entry.type === 'selection') {
-      if (entry.after) {
-        useSelectionStore.getState().applySnapshot(entry.after);
+      if (entry.type === 'selection') {
+        if (entry.after) {
+          useSelectionStore.getState().applySnapshot(entry.after);
+        }
+        return;
       }
-      return;
-    }
 
-    const renderer = layerRendererRef.current;
-    if (!renderer) return;
+      const renderer = layerRendererRef.current;
+      if (!renderer) return;
 
-    switch (entry.type) {
-      case 'stroke': {
-        // Restore afterImage (saved during undo)
-        if (entry.afterImage) {
-          renderer.setLayerImageData(entry.layerId, entry.afterImage);
+      switch (entry.type) {
+        case 'stroke': {
+          // Restore afterImage (saved during undo)
+          if (entry.afterImage) {
+            renderer.setLayerImageData(entry.layerId, entry.afterImage);
+            compositeAndRender();
+            markLayerDirty();
+            updateThumbnail(entry.layerId);
+          }
+          break;
+        }
+        case 'resizeCanvas': {
+          if (!entry.after) return;
+
+          renderer.resize(entry.after.width, entry.after.height);
+          for (const layer of entry.after.layers) {
+            renderer.setLayerImageData(layer.layerId, layer.imageData);
+          }
+
+          useDocumentStore.setState({ width: entry.after.width, height: entry.after.height });
+          useSelectionStore.getState().deselectAll();
+
+          compositeAndRender();
+          markLayerDirty();
+
+          const docState = useDocumentStore.getState();
+          for (const layer of docState.layers) {
+            updateThumbnailWithSize(layer.id, entry.after.width, entry.after.height);
+          }
+          break;
+        }
+        case 'addLayer': {
+          // Redo add = add the layer back
+          useDocumentStore.setState((state) => {
+            const newLayers = [...state.layers];
+            newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
+            return { layers: newLayers, activeLayerId: entry.layerId };
+          });
+          renderer.createLayer(entry.layerId, {
+            visible: entry.layerMeta.visible,
+            opacity: entry.layerMeta.opacity,
+            blendMode: entry.layerMeta.blendMode,
+            isBackground: entry.layerMeta.isBackground,
+          });
+          renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
           compositeAndRender();
           markLayerDirty();
           updateThumbnail(entry.layerId);
+          break;
         }
-        break;
-      }
-      case 'resizeCanvas': {
-        if (!entry.after) return;
-
-        renderer.resize(entry.after.width, entry.after.height);
-        for (const layer of entry.after.layers) {
-          renderer.setLayerImageData(layer.layerId, layer.imageData);
+        case 'removeLayer': {
+          // Redo remove = remove the layer again
+          const { removeLayer } = useDocumentStore.getState();
+          renderer.removeLayer(entry.layerId);
+          removeLayer(entry.layerId);
+          compositeAndRender();
+          markLayerDirty();
+          break;
         }
-
-        useDocumentStore.setState({ width: entry.after.width, height: entry.after.height });
-        useSelectionStore.getState().deselectAll();
-
-        compositeAndRender();
-        markLayerDirty();
-
-        const docState = useDocumentStore.getState();
-        for (const layer of docState.layers) {
-          updateThumbnailWithSize(layer.id, entry.after.width, entry.after.height);
-        }
-        break;
       }
-      case 'addLayer': {
-        // Redo add = add the layer back
-        useDocumentStore.setState((state) => {
-          const newLayers = [...state.layers];
-          newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
-          return { layers: newLayers, activeLayerId: entry.layerId };
-        });
-        renderer.createLayer(entry.layerId, {
-          visible: entry.layerMeta.visible,
-          opacity: entry.layerMeta.opacity,
-          blendMode: entry.layerMeta.blendMode,
-          isBackground: entry.layerMeta.isBackground,
-        });
-        renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
-        compositeAndRender();
-        markLayerDirty();
-        updateThumbnail(entry.layerId);
-        break;
-      }
-      case 'removeLayer': {
-        // Redo remove = remove the layer again
-        const { removeLayer } = useDocumentStore.getState();
-        renderer.removeLayer(entry.layerId);
-        removeLayer(entry.layerId);
-        compositeAndRender();
-        markLayerDirty();
-        break;
-      }
-    }
+    })();
   }, [
     redo,
     compositeAndRender,
     markLayerDirty,
-    isNoReadbackPilotEnabled,
     updateThumbnail,
     updateThumbnailWithSize,
     layerRendererRef,
@@ -458,20 +461,25 @@ export function useLayerOperations({
 
   // Clear current layer content
   const handleClearLayer = useCallback(() => {
-    const renderer = layerRendererRef.current;
-    if (!renderer || !activeLayerId) return;
+    if (!activeLayerId) return;
+    void (async () => {
+      await syncGpuLayerForHistory?.(activeLayerId);
 
-    // Capture state before clearing for undo
-    captureBeforeImage();
+      const renderer = layerRendererRef.current;
+      if (!renderer) return;
 
-    // Clear the layer
-    renderer.clearLayer(activeLayerId, useDocumentStore.getState().backgroundFillColor);
-    compositeAndRender();
+      // Capture state before clearing for undo
+      captureBeforeImage();
 
-    // Push to history
-    saveStrokeToHistory();
-    markLayerDirty();
-    updateThumbnail(activeLayerId);
+      // Clear the layer
+      renderer.clearLayer(activeLayerId, useDocumentStore.getState().backgroundFillColor);
+      compositeAndRender();
+
+      // Push to history
+      saveStrokeToHistory();
+      markLayerDirty();
+      updateThumbnail(activeLayerId);
+    })();
   }, [
     activeLayerId,
     captureBeforeImage,
@@ -479,6 +487,7 @@ export function useLayerOperations({
     compositeAndRender,
     markLayerDirty,
     updateThumbnail,
+    syncGpuLayerForHistory,
     layerRendererRef,
   ]);
 

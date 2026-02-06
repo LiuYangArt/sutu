@@ -81,6 +81,19 @@ declare global {
 
 type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number };
 
+function tileCoordKey(x: number, y: number): string {
+  return `${x},${y}`;
+}
+
+function parseTileCoordKey(key: string): { x: number; y: number } | null {
+  const [xStr, yStr] = key.split(',');
+  if (xStr === undefined || yStr === undefined) return null;
+  const x = Number.parseInt(xStr, 10);
+  const y = Number.parseInt(yStr, 10);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -106,6 +119,9 @@ export function Canvas() {
   const previousToolRef = useRef<ToolType | null>('brush');
   const historyInitializedRef = useRef(false);
   const strokeCaptureRef = useRef<StrokeCaptureController | null>(null);
+  const pendingGpuCpuSyncTilesRef = useRef<Map<string, Set<string>>>(new Map());
+  const prevGpuDisplayActiveRef = useRef(false);
+  const prevGpuDisplayLayerIdRef = useRef<string | null>(null);
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -362,7 +378,7 @@ export function Canvas() {
     const gpuRenderer = gpuRendererRef.current;
     if (!gpuRenderer) return;
 
-    gpuCommitCoordinatorRef.current = new GpuStrokeCommitCoordinator({
+    const coordinator = new GpuStrokeCommitCoordinator({
       gpuRenderer,
       prepareStrokeEndGpu,
       clearScratchGpu,
@@ -372,6 +388,8 @@ export function Canvas() {
         return { canvas: layer.canvas, ctx: layer.ctx };
       },
     });
+    coordinator.setReadbackMode('disabled');
+    gpuCommitCoordinatorRef.current = coordinator;
   }, [prepareStrokeEndGpu, clearScratchGpu]);
 
   useEffect(() => {
@@ -412,18 +430,88 @@ export function Canvas() {
     layerRevisionRef.current += 1;
   }, []);
 
+  const trackPendingGpuCpuSyncTiles = useCallback(
+    (layerId: string, tiles: Array<{ x: number; y: number }>) => {
+      if (tiles.length === 0) return;
+      let layerTiles = pendingGpuCpuSyncTilesRef.current.get(layerId);
+      if (!layerTiles) {
+        layerTiles = new Set<string>();
+        pendingGpuCpuSyncTilesRef.current.set(layerId, layerTiles);
+      }
+      for (const tile of tiles) {
+        layerTiles.add(tileCoordKey(tile.x, tile.y));
+      }
+    },
+    []
+  );
+
+  const syncGpuLayerToCpu = useCallback(async (layerId: string): Promise<boolean> => {
+    const gpuRenderer = gpuRendererRef.current;
+    const renderer = layerRendererRef.current;
+    if (!gpuRenderer || !renderer) return false;
+
+    const layer = renderer.getLayer(layerId);
+    if (!layer) return false;
+
+    const trackedTileKeys = pendingGpuCpuSyncTilesRef.current.get(layerId);
+    if (!trackedTileKeys || trackedTileKeys.size === 0) return false;
+
+    const tiles: Array<{ x: number; y: number }> = [];
+    for (const key of trackedTileKeys) {
+      const coord = parseTileCoordKey(key);
+      if (coord) {
+        tiles.push(coord);
+      }
+    }
+    if (tiles.length === 0) {
+      pendingGpuCpuSyncTilesRef.current.delete(layerId);
+      return false;
+    }
+
+    try {
+      await gpuRenderer.readbackTilesToLayer({
+        layerId,
+        tiles,
+        targetCtx: layer.ctx,
+      });
+      pendingGpuCpuSyncTilesRef.current.delete(layerId);
+      return true;
+    } catch (error) {
+      console.warn('[NoReadback] Failed to sync GPU tiles to CPU layer', { layerId, error });
+      return false;
+    }
+  }, []);
+
+  const syncAllPendingGpuLayersToCpu = useCallback(async (): Promise<number> => {
+    const layerIds = Array.from(pendingGpuCpuSyncTilesRef.current.keys());
+    if (layerIds.length === 0) return 0;
+    let synced = 0;
+    for (const layerId of layerIds) {
+      if (await syncGpuLayerToCpu(layerId)) {
+        synced += 1;
+      }
+    }
+    return synced;
+  }, [syncGpuLayerToCpu]);
+
   const getGpuBrushNoReadbackPilot = useCallback((): boolean => {
     return gpuCommitCoordinatorRef.current?.getReadbackMode() === 'disabled';
   }, []);
 
-  const setGpuBrushNoReadbackPilot = useCallback((enabled: boolean): boolean => {
-    const coordinator = gpuCommitCoordinatorRef.current;
-    if (!coordinator) {
-      return false;
-    }
-    coordinator.setReadbackMode(enabled ? 'disabled' : 'enabled');
-    return true;
-  }, []);
+  const setGpuBrushNoReadbackPilot = useCallback(
+    (enabled: boolean): boolean => {
+      const coordinator = gpuCommitCoordinatorRef.current;
+      if (!coordinator) {
+        return false;
+      }
+      coordinator.setReadbackMode(enabled ? 'disabled' : 'enabled');
+      if (!enabled) {
+        void syncAllPendingGpuLayersToCpu();
+      }
+      return true;
+    },
+    [syncAllPendingGpuLayersToCpu]
+  );
 
   const {
     getGuideLine: getShiftLineGuide,
@@ -505,7 +593,7 @@ export function Canvas() {
     height,
     compositeAndRender,
     markLayerDirty,
-    isNoReadbackPilotEnabled: getGpuBrushNoReadbackPilot,
+    syncGpuLayerForHistory: syncGpuLayerToCpu,
   });
 
   const renderGpuFrame = useCallback(
@@ -542,8 +630,16 @@ export function Canvas() {
         timings: { prepareMs: 0, commitMs: 0, readbackMs: 0 },
       };
     }
-    return coordinator.commit(activeLayerId);
-  }, [activeLayerId]);
+    const result = await coordinator.commit(activeLayerId);
+    if (
+      activeLayerId &&
+      result.dirtyTiles.length > 0 &&
+      coordinator.getReadbackMode() === 'disabled'
+    ) {
+      trackPendingGpuCpuSyncTiles(activeLayerId, result.dirtyTiles);
+    }
+    return result;
+  }, [activeLayerId, trackPendingGpuCpuSyncTiles]);
 
   const getGpuBrushCommitMetricsSnapshot = useCallback((): GpuBrushCommitMetricsSnapshot | null => {
     return gpuCommitCoordinatorRef.current?.getCommitMetricsSnapshot() ?? null;
@@ -562,14 +658,30 @@ export function Canvas() {
     return gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
   }, []);
 
-  const setGpuBrushCommitReadbackMode = useCallback((mode: GpuBrushCommitReadbackMode): boolean => {
-    const coordinator = gpuCommitCoordinatorRef.current;
-    if (!coordinator) {
-      return false;
+  const setGpuBrushCommitReadbackMode = useCallback(
+    (mode: GpuBrushCommitReadbackMode): boolean => {
+      const coordinator = gpuCommitCoordinatorRef.current;
+      if (!coordinator) {
+        return false;
+      }
+      coordinator.setReadbackMode(mode);
+      if (mode === 'enabled') {
+        void syncAllPendingGpuLayersToCpu();
+      }
+      return true;
+    },
+    [syncAllPendingGpuLayersToCpu]
+  );
+
+  useEffect(() => {
+    const prevActive = prevGpuDisplayActiveRef.current;
+    const prevLayerId = prevGpuDisplayLayerIdRef.current;
+    if (prevActive && prevLayerId && (!gpuDisplayActive || prevLayerId !== activeLayerId)) {
+      void syncGpuLayerToCpu(prevLayerId);
     }
-    coordinator.setReadbackMode(mode);
-    return true;
-  }, []);
+    prevGpuDisplayActiveRef.current = gpuDisplayActive;
+    prevGpuDisplayLayerIdRef.current = activeLayerId;
+  }, [gpuDisplayActive, activeLayerId, syncGpuLayerToCpu]);
 
   useGlobalExports({
     layerRendererRef,
@@ -590,6 +702,8 @@ export function Canvas() {
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
+    syncGpuLayerToCpu,
+    syncAllGpuLayersToCpu: syncAllPendingGpuLayersToCpu,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

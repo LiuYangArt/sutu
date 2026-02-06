@@ -1758,7 +1758,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
               className={`debug-btn secondary ${noReadbackPilotEnabled ? 'active' : ''}`}
               onClick={toggleNoReadbackPilot}
               disabled={!!runningTest}
-              title="Debug-only pilot: disable stroke-end readback on live path. Undo/Redo are blocked while enabled."
+              title="No-readback live mode toggle. History/export paths will sync GPU tiles to CPU on demand."
             >
               <span>No-Readback Pilot: {noReadbackPilotEnabled ? 'ON' : 'OFF'}</span>
             </button>
@@ -1775,7 +1775,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
           </div>
           {noReadbackPilotEnabled && (
             <div className="debug-note" style={{ marginTop: '6px' }}>
-              Pilot enabled: Undo/Redo are blocked to avoid CPU-layer consistency mismatch.
+              No-Readback active: Undo/Redo and export use on-demand GPU-to-CPU sync.
             </div>
           )}
           {noReadbackPilotMessage && (

@@ -158,7 +158,7 @@ describe('DebugPanel', () => {
     expectLatestResultStatus('Phase6A Manual 20-Stroke', 'passed');
   });
 
-  it('No-Readback Pilot 开关可切换并显示限制提示', async () => {
+  it('No-Readback Pilot 开关可切换并显示同步提示', async () => {
     const user = userEvent.setup();
     let pilotEnabled = false;
     const getPilotSpy = vi.fn(() => pilotEnabled);
@@ -179,9 +179,7 @@ describe('DebugPanel', () => {
       expect(screen.getByRole('button', { name: 'No-Readback Pilot: ON' })).toBeInTheDocument();
     });
     expect(
-      screen.getByText(
-        'Pilot enabled: Undo/Redo are blocked to avoid CPU-layer consistency mismatch.'
-      )
+      screen.getByText('No-Readback active: Undo/Redo and export use on-demand GPU-to-CPU sync.')
     ).toBeInTheDocument();
   });
 
