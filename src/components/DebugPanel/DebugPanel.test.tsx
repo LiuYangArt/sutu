@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DebugPanel } from './index';
 
@@ -8,6 +8,8 @@ type TestWindow = Window & {
   __gpuBrushDiagnostics?: () => unknown;
   __gpuBrushCommitMetrics?: () => unknown;
   __gpuBrushCommitMetricsReset?: () => boolean;
+  __gpuBrushCommitReadbackMode?: () => 'enabled' | 'disabled';
+  __gpuBrushCommitReadbackModeSet?: (mode: 'enabled' | 'disabled') => boolean;
   __strokeCaptureReplay?: (capture?: unknown) => Promise<unknown>;
   __canvasClearLayer?: () => void;
   showOpenFilePicker?: () => Promise<Array<{ getFile: () => Promise<File> }>>;
@@ -48,8 +50,12 @@ describe('DebugPanel', () => {
       avgDirtyTiles: 0,
       maxDirtyTiles: 0,
       lastCommitAtMs: null,
+      readbackMode: 'enabled' as const,
+      readbackBypassedCount: 0,
     }));
     (window as TestWindow).__gpuBrushCommitMetricsReset = vi.fn(() => true);
+    (window as TestWindow).__gpuBrushCommitReadbackMode = vi.fn(() => 'enabled');
+    (window as TestWindow).__gpuBrushCommitReadbackModeSet = vi.fn(() => true);
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       cb(0);
       return 1;
@@ -61,6 +67,8 @@ describe('DebugPanel', () => {
     delete (window as TestWindow).__gpuBrushDiagnostics;
     delete (window as TestWindow).__gpuBrushCommitMetrics;
     delete (window as TestWindow).__gpuBrushCommitMetricsReset;
+    delete (window as TestWindow).__gpuBrushCommitReadbackMode;
+    delete (window as TestWindow).__gpuBrushCommitReadbackModeSet;
     delete (window as TestWindow).__strokeCaptureReplay;
     delete (window as TestWindow).__canvasClearLayer;
     delete (window as TestWindow).showOpenFilePicker;
@@ -144,6 +152,32 @@ describe('DebugPanel', () => {
     expectLatestResultStatus('Phase6A Manual 20-Stroke', 'passed');
   });
 
+  it('Results 支持一键复制报告到剪贴板', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Record 20-Stroke Manual Gate' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('Phase6A Manual 20-Stroke', 'failed');
+    });
+
+    const latest = getLatestResultNode('Phase6A Manual 20-Stroke');
+    const copyButton = within(latest).getByRole('button', { name: 'Copy Report' });
+    await user.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+    });
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Phase6A Manual 20-Stroke'));
+    expect(copyButton).toHaveTextContent('Copied');
+  });
+
   it('Phase6B Perf Gate 在 replay+metrics 可用时通过', async () => {
     const user = userEvent.setup();
     const clearLayerSpy = vi.fn();
@@ -162,6 +196,8 @@ describe('DebugPanel', () => {
       avgDirtyTiles: 5,
       maxDirtyTiles: 6,
       lastCommitAtMs: 1234,
+      readbackMode: 'enabled' as const,
+      readbackBypassedCount: 0,
     }));
 
     (window as TestWindow).__canvasClearLayer = clearLayerSpy;
@@ -208,6 +244,91 @@ describe('DebugPanel', () => {
       expect(getMetricsSpy).toHaveBeenCalled();
     });
     expectLatestResultStatus('Phase6B Perf Gate (30s)', 'passed');
+  });
+
+  it('Phase6B-3 Readback A/B Compare 按 A->B->B->A 顺序执行并通过', async () => {
+    const user = userEvent.setup();
+    const clearLayerSpy = vi.fn();
+    const replaySpy = vi.fn(async () => {
+      await Promise.resolve();
+      return { events: 200, durationMs: 1000 };
+    });
+    const resetDiagSpy = vi.fn(() => true);
+    const resetMetricsSpy = vi.fn(() => true);
+    let mode: 'enabled' | 'disabled' = 'enabled';
+    const getModeSpy = vi.fn(() => mode);
+    const setModeSpy = vi.fn((next: 'enabled' | 'disabled') => {
+      mode = next;
+      return true;
+    });
+    const getMetricsSpy = vi.fn(() => ({
+      attemptCount: 3,
+      committedCount: 3,
+      avgPrepareMs: 1,
+      avgCommitMs: 2,
+      avgReadbackMs: mode === 'enabled' ? 4 : 0,
+      avgTotalMs: mode === 'enabled' ? 7 : 3,
+      maxTotalMs: 10,
+      totalDirtyTiles: 12,
+      avgDirtyTiles: 4,
+      maxDirtyTiles: 6,
+      lastCommitAtMs: 4567,
+      readbackMode: mode,
+      readbackBypassedCount: mode === 'enabled' ? 0 : 3,
+    }));
+
+    (window as TestWindow).__canvasClearLayer = clearLayerSpy;
+    (window as TestWindow).__strokeCaptureReplay = replaySpy;
+    (window as TestWindow).__gpuBrushDiagnosticsReset = resetDiagSpy;
+    (window as TestWindow).__gpuBrushCommitMetricsReset = resetMetricsSpy;
+    (window as TestWindow).__gpuBrushCommitMetrics = getMetricsSpy;
+    (window as TestWindow).__gpuBrushDiagnostics = vi.fn(() => ({
+      diagnosticsSessionId: 11,
+      uncapturedErrors: [],
+      deviceLost: false,
+    }));
+    (window as TestWindow).__gpuBrushCommitReadbackMode = getModeSpy;
+    (window as TestWindow).__gpuBrushCommitReadbackModeSet = setModeSpy;
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+        samples: [{ type: 'pointerdown', timeMs: 0 }],
+      }),
+    } as unknown as Response);
+
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      now += 40_000;
+      return now;
+    });
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run Phase6B-3 Readback A/B Compare' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('Phase6B-3 Readback A/B Compare', 'passed');
+    });
+
+    const firstFourModes = setModeSpy.mock.calls.slice(0, 4).map((call) => call[0]);
+    expect(firstFourModes).toEqual(['enabled', 'disabled', 'disabled', 'enabled']);
+    expect(replaySpy).toHaveBeenCalled();
+    expect(clearLayerSpy).toHaveBeenCalled();
+  });
+
+  it('Phase6B-3 Readback A/B Compare 缺失 readback mode API 时失败', async () => {
+    const user = userEvent.setup();
+    delete (window as TestWindow).__gpuBrushCommitReadbackModeSet;
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run Phase6B-3 Readback A/B Compare' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('Phase6B-3 Readback A/B Compare', 'failed');
+    });
   });
 
   it('Phase6B Perf Gate 缺失 commit metrics API 时失败', async () => {

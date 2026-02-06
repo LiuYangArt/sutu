@@ -26,6 +26,8 @@ function cleanupGlobals(): void {
   delete win.__gpuBrushDiagnosticsReset;
   delete win.__gpuBrushCommitMetrics;
   delete win.__gpuBrushCommitMetricsReset;
+  delete win.__gpuBrushCommitReadbackMode;
+  delete win.__gpuBrushCommitReadbackModeSet;
   delete win.__strokeCaptureStart;
   delete win.__strokeCaptureStop;
   delete win.__strokeCaptureLast;
@@ -141,8 +143,12 @@ describe('useGlobalExports', () => {
       avgDirtyTiles: 0,
       maxDirtyTiles: 0,
       lastCommitAtMs: 1,
+      readbackMode: 'enabled' as const,
+      readbackBypassedCount: 0,
     }));
     const resetGpuBrushCommitMetrics = vi.fn(() => true);
+    const getGpuBrushCommitReadbackMode = vi.fn(() => 'enabled' as const);
+    const setGpuBrushCommitReadbackMode = vi.fn(() => true);
 
     const { unmount } = renderHook(() =>
       useGlobalExports({
@@ -160,6 +166,8 @@ describe('useGlobalExports', () => {
         resetGpuDiagnostics,
         getGpuBrushCommitMetricsSnapshot,
         resetGpuBrushCommitMetrics,
+        getGpuBrushCommitReadbackMode,
+        setGpuBrushCommitReadbackMode,
         startStrokeCapture,
         stopStrokeCapture,
         getLastStrokeCapture,
@@ -185,6 +193,8 @@ describe('useGlobalExports', () => {
     expect(typeof win.__gpuBrushDiagnosticsReset).toBe('function');
     expect(typeof win.__gpuBrushCommitMetrics).toBe('function');
     expect(typeof win.__gpuBrushCommitMetricsReset).toBe('function');
+    expect(typeof win.__gpuBrushCommitReadbackMode).toBe('function');
+    expect(typeof win.__gpuBrushCommitReadbackModeSet).toBe('function');
     expect(typeof win.__strokeCaptureStart).toBe('function');
     expect(typeof win.__strokeCaptureStop).toBe('function');
     expect(typeof win.__strokeCaptureLast).toBe('function');
@@ -215,6 +225,8 @@ describe('useGlobalExports', () => {
       win.__gpuBrushDiagnosticsReset();
       win.__gpuBrushCommitMetrics();
       win.__gpuBrushCommitMetricsReset();
+      win.__gpuBrushCommitReadbackMode();
+      win.__gpuBrushCommitReadbackModeSet('disabled');
     });
     await win.__strokeCaptureReplay(capture);
 
@@ -235,6 +247,8 @@ describe('useGlobalExports', () => {
     expect(resetGpuDiagnostics).toHaveBeenCalledTimes(1);
     expect(getGpuBrushCommitMetricsSnapshot).toHaveBeenCalledTimes(1);
     expect(resetGpuBrushCommitMetrics).toHaveBeenCalledTimes(1);
+    expect(getGpuBrushCommitReadbackMode).toHaveBeenCalledTimes(1);
+    expect(setGpuBrushCommitReadbackMode).toHaveBeenCalledWith('disabled');
 
     await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
     await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
@@ -262,6 +276,8 @@ describe('useGlobalExports', () => {
     expect(win.__gpuBrushDiagnosticsReset).toBeUndefined();
     expect(win.__gpuBrushCommitMetrics).toBeUndefined();
     expect(win.__gpuBrushCommitMetricsReset).toBeUndefined();
+    expect(win.__gpuBrushCommitReadbackMode).toBeUndefined();
+    expect(win.__gpuBrushCommitReadbackModeSet).toBeUndefined();
     expect(win.__strokeCaptureStart).toBeUndefined();
     expect(win.__strokeCaptureStop).toBeUndefined();
     expect(win.__strokeCaptureLast).toBeUndefined();

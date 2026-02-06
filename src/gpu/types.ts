@@ -98,6 +98,8 @@ export interface GpuStrokeCommitResult {
   };
 }
 
+export type GpuBrushCommitReadbackMode = 'enabled' | 'disabled';
+
 export interface GpuBrushCommitMetricsSnapshot {
   attemptCount: number;
   committedCount: number;
@@ -110,6 +112,8 @@ export interface GpuBrushCommitMetricsSnapshot {
   avgDirtyTiles: number;
   maxDirtyTiles: number;
   lastCommitAtMs: number | null;
+  readbackMode: GpuBrushCommitReadbackMode;
+  readbackBypassedCount: number;
 }
 
 /**

@@ -11,7 +11,7 @@
 - [x] Phase 4：SelectionMask 改为 `r8unorm`
 - [x] Phase 5：验收模板回填到设计文档
 - [ ] Phase 6A：稳定性回归门禁（压感/丢笔触/消失）
-- [ ] Phase 6B：5000x5000 性能收敛（拆分为门禁能力落地 + 数据回填，临时豁免模式结论不封版）
+- [ ] Phase 6B：5000x5000 性能收敛（门禁能力已落地；策略切换为“冻结基线 + 无 readback 对比优先”）
 
 ## 已完成实现
 - 新增类型契约：`GpuScratchHandle` / `GpuStrokePrepareResult` / `GpuStrokeCommitResult`
@@ -46,6 +46,11 @@
   - 大画布起笔保护与 `currentPoint` 新鲜度策略曾上线，但造成手绘压感回归
   - 已回退至基线输入路径，用户实测“压感已恢复”
   - 保留 Debug Panel 门禁与诊断框架，作为后续稳定性验证工具
+- 新增 Phase 6B-3 对比工具落地（2026-02-06）：
+  - commit 指标快照新增 `readbackMode` / `readbackBypassedCount`。
+  - `GpuStrokeCommitCoordinator` 新增 `setReadbackMode/getReadbackMode`，支持调试态禁用 readback。
+  - 新增全局接口：`window.__gpuBrushCommitReadbackMode()` / `window.__gpuBrushCommitReadbackModeSet(mode)`。
+  - Debug Panel 新增 `Run Phase6B-3 Readback A/B Compare`（固定 `case-5000-04`、`A->B->B->A`、每种模式 replay-only 30s、清层耗时单列、输出对比报告）。
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
@@ -74,15 +79,18 @@
    - 已新增 `Run Phase6B Perf Gate (30s)`，复用 replay 流程，自动输出 Frame/Commit/Diagnostics 三类报告。
    - 已新增全局接口：`window.__gpuBrushCommitMetrics()` / `window.__gpuBrushCommitMetricsReset()`。
    - 已新增 commit 指标聚合：`attemptCount/committedCount/avg*/max*/dirtyTiles`。
-6. [ ] Phase 6B-2：5000x5000 基线数据回填
-   - 运行 `Run Phase6B Perf Gate (30s)`，记录平均帧时间、p95/p99、commit 耗时、dirtyTiles。
-   - 对比改造前后数据并回填设计文档（标注“非封版预结论”）。
-7. [ ] 多层可见性能说明与下一阶段
+6. [ ] Phase 6B-2：5000x5000 基线冻结与回填
+   - 以 `case-5000-04` 冻结当前过渡态基线（含 `avg readbackMs`、frame p95/p99、dirtyTiles、稳定性信号）。
+   - 回填到设计文档并标注“非封版预结论”。
+7. [ ] Phase 6B-3：无 readback 路线对比验证（优先）
+   - [x] 对比执行器已落地：固定 `case-5000-04`，执行 `A->B->B->A`，按 replay-only 30s 采样并输出差异报告（无硬阈值）。
+   - [ ] 在目标硬件执行实测并回填设计文档 13.10（A/B 聚合、Delta、稳定性信号、非封版预结论）。
+8. [ ] 多层可见性能说明与下一阶段
    - 当前 M2 仍是单层 GPU 显示（`visibleLayerCount <= 1`）。
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线数据回填）
+**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线冻结）/6B-3（对比工具已落地，待实测回填）
 
 ## Phase 6A 临时豁免决议（2026-02-06）
 - 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。
@@ -105,6 +113,9 @@
 - [x] 新增 Phase 6B 门禁能力：`Run Phase6B Perf Gate (30s)`（含 Frame/Commit/Diagnostics 报告）。
 - [x] 新增 commit 指标接口：`__gpuBrushCommitMetrics` / `__gpuBrushCommitMetricsReset`。
 - [x] 新增自动检查通过：`pnpm -s test -- GpuStrokeCommitCoordinator`。
+- [x] 新增 Phase 6B-3 对比能力：`Run Phase6B-3 Readback A/B Compare`（固定 case、`A->B->B->A`、回放时段统计）。
+- [x] 新增 readback mode 调试接口：`__gpuBrushCommitReadbackMode` / `__gpuBrushCommitReadbackModeSet`。
+- [x] 新增自动检查通过：`pnpm -s typecheck`、`pnpm -s test -- GpuStrokeCommitCoordinator`、`pnpm -s test -- useGlobalExports`、`pnpm -s test -- DebugPanel`。
 - [x] 压感策略实验回退后，用户手测确认压感恢复可用（2026-02-06）。
 - [x] Auto Gate 最新实测：PASS（`case-5000-04.json`，session=3，`startPressureFallbackCount=0`）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
@@ -113,6 +124,15 @@
 - 当前“能画、能回放”已恢复，主链路可继续推进。
 - 诊断里的报错集中在启动/预热相关 submit（`GPU Startup Init Encoder` / `Prewarm Dual Readback Encoder` / `Dual Blend Encoder`），不是本次回放时即时新增的绘制报错，但会污染门禁判断，必须清理。
 - M2 单层目标下，Dual 预热路径不是必需项，可降级为按需启用或直接禁用预热。
+
+### 决策更新（2026-02-06，Phase 6B 路线切换）
+- 背景：设计终态目标是“实时无 readback”，当前实现仍是过渡态（stroke-end dirty readback）。
+- 结论：
+  - `57ms -> 40ms` 的 readback 微优化不再作为主目标；
+  - 先冻结当前基线（作为对照组），再优先推进“无 readback 原型”并做同口径门禁对比。
+- 执行规则：
+  - 允许做必要的安全性/稳定性修补，但避免深挖 readback 微优化；
+  - 6B 阶段评估重心调整为“当前 vs 无 readback”的差异。
 
 ### 接下来按顺序做（不并行）
 1. [x] 清理启动期 Dual 预热大缓冲报错

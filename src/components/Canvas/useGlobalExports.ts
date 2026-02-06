@@ -8,6 +8,7 @@ import { renderLayerThumbnail } from '@/utils/layerThumbnail';
 import type { StrokeCaptureData, StrokeReplayOptions } from '@/test';
 import {
   GPUContext,
+  type GpuBrushCommitReadbackMode,
   persistResidencyBudgetFromProbe,
   runFormatCompare,
   runM0Baseline,
@@ -30,6 +31,8 @@ interface UseGlobalExportsParams {
   resetGpuDiagnostics?: () => boolean;
   getGpuBrushCommitMetricsSnapshot?: () => GpuBrushCommitMetricsSnapshot | null;
   resetGpuBrushCommitMetrics?: () => boolean;
+  getGpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
+  setGpuBrushCommitReadbackMode?: (mode: GpuBrushCommitReadbackMode) => boolean;
   startStrokeCapture?: () => boolean;
   stopStrokeCapture?: () => StrokeCaptureData | null;
   getLastStrokeCapture?: () => StrokeCaptureData | null;
@@ -118,6 +121,8 @@ export function useGlobalExports({
   resetGpuDiagnostics,
   getGpuBrushCommitMetricsSnapshot,
   resetGpuBrushCommitMetrics,
+  getGpuBrushCommitReadbackMode,
+  setGpuBrushCommitReadbackMode,
   startStrokeCapture,
   stopStrokeCapture,
   getLastStrokeCapture,
@@ -158,6 +163,8 @@ export function useGlobalExports({
       __gpuBrushDiagnosticsReset?: () => boolean;
       __gpuBrushCommitMetrics?: () => GpuBrushCommitMetricsSnapshot | null;
       __gpuBrushCommitMetricsReset?: () => boolean;
+      __gpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
+      __gpuBrushCommitReadbackModeSet?: (mode: GpuBrushCommitReadbackMode) => boolean;
       __strokeCaptureStart?: () => boolean;
       __strokeCaptureStop?: () => StrokeCaptureData | null;
       __strokeCaptureLast?: () => StrokeCaptureData | null;
@@ -261,6 +268,13 @@ export function useGlobalExports({
     };
     win.__gpuBrushCommitMetricsReset = () => {
       return resetGpuBrushCommitMetrics?.() ?? false;
+    };
+    win.__gpuBrushCommitReadbackMode = () => {
+      return getGpuBrushCommitReadbackMode?.() ?? 'enabled';
+    };
+    win.__gpuBrushCommitReadbackModeSet = (mode) => {
+      if (mode !== 'enabled' && mode !== 'disabled') return false;
+      return setGpuBrushCommitReadbackMode?.(mode) ?? false;
     };
 
     const applyReplayContext = async (capture: StrokeCaptureData): Promise<void> => {
@@ -644,6 +658,8 @@ export function useGlobalExports({
       delete win.__gpuBrushDiagnosticsReset;
       delete win.__gpuBrushCommitMetrics;
       delete win.__gpuBrushCommitMetricsReset;
+      delete win.__gpuBrushCommitReadbackMode;
+      delete win.__gpuBrushCommitReadbackModeSet;
       delete win.__strokeCaptureStart;
       delete win.__strokeCaptureStop;
       delete win.__strokeCaptureLast;
@@ -665,6 +681,8 @@ export function useGlobalExports({
     resetGpuDiagnostics,
     getGpuBrushCommitMetricsSnapshot,
     resetGpuBrushCommitMetrics,
+    getGpuBrushCommitReadbackMode,
+    setGpuBrushCommitReadbackMode,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

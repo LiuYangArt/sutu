@@ -27,7 +27,7 @@ describe('GpuStrokeCommitCoordinator', () => {
     vi.restoreAllMocks();
   });
 
-  it('aggregates commit metrics for all commit outcomes', async () => {
+  it('aggregates commit metrics for all commit outcomes and readback modes', async () => {
     const commitStroke = vi.fn(() => [
       { x: 0, y: 0 },
       { x: 1, y: 0 },
@@ -40,6 +40,7 @@ describe('GpuStrokeCommitCoordinator', () => {
 
     const prepareQueue: GpuStrokePrepareResult[] = [
       { dirtyRect: null, strokeOpacity: 1, scratch: null },
+      makeScratchPrepareResult(),
       makeScratchPrepareResult(),
       makeScratchPrepareResult(),
     ];
@@ -66,24 +67,29 @@ describe('GpuStrokeCommitCoordinator', () => {
     await coordinator.commit('layer-1');
     layerAvailable = true;
     const success = await coordinator.commit('layer-1');
+    coordinator.setReadbackMode('disabled');
+    const successWithoutReadback = await coordinator.commit('layer-1');
 
     expect(success.committed).toBe(true);
-    expect(clearScratchGpu).toHaveBeenCalledTimes(3);
-    expect(commitStroke).toHaveBeenCalledTimes(1);
+    expect(successWithoutReadback.committed).toBe(true);
+    expect(clearScratchGpu).toHaveBeenCalledTimes(4);
+    expect(commitStroke).toHaveBeenCalledTimes(2);
     expect(readbackTilesToLayer).toHaveBeenCalledTimes(1);
 
     const snapshot = coordinator.getCommitMetricsSnapshot();
-    expect(snapshot.attemptCount).toBe(3);
-    expect(snapshot.committedCount).toBe(1);
+    expect(snapshot.attemptCount).toBe(4);
+    expect(snapshot.committedCount).toBe(2);
     expect(snapshot.avgPrepareMs).toBeCloseTo(10);
-    expect(snapshot.avgCommitMs).toBeCloseTo(10 / 3);
-    expect(snapshot.avgReadbackMs).toBeCloseTo(10 / 3);
-    expect(snapshot.avgTotalMs).toBeCloseTo((10 + 10 + 30) / 3);
+    expect(snapshot.avgCommitMs).toBeCloseTo(20 / 4);
+    expect(snapshot.avgReadbackMs).toBeCloseTo(10 / 4);
+    expect(snapshot.avgTotalMs).toBeCloseTo((10 + 10 + 30 + 20) / 4);
     expect(snapshot.maxTotalMs).toBe(30);
-    expect(snapshot.totalDirtyTiles).toBe(2);
-    expect(snapshot.avgDirtyTiles).toBeCloseTo(2 / 3);
+    expect(snapshot.totalDirtyTiles).toBe(4);
+    expect(snapshot.avgDirtyTiles).toBeCloseTo(1);
     expect(snapshot.maxDirtyTiles).toBe(2);
-    expect(snapshot.lastCommitAtMs).toBe(130);
+    expect(snapshot.lastCommitAtMs).toBe(180);
+    expect(snapshot.readbackMode).toBe('disabled');
+    expect(snapshot.readbackBypassedCount).toBe(1);
 
     coordinator.resetCommitMetrics();
     const resetSnapshot = coordinator.getCommitMetricsSnapshot();
@@ -99,6 +105,8 @@ describe('GpuStrokeCommitCoordinator', () => {
       avgDirtyTiles: 0,
       maxDirtyTiles: 0,
       lastCommitAtMs: null,
+      readbackMode: 'disabled',
+      readbackBypassedCount: 0,
     });
   });
 });

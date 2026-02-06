@@ -1,5 +1,6 @@
 import type { Rect } from '@/utils/strokeBuffer';
 import type {
+  GpuBrushCommitReadbackMode,
   GpuBrushCommitMetricsSnapshot,
   GpuStrokeCommitResult,
   GpuStrokePrepareResult,
@@ -43,6 +44,7 @@ interface GpuCommitMetricsAccumulatorState {
   totalDirtyTiles: number;
   maxDirtyTiles: number;
   lastCommitAtMs: number | null;
+  readbackBypassedCount: number;
 }
 
 function createEmptyCommitMetricsState(): GpuCommitMetricsAccumulatorState {
@@ -57,6 +59,7 @@ function createEmptyCommitMetricsState(): GpuCommitMetricsAccumulatorState {
     totalDirtyTiles: 0,
     maxDirtyTiles: 0,
     lastCommitAtMs: null,
+    readbackBypassedCount: 0,
   };
 }
 
@@ -68,12 +71,21 @@ export class GpuStrokeCommitCoordinator {
     layerId: string
   ) => { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null;
   private metrics: GpuCommitMetricsAccumulatorState = createEmptyCommitMetricsState();
+  private readbackMode: GpuBrushCommitReadbackMode = 'enabled';
 
   constructor(options: GpuStrokeCommitCoordinatorOptions) {
     this.gpuRenderer = options.gpuRenderer;
     this.prepareStrokeEndGpu = options.prepareStrokeEndGpu;
     this.clearScratchGpu = options.clearScratchGpu;
     this.getTargetLayer = options.getTargetLayer;
+  }
+
+  setReadbackMode(mode: GpuBrushCommitReadbackMode): void {
+    this.readbackMode = mode;
+  }
+
+  getReadbackMode(): GpuBrushCommitReadbackMode {
+    return this.readbackMode;
   }
 
   getCommitMetricsSnapshot(): GpuBrushCommitMetricsSnapshot {
@@ -92,6 +104,8 @@ export class GpuStrokeCommitCoordinator {
       avgDirtyTiles: avgOrZero(this.metrics.totalDirtyTiles),
       maxDirtyTiles: this.metrics.maxDirtyTiles,
       lastCommitAtMs: this.metrics.lastCommitAtMs,
+      readbackMode: this.readbackMode,
+      readbackBypassedCount: this.metrics.readbackBypassedCount,
     };
   }
 
@@ -161,7 +175,7 @@ export class GpuStrokeCommitCoordinator {
     const commitMs = performance.now() - commitStart;
 
     let readbackMs = 0;
-    if (dirtyTiles.length > 0) {
+    if (dirtyTiles.length > 0 && this.readbackMode === 'enabled') {
       const readbackStart = performance.now();
       await this.gpuRenderer.readbackTilesToLayer({
         layerId,
@@ -169,6 +183,8 @@ export class GpuStrokeCommitCoordinator {
         targetCtx: layer.ctx,
       });
       readbackMs = performance.now() - readbackStart;
+    } else if (dirtyTiles.length > 0) {
+      this.metrics.readbackBypassedCount += 1;
     }
 
     this.clearScratchGpu();

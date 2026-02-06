@@ -19,6 +19,7 @@ export type {
   GpuScratchHandle,
   GpuStrokePrepareResult,
   GpuStrokeCommitResult,
+  GpuBrushCommitReadbackMode,
   GpuBrushCommitMetricsSnapshot,
 } from './types';
 

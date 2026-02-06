@@ -27,6 +27,7 @@ import {
   GpuCanvasRenderer,
   GpuStrokeCommitCoordinator,
   loadResidencyBudget,
+  type GpuBrushCommitReadbackMode,
   type GpuBrushCommitMetricsSnapshot,
   type GpuStrokeCommitResult,
 } from '@/gpu';
@@ -54,6 +55,8 @@ declare global {
     __gpuBrushDiagnosticsReset?: () => boolean;
     __gpuBrushCommitMetrics?: () => GpuBrushCommitMetricsSnapshot | null;
     __gpuBrushCommitMetricsReset?: () => boolean;
+    __gpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
+    __gpuBrushCommitReadbackModeSet?: (mode: GpuBrushCommitReadbackMode) => boolean;
     __gpuM0Baseline?: () => Promise<void>;
     __strokeCaptureStart?: () => boolean;
     __strokeCaptureStop?: () => StrokeCaptureData | null;
@@ -539,6 +542,19 @@ export function Canvas() {
     return true;
   }, []);
 
+  const getGpuBrushCommitReadbackMode = useCallback((): GpuBrushCommitReadbackMode => {
+    return gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
+  }, []);
+
+  const setGpuBrushCommitReadbackMode = useCallback((mode: GpuBrushCommitReadbackMode): boolean => {
+    const coordinator = gpuCommitCoordinatorRef.current;
+    if (!coordinator) {
+      return false;
+    }
+    coordinator.setReadbackMode(mode);
+    return true;
+  }, []);
+
   useGlobalExports({
     layerRendererRef,
     compositeAndRender,
@@ -554,6 +570,8 @@ export function Canvas() {
     resetGpuDiagnostics,
     getGpuBrushCommitMetricsSnapshot,
     resetGpuBrushCommitMetrics,
+    getGpuBrushCommitReadbackMode,
+    setGpuBrushCommitReadbackMode,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

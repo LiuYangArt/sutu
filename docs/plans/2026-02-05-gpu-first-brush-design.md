@@ -450,3 +450,120 @@
 - Latest signal:
   - Auto Gate：PASS（`case-5000-04.json`，`uncapturedErrors=0`，`deviceLost=NO`，`startPressureFallbackCount=0`）。
   - Manual Gate：第一条“无起笔细头”仍可能不满足。
+
+### 13.9 决议记录（2026-02-06，6B 路线校准：无 readback 优先）
+
+- Problem:
+  - 文档终态目标明确为“实时绘画无 readback”，但当前 M2 过渡实现仍保留 `stroke-end readback`（用于与既有 CPU layer/历史链路兼容）。
+  - 当前 `Phase6B Perf Gate` 数据显示瓶颈主要集中在 readback，出现“继续微优化 vs 直接推进终态”的取舍。
+- Decision:
+  - 6B 阶段不再将 `avg readbackMs 57 -> 40` 作为主目标；
+  - 将“当前过渡态（含 stroke-end readback）vs 无 readback 原型”的同口径对比设为优先目标。
+- Execution:
+  - 先冻结当前基线（`case-5000-04`，30s gate，记录 frame/readback/dirtyTiles/稳定性信号）作为对照组；
+  - 后续在同一 gate 口径下评估无 readback 原型收益；
+  - readback 仅做必要稳定性修补，不做深度微优化投入。
+- Why:
+  - 终态价值应来自“当前 vs 无 readback”的结构性差异，而不是在过渡态里持续打磨局部指标；
+  - 冻结基线可保留量化证据，避免后续收益评估失真。
+- Note:
+  - 当前及后续 6B 结果均标注“非封版预结论”，最终封版仍受 6A 全量复验约束。
+
+### 13.10 验收记录模板（Phase 6B-3：Readback A/B Compare）
+
+> 目的：在统一口径下比较 A（readback enabled）与 B（readback disabled）结构性差异。  
+> 约束：固定 `case-5000-04.json`，固定序列 `A->B->B->A`，每种模式 replay-only 累计 30s；清层耗时单列，不纳入性能主统计。  
+> 判定：只做“数据完整性 + 稳定性”判定，不设硬性能阈值；结论均为“非封版预结论”。
+
+```md
+#### Phase6B-3 Readback A/B Compare - YYYY-MM-DD HH:mm
+
+- Build/Checks:
+  - `pnpm -s typecheck`: PASS/FAIL
+  - `pnpm -s test -- GpuStrokeCommitCoordinator`: PASS/FAIL
+  - `pnpm -s test -- useGlobalExports`: PASS/FAIL
+  - `pnpm -s test -- DebugPanel`: PASS/FAIL
+- Capture:
+  - fixed file: `case-5000-04.json`
+  - source: `/abr/case-5000-04.json` or `file-picker`
+- Sequence:
+  - `enabled -> disabled -> disabled -> enabled`
+  - replay-only target per mode: `30000ms`
+- Per-round details:
+  - Round1(A):
+    - replayDuration / clearDuration:
+    - frame p95/p99:
+    - commit avg readback/total:
+    - commit avg dirtyTiles:
+    - readbackBypassedCount:
+    - uncapturedErrors / deviceLost:
+  - Round2(B):
+    - replayDuration / clearDuration:
+    - frame p95/p99:
+    - commit avg readback/total:
+    - commit avg dirtyTiles:
+    - readbackBypassedCount:
+    - uncapturedErrors / deviceLost:
+  - Round3(B):
+    - replayDuration / clearDuration:
+    - frame p95/p99:
+    - commit avg readback/total:
+    - commit avg dirtyTiles:
+    - readbackBypassedCount:
+    - uncapturedErrors / deviceLost:
+  - Round4(A):
+    - replayDuration / clearDuration:
+    - frame p95/p99:
+    - commit avg readback/total:
+    - commit avg dirtyTiles:
+    - readbackBypassedCount:
+    - uncapturedErrors / deviceLost:
+- Mode Aggregate:
+  - A(enabled):
+    - replayDuration / clearDuration:
+    - frame avg/p95/p99:
+    - commit avg readback/total:
+    - commit avg dirtyTiles:
+    - readbackBypassedCount:
+    - stability:
+  - B(disabled):
+    - replayDuration / clearDuration:
+    - frame avg/p95/p99:
+    - commit avg readback/total:
+    - commit avg dirtyTiles:
+    - readbackBypassedCount:
+    - stability:
+- Delta (B - A):
+  - commit avg readback:
+  - commit avg total:
+  - frame p95 / p99:
+  - commit avg dirtyTiles:
+- Integrity/Stable Gate:
+  - mode restored: YES/NO
+  - all rounds complete: YES/NO
+  - uncapturedErrors == 0: YES/NO
+  - deviceLost == NO: YES/NO
+  - Result: PASS/FAIL
+- Preliminary Conclusion (Non-release):
+  - summary:
+  - decision hint:
+  - note: 最终封版仍受 6A 全量复验约束
+```
+
+### 13.11 Phase 6B-3 工具落地记录（2026-02-06）
+
+- Scope:
+  - 新增独立入口：`Run Phase6B-3 Readback A/B Compare`（不改默认绘画行为）。
+  - 新增 readback 模式调试 API 与 commit 指标字段，支持证明 B 路径确实绕过 readback。
+- Implemented:
+  - `GpuBrushCommitMetricsSnapshot` 新增 `readbackMode` / `readbackBypassedCount`。
+  - `GpuStrokeCommitCoordinator` 新增 `setReadbackMode/getReadbackMode`；`disabled` 时跳过 `readbackTilesToLayer` 并累计 bypass 次数。
+  - `Canvas/useGlobalExports` 新增 `window.__gpuBrushCommitReadbackMode()` / `window.__gpuBrushCommitReadbackModeSet(mode)`。
+  - DebugPanel 新增 6B-3 对比执行器：固定 case、固定序列、replay-only 统计、清层耗时单列、A/B 聚合与 Delta 报告。
+- Verification:
+  - `pnpm -s typecheck`: PASS
+  - `pnpm -s test -- GpuStrokeCommitCoordinator`: PASS
+  - `pnpm -s test -- useGlobalExports`: PASS
+  - `pnpm -s test -- DebugPanel`: PASS
+- Current state:
+  - 工具可运行，待目标硬件执行一次实测并按 13.10 模板回填结果。

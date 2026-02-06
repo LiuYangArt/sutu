@@ -81,6 +81,36 @@
   overflow-y: auto;
 }
 
+.debug-result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.debug-result-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.debug-result-copy-btn {
+  border: 1px solid #585b70;
+  background: #313244;
+  color: #cdd6f4;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.debug-result-copy-btn:hover {
+  background: #45475a;
+}
+
+.debug-result-time {
+  color: #9399b2;
+  font-size: 11px;
+}
+
 .debug-section {
   display: flex;
   flex-direction: column;
