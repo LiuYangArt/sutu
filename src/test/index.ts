@@ -23,3 +23,12 @@ export type {
 // Chaos testing
 export { chaosClicker, chaosMixed, formatChaosReport } from './ChaosTest';
 export type { ChaosTestResult, ChaosTestOptions } from './ChaosTest';
+
+// Real-input capture/replay
+export { StrokeCaptureController } from './StrokeCapture';
+export type {
+  StrokeCaptureData,
+  StrokeCaptureSample,
+  StrokeCaptureMetadata,
+  StrokeReplayOptions,
+} from './StrokeCapture';

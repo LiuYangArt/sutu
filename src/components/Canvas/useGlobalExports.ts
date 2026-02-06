@@ -3,6 +3,7 @@ import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
+import type { StrokeCaptureData, StrokeReplayOptions } from '@/test';
 import {
   GPUContext,
   persistResidencyBudgetFromProbe,
@@ -23,6 +24,14 @@ interface UseGlobalExportsParams {
   handleRemoveLayer: (id: string) => void;
   handleResizeCanvas: (options: ResizeCanvasOptions) => void;
   getGpuDiagnosticsSnapshot?: () => unknown;
+  startStrokeCapture?: () => boolean;
+  stopStrokeCapture?: () => StrokeCaptureData | null;
+  getLastStrokeCapture?: () => StrokeCaptureData | null;
+  replayStrokeCapture?: (
+    capture?: StrokeCaptureData | string,
+    options?: StrokeReplayOptions
+  ) => Promise<{ events: number; durationMs: number } | null>;
+  downloadStrokeCapture?: (fileName?: string, capture?: StrokeCaptureData | string) => boolean;
 }
 
 export function useGlobalExports({
@@ -37,6 +46,11 @@ export function useGlobalExports({
   handleRemoveLayer,
   handleResizeCanvas,
   getGpuDiagnosticsSnapshot,
+  startStrokeCapture,
+  stopStrokeCapture,
+  getLastStrokeCapture,
+  replayStrokeCapture,
+  downloadStrokeCapture,
 }: UseGlobalExportsParams): void {
   useEffect(() => {
     const win = window as Window & {
@@ -69,6 +83,17 @@ export function useGlobalExports({
         viewportTiles?: number;
       }) => Promise<unknown>;
       __gpuBrushDiagnostics?: () => unknown;
+      __strokeCaptureStart?: () => boolean;
+      __strokeCaptureStop?: () => StrokeCaptureData | null;
+      __strokeCaptureLast?: () => StrokeCaptureData | null;
+      __strokeCaptureReplay?: (
+        capture?: StrokeCaptureData | string,
+        options?: StrokeReplayOptions
+      ) => Promise<{ events: number; durationMs: number } | null>;
+      __strokeCaptureDownload?: (
+        fileName?: string,
+        capture?: StrokeCaptureData | string
+      ) => boolean;
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -152,6 +177,37 @@ export function useGlobalExports({
 
     win.__gpuBrushDiagnostics = () => {
       return getGpuDiagnosticsSnapshot?.() ?? null;
+    };
+    win.__strokeCaptureStart = () => {
+      const started = startStrokeCapture?.() ?? false;
+      if (started) {
+        // eslint-disable-next-line no-console
+        console.log('[StrokeCapture] recording started');
+      }
+      return started;
+    };
+    win.__strokeCaptureStop = () => {
+      const capture = stopStrokeCapture?.() ?? null;
+      if (capture) {
+        // eslint-disable-next-line no-console
+        console.log('[StrokeCapture] recording stopped', {
+          samples: capture.samples.length,
+          createdAt: capture.createdAt,
+        });
+      }
+      return capture;
+    };
+    win.__strokeCaptureLast = () => {
+      return getLastStrokeCapture?.() ?? null;
+    };
+    win.__strokeCaptureReplay = async (capture, options) => {
+      const result = await replayStrokeCapture?.(capture, options);
+      // eslint-disable-next-line no-console
+      console.log('[StrokeCapture] replay result', result);
+      return result ?? null;
+    };
+    win.__strokeCaptureDownload = (fileName, capture) => {
+      return downloadStrokeCapture?.(fileName, capture) ?? false;
     };
 
     // Get single layer image data as Base64 PNG data URL
@@ -356,6 +412,11 @@ export function useGlobalExports({
       delete win.__gpuFormatCompare;
       delete win.__gpuTileSizeCompare;
       delete win.__gpuBrushDiagnostics;
+      delete win.__strokeCaptureStart;
+      delete win.__strokeCaptureStop;
+      delete win.__strokeCaptureLast;
+      delete win.__strokeCaptureReplay;
+      delete win.__strokeCaptureDownload;
     };
   }, [
     layerRendererRef,
@@ -369,5 +430,10 @@ export function useGlobalExports({
     handleRemoveLayer,
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
+    startStrokeCapture,
+    stopStrokeCapture,
+    getLastStrokeCapture,
+    replayStrokeCapture,
+    downloadStrokeCapture,
   ]);
 }

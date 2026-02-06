@@ -17,6 +17,11 @@ function cleanupGlobals(): void {
   delete win.__canvasDuplicateLayer;
   delete win.__canvasRemoveLayer;
   delete win.__canvasResize;
+  delete win.__strokeCaptureStart;
+  delete win.__strokeCaptureStop;
+  delete win.__strokeCaptureLast;
+  delete win.__strokeCaptureReplay;
+  delete win.__strokeCaptureDownload;
 }
 
 describe('useGlobalExports', () => {
@@ -80,6 +85,22 @@ describe('useGlobalExports', () => {
     const handleDuplicateLayer = vi.fn();
     const handleRemoveLayer = vi.fn();
     const handleResizeCanvas = vi.fn();
+    const capture = {
+      version: 1 as const,
+      createdAt: new Date().toISOString(),
+      metadata: {
+        canvasWidth: 100,
+        canvasHeight: 80,
+        viewportScale: 1,
+        tool: {},
+      },
+      samples: [],
+    };
+    const startStrokeCapture = vi.fn(() => true);
+    const stopStrokeCapture = vi.fn(() => capture);
+    const getLastStrokeCapture = vi.fn(() => capture);
+    const replayStrokeCapture = vi.fn(async () => ({ events: 0, durationMs: 0 }));
+    const downloadStrokeCapture = vi.fn(() => true);
 
     const { unmount } = renderHook(() =>
       useGlobalExports({
@@ -93,6 +114,11 @@ describe('useGlobalExports', () => {
         handleDuplicateLayer,
         handleRemoveLayer,
         handleResizeCanvas,
+        startStrokeCapture,
+        stopStrokeCapture,
+        getLastStrokeCapture,
+        replayStrokeCapture,
+        downloadStrokeCapture,
       })
     );
 
@@ -109,6 +135,11 @@ describe('useGlobalExports', () => {
     expect(typeof win.__getLayerImageData).toBe('function');
     expect(typeof win.__getFlattenedImage).toBe('function');
     expect(typeof win.__getThumbnail).toBe('function');
+    expect(typeof win.__strokeCaptureStart).toBe('function');
+    expect(typeof win.__strokeCaptureStop).toBe('function');
+    expect(typeof win.__strokeCaptureLast).toBe('function');
+    expect(typeof win.__strokeCaptureReplay).toBe('function');
+    expect(typeof win.__strokeCaptureDownload).toBe('function');
 
     act(() => {
       win.__canvasFillLayer('#ffffff');
@@ -126,7 +157,12 @@ describe('useGlobalExports', () => {
         extensionColor: 'transparent',
         resampleMode: 'nearest',
       });
+      win.__strokeCaptureStart();
+      win.__strokeCaptureStop();
+      win.__strokeCaptureLast();
+      win.__strokeCaptureDownload('case.json');
     });
+    await win.__strokeCaptureReplay(capture);
 
     expect(fillActiveLayer).toHaveBeenCalledWith('#ffffff');
     expect(handleClearSelection).toHaveBeenCalledTimes(1);
@@ -136,6 +172,11 @@ describe('useGlobalExports', () => {
     expect(handleDuplicateLayer).toHaveBeenCalledWith('from', 'to');
     expect(handleRemoveLayer).toHaveBeenCalledWith('id');
     expect(handleResizeCanvas).toHaveBeenCalledTimes(1);
+    expect(startStrokeCapture).toHaveBeenCalledTimes(1);
+    expect(stopStrokeCapture).toHaveBeenCalledTimes(1);
+    expect(getLastStrokeCapture).toHaveBeenCalledTimes(1);
+    expect(replayStrokeCapture).toHaveBeenCalledTimes(1);
+    expect(downloadStrokeCapture).toHaveBeenCalledWith('case.json', undefined);
 
     await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
     await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
@@ -159,6 +200,11 @@ describe('useGlobalExports', () => {
     expect(win.__canvasDuplicateLayer).toBeUndefined();
     expect(win.__canvasRemoveLayer).toBeUndefined();
     expect(win.__canvasResize).toBeUndefined();
+    expect(win.__strokeCaptureStart).toBeUndefined();
+    expect(win.__strokeCaptureStop).toBeUndefined();
+    expect(win.__strokeCaptureLast).toBeUndefined();
+    expect(win.__strokeCaptureReplay).toBeUndefined();
+    expect(win.__strokeCaptureDownload).toBeUndefined();
   });
 
   it('updates layer thumbnail after __loadLayerImages draws pixels (legacy base64 path)', async () => {

@@ -8,11 +8,11 @@ test.describe('Stroke Flicker Tests', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.waitForSelector('canvas', { state: 'visible', timeout: 10000 });
+    await page.waitForSelector('[data-testid="main-canvas"]', { state: 'visible', timeout: 10000 });
   });
 
   test('should not drop strokes in grid test (10x10)', async ({ page }) => {
-    const canvas = page.locator('canvas');
+    const canvas = page.getByTestId('main-canvas');
     const box = await canvas.boundingBox();
     if (!box) throw new Error('Canvas not found');
 
@@ -42,7 +42,7 @@ test.describe('Stroke Flicker Tests', () => {
     // Post-test verification: check each point for pixels
     const result = await page.evaluate(
       ({ points, boxX, boxY }) => {
-        const canvas = document.querySelector('canvas');
+        const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="main-canvas"]');
         if (!canvas) return { passed: false, missing: points.length, total: points.length };
 
         const ctx = canvas.getContext('2d');
@@ -89,7 +89,7 @@ test.describe('Stroke Flicker Tests', () => {
   });
 
   test('should handle rapid taps (100x) without crash', async ({ page }) => {
-    const canvas = page.locator('canvas');
+    const canvas = page.getByTestId('main-canvas');
     const box = await canvas.boundingBox();
     if (!box) throw new Error('Canvas not found');
 
@@ -125,7 +125,7 @@ test.describe('Stroke Flicker Tests', () => {
   });
 
   test('should handle stroke start/end stress (50x short strokes)', async ({ page }) => {
-    const canvas = page.locator('canvas');
+    const canvas = page.getByTestId('main-canvas');
     const box = await canvas.boundingBox();
     if (!box) throw new Error('Canvas not found');
 
@@ -147,7 +147,7 @@ test.describe('Stroke Flicker Tests', () => {
   });
 
   test('should handle interleaved rapid pen up/down', async ({ page }) => {
-    const canvas = page.locator('canvas');
+    const canvas = page.getByTestId('main-canvas');
     const box = await canvas.boundingBox();
     if (!box) throw new Error('Canvas not found');
 
@@ -175,7 +175,7 @@ test.describe('Stroke Chaos Tests', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    const canvas = page.locator('canvas');
+    const canvas = page.getByTestId('main-canvas');
     await canvas.waitFor({ state: 'visible', timeout: 10000 });
     const box = await canvas.boundingBox();
     if (!box) throw new Error('Canvas not found');

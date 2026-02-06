@@ -20,6 +20,7 @@ import { SelectionOverlay } from './SelectionOverlay';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
+import { StrokeCaptureController, type StrokeCaptureData, type StrokeReplayOptions } from '@/test';
 import {
   GPUContext,
   GpuCanvasRenderer,
@@ -48,6 +49,14 @@ declare global {
     __gpuBrushDiagPendingMsThreshold?: number;
     __gpuBrushDiagnostics?: () => unknown;
     __gpuM0Baseline?: () => Promise<void>;
+    __strokeCaptureStart?: () => boolean;
+    __strokeCaptureStop?: () => StrokeCaptureData | null;
+    __strokeCaptureLast?: () => StrokeCaptureData | null;
+    __strokeCaptureReplay?: (
+      capture?: StrokeCaptureData | string,
+      options?: StrokeReplayOptions
+    ) => Promise<{ events: number; durationMs: number } | null>;
+    __strokeCaptureDownload?: (fileName?: string, capture?: StrokeCaptureData | string) => boolean;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;
@@ -83,6 +92,7 @@ export function Canvas() {
   const isZoomingRef = useRef(false);
   const previousToolRef = useRef<ToolType | null>('brush');
   const historyInitializedRef = useRef(false);
+  const strokeCaptureRef = useRef<StrokeCaptureController | null>(null);
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -164,6 +174,70 @@ export function Canvas() {
 
   const { isPanning, scale, setScale, setIsPanning, pan, zoomIn, zoomOut, offsetX, offsetY } =
     useViewportStore();
+
+  useEffect(() => {
+    if (!strokeCaptureRef.current) {
+      strokeCaptureRef.current = new StrokeCaptureController({
+        getCanvas: () => canvasRef.current,
+        getCaptureRoot: () => containerRef.current,
+        getScale: () => useViewportStore.getState().scale,
+        getMetadata: () => {
+          const docState = useDocumentStore.getState();
+          const toolState = useToolStore.getState();
+          const viewportState = useViewportStore.getState();
+          return {
+            canvasWidth: docState.width,
+            canvasHeight: docState.height,
+            viewportScale: viewportState.scale,
+            tool: {
+              currentTool: toolState.currentTool,
+              brushSize: toolState.brushSize,
+              brushFlow: toolState.brushFlow,
+              brushOpacity: toolState.brushOpacity,
+              brushHardness: toolState.brushHardness,
+              brushSpacing: toolState.brushSpacing,
+              pressureCurve: toolState.pressureCurve,
+              pressureSizeEnabled: toolState.pressureSizeEnabled,
+              pressureFlowEnabled: toolState.pressureFlowEnabled,
+              pressureOpacityEnabled: toolState.pressureOpacityEnabled,
+            },
+          };
+        },
+      });
+    }
+
+    return () => {
+      strokeCaptureRef.current?.cancel();
+    };
+  }, []);
+
+  const startStrokeCapture = useCallback(() => {
+    return strokeCaptureRef.current?.start() ?? false;
+  }, []);
+
+  const stopStrokeCapture = useCallback(() => {
+    return strokeCaptureRef.current?.stop() ?? null;
+  }, []);
+
+  const getLastStrokeCapture = useCallback(() => {
+    return strokeCaptureRef.current?.getLastCapture() ?? null;
+  }, []);
+
+  const replayStrokeCapture = useCallback(
+    async (capture?: StrokeCaptureData | string, options?: StrokeReplayOptions) => {
+      if (!strokeCaptureRef.current) return null;
+      return strokeCaptureRef.current.replay(capture, options);
+    },
+    []
+  );
+
+  const downloadStrokeCapture = useCallback(
+    (fileName?: string, capture?: StrokeCaptureData | string) => {
+      if (!strokeCaptureRef.current) return false;
+      return strokeCaptureRef.current.download(fileName, capture);
+    },
+    []
+  );
 
   // Selection handler for rect select and lasso tools
   const {
@@ -428,6 +502,11 @@ export function Canvas() {
     handleRemoveLayer,
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
+    startStrokeCapture,
+    stopStrokeCapture,
+    getLastStrokeCapture,
+    replayStrokeCapture,
+    downloadStrokeCapture,
   });
 
   // Initialize document and layer renderer

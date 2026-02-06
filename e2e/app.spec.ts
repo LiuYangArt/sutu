@@ -15,7 +15,7 @@ test.describe('PaintBoard App', () => {
 
   test('should display canvas area', async ({ page }) => {
     // The canvas component should be rendered
-    const canvas = page.locator('canvas');
+    const canvas = page.getByTestId('main-canvas');
     await expect(canvas).toBeVisible({ timeout: 10000 });
   });
 
@@ -59,7 +59,7 @@ test.describe('Canvas Interaction', () => {
   });
 
   test('should respond to pointer events on canvas', async ({ page }) => {
-    const canvas = page.locator('canvas');
+    const canvas = page.getByTestId('main-canvas');
 
     // Skip if canvas not yet implemented
     if (!(await canvas.isVisible().catch(() => false))) {
