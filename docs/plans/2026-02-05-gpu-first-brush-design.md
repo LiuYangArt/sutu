@@ -632,3 +632,72 @@
   - 工具已在目标硬件完成两轮实测并回填（见 13.10.1）。
   - 下一阶段进入 Debug-only 无 readback 试点（默认绘画行为保持不变）。
   - 已新增 `Run No-Readback Pilot Gate (30s)`，用于固定 case 的试点验收与报告导出。
+
+### 13.12 No-Readback Pilot Gate 实测记录（2026-02-06）
+
+- Run-1（`2026-02-06T13:59:59.399Z`）：
+  - Capture: `case-5000-04.json`（source: `/abr/case-5000-04.json`）
+  - replay/clear/loops: `38653ms / 169ms / 2`
+  - reset(diag/metrics): `OK/OK`
+  - clearPerRound: `YES`
+  - stability: `uncapturedErrors=0`, `deviceLost=NO`
+  - frame avg/p95/p99: `16.67 / 17.50 / 32.70ms`
+  - commit attempts/committed: `58 / 56`
+  - commit avg readback/total: `0.00 / 2.61ms`
+  - commit avg dirtyTiles: `17.38`
+  - readback bypassed count: `56`
+  - commit readback mode: `disabled`
+  - acceptance:
+    - near-zero readback (`<=2ms`): `YES`
+    - avg total improved vs baseline `62.27ms`: `YES`（delta: `-59.66ms`）
+    - pilot restored: `YES`
+  - Result: `No-Readback Pilot Gate: PASS`
+
+- Run-2（`2026-02-06T14:06:20.517Z`）：
+  - Capture: `case-5000-04.json`（source: `/abr/case-5000-04.json`）
+  - replay/clear/loops: `38509ms / 149ms / 2`
+  - reset(diag/metrics): `OK/OK`
+  - clearPerRound: `YES`
+  - stability: `uncapturedErrors=0`, `deviceLost=NO`
+  - frame avg/p95/p99: `16.68 / 18.10 / 33.10ms`
+  - commit attempts/committed: `58 / 56`
+  - commit avg readback/total: `0.00 / 2.42ms`
+  - commit avg dirtyTiles: `17.69`
+  - readback bypassed count: `56`
+  - commit readback mode: `disabled`
+  - acceptance:
+    - near-zero readback (`<=2ms`): `YES`
+    - avg total improved vs baseline `62.27ms`: `YES`（delta: `-59.85ms`）
+    - pilot restored: `YES`
+  - Result: `No-Readback Pilot Gate: PASS`
+
+- Run-3（`2026-02-06T14:07:56.249Z`）：
+  - Capture: `case-5000-04.json`（source: `/abr/case-5000-04.json`）
+  - replay/clear/loops: `38450ms / 201ms / 2`
+  - reset(diag/metrics): `OK/OK`
+  - clearPerRound: `YES`
+  - stability: `uncapturedErrors=0`, `deviceLost=NO`
+  - frame avg/p95/p99: `16.69 / 20.10 / 34.80ms`
+  - commit attempts/committed: `58 / 56`
+  - commit avg readback/total: `0.00 / 3.69ms`
+  - commit avg dirtyTiles: `17.45`
+  - readback bypassed count: `56`
+  - commit readback mode: `disabled`
+  - acceptance:
+    - near-zero readback (`<=2ms`): `YES`
+    - avg total improved vs baseline `62.27ms`: `YES`（delta: `-58.58ms`）
+    - pilot restored: `YES`
+  - Result: `No-Readback Pilot Gate: PASS`
+
+- 跨轮汇总（3 runs mean）：
+  - replayDuration / clearDuration: `38537ms / 173ms`
+  - frame avg/p95/p99: `16.68 / 18.57 / 33.53ms`
+  - commit avg readback/total: `0.00 / 2.91ms`
+  - commit avg dirtyTiles: `17.51`
+  - readback bypassed count: `56`（每轮）/ `168`（累计）
+  - commit attempts/committed: `58 / 56`（每轮）
+  - delta avg total vs baseline A (`62.27ms`): `-59.36ms`
+  - stability: 三轮均 `uncapturedErrors=0`、`deviceLost=NO`、`pilot restored=YES`
+
+- Note:
+  - Pilot gate result is still `comparison-only / non-release evidence under 6A waiver`.

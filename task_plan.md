@@ -78,7 +78,8 @@
 4. [ ] 继续压缩 GPU path 的 CPU 参与（临时豁免下可先探索）
    - 排查并移除非必要 `readback -> CPU layer -> 再回传` 的链路依赖。
    - [x] 已新增 Debug-only `No-Readback Pilot` 试点开关（默认路径不变）。
-   - [ ] 在目标硬件执行试点验收：连续绘制稳定性 + commit 指标 + 诊断信号。
+   - [x] 在目标硬件完成首轮试点验收（`2026-02-06T13:59:59.399Z`，`No-Readback Pilot Gate: PASS`）。
+   - [x] 已完成两轮试点复验并回填文档（`2026-02-06T14:06:20.517Z` / `2026-02-06T14:07:56.249Z`，均 PASS）。
    - 已修复：pointer-up 后延迟尾 dab（队列消费时序 + 收尾立即 flush/render）。
    - 已修复：GPU commit 路径补 finishing lock，避免新笔触提前清 scratch 导致偶发丢笔。
    - 待确认：长时间回归是否仍出现“预览出现但提交丢失”。
@@ -97,7 +98,7 @@
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线冻结）/6B-3（两轮复验已完成，进入无 readback 试点准备）
+**In Progress** - M2 功能链路已打通；当前处于 Phase 6A（稳定性回归门禁）+ Phase 6B-2（基线冻结）/6B-3（两轮复验完成）+ 无 readback 试点三轮复验通过
 
 ## Phase 6A 临时豁免决议（2026-02-06）
 - 选择路线：临时豁免（先推进后续项，压感细头问题后置处理）。
@@ -126,6 +127,14 @@
 - [x] 新增 6B-3 实测回填（`2026-02-06`，`13:16`/`13:21` 两轮）：
   - 两轮均 `Phase6B-3 Compare: PASS`，且 `uncapturedErrors=0`、`deviceLost=NO`、`mode restored=YES`。
   - Delta（B-A）跨轮均值：`commit avg readback -58.63ms`、`commit avg total -58.51ms`、`frame p95 -2.80ms`、`frame p99 -26.60ms`、`dirtyTiles -0.72`。
+- [x] 新增 No-Readback Pilot Gate 首轮验收（`2026-02-06T13:59:59.399Z`）：
+  - `No-Readback Pilot Gate: PASS`，且 `uncapturedErrors=0`、`deviceLost=NO`、`pilot restored=YES`。
+  - commit：`avg readback/total = 0.00 / 2.61ms`，`readbackBypassedCount=56`，`mode=disabled`。
+  - 对基线 A（`62.27ms`）的 `avg total` 差值：`-59.66ms`（非封版预结论）。
+- [x] 新增 No-Readback Pilot Gate 两轮复验（`2026-02-06T14:06:20.517Z` / `2026-02-06T14:07:56.249Z`）：
+  - 两轮均 `No-Readback Pilot Gate: PASS`，且 `uncapturedErrors=0`、`deviceLost=NO`、`pilot restored=YES`。
+  - commit：`avg readback/total = 0.00 / 2.42ms`、`0.00 / 3.69ms`，`readbackBypassedCount=56`（每轮）。
+  - 三轮均值（含首轮）：`commit avg total 2.91ms`、`delta vs baseline A(62.27ms) = -59.36ms`。
 - [x] 压感策略实验回退后，用户手测确认压感恢复可用（2026-02-06）。
 - [x] Auto Gate 最新实测：PASS（`case-5000-04.json`，session=3，`startPressureFallbackCount=0`）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。

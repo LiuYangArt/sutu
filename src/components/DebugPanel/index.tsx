@@ -774,7 +774,26 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   }, []);
 
   const addResult = useCallback((name: string, status: TestStatus, report?: string) => {
-    setResults((prev) => [{ name, status, report, timestamp: new Date() }, ...prev.slice(0, 9)]);
+    const next = { name, status, report, timestamp: new Date() };
+    setResults((prev) => {
+      if (status === 'running') {
+        const withoutSameRunning = prev.filter(
+          (entry) => !(entry.name === name && entry.status === 'running')
+        );
+        return [next, ...withoutSameRunning.slice(0, 9)];
+      }
+
+      const runningIndex = prev.findIndex(
+        (entry) => entry.name === name && entry.status === 'running'
+      );
+      if (runningIndex >= 0) {
+        const updated = [...prev];
+        updated[runningIndex] = next;
+        return updated.slice(0, 10);
+      }
+
+      return [next, ...prev.slice(0, 9)];
+    });
   }, []);
 
   const updateManualGateChecklist = useCallback(

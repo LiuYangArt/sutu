@@ -528,5 +528,6 @@ describe('DebugPanel', () => {
     await waitFor(() => {
       expectLatestResultStatus('Phase6B Perf Gate (30s)', 'failed');
     });
+    expect(screen.getAllByText('Phase6B Perf Gate (30s)')).toHaveLength(1);
   });
 });
