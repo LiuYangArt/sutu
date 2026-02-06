@@ -36,6 +36,7 @@ declare global {
   interface Window {
     __canvasFillLayer?: (color: string) => void;
     __canvasClearSelection?: () => void;
+    __canvasClearLayer?: () => void;
     __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
     __getFlattenedImage?: () => Promise<string | undefined>;
     __getThumbnail?: () => Promise<string | undefined>;
@@ -64,6 +65,8 @@ declare global {
       onStrokeStart: () => void;
       onStrokeEnd: () => void;
       onStateChange: (state: string) => void;
+      onStartPressureFallback: () => void;
+      startPressureFallbackCount?: number;
     };
   }
 }

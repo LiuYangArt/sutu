@@ -38,6 +38,13 @@
   - 启动期 Dual 预热条件化跳过（`width*height >= 16_000_000` 或 `maxBufferSize <= 536_870_912`）
   - `GPUStrokeAccumulator.resetDiagnostics()` + 诊断分代字段（`diagnosticsSessionId` / `resetAtMs`）
   - 全局接口 `window.__gpuBrushDiagnosticsReset()`（Debug Panel 按钮接线）
+- 新增 Phase 6A 收敛改动（大画布分层，2026-02-06）：
+  - `Run Phase6A Auto Gate` 支持每轮 replay 前清层并等待 1 帧，结果写入 `clearPerRound`
+  - `Record 20-Stroke Manual Gate` 改为 checklist + 诊断联合判定（不再仅 confirm）
+  - `5000x5000` 大画布起笔压力保护（buffer > fresh currentPoint <=80ms > PointerEvent > `0.03`）
+  - 统一 `currentPoint` 新鲜度判断，禁止陈旧点覆盖事件压力
+  - 诊断统计新增 `startPressureFallbackCount`
+  - 已补测试：`inputUtils`、`DebugPanel` 新门禁流程
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
@@ -79,6 +86,7 @@
 - [x] 启动期 Dual 预热报错解阻实现已落地（条件化跳过 + 诊断事件记录）。
 - [x] 诊断分代/重置能力已落地（含 Debug Panel 按钮）。
 - [x] 自动检查通过：`pnpm -s typecheck`、`pnpm -s test -- useGlobalExports`、`pnpm -s test -- startupPrewarmPolicy`、`pnpm -s test -- DebugPanel`。
+- [x] 新增检查通过：`pnpm -s test -- inputUtils`（覆盖大画布起笔压力决策与陈旧点回退）。
 - [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
 
 ### 本轮关键结论
@@ -94,5 +102,5 @@
    - `uncapturedErrors` / `events` / `submitHistory` 可通过 reset 进入新会话统计。
    - `window.__gpuBrushDiagnosticsReset()` 已可直接触发（Debug Panel）。
 3. [ ] 回归验收（自动回放 + 手工抽检）
-   - 用 `case-5000-04.json` 连续回放 3 轮，确认无新增 validation error。
-   - 手工压感短测（20 笔）确认起笔/行笔无 1px 伪迹。
+   - 用 `Run Phase6A Auto Gate` 选择 `case-5000-04.json`，确认每轮清层且 `Auto Gate: PASS`。
+   - 手工压感短测（20 笔）勾选 checklist 后再点 `Record 20-Stroke Manual Gate`，确认 `Manual Gate: PASS`。

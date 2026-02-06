@@ -7,6 +7,7 @@ import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
 import type { GpuStrokeCommitResult, RenderBackend } from '@/gpu';
+import { isLargeCanvas } from './inputUtils';
 
 const MAX_POINTS_PER_FRAME = 80;
 // Photoshop Build-up (Airbrush) rate tuning:
@@ -16,6 +17,8 @@ const TARGET_BUILDUP_DABS_PER_SEC = 5;
 const BUILDUP_INTERVAL_MS = 1000 / TARGET_BUILDUP_DABS_PER_SEC;
 const MAX_BUILDUP_DABS_PER_FRAME = 1;
 const WINTAB_CURRENT_POINT_MAX_AGE_MS = 80;
+const LARGE_CANVAS_START_PRESSURE_LOW_MAX = 0.01;
+const LARGE_CANVAS_START_PRESSURE_RECOVER_MIN = 0.03;
 
 interface QueuedPoint {
   x: number;
@@ -703,6 +706,19 @@ export function useStrokeProcessor({
         replayPoints = out.length > 1 ? out.slice(1) : out;
       }
 
+      if (isLargeCanvas(width, height) && replayPoints.length > 1) {
+        const first = replayPoints[0]!;
+        if (first.pressure <= LARGE_CANVAS_START_PRESSURE_LOW_MAX) {
+          const followup = replayPoints.find(
+            (p, index) => index > 0 && p.pressure >= LARGE_CANVAS_START_PRESSURE_RECOVER_MIN
+          );
+          if (followup) {
+            replayPoints = [{ ...first, pressure: followup.pressure }, ...replayPoints.slice(1)];
+            window.__strokeDiagnostics?.onStartPressureFallback?.();
+          }
+        }
+      }
+
       for (const p of replayPoints) {
         processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex);
         window.__strokeDiagnostics?.onPointBuffered();
@@ -736,6 +752,8 @@ export function useStrokeProcessor({
     inputQueueRef,
     pendingEndRef,
     isDrawingRef,
+    width,
+    height,
   ]);
 
   return { drawPoints, finishCurrentStroke, initializeBrushStroke };

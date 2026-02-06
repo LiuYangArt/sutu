@@ -4,7 +4,7 @@ import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark';
 import { StrokeBuffer, Point as BufferPoint } from '@/utils/interpolation';
-import { getEffectiveInputData } from './inputUtils';
+import { getEffectiveInputData, isLargeCanvas, resolvePointerDownPressure } from './inputUtils';
 import type { RawInputPoint } from '@/stores/tablet';
 
 interface QueuedPoint {
@@ -183,16 +183,9 @@ export function usePointerHandlers({
         return;
       }
 
-      // Prepare input data (pressure/tilt), preferring WinTab buffer if active.
-      // Important: For pen, do NOT default pressure to 0.5 at pointerdown,
-      // otherwise the first dab can become noticeably too heavy (especially with Build-up enabled).
       const pe = e.nativeEvent as PointerEvent;
-      let pressure = 0.5;
-      if (pe.pointerType === 'pen') {
-        pressure = pe.pressure > 0 ? pe.pressure : 0;
-      } else if (pe.pressure > 0) {
-        pressure = pe.pressure;
-      }
+      const largeCanvasMode = isLargeCanvas(width, height);
+      let pressure = pe.pressure > 0 ? pe.pressure : pe.pointerType === 'pen' ? 0 : 0.5;
       if (currentTool === 'brush' || currentTool === 'eraser') {
         const tabletState = useTabletStore.getState();
         const isWinTabActive =
@@ -202,18 +195,17 @@ export function usePointerHandlers({
         // Synthetic replay events are not trusted; keep captured pressure instead of
         // overriding with live WinTab stream.
         const shouldUseWinTab = isWinTabActive && pe.isTrusted;
-        if (shouldUseWinTab) {
-          // Use buffered WinTab points when available; avoid using currentPoint at pointerdown
-          // because it can be stale (previous stroke), causing an overly heavy first dab.
-          const bufferedPoints = drainPointBuffer();
-          if (bufferedPoints.length > 0) {
-            pressure = bufferedPoints[bufferedPoints.length - 1]!.pressure;
-          } else {
-            // No fresh WinTab sample yet.
-            if (pe.pointerType === 'pen') {
-              pressure = 0;
-            }
-          }
+        const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
+        const resolved = resolvePointerDownPressure(
+          pe,
+          shouldUseWinTab,
+          bufferedPoints,
+          tabletState.currentPoint,
+          largeCanvasMode
+        );
+        pressure = resolved.pressure;
+        if (resolved.source === 'large-canvas-floor') {
+          window.__strokeDiagnostics?.onStartPressureFallback?.();
         }
       }
 
@@ -326,6 +318,8 @@ export function usePointerHandlers({
       pendingEndRef,
       lastInputPosRef,
       latencyProfilerRef,
+      width,
+      height,
       trySetPointerCapture,
       usingRawInput,
     ]

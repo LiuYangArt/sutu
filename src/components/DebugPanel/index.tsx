@@ -21,6 +21,7 @@ import {
   getTestReport,
   type ChaosTestResult,
   type DiagnosticHooks,
+  type StrokeCaptureData,
 } from '../../test';
 import { LatencyProfilerStats, FrameStats, LagometerStats } from '@/benchmark/types';
 import {
@@ -56,6 +57,80 @@ interface BenchmarkStatsData {
   fps: FrameStats;
   lagometer: LagometerStats;
   queueDepth: number;
+}
+
+interface ManualGateChecklist {
+  noThinStart: boolean;
+  noMissingOrDisappear: boolean;
+  noTailDab: boolean;
+}
+
+const DEFAULT_MANUAL_GATE_CHECKLIST: ManualGateChecklist = {
+  noThinStart: false,
+  noMissingOrDisappear: false,
+  noTailDab: false,
+};
+
+type GpuBrushDiagnosticsSnapshot = {
+  diagnosticsSessionId?: number;
+  uncapturedErrors?: unknown[];
+  deviceLost?: boolean;
+};
+
+function asGpuDiagnosticsSnapshot(value: unknown): GpuBrushDiagnosticsSnapshot {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  return value as GpuBrushDiagnosticsSnapshot;
+}
+
+async function pickStrokeCaptureFromFile(): Promise<{
+  capture: StrokeCaptureData;
+  name: string;
+} | null> {
+  const picker = (
+    window as Window & {
+      showOpenFilePicker?: (options?: unknown) => Promise<Array<{ getFile: () => Promise<File> }>>;
+    }
+  ).showOpenFilePicker;
+
+  let file: File | null = null;
+
+  if (typeof picker === 'function') {
+    const handles = await picker({
+      types: [{ description: 'Stroke Capture JSON', accept: { 'application/json': ['.json'] } }],
+      multiple: false,
+      excludeAcceptAllOption: false,
+    });
+    const first = handles?.[0];
+    if (!first) return null;
+    file = await first.getFile();
+  } else {
+    file = await new Promise<File | null>((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.onchange = () => resolve(input.files?.[0] ?? null);
+      input.oncancel = () => resolve(null);
+      input.click();
+    });
+  }
+
+  if (!file) return null;
+  const text = await file.text();
+  const parsed = JSON.parse(text) as unknown;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Invalid capture JSON: expected object');
+  }
+  const capture = parsed as StrokeCaptureData;
+  if (!Array.isArray(capture.samples) || !capture.metadata) {
+    throw new Error('Invalid capture JSON: missing samples/metadata');
+  }
+  return { capture, name: file.name };
+}
+
+function waitForAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 // --- Hooks ---
@@ -246,6 +321,10 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [debugRectsEnabled, setDebugRectsEnabled] = useState(readDebugRectsFlag);
   const [batchUnionEnabled, setBatchUnionEnabled] = useState(readBatchUnionFlag);
   const [gpuDiagResetMessage, setGpuDiagResetMessage] = useState<string>('');
+  const [phase6GateCaptureName, setPhase6GateCaptureName] = useState<string>('');
+  const [manualGateChecklist, setManualGateChecklist] = useState<ManualGateChecklist>(
+    DEFAULT_MANUAL_GATE_CHECKLIST
+  );
 
   const diagnosticsRef = useRef<DiagnosticHooks | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -328,6 +407,125 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const addResult = useCallback((name: string, status: TestStatus, report?: string) => {
     setResults((prev) => [{ name, status, report, timestamp: new Date() }, ...prev.slice(0, 9)]);
   }, []);
+
+  const updateManualGateChecklist = useCallback(
+    (key: keyof ManualGateChecklist, checked: boolean) => {
+      setManualGateChecklist((prev) => ({ ...prev, [key]: checked }));
+    },
+    []
+  );
+
+  const runPhase6AutoGate = useCallback(async () => {
+    if (runningTest) return;
+    setRunningTest('phase6a:auto');
+    setProgress(0);
+    addResult('Phase6A Auto Gate', 'running');
+
+    try {
+      const replay = window.__strokeCaptureReplay;
+      const clearLayer = window.__canvasClearLayer;
+      const getDiag = window.__gpuBrushDiagnostics;
+      const reset = window.__gpuBrushDiagnosticsReset;
+      if (typeof replay !== 'function') {
+        throw new Error('Missing API: window.__strokeCaptureReplay');
+      }
+      if (typeof clearLayer !== 'function') {
+        throw new Error('Missing API: window.__canvasClearLayer');
+      }
+      if (typeof getDiag !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushDiagnostics');
+      }
+      if (typeof reset !== 'function') {
+        throw new Error('Missing API: window.__gpuBrushDiagnosticsReset');
+      }
+
+      diagnosticsRef.current?.reset();
+      const didReset = reset();
+      const resetSnapshot = asGpuDiagnosticsSnapshot(getDiag());
+      const picked = await pickStrokeCaptureFromFile();
+      if (!picked) {
+        addResult('Phase6A Auto Gate', 'failed', 'Capture selection cancelled.');
+        return;
+      }
+      setPhase6GateCaptureName(picked.name);
+
+      let clearPerRound = true;
+      for (let i = 1; i <= 3; i++) {
+        try {
+          clearLayer();
+        } catch {
+          clearPerRound = false;
+        }
+        await waitForAnimationFrame();
+        await replay(picked.capture);
+        setProgress(i / 3);
+      }
+
+      const finalSnapshot = asGpuDiagnosticsSnapshot(getDiag());
+      const sessionId = finalSnapshot.diagnosticsSessionId ?? '?';
+      const uncapturedErrors = Array.isArray(finalSnapshot.uncapturedErrors)
+        ? finalSnapshot.uncapturedErrors
+        : [];
+      const deviceLost = Boolean(finalSnapshot.deviceLost);
+      const startPressureFallbackCount = diagnosticsRef.current?.startPressureFallbackCount ?? 0;
+
+      const passed = didReset && clearPerRound && uncapturedErrors.length === 0 && !deviceLost;
+      const report = [
+        `Capture: ${picked.name}`,
+        `Reset: ${didReset ? 'OK' : 'FAILED'}`,
+        `clearPerRound: ${clearPerRound ? 'YES' : 'NO'}`,
+        `Session after reset: ${resetSnapshot.diagnosticsSessionId ?? '?'}`,
+        `Session after replay x3: ${sessionId}`,
+        `Uncaptured errors: ${uncapturedErrors.length}`,
+        `Device lost: ${deviceLost ? 'YES' : 'NO'}`,
+        `startPressureFallbackCount: ${startPressureFallbackCount}`,
+        `Auto Gate: ${passed ? 'PASS' : 'FAIL'}`,
+        '',
+        'Next: run 20 pressure strokes manually, then click "Record 20-Stroke Manual Gate".',
+      ].join('\n');
+      addResult('Phase6A Auto Gate', passed ? 'passed' : 'failed', report);
+    } catch (e) {
+      addResult('Phase6A Auto Gate', 'failed', String(e));
+    } finally {
+      setRunningTest(null);
+      setProgress(0);
+    }
+  }, [runningTest, addResult]);
+
+  const recordPhase6ManualGate = useCallback(() => {
+    const getDiag = window.__gpuBrushDiagnostics;
+    if (typeof getDiag !== 'function') {
+      addResult('Phase6A Manual 20-Stroke', 'failed', 'Missing API: window.__gpuBrushDiagnostics');
+      return;
+    }
+
+    const snapshot = asGpuDiagnosticsSnapshot(getDiag());
+    const uncapturedErrors = Array.isArray(snapshot.uncapturedErrors)
+      ? snapshot.uncapturedErrors
+      : [];
+    const deviceLost = Boolean(snapshot.deviceLost);
+    const manualChecklist = {
+      noThinStart: manualGateChecklist.noThinStart,
+      noMissingOrDisappear: manualGateChecklist.noMissingOrDisappear,
+      noTailDab: manualGateChecklist.noTailDab,
+    };
+    const checklistPass =
+      manualChecklist.noThinStart &&
+      manualChecklist.noMissingOrDisappear &&
+      manualChecklist.noTailDab;
+    const startPressureFallbackCount = diagnosticsRef.current?.startPressureFallbackCount ?? 0;
+    const passed = checklistPass && uncapturedErrors.length === 0 && !deviceLost;
+    const report = [
+      `Capture used: ${phase6GateCaptureName || 'N/A'}`,
+      `Session: ${snapshot.diagnosticsSessionId ?? '?'}`,
+      `Uncaptured errors: ${uncapturedErrors.length}`,
+      `Device lost: ${deviceLost ? 'YES' : 'NO'}`,
+      `startPressureFallbackCount: ${startPressureFallbackCount}`,
+      `manualChecklist: ${JSON.stringify(manualChecklist)}`,
+      `Manual Gate: ${passed ? 'PASS' : 'FAIL'}`,
+    ].join('\n');
+    addResult('Phase6A Manual 20-Stroke', passed ? 'passed' : 'failed', report);
+  }, [addResult, phase6GateCaptureName, manualGateChecklist]);
 
   // --- Test Runners ---
 
@@ -538,6 +736,61 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
               </button>
             </div>
           )}
+          <div className="debug-button-row" style={{ marginTop: '8px' }}>
+            <button
+              className="debug-btn secondary"
+              onClick={runPhase6AutoGate}
+              disabled={!!runningTest}
+              title="Reset diagnostics, replay selected case 3 times, and auto-check uncaptured errors"
+            >
+              <span>Run Phase6A Auto Gate</span>
+            </button>
+          </div>
+          <div className="debug-button-row" style={{ marginTop: '8px' }}>
+            <button
+              className="debug-btn secondary"
+              onClick={recordPhase6ManualGate}
+              disabled={!!runningTest}
+              title="Record final manual 20-stroke pressure gate result"
+            >
+              <span>Record 20-Stroke Manual Gate</span>
+            </button>
+          </div>
+          <div className="debug-note" style={{ marginTop: '8px' }}>
+            Manual checklist:
+          </div>
+          <label className="debug-note" style={{ display: 'block' }}>
+            <input
+              type="checkbox"
+              checked={manualGateChecklist.noThinStart}
+              onChange={(e) => updateManualGateChecklist('noThinStart', e.currentTarget.checked)}
+              disabled={!!runningTest}
+              style={{ marginRight: '6px' }}
+            />
+            无起笔细头
+          </label>
+          <label className="debug-note" style={{ display: 'block' }}>
+            <input
+              type="checkbox"
+              checked={manualGateChecklist.noMissingOrDisappear}
+              onChange={(e) =>
+                updateManualGateChecklist('noMissingOrDisappear', e.currentTarget.checked)
+              }
+              disabled={!!runningTest}
+              style={{ marginRight: '6px' }}
+            />
+            无丢笔触/无预览后消失
+          </label>
+          <label className="debug-note" style={{ display: 'block' }}>
+            <input
+              type="checkbox"
+              checked={manualGateChecklist.noTailDab}
+              onChange={(e) => updateManualGateChecklist('noTailDab', e.currentTarget.checked)}
+              disabled={!!runningTest}
+              style={{ marginRight: '6px' }}
+            />
+            无尾部延迟 dab
+          </label>
           {gpuDiagResetMessage && (
             <div className="debug-note" style={{ marginTop: '6px' }}>
               {gpuDiagResetMessage}

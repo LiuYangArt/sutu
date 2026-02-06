@@ -87,7 +87,8 @@ export function useRawPointerInput({
         tabletState.isStreaming &&
         typeof tabletState.backend === 'string' &&
         tabletState.backend.toLowerCase() === 'wintab';
-      const bufferedPoints = isWinTabActive ? drainPointBuffer() : [];
+      const shouldUseWinTab = isWinTabActive && pe.isTrusted;
+      const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
 
       for (const evt of coalescedEvents) {
         const canvasX = (evt.clientX - rect.left) / scale;
@@ -96,7 +97,7 @@ export function useRawPointerInput({
         // Resolve pressure/tilt from WinTab or PointerEvent
         const { pressure } = getEffectiveInputData(
           evt,
-          isWinTabActive,
+          shouldUseWinTab,
           bufferedPoints,
           tabletState.currentPoint
         );

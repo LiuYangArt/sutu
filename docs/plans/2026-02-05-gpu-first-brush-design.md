@@ -392,3 +392,26 @@
   - Residual risks:
     - 仍需真实环境执行 3 轮 `case-5000-04` 回放并确认当前会话 `uncapturedErrors` 无新增。
     - 仍需手工压感 20 笔短测确认起笔/行笔连续性与无尾 dab。
+
+### 13.6 验收记录（2026-02-06 Phase 6A 收敛实现：大画布分层）
+
+- Build/Checks:
+  - `pnpm -s typecheck`: PASS
+  - `pnpm -s test -- inputUtils`: PASS
+  - `pnpm -s test -- DebugPanel`: PASS
+  - `pnpm -s test -- useGlobalExports`: PASS
+  - `pnpm -s test -- startupPrewarmPolicy`: PASS
+- Changes:
+  - DebugPanel 新增完整门禁按钮流：
+    - `Run Phase6A Auto Gate`：自动 reset 诊断、每轮 replay 前清层、等待 1 帧、回放 3 轮、输出 PASS/FAIL 报告。
+    - `Record 20-Stroke Manual Gate`：强制 checklist + 诊断条件联合判定，避免“有问题但 PASS”。
+  - 大画布输入保护（`max(width,height) >= 4096`）：
+    - `pointerdown` 压力顺序固定为 `buffered > fresh currentPoint (<=80ms) > PointerEvent > 0.03`。
+    - WinTab 路径统一“新鲜度”判断，陈旧 `currentPoint` 不再覆盖事件压力。
+  - 诊断统计增强：
+    - 新增 `startPressureFallbackCount`，并写入 Auto/Manual Gate 报告。
+- Final:
+  - Overall: **PARTIAL PASS**
+  - Residual risks:
+    - 仍需目标硬件下执行真实 `5000x5000` 手工 20 笔复验，确认无起笔细头与偶发丢笔触。
+    - 若仍出现问题，进入下一轮“定点修首点时序/队列”而非回退当前门禁框架。
