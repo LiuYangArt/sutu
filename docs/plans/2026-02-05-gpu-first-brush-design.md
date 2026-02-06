@@ -373,3 +373,22 @@
   - Blockers:
     - 启动期 Dual 预热触发超大 staging buffer 报错，污染稳定性门禁
     - 需补“诊断分代/重置”能力，避免历史错误干扰当前结论
+
+### 13.5 验收记录（2026-02-06 Phase 6A 解阻实现）
+
+- Build/Checks:
+  - `pnpm -s typecheck`: PASS
+  - `pnpm -s test -- useGlobalExports`: PASS
+  - `pnpm -s test -- startupPrewarmPolicy`: PASS
+  - `pnpm -s test -- DebugPanel`: PASS
+- Changes:
+  - `GPUStrokeAccumulator.initializePresentableTextures()` 已加入启动期 Dual 预热条件化跳过：
+    - `width * height >= 16_000_000` 或 `device.limits.maxBufferSize <= 536_870_912`
+  - 跳过时写入 `startup-dual-prewarm-skipped` 诊断事件（记录尺寸/上限/原因）。
+  - 新增 `resetDiagnostics()`，并在快照中暴露 `diagnosticsSessionId` / `resetAtMs`。
+  - 新增全局调试接口 `window.__gpuBrushDiagnosticsReset()`，Debug Panel 已接入 `Reset GPU Diag` 按钮（dev/test 可见）。
+- Final:
+  - Overall: **PARTIAL PASS**
+  - Residual risks:
+    - 仍需真实环境执行 3 轮 `case-5000-04` 回放并确认当前会话 `uncapturedErrors` 无新增。
+    - 仍需手工压感 20 笔短测确认起笔/行笔连续性与无尾 dab。

@@ -189,6 +189,7 @@ export interface UseBrushRendererResult {
   /** @deprecated Use getScratchHandle() result.renderScale instead. */
   getGpuRenderScale: () => number;
   getGpuDiagnosticsSnapshot: () => unknown;
+  resetGpuDiagnostics: () => boolean;
 }
 
 export function useBrushRenderer({
@@ -856,6 +857,15 @@ export function useBrushRenderer({
     return gpuBufferRef.current?.getDiagnosticSnapshot() ?? null;
   }, []);
 
+  const resetGpuDiagnostics = useCallback(() => {
+    const gpu = gpuBufferRef.current;
+    if (!gpu) {
+      return false;
+    }
+    gpu.resetDiagnostics();
+    return true;
+  }, []);
+
   /**
    * Flush pending dabs to GPU (called once per frame by RAF loop)
    * This ensures all dabs accumulated during the frame are rendered together
@@ -900,5 +910,6 @@ export function useBrushRenderer({
     getGpuDirtyRect,
     getGpuRenderScale,
     getGpuDiagnosticsSnapshot,
+    resetGpuDiagnostics,
   };
 }

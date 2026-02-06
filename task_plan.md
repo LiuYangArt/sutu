@@ -34,6 +34,10 @@
 - 已执行一次压感实验改动回退（见 `docs/postmortem/2026-02-06-gpu-m2-pressure-regression-rollback.md`）：
   - 回退 `inputUtils/usePointerHandlers/useStrokeProcessor` 的本轮输入策略改动
   - 保留 `useBrushRenderer` 的 GPU commit finishing lock（已验证有效）
+- 新增 M2 稳定性解阻改动（2026-02-06）：
+  - 启动期 Dual 预热条件化跳过（`width*height >= 16_000_000` 或 `maxBufferSize <= 536_870_912`）
+  - `GPUStrokeAccumulator.resetDiagnostics()` + 诊断分代字段（`diagnosticsSessionId` / `resetAtMs`）
+  - 全局接口 `window.__gpuBrushDiagnosticsReset()`（Debug Panel 按钮接线）
 
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
@@ -68,11 +72,14 @@
 ## Status
 **In Progress** - M2 功能链路已打通，当前处于 Phase 6A（稳定性回归门禁）
 
-## 最新检查点（2026-02-06）
+## 最新检查点（2026-02-06，Phase 6A 实施后）
 - [x] `case-5000-04.json` 已可稳定回放并在画布正确出图（`__strokeCaptureReplay` 可用）。
 - [x] 回放 1px 细线问题已修复（回放事件不再被 WinTab 实时流错误覆盖）。
 - [x] 录制压感路径已修复关键大小写问题（`backend: wintab` 识别）。
-- [ ] 稳定性 Gate 未通过：`__gpuBrushDiagnostics().uncapturedErrors` 仍有启动阶段 `GPUValidationError` 记录（超大 staging buffer 6.41GB > 512MB）。
+- [x] 启动期 Dual 预热报错解阻实现已落地（条件化跳过 + 诊断事件记录）。
+- [x] 诊断分代/重置能力已落地（含 Debug Panel 按钮）。
+- [x] 自动检查通过：`pnpm -s typecheck`、`pnpm -s test -- useGlobalExports`、`pnpm -s test -- startupPrewarmPolicy`、`pnpm -s test -- DebugPanel`。
+- [ ] 稳定性 Gate 待最终手工复验（3 轮 replay + 20 笔压感短测）。
 
 ### 本轮关键结论
 - 当前“能画、能回放”已恢复，主链路可继续推进。
@@ -80,12 +87,12 @@
 - M2 单层目标下，Dual 预热路径不是必需项，可降级为按需启用或直接禁用预热。
 
 ### 接下来按顺序做（不并行）
-1. [ ] 清理启动期 Dual 预热大缓冲报错
-   - 定位 `GPUStrokeAccumulator` 启动路径（`initializePresentableTextures` / `prewarmDualReadback` / Dual blend 初始化）。
-   - M2 范围内对 Dual 预热做条件化：大画布或单层模式跳过 Dual 预热提交。
-2. [ ] 诊断数据分代/清理
-   - 增加“仅看当前会话”的错误视图，避免历史 `uncapturedErrors` 干扰当前判断。
-   - 增加一个 reset 接口（例如 `__gpuBrushDiagnosticsReset()`）。
+1. [x] 清理启动期 Dual 预热大缓冲报错
+   - `initializePresentableTextures` 已加入 Dual 启动预热跳过策略。
+   - 跳过时写入 `startup-dual-prewarm-skipped` 诊断事件（含画布尺寸/设备上限/原因）。
+2. [x] 诊断数据分代/清理
+   - `uncapturedErrors` / `events` / `submitHistory` 可通过 reset 进入新会话统计。
+   - `window.__gpuBrushDiagnosticsReset()` 已可直接触发（Debug Panel）。
 3. [ ] 回归验收（自动回放 + 手工抽检）
    - 用 `case-5000-04.json` 连续回放 3 轮，确认无新增 validation error。
    - 手工压感短测（20 笔）确认起笔/行笔无 1px 伪迹。

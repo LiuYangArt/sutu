@@ -49,6 +49,7 @@ declare global {
     __gpuBrushDiagCopyBytesThreshold?: number;
     __gpuBrushDiagPendingMsThreshold?: number;
     __gpuBrushDiagnostics?: () => unknown;
+    __gpuBrushDiagnosticsReset?: () => boolean;
     __gpuM0Baseline?: () => Promise<void>;
     __strokeCaptureStart?: () => boolean;
     __strokeCaptureStop?: () => StrokeCaptureData | null;
@@ -299,6 +300,7 @@ export function Canvas() {
     clearScratchGpu,
     getGpuRenderScale,
     getGpuDiagnosticsSnapshot,
+    resetGpuDiagnostics,
   } = useBrushRenderer({
     width,
     height,
@@ -530,6 +532,7 @@ export function Canvas() {
     handleRemoveLayer,
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
+    resetGpuDiagnostics,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

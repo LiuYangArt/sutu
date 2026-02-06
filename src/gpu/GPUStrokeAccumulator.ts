@@ -36,6 +36,7 @@ import { patternManager } from '@/utils/patternManager';
 import { forEachScatter } from '@/utils/scatterDynamics';
 import { getNoisePattern } from '@/utils/noiseTexture';
 import { alignTo, computeTextureCopyRectFromLogicalRect } from './utils/textureCopyRect';
+import { decideDualStartupPrewarmPolicy } from './utils/startupPrewarmPolicy';
 
 interface DebugRect {
   rect: Rect;
@@ -172,6 +173,8 @@ export class GPUStrokeAccumulator {
   private diagPreviewUpdateCount: number = 0;
   private diagPreviewSkipCount: number = 0;
   private diagPreviewMaxCopyBytes: number = 0;
+  private diagnosticsSessionId: number = 0;
+  private diagnosticsResetAtMs: number = 0;
 
   // Wet Edge post-processing (stroke-level effect)
   private wetEdgePipeline: ComputeWetEdgePipeline;
@@ -277,6 +280,7 @@ export class GPUStrokeAccumulator {
       );
     };
     this.device.addEventListener('uncapturederror', this.uncapturedErrorHandler);
+    this.resetDiagnostics();
 
     this.prewarmPipelines();
     this.initializePresentableTextures();
@@ -454,16 +458,23 @@ export class GPUStrokeAccumulator {
         label: 'GPU Startup Init Encoder',
       });
 
-      // Initialize dual blend output (avoid first-read implicit clear cost).
-      this.computeDualBlendPipeline.dispatch(
-        encoder,
-        this.pingPongBuffer.source,
-        this.dualMaskBuffer.source,
-        this.dualBlendTexture,
-        fullRect,
-        0,
-        this.currentRenderScale
-      );
+      const dualPrewarm = decideDualStartupPrewarmPolicy({
+        width: this.width,
+        height: this.height,
+        maxBufferSize: this.device.limits.maxBufferSize,
+      });
+      if (!dualPrewarm.skip) {
+        // Initialize dual blend output (avoid first-read implicit clear cost).
+        this.computeDualBlendPipeline.dispatch(
+          encoder,
+          this.pingPongBuffer.source,
+          this.dualMaskBuffer.source,
+          this.dualBlendTexture,
+          fullRect,
+          0,
+          this.currentRenderScale
+        );
+      }
 
       // Initialize wet edge display output.
       this.wetEdgePipeline.dispatch(
@@ -477,8 +488,17 @@ export class GPUStrokeAccumulator {
       );
 
       this.device.queue.submit([encoder.finish()]);
-      this.prewarmDualMaskCompute();
-      this.prewarmDualReadback();
+      if (!dualPrewarm.skip) {
+        this.prewarmDualMaskCompute();
+        this.prewarmDualReadback();
+      } else {
+        this.pushDiagnosticEvent('startup-dual-prewarm-skipped', {
+          width: this.width,
+          height: this.height,
+          maxBufferSize: this.device.limits.maxBufferSize,
+          reasons: dualPrewarm.reasons,
+        });
+      }
     } catch (error) {
       console.warn('[GPUStrokeAccumulator] Startup init failed:', error);
     }
@@ -2852,8 +2872,32 @@ export class GPUStrokeAccumulator {
     return this.profiler.getSummary();
   }
 
+  resetDiagnostics(): void {
+    this.diagnosticsSessionId += 1;
+    this.diagnosticsResetAtMs = this.nowMs();
+    this.uncapturedErrors = [];
+    this.diagnosticEvents = [];
+    this.submitHistory = [];
+    this.lastSubmitLabel = null;
+    this.lastSubmitAtMs = null;
+    this.previewUpdateCount = 0;
+    this.previewUpdateSkipCount = 0;
+    this.previewMaxCopyBytes = 0;
+    this.diagDualMaskCopyCount = 0;
+    this.diagDualMaskCopyPixels = 0;
+    this.diagPreviewUpdateCount = 0;
+    this.diagPreviewSkipCount = 0;
+    this.diagPreviewMaxCopyBytes = 0;
+    this.dualMaskCopyCount = 0;
+    this.dualMaskCopyPixels = 0;
+    this.lastPrimaryBatchLabel = null;
+    this.lastDualBatchLabel = null;
+  }
+
   getDiagnosticSnapshot(): Record<string, unknown> {
     return {
+      diagnosticsSessionId: this.diagnosticsSessionId,
+      resetAtMs: this.diagnosticsResetAtMs,
       canvas: {
         width: this.width,
         height: this.height,

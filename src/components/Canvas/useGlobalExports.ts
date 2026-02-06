@@ -26,6 +26,7 @@ interface UseGlobalExportsParams {
   handleRemoveLayer: (id: string) => void;
   handleResizeCanvas: (options: ResizeCanvasOptions) => void;
   getGpuDiagnosticsSnapshot?: () => unknown;
+  resetGpuDiagnostics?: () => boolean;
   startStrokeCapture?: () => boolean;
   stopStrokeCapture?: () => StrokeCaptureData | null;
   getLastStrokeCapture?: () => StrokeCaptureData | null;
@@ -111,6 +112,7 @@ export function useGlobalExports({
   handleRemoveLayer,
   handleResizeCanvas,
   getGpuDiagnosticsSnapshot,
+  resetGpuDiagnostics,
   startStrokeCapture,
   stopStrokeCapture,
   getLastStrokeCapture,
@@ -148,6 +150,7 @@ export function useGlobalExports({
         viewportTiles?: number;
       }) => Promise<unknown>;
       __gpuBrushDiagnostics?: () => unknown;
+      __gpuBrushDiagnosticsReset?: () => boolean;
       __strokeCaptureStart?: () => boolean;
       __strokeCaptureStop?: () => StrokeCaptureData | null;
       __strokeCaptureLast?: () => StrokeCaptureData | null;
@@ -242,6 +245,9 @@ export function useGlobalExports({
 
     win.__gpuBrushDiagnostics = () => {
       return getGpuDiagnosticsSnapshot?.() ?? null;
+    };
+    win.__gpuBrushDiagnosticsReset = () => {
+      return resetGpuDiagnostics?.() ?? false;
     };
 
     const applyReplayContext = async (capture: StrokeCaptureData): Promise<void> => {
@@ -622,6 +628,7 @@ export function useGlobalExports({
       delete win.__gpuFormatCompare;
       delete win.__gpuTileSizeCompare;
       delete win.__gpuBrushDiagnostics;
+      delete win.__gpuBrushDiagnosticsReset;
       delete win.__strokeCaptureStart;
       delete win.__strokeCaptureStop;
       delete win.__strokeCaptureLast;
@@ -640,6 +647,7 @@ export function useGlobalExports({
     handleRemoveLayer,
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
+    resetGpuDiagnostics,
     startStrokeCapture,
     stopStrokeCapture,
     getLastStrokeCapture,

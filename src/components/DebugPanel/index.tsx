@@ -236,6 +236,7 @@ function ActionGrid({
 // --- Main Component ---
 
 export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
+  const isDevBuild = import.meta.env.DEV || import.meta.env.MODE === 'test';
   const [results, setResults] = useState<TestResult[]>([]);
   const [runningTest, setRunningTest] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -244,6 +245,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [lastReport, setLastReport] = useState<BenchmarkReport | null>(null);
   const [debugRectsEnabled, setDebugRectsEnabled] = useState(readDebugRectsFlag);
   const [batchUnionEnabled, setBatchUnionEnabled] = useState(readBatchUnionFlag);
+  const [gpuDiagResetMessage, setGpuDiagResetMessage] = useState<string>('');
 
   const diagnosticsRef = useRef<DiagnosticHooks | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -301,6 +303,27 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     },
     [batchUnionEnabled]
   );
+
+  const resetGpuDiagnostics = useCallback(() => {
+    const reset = window.__gpuBrushDiagnosticsReset;
+    if (typeof reset !== 'function') {
+      setGpuDiagResetMessage('Reset API unavailable');
+      return;
+    }
+
+    const didReset = reset();
+    const snapshot = window.__gpuBrushDiagnostics?.();
+    const sessionId =
+      snapshot && typeof snapshot === 'object' && 'diagnosticsSessionId' in snapshot
+        ? String((snapshot as { diagnosticsSessionId?: unknown }).diagnosticsSessionId ?? '?')
+        : '?';
+
+    if (didReset) {
+      setGpuDiagResetMessage(`Diagnostics reset OK (session ${sessionId})`);
+    } else {
+      setGpuDiagResetMessage('GPU not ready, diagnostics not reset');
+    }
+  }, []);
 
   const addResult = useCallback((name: string, status: TestStatus, report?: string) => {
     setResults((prev) => [{ name, status, report, timestamp: new Date() }, ...prev.slice(0, 9)]);
@@ -504,6 +527,22 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
               <span>Batch-Union Preview</span>
             </button>
           </div>
+          {isDevBuild && (
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className="debug-btn secondary"
+                onClick={resetGpuDiagnostics}
+                title="Reset GPU diagnostics counters/session only (no render state changes)"
+              >
+                <span>Reset GPU Diag</span>
+              </button>
+            </div>
+          )}
+          {gpuDiagResetMessage && (
+            <div className="debug-note" style={{ marginTop: '6px' }}>
+              {gpuDiagResetMessage}
+            </div>
+          )}
           <div className="debug-note">No console commands needed for these toggles.</div>
         </div>
 
