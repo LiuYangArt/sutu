@@ -124,6 +124,7 @@ export function useLayerOperations({
   onBeforeCanvasMutation,
 }: UseLayerOperationsParams) {
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
+  const setDocumentDirty = useDocumentStore((s) => s.setDirty);
   const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
 
   // Store beforeImage when stroke starts
@@ -212,8 +213,9 @@ export function useLayerOperations({
         selectionAfter: options?.selectionAfter,
       });
       beforeImageRef.current = null;
+      setDocumentDirty(true);
     },
-    [pushStroke]
+    [pushStroke, setDocumentDirty]
   );
 
   // Resize canvas with history support
@@ -237,6 +239,7 @@ export function useLayerOperations({
 
       renderer.resizeWithOptions(options);
       useDocumentStore.setState({ width: options.width, height: options.height });
+      setDocumentDirty(true);
 
       compositeAndRender();
       markLayerDirty(docState.layers.map((layer) => layer.id));
@@ -252,6 +255,7 @@ export function useLayerOperations({
       pushResizeCanvas,
       updateThumbnailWithSize,
       onBeforeCanvasMutation,
+      setDocumentDirty,
     ]
   );
 
@@ -292,6 +296,7 @@ export function useLayerOperations({
 
         // Save to history
         pushCpuStrokeHistory(activeLayerId, beforeImage);
+        setDocumentDirty(true);
 
         // Update thumbnail and re-render
         markLayerDirty(activeLayerId);
@@ -311,6 +316,7 @@ export function useLayerOperations({
       syncGpuLayerForHistory,
       layerRendererRef,
       onBeforeCanvasMutation,
+      setDocumentDirty,
     ]
   );
 
@@ -359,6 +365,7 @@ export function useLayerOperations({
 
       // Save to history
       pushCpuStrokeHistory(activeLayerId, beforeImage);
+      setDocumentDirty(true);
 
       // Update thumbnail and re-render
       markLayerDirty(activeLayerId);
@@ -377,6 +384,7 @@ export function useLayerOperations({
     syncGpuLayerForHistory,
     layerRendererRef,
     onBeforeCanvasMutation,
+    setDocumentDirty,
   ]);
 
   // Handle undo for all operation types
@@ -633,6 +641,7 @@ export function useLayerOperations({
 
       // Clear the layer
       renderer.clearLayer(activeLayerId, useDocumentStore.getState().backgroundFillColor);
+      setDocumentDirty(true);
       compositeAndRender();
 
       // Push to history
@@ -649,6 +658,7 @@ export function useLayerOperations({
     updateThumbnail,
     layerRendererRef,
     onBeforeCanvasMutation,
+    setDocumentDirty,
   ]);
 
   // Duplicate layer content from source to target
@@ -666,11 +676,19 @@ export function useLayerOperations({
 
       // Copy the source layer content to target layer
       targetLayer.ctx.drawImage(sourceLayer.canvas, 0, 0);
+      setDocumentDirty(true);
       compositeAndRender();
       markLayerDirty(toId);
       updateThumbnail(toId);
     },
-    [compositeAndRender, markLayerDirty, updateThumbnail, layerRendererRef, onBeforeCanvasMutation]
+    [
+      compositeAndRender,
+      markLayerDirty,
+      updateThumbnail,
+      layerRendererRef,
+      onBeforeCanvasMutation,
+      setDocumentDirty,
+    ]
   );
 
   // Remove layer with history support

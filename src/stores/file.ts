@@ -1,10 +1,16 @@
 /**
- * File operations store for save/load functionality
+ * File operations store for save/load/autosave/startup-restore functionality
  */
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { join, tempDir } from '@tauri-apps/api/path';
 import { save, open } from '@tauri-apps/plugin-dialog';
+import { BaseDirectory, exists, mkdir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { useDocumentStore, FileFormat, Layer } from './document';
+import { useSettingsStore } from './settings';
+
+const SESSION_FILE = 'autosave-session.json';
+const TEMP_AUTOSAVE_FILE_NAME = 'paintboard-autosave.ora';
 
 // Types matching Rust backend
 interface LayerData {
@@ -48,33 +54,31 @@ interface FileOperationResult {
   error?: string;
 }
 
+interface AutosaveSessionData {
+  lastSavedPath: string | null;
+  hasUnsavedTemp: boolean;
+}
+
+interface SaveTargetResult {
+  success: boolean;
+  error?: string;
+}
+
+interface OpenPathOptions {
+  asUntitled?: boolean;
+  rememberAsLastSaved?: boolean;
+  clearUnsavedTemp?: boolean;
+}
+
+interface SaveTargetOptions {
+  updateDocumentPath?: boolean;
+  markDocumentClean?: boolean;
+}
+
 type CanvasExportWindow = Window & {
   __getThumbnail?: () => Promise<string | undefined>;
   __getFlattenedImage?: () => Promise<string | undefined>;
 };
-
-function detectFileFormatFromPath(path: string): FileFormat | null {
-  const lowerPath = path.toLowerCase();
-  if (lowerPath.endsWith('.psd')) return 'psd';
-  if (lowerPath.endsWith('.ora')) return 'ora';
-  return null;
-}
-
-function resolveSaveTarget(path: string): { path: string; format: FileFormat } {
-  const detectedFormat = detectFileFormatFromPath(path);
-  if (detectedFormat) {
-    return { path, format: detectedFormat };
-  }
-
-  // Default to PSD if no recognized extension
-  return { path: `${path}.psd`, format: 'psd' };
-}
-
-function normalizeImageDataToDataUrl(imageData?: string): string | undefined {
-  if (!imageData) return undefined;
-  if (imageData.startsWith('data:')) return imageData;
-  return `data:image/png;base64,${imageData}`;
-}
 
 interface FileState {
   isSaving: boolean;
@@ -84,8 +88,16 @@ interface FileState {
   // Actions
   save: (saveAs?: boolean) => Promise<boolean>;
   open: () => Promise<boolean>;
+  openPath: (path: string, options?: OpenPathOptions) => Promise<boolean>;
+  runAutoSaveTick: () => Promise<void>;
+  restoreOnStartup: () => Promise<boolean>;
   reset: () => void;
 }
+
+const DEFAULT_SESSION: AutosaveSessionData = {
+  lastSavedPath: null,
+  hasUnsavedTemp: false,
+};
 
 /**
  * Get layer image data from canvas
@@ -111,6 +123,81 @@ async function getThumbnail(): Promise<string | undefined> {
 async function getFlattenedImage(): Promise<string | undefined> {
   const win = window as CanvasExportWindow;
   return win.__getFlattenedImage?.();
+}
+
+function detectFileFormatFromPath(path: string): FileFormat | null {
+  const lowerPath = path.toLowerCase();
+  if (lowerPath.endsWith('.psd')) return 'psd';
+  if (lowerPath.endsWith('.ora')) return 'ora';
+  return null;
+}
+
+function resolveSaveTarget(path: string): { path: string; format: FileFormat } {
+  const detectedFormat = detectFileFormatFromPath(path);
+  if (detectedFormat) {
+    return { path, format: detectedFormat };
+  }
+
+  // Default to PSD if no recognized extension
+  return { path: `${path}.psd`, format: 'psd' };
+}
+
+function normalizeImageDataToDataUrl(imageData?: string): string | undefined {
+  if (!imageData) return undefined;
+  if (imageData.startsWith('data:')) return imageData;
+  return `data:image/png;base64,${imageData}`;
+}
+
+function parseSessionData(raw: string): AutosaveSessionData {
+  try {
+    const parsed = JSON.parse(raw) as Partial<AutosaveSessionData>;
+    return {
+      lastSavedPath: typeof parsed.lastSavedPath === 'string' ? parsed.lastSavedPath : null,
+      hasUnsavedTemp: parsed.hasUnsavedTemp === true,
+    };
+  } catch {
+    return { ...DEFAULT_SESSION };
+  }
+}
+
+async function ensureAppConfigDir(): Promise<void> {
+  await mkdir('', { baseDir: BaseDirectory.AppConfig, recursive: true });
+}
+
+async function readSessionData(): Promise<AutosaveSessionData> {
+  try {
+    const sessionExists = await exists(SESSION_FILE, { baseDir: BaseDirectory.AppConfig });
+    if (!sessionExists) return { ...DEFAULT_SESSION };
+    const raw = await readTextFile(SESSION_FILE, { baseDir: BaseDirectory.AppConfig });
+    return parseSessionData(raw);
+  } catch {
+    return { ...DEFAULT_SESSION };
+  }
+}
+
+async function writeSessionData(data: AutosaveSessionData): Promise<void> {
+  try {
+    await ensureAppConfigDir();
+    await writeTextFile(SESSION_FILE, JSON.stringify(data, null, 2), {
+      baseDir: BaseDirectory.AppConfig,
+    });
+  } catch {
+    // Session persistence is best-effort.
+  }
+}
+
+async function updateSessionData(
+  updater: (prev: AutosaveSessionData) => AutosaveSessionData
+): Promise<AutosaveSessionData> {
+  const prev = await readSessionData();
+  const next = updater(prev);
+  await writeSessionData(next);
+  return next;
+}
+
+async function getTempAutosavePath(): Promise<string> {
+  const tempRoot = await tempDir();
+  return join(tempRoot, TEMP_AUTOSAVE_FILE_NAME);
 }
 
 /**
@@ -149,13 +236,147 @@ function layerDataToLayer(data: LayerData): Layer {
   };
 }
 
-export const useFileStore = create<FileState>((set) => ({
+async function buildProjectDataSnapshot(): Promise<ProjectData> {
+  const docStore = useDocumentStore.getState();
+  const layerDataPromises = docStore.layers.map(async (layer) => {
+    const imageData = await getLayerImageData(layer.id);
+    return layerToLayerData(layer, imageData);
+  });
+
+  const layers = await Promise.all(layerDataPromises);
+
+  const [thumbnail, flattenedImage] = await Promise.all([getThumbnail(), getFlattenedImage()]);
+
+  return {
+    width: docStore.width,
+    height: docStore.height,
+    dpi: docStore.dpi,
+    layers,
+    flattenedImage,
+    thumbnail,
+  };
+}
+
+async function loadProjectIntoDocument(
+  filePath: string,
+  options: OpenPathOptions,
+  set: (partial: Partial<FileState>) => void
+): Promise<boolean> {
+  set({ isLoading: true, error: null });
+
+  try {
+    const docStore = useDocumentStore.getState();
+    docStore.reset();
+
+    const ipcStart = performance.now();
+    const projectData = await invoke<ProjectData>('load_project', { path: filePath });
+    const ipcTransferMs = performance.now() - ipcStart;
+
+    if (projectData.benchmark?.sessionId) {
+      invoke('report_benchmark', {
+        sessionId: projectData.benchmark.sessionId,
+        phase: 'ipc_transfer',
+        durationMs: ipcTransferMs,
+      });
+    }
+
+    const loadedLayers = projectData.layers.map(layerDataToLayer);
+    const detectedFormat = detectFileFormatFromPath(filePath) ?? 'ora';
+
+    useDocumentStore.setState({
+      width: projectData.width,
+      height: projectData.height,
+      dpi: projectData.dpi,
+      layers: loadedLayers,
+      activeLayerId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
+      filePath: options.asUntitled ? null : filePath,
+      fileFormat: options.asUntitled ? null : detectedFormat,
+      isDirty: false,
+    });
+
+    set({ isLoading: false });
+
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+    const win = window as Window & {
+      __loadLayerImages?: (
+        layers: ProjectData['layers'],
+        benchmarkSessionId?: string
+      ) => Promise<void>;
+    };
+    if (win.__loadLayerImages) {
+      await win.__loadLayerImages(projectData.layers, projectData.benchmark?.sessionId);
+    }
+
+    if (options.rememberAsLastSaved) {
+      await updateSessionData((prev) => ({
+        ...prev,
+        lastSavedPath: filePath,
+        hasUnsavedTemp: options.clearUnsavedTemp ? false : prev.hasUnsavedTemp,
+      }));
+    } else if (options.clearUnsavedTemp) {
+      await updateSessionData((prev) => ({ ...prev, hasUnsavedTemp: false }));
+    }
+
+    return true;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    set({ isLoading: false, error: errorMessage });
+    console.error('Open failed:', error);
+    return false;
+  }
+}
+
+async function saveProjectToTarget(
+  targetPath: string,
+  targetFormat: FileFormat,
+  options: SaveTargetOptions,
+  set: (partial: Partial<FileState>) => void
+): Promise<SaveTargetResult> {
+  set({ isSaving: true, error: null });
+
+  try {
+    const projectData = await buildProjectDataSnapshot();
+    const result = await invoke<FileOperationResult>('save_project', {
+      path: targetPath,
+      format: targetFormat,
+      project: projectData,
+    });
+
+    if (!result.success) {
+      const message = result.error || 'Unknown error';
+      set({ isSaving: false, error: message });
+      return { success: false, error: message };
+    }
+
+    const docStore = useDocumentStore.getState();
+    if (options.updateDocumentPath) {
+      docStore.setFilePath(targetPath, targetFormat);
+    } else if (options.markDocumentClean) {
+      docStore.setDirty(false);
+    }
+
+    set({ isSaving: false });
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    set({ isSaving: false, error: errorMessage });
+    console.error('Save failed:', error);
+    return { success: false, error: errorMessage };
+  }
+}
+
+export const useFileStore = create<FileState>((set, get) => ({
   isSaving: false,
   isLoading: false,
   error: null,
 
   save: async (saveAs = false) => {
     const docStore = useDocumentStore.getState();
+    const hadExistingPath = !!docStore.filePath;
     let targetPath = docStore.filePath;
     let targetFormat = docStore.fileFormat;
 
@@ -180,51 +401,38 @@ export const useFileStore = create<FileState>((set) => ({
       targetFormat = resolvedTarget.format;
     }
 
-    set({ isSaving: true, error: null });
+    if (!targetPath || !targetFormat) return false;
 
-    try {
-      // Collect layer data with images
-      const layerDataPromises = docStore.layers.map(async (layer) => {
-        const imageData = await getLayerImageData(layer.id);
-        return layerToLayerData(layer, imageData);
-      });
+    const saveResult = await saveProjectToTarget(
+      targetPath,
+      targetFormat,
+      {
+        updateDocumentPath: true,
+        markDocumentClean: true,
+      },
+      set
+    );
 
-      const layers = await Promise.all(layerDataPromises);
-
-      // Export preview images from current composited canvas
-      const [thumbnail, flattenedImage] = await Promise.all([getThumbnail(), getFlattenedImage()]);
-
-      const projectData: ProjectData = {
-        width: docStore.width,
-        height: docStore.height,
-        dpi: docStore.dpi,
-        layers,
-        flattenedImage,
-        thumbnail,
-      };
-
-      const result = await invoke<FileOperationResult>('save_project', {
-        path: targetPath,
-        format: targetFormat,
-        project: projectData,
-      });
-
-      if (result.success) {
-        // Update document state
-        docStore.setFilePath(targetPath!, targetFormat!);
-        docStore.setDirty(false);
-        set({ isSaving: false });
-        return true;
-      } else {
-        set({ isSaving: false, error: result.error || 'Unknown error' });
-        return false;
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      set({ isSaving: false, error: errorMessage });
-      console.error('Save failed:', error);
+    if (!saveResult.success) {
       return false;
     }
+
+    await updateSessionData((prev) => ({
+      ...prev,
+      lastSavedPath: targetPath,
+      hasUnsavedTemp: false,
+    }));
+
+    if (!hadExistingPath) {
+      try {
+        const tempAutosavePath = await getTempAutosavePath();
+        await invoke('delete_file_if_exists', { path: tempAutosavePath });
+      } catch {
+        // Temp file cleanup is best-effort.
+      }
+    }
+
+    return true;
   },
 
   open: async () => {
@@ -244,76 +452,110 @@ export const useFileStore = create<FileState>((set) => ({
     }
 
     const filePath = Array.isArray(result) ? result[0] : result;
+    if (!filePath) return false;
+    return get().openPath(filePath, {
+      asUntitled: false,
+      rememberAsLastSaved: true,
+      clearUnsavedTemp: true,
+    });
+  },
 
-    set({ isLoading: true, error: null });
+  openPath: async (path: string, options?: OpenPathOptions) => {
+    const openOptions: OpenPathOptions = {
+      asUntitled: false,
+      rememberAsLastSaved: false,
+      clearUnsavedTemp: false,
+      ...options,
+    };
+    return loadProjectIntoDocument(path, openOptions, set);
+  },
 
-    try {
-      const docStore = useDocumentStore.getState();
+  runAutoSaveTick: async () => {
+    const fileState = get();
+    if (fileState.isSaving || fileState.isLoading) return;
 
-      // Reset current document state BEFORE loading new file
-      // This ensures clean state and prevents conflicts with old layer data
-      docStore.reset();
+    const docStore = useDocumentStore.getState();
+    if (!docStore.isDirty) return;
 
-      // Measure IPC transfer time
-      const ipcStart = performance.now();
-      const projectData = await invoke<ProjectData>('load_project', {
-        path: filePath,
-      });
-      const ipcTransferMs = performance.now() - ipcStart;
+    const tempAutosavePath = await getTempAutosavePath();
 
-      // Report IPC transfer time to backend
-      if (projectData.benchmark?.sessionId) {
-        invoke('report_benchmark', {
-          sessionId: projectData.benchmark.sessionId,
-          phase: 'ipc_transfer',
-          durationMs: ipcTransferMs,
-        });
-      }
-
-      // Convert and set document state in one operation
-      const loadedLayers = projectData.layers.map(layerDataToLayer);
-      const format = detectFileFormatFromPath(filePath) ?? 'ora';
-
-      useDocumentStore.setState({
-        width: projectData.width,
-        height: projectData.height,
-        dpi: projectData.dpi,
-        layers: loadedLayers,
-        activeLayerId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
-        filePath,
-        fileFormat: format,
-        isDirty: false,
-      });
-
-      set({ isLoading: false });
-
-      // Wait for Canvas to create layers before loading images
-      // Use double requestAnimationFrame to ensure React has rendered and useEffect has run
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    if (docStore.filePath) {
+      const targetFormat =
+        docStore.fileFormat ?? detectFileFormatFromPath(docStore.filePath) ?? 'ora';
+      const primarySave = await saveProjectToTarget(
+        docStore.filePath,
+        targetFormat,
+        { updateDocumentPath: false, markDocumentClean: true },
+        set
       );
 
-      // Small additional delay to ensure LayerRenderer has created layers
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-
-      // Trigger canvas reload with layer data, passing benchmark session ID
-      const win = window as Window & {
-        __loadLayerImages?: (
-          layers: ProjectData['layers'],
-          benchmarkSessionId?: string
-        ) => Promise<void>;
-      };
-      if (win.__loadLayerImages) {
-        await win.__loadLayerImages(projectData.layers, projectData.benchmark?.sessionId);
+      if (primarySave.success) {
+        await updateSessionData((prev) => ({
+          ...prev,
+          lastSavedPath: docStore.filePath,
+          hasUnsavedTemp: false,
+        }));
+        return;
       }
 
-      return true;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      set({ isLoading: false, error: errorMessage });
-      console.error('Open failed:', error);
+      const fallbackSave = await saveProjectToTarget(
+        tempAutosavePath,
+        'ora',
+        { updateDocumentPath: false, markDocumentClean: true },
+        set
+      );
+      if (fallbackSave.success) {
+        await updateSessionData((prev) => ({
+          ...prev,
+          hasUnsavedTemp: true,
+          lastSavedPath: docStore.filePath,
+        }));
+      }
+      return;
+    }
+
+    const tempSave = await saveProjectToTarget(
+      tempAutosavePath,
+      'ora',
+      { updateDocumentPath: false, markDocumentClean: true },
+      set
+    );
+    if (tempSave.success) {
+      await updateSessionData((prev) => ({
+        ...prev,
+        hasUnsavedTemp: true,
+      }));
+    }
+  },
+
+  restoreOnStartup: async () => {
+    const { openLastFileOnStartup } = useSettingsStore.getState().general;
+    if (!openLastFileOnStartup) {
       return false;
     }
+
+    const session = await readSessionData();
+
+    if (session.hasUnsavedTemp) {
+      const tempAutosavePath = await getTempAutosavePath();
+      const restoredTemp = await get().openPath(tempAutosavePath, {
+        asUntitled: true,
+        rememberAsLastSaved: false,
+        clearUnsavedTemp: false,
+      });
+      if (restoredTemp) return true;
+    }
+
+    if (session.lastSavedPath) {
+      const restoredLast = await get().openPath(session.lastSavedPath, {
+        asUntitled: false,
+        rememberAsLastSaved: true,
+        clearUnsavedTemp: true,
+      });
+      if (restoredLast) return true;
+    }
+
+    return false;
   },
 
   reset: () => {

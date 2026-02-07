@@ -1,4 +1,5 @@
-import { X, Palette, Tablet, Brush } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, Palette, Tablet, Brush, Settings2 } from 'lucide-react';
 import {
   useSettingsStore,
   ACCENT_COLORS,
@@ -23,6 +24,7 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={16} /> },
+  { id: 'general', label: 'General', icon: <Settings2 size={16} /> },
   { id: 'brush', label: 'Brush', icon: <Brush size={16} /> },
   { id: 'tablet', label: 'Tablet', icon: <Tablet size={16} /> },
 ];
@@ -138,6 +140,70 @@ function AppearanceSettings() {
               type="checkbox"
               checked={appearance.enableBlur}
               onChange={(e) => setEnableBlur(e.target.checked)}
+            />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeneralSettings() {
+  const general = useSettingsStore((s) => s.general);
+  const setAutosaveIntervalMinutes = useSettingsStore((s) => s.setAutosaveIntervalMinutes);
+  const setOpenLastFileOnStartup = useSettingsStore((s) => s.setOpenLastFileOnStartup);
+  const [intervalInput, setIntervalInput] = useState(String(general.autosaveIntervalMinutes));
+
+  useEffect(() => {
+    setIntervalInput(String(general.autosaveIntervalMinutes));
+  }, [general.autosaveIntervalMinutes]);
+
+  const commitInterval = () => {
+    const parsed = Number.parseInt(intervalInput, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setIntervalInput(String(general.autosaveIntervalMinutes));
+      return;
+    }
+    const normalized = Math.max(1, parsed);
+    setAutosaveIntervalMinutes(normalized);
+    setIntervalInput(String(normalized));
+  };
+
+  return (
+    <div className="settings-content">
+      <h3 className="settings-section-title">General</h3>
+
+      <div className="settings-section">
+        <label className="settings-label">AUTO SAVE</label>
+        <div className="settings-row">
+          <span className="settings-description">Autosave interval (minutes)</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            className="settings-number-input"
+            value={intervalInput}
+            onChange={(e) => setIntervalInput(e.target.value)}
+            onBlur={commitInterval}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitInterval();
+              }
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <label className="settings-label">STARTUP</label>
+        <div className="settings-row">
+          <span className="settings-description">Open last file on startup</span>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={general.openLastFileOnStartup}
+              onChange={(e) => setOpenLastFileOnStartup(e.target.checked)}
             />
             <span className="toggle-slider" />
           </label>
@@ -432,6 +498,8 @@ export function SettingsPanel() {
     switch (activeTab) {
       case 'appearance':
         return <AppearanceSettings />;
+      case 'general':
+        return <GeneralSettings />;
       case 'brush':
         return <BrushSettings />;
       case 'tablet':

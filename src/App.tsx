@@ -74,6 +74,8 @@ function App() {
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState(false);
   const [showNewFilePanel, setShowNewFilePanel] = useState(false);
   const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] = useState(false);
+  const settingsLoaded = useSettingsStore((s) => s.isLoaded);
+  const autosaveIntervalMinutes = useSettingsStore((s) => s.general.autosaveIntervalMinutes);
   const setNewFileLastUsed = useSettingsStore((s) => s.setNewFileLastUsed);
   const initDocument = useDocumentStore((s) => s.initDocument);
   const docDefaults = useDocumentStore((s) => ({
@@ -81,6 +83,7 @@ function App() {
     height: s.height,
   }));
   const tabletInitializedRef = useRef(false);
+  const startupRestoreTriggeredRef = useRef(false);
 
   // Get tablet store actions (stable references)
   const initTablet = useTabletStore((s) => s.init);
@@ -103,6 +106,8 @@ function App() {
   const closeSettings = useSettingsStore((s) => s.closeSettings);
   const fileSave = useFileStore((s) => s.save);
   const fileOpen = useFileStore((s) => s.open);
+  const runAutoSaveTick = useFileStore((s) => s.runAutoSaveTick);
+  const restoreOnStartup = useFileStore((s) => s.restoreOnStartup);
   const handleDrawingShortcuts = useCallback(
     (e: KeyboardEvent) => {
       // Ctrl+N: New
@@ -312,6 +317,32 @@ function App() {
     });
     setIsReady(true);
   }, [initDocument]);
+
+  useEffect(() => {
+    if (!isReady || !settingsLoaded || startupRestoreTriggeredRef.current) return;
+    startupRestoreTriggeredRef.current = true;
+
+    const restore = async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      await restoreOnStartup();
+    };
+
+    void restore();
+  }, [isReady, settingsLoaded, restoreOnStartup]);
+
+  useEffect(() => {
+    if (!isReady || !settingsLoaded) return;
+    const intervalMs = Math.max(1, autosaveIntervalMinutes) * 60 * 1000;
+    const timer = window.setInterval(() => {
+      void runAutoSaveTick();
+    }, intervalMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isReady, settingsLoaded, autosaveIntervalMinutes, runAutoSaveTick]);
 
   // Register floating panels (only Brush panel now uses FloatingPanel)
   const registerPanel = usePanelStore((s) => s.registerPanel);

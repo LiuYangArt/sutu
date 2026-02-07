@@ -142,6 +142,9 @@ export const useDocumentStore = create<DocumentState>()(
         state.width = config.width;
         state.height = config.height;
         state.dpi = config.dpi;
+        state.filePath = null;
+        state.fileFormat = null;
+        state.isDirty = false;
 
         state.pendingHistoryLayerAdds = [];
 
@@ -205,6 +208,7 @@ export const useDocumentStore = create<DocumentState>()(
         state.layers.push(newLayer);
         state.activeLayerId = newLayer.id;
         state.pendingHistoryLayerAdds.push(newLayer.id);
+        state.isDirty = true;
       }),
 
     removeLayer: (id) =>
@@ -224,6 +228,7 @@ export const useDocumentStore = create<DocumentState>()(
             state.activeLayerId = null;
           }
         }
+        state.isDirty = true;
       }),
 
     duplicateLayer: (id) => {
@@ -248,6 +253,7 @@ export const useDocumentStore = create<DocumentState>()(
         state.layers.splice(index + 1, 0, duplicated);
         state.activeLayerId = newLayerId;
         state.pendingHistoryLayerAdds.push(newLayerId);
+        state.isDirty = true;
       });
       return newLayerId;
     },
@@ -262,6 +268,7 @@ export const useDocumentStore = create<DocumentState>()(
         const layer = state.layers.find((l) => l.id === id);
         if (layer) {
           layer.visible = !layer.visible;
+          state.isDirty = true;
         }
       }),
 
@@ -270,6 +277,7 @@ export const useDocumentStore = create<DocumentState>()(
         const layer = state.layers.find((l) => l.id === id);
         if (layer) {
           layer.locked = !layer.locked;
+          state.isDirty = true;
         }
       }),
 
@@ -278,6 +286,7 @@ export const useDocumentStore = create<DocumentState>()(
         const layer = state.layers.find((l) => l.id === id);
         if (layer) {
           layer.opacity = Math.max(0, Math.min(100, opacity));
+          state.isDirty = true;
         }
       }),
 
@@ -286,6 +295,7 @@ export const useDocumentStore = create<DocumentState>()(
         const layer = state.layers.find((l) => l.id === id);
         if (layer) {
           layer.blendMode = blendMode;
+          state.isDirty = true;
         }
       }),
 
@@ -294,6 +304,7 @@ export const useDocumentStore = create<DocumentState>()(
         const layer = state.layers.find((l) => l.id === id);
         if (layer) {
           layer.name = name;
+          state.isDirty = true;
         }
       }),
 
@@ -313,6 +324,7 @@ export const useDocumentStore = create<DocumentState>()(
         const [layer] = state.layers.splice(fromIndex, 1);
         if (layer) {
           state.layers.splice(toIndex, 0, layer);
+          state.isDirty = true;
         }
       }),
 

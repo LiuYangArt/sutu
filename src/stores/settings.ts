@@ -109,11 +109,17 @@ export interface NewFileSettings {
   lastUsed: NewFileLastUsedSettings;
 }
 
+export interface GeneralSettings {
+  autosaveIntervalMinutes: number;
+  openLastFileOnStartup: boolean;
+}
+
 interface PersistedSettings {
   appearance: AppearanceSettings;
   tablet: TabletSettings;
   brush: BrushSettings;
   newFile: NewFileSettings;
+  general: GeneralSettings;
 }
 
 interface SettingsState extends PersistedSettings {
@@ -150,6 +156,10 @@ interface SettingsState extends PersistedSettings {
   addCustomSizePreset: (preset: { name: string; width: number; height: number }) => string;
   removeCustomSizePreset: (id: string) => void;
   setNewFileLastUsed: (lastUsed: NewFileLastUsedSettings) => void;
+
+  // General actions
+  setAutosaveIntervalMinutes: (minutes: number) => void;
+  setOpenLastFileOnStartup: (enabled: boolean) => void;
 
   // Persistence
   _loadSettings: () => Promise<void>;
@@ -192,6 +202,11 @@ function mergeLoadedNewFileSettings(loadedNewFile: unknown): NewFileSettings {
   };
 }
 
+function clampAutosaveIntervalMinutes(value: number): number {
+  if (!Number.isFinite(value)) return 10;
+  return Math.max(1, Math.floor(value));
+}
+
 // Default settings
 const defaultSettings: PersistedSettings = {
   appearance: {
@@ -212,6 +227,10 @@ const defaultSettings: PersistedSettings = {
     gpuRenderScaleMode: 'off',
   },
   newFile: cloneDefaultNewFileSettings(),
+  general: {
+    autosaveIntervalMinutes: 10,
+    openLastFileOnStartup: true,
+  },
 };
 
 function createCustomSizePresetId(): string {
@@ -413,6 +432,21 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setAutosaveIntervalMinutes: (minutes) => {
+      const normalized = clampAutosaveIntervalMinutes(minutes);
+      set((state) => {
+        state.general.autosaveIntervalMinutes = normalized;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setOpenLastFileOnStartup: (enabled) => {
+      set((state) => {
+        state.general.openLastFileOnStartup = enabled;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     // Load settings from file
     _loadSettings: async () => {
       try {
@@ -434,6 +468,18 @@ export const useSettingsStore = create<SettingsState>()(
               state.brush = { ...defaultSettings.brush, ...loaded.brush };
             }
             state.newFile = mergeLoadedNewFileSettings(loaded.newFile);
+            if (loaded.general) {
+              state.general = {
+                ...defaultSettings.general,
+                ...loaded.general,
+                autosaveIntervalMinutes: clampAutosaveIntervalMinutes(
+                  loaded.general.autosaveIntervalMinutes ??
+                    defaultSettings.general.autosaveIntervalMinutes
+                ),
+              };
+            } else {
+              state.general = { ...defaultSettings.general };
+            }
             state.isLoaded = true;
           });
         } else {
@@ -462,6 +508,7 @@ export const useSettingsStore = create<SettingsState>()(
           tablet: state.tablet,
           brush: state.brush,
           newFile: state.newFile,
+          general: state.general,
         };
 
         await writeTextFile(SETTINGS_FILE, JSON.stringify(data, null, 2), {

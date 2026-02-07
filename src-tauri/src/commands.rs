@@ -1047,6 +1047,16 @@ pub fn detect_file_format(path: String) -> Option<FileFormat> {
     FileFormat::from_path(&path)
 }
 
+/// Delete file if it exists
+#[tauri::command]
+pub fn delete_file_if_exists(path: String) -> Result<(), String> {
+    let path_ref = Path::new(&path);
+    if !path_ref.exists() {
+        return Ok(());
+    }
+    std::fs::remove_file(path_ref).map_err(|e| e.to_string())
+}
+
 // ============================================================================
 // Pattern Library Commands
 // ============================================================================

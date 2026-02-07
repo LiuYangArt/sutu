@@ -220,6 +220,7 @@ pub fn run() {
             commands::save_project,
             commands::load_project,
             commands::detect_file_format,
+            commands::delete_file_if_exists,
             // Pattern Library
             commands::get_patterns,
             commands::import_pat_file,

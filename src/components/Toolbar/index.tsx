@@ -51,6 +51,8 @@ function AppMenu() {
   const isSaving = useFileStore((s) => s.isSaving);
   const isLoading = useFileStore((s) => s.isLoading);
   const isDirty = useDocumentStore((s) => s.isDirty);
+  const filePath = useDocumentStore((s) => s.filePath);
+  const showUnsavedIndicator = isDirty || !filePath;
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -122,7 +124,7 @@ function AppMenu() {
 
           <button className="menu-item" onClick={handleSave} disabled={isSaving}>
             <Save size={16} />
-            <span>Save{isDirty ? ' *' : ''}</span>
+            <span>Save{showUnsavedIndicator ? ' *' : ''}</span>
             <span className="shortcut">Ctrl+S</span>
           </button>
 

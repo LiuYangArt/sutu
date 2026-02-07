@@ -269,6 +269,25 @@
   border-color: var(--primary);
 }
 
+.settings-number-input {
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-width: 120px;
+}
+
+.settings-number-input:hover {
+  border-color: var(--primary);
+}
+
+.settings-number-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
 /* Tablet Status Info */
 .tablet-status-info {
   display: flex;

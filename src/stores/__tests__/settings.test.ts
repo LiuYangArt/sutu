@@ -44,6 +44,10 @@ describe('settings store newFile persistence', () => {
         colorBlendMode: 'linear',
         gpuRenderScaleMode: 'off',
       },
+      general: {
+        autosaveIntervalMinutes: 10,
+        openLastFileOnStartup: true,
+      },
       newFile: {
         customSizePresets: [],
         lastUsed: { ...DEFAULT_NEW_FILE_SETTINGS.lastUsed },
@@ -81,5 +85,29 @@ describe('settings store newFile persistence', () => {
     expect(state.isLoaded).toBe(true);
     expect(state.newFile.customSizePresets).toEqual([]);
     expect(state.newFile.lastUsed).toEqual(DEFAULT_NEW_FILE_SETTINGS.lastUsed);
+    expect(state.general.autosaveIntervalMinutes).toBe(10);
+    expect(state.general.openLastFileOnStartup).toBe(true);
+  });
+
+  it('persists general settings fields', async () => {
+    fsMocks.exists.mockResolvedValue(false);
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    useSettingsStore.getState().setAutosaveIntervalMinutes(15);
+    useSettingsStore.getState().setOpenLastFileOnStartup(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(fsMocks.writeTextFile).toHaveBeenCalled();
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    expect(lastCall).toBeDefined();
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as {
+      general?: { autosaveIntervalMinutes?: number; openLastFileOnStartup?: boolean };
+    };
+    expect(parsed.general?.autosaveIntervalMinutes).toBe(15);
+    expect(parsed.general?.openLastFileOnStartup).toBe(false);
   });
 });
