@@ -206,6 +206,7 @@ export function Canvas() {
   const prevGpuDisplayLayerIdRef = useRef<string | null>(null);
   const pendingGpuCpuSyncLayerRef = useRef<string | null>(null);
   const pendingGpuCpuSyncRafRef = useRef<number | null>(null);
+  const gpuCanvasClearedForCpuRef = useRef(false);
   const finalizeFloatingSelectionSessionRef = useRef<(reason?: string) => void>(() => undefined);
   const hasFloatingSelectionSessionRef = useRef<() => boolean>(() => false);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
@@ -926,7 +927,19 @@ export function Canvas() {
         });
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.clearRect(0, 0, docWidth, docHeight);
+        gpuCanvasClearedForCpuRef.current = false;
         return;
+      }
+
+      if (gpuDisplayActive && gpuRendererRef.current && !gpuCanvasClearedForCpuRef.current) {
+        gpuRendererRef.current.renderLayerStackFrame({
+          layers: [],
+          activeLayerId: null,
+          scratchTexture: null,
+          strokeOpacity: 1,
+          renderScale: 1,
+        });
+        gpuCanvasClearedForCpuRef.current = true;
       }
 
       const ctx = canvas.getContext('2d');

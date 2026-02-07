@@ -326,6 +326,72 @@ describe('useMoveTool', () => {
     createElementSpy.mockRestore();
   });
 
+  it('keeps floating content on preview overlay during selection drag', async () => {
+    const width = 32;
+    const height = 32;
+    const layerA = makeLayerCanvas('layerA', width, height);
+    const renderer = {
+      getLayer: vi.fn(() => layerA),
+    } as unknown as LayerRenderer;
+
+    const maskData = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < maskData.length; i += 4) {
+      maskData[i + 3] = 255;
+    }
+    useSelectionStore.setState({
+      hasSelection: true,
+      selectionMask: new ImageData(maskData, width, height),
+      selectionMaskPending: false,
+      selectionPath: [
+        [
+          { x: 2, y: 2, type: 'polygonal' },
+          { x: 10, y: 2, type: 'polygonal' },
+          { x: 10, y: 10, type: 'polygonal' },
+          { x: 2, y: 10, type: 'polygonal' },
+          { x: 2, y: 2, type: 'polygonal' },
+        ],
+      ],
+      bounds: { x: 2, y: 2, width: 8, height: 8 },
+    });
+
+    const previewCanvas = document.createElement('canvas');
+    previewCanvas.width = width;
+    previewCanvas.height = height;
+
+    const { result, unmount } = renderHook(() =>
+      useMoveTool({
+        layerRendererRef: { current: renderer },
+        movePreviewCanvasRef: { current: previewCanvas },
+        currentTool: 'move',
+        layers: [{ id: 'layerA', visible: true, locked: false, opacity: 100 } as Layer],
+        activeLayerId: 'layerA',
+        width,
+        height,
+        setActiveLayer: vi.fn(),
+        syncAllPendingGpuLayersToCpu: vi.fn(async () => 0),
+        captureBeforeImage: vi.fn(async () => undefined),
+        saveStrokeToHistory: vi.fn(),
+        markLayerDirty: vi.fn(),
+        compositeAndRender: vi.fn(),
+        updateThumbnail: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.handleMovePointerDown(4, 4, { ctrlKey: false, pointerId: 51 });
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+    act(() => {
+      result.current.handleMovePointerMove(14, 14, { pointerId: 51 });
+    });
+
+    const layerDrawCalls = (layerA.ctx.drawImage as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(layerDrawCalls.length).toBe(1);
+    unmount();
+  });
+
   it('keeps selection move offsets when moving outside canvas bounds', async () => {
     const width = 32;
     const height = 32;

@@ -324,6 +324,16 @@ function renderFloatingCompositionToLayer(
   layerCtx.drawImage(floating.floatingSourceCanvas, floatingOffsetX, floatingOffsetY);
 }
 
+function renderFloatingAnchorToLayer(
+  layerCtx: CanvasRenderingContext2D,
+  floating: FloatingSelectionSession,
+  width: number,
+  height: number
+): void {
+  layerCtx.clearRect(0, 0, width, height);
+  layerCtx.drawImage(floating.anchorBaseCanvas, floating.anchorOffsetX, floating.anchorOffsetY);
+}
+
 export function useMoveTool({
   layerRendererRef,
   movePreviewCanvasRef,
@@ -786,20 +796,14 @@ export function useMoveTool({
           selectionStore.beginMove({ x: canvasX, y: canvasY, type: 'freehand' });
 
           if (session.selectionPreviewMode === 'overlay' && floating) {
-            renderFloatingCompositionToLayer(
-              session.layerCtx,
-              floating,
-              floating.anchorOffsetX,
-              floating.anchorOffsetY,
-              width,
-              height
-            );
-            compositeAndRender({ forceCpu: true, clipRect: getPreviewClipRect() });
+            const previewClipRect = getPreviewClipRect();
+            renderFloatingAnchorToLayer(session.layerCtx, floating, width, height);
+            compositeAndRender({ forceCpu: true });
             renderSelectionMoveOverlay(
               floating,
               floating.floatingOffsetX,
               floating.floatingOffsetY,
-              getPreviewClipRect()
+              previewClipRect
             );
           }
         } else {
