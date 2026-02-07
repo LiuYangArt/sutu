@@ -1008,8 +1008,7 @@ export class GpuCanvasRenderer {
     blendMode: 'normal' | 'multiply' | 'screen' | 'overlay';
   }): void {
     const { encoder, targetView, baseView, sourceView, tileRect, layerOpacity, blendMode } = args;
-    const uniformIndex = this.nextLayerBlendUniformSlot();
-    const uniformOffset = uniformIndex * this.layerBlendUniformStride;
+    const uniformOffset = this.nextLayerBlendUniformOffset();
     const blendData = new ArrayBuffer(LAYER_BLEND_UNIFORM_BYTES);
     const blendView = new DataView(blendData);
     blendView.setUint32(0, this.encodeBlendMode(blendMode), true);
@@ -1264,13 +1263,13 @@ export class GpuCanvasRenderer {
     this.layerBlendUniformBuffer = this.createLayerBlendUniformBuffer(this.layerBlendUniformSlots);
   }
 
-  private nextLayerBlendUniformSlot(): number {
-    const slot = this.layerBlendUniformWriteIndex;
-    this.layerBlendUniformWriteIndex += 1;
-    if (this.layerBlendUniformWriteIndex > this.layerBlendUniformSlots) {
-      this.ensureLayerBlendUniformCapacity(this.layerBlendUniformWriteIndex);
+  private nextLayerBlendUniformOffset(): number {
+    if (this.layerBlendUniformWriteIndex >= this.layerBlendUniformSlots) {
+      this.ensureLayerBlendUniformCapacity(this.layerBlendUniformWriteIndex + 1);
     }
-    return slot;
+    const offset = this.layerBlendUniformWriteIndex * this.layerBlendUniformStride;
+    this.layerBlendUniformWriteIndex += 1;
+    return offset;
   }
 
   private rebuildVisibleTiles(): void {

@@ -130,6 +130,17 @@
 - 已新增自动化测试：
   - `gpuLayerStackPolicy.test.ts`（门禁与 revision 逻辑）；
   - `layerStackCache.test.ts`（below cache 签名/失效条件）。
+- 已完成首轮线上问题修复（2026-02-07）：
+  - 修复 `renderLayerStackFrame` pass 嵌套导致的 `GPUValidationError`（画布不显示）。
+  - 修复非 normal blend 在可见性切换后的整屏发黑（blend 公式 + uniform 覆盖问题）。
+  - 修复吸色语义为“所见即所得”，透明像素不再吸黑。
+  - 修复 ColorPanel 在吸色后 HSVA 光标不同步。
+- 调试经验已沉淀：
+  - `docs/postmortem/2026-02-07-m3-layer-stack-black-canvas-eyedropper-palette-sync.md`
+- 已执行本轮 `code-simplifier` 收敛（仅可维护性优化，不改行为）：
+  - `GpuCanvasRenderer.ts`：layerBlend uniform 游标逻辑改为直接返回 offset，减少中间状态与误用风险。
+  - `Canvas/index.tsx`：移除 `sampleGpuPixelColor` 冗余依赖。
+  - `ColorPanel/index.tsx`：颜色同步判定分支简化，提升可读性。
 - 待执行：M3 手工门禁回放与 4K/多层稳定性验收回填（本轮代码落地后统一执行）。
 
 ## 今日决议（2026-02-06）

@@ -994,9 +994,8 @@ export function Canvas() {
 
   const sampleGpuPixelColor = useCallback(
     async (canvasX: number, canvasY: number): Promise<string | null> => {
-      const gpuRenderer = gpuRendererRef.current;
       const renderer = layerRendererRef.current;
-      if (!gpuRenderer || !renderer) return null;
+      if (!renderer) return null;
 
       // Eyedropper must sample what is currently visible; sync pending no-readback tiles first.
       await syncAllPendingGpuLayersToCpu();

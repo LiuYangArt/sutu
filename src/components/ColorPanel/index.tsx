@@ -22,12 +22,11 @@ export function ColorPanel() {
   useEffect(() => {
     // Always sync hex input
     setHexInput(brushColor.replace('#', ''));
+    const currentHex = brushColor.toLowerCase();
+    const initiatedHex = lastInitiatedHex.current?.toLowerCase();
 
     // Check if the update matches what we just initiated locally
-    if (
-      lastInitiatedHex.current &&
-      lastInitiatedHex.current.toLowerCase() === brushColor.toLowerCase()
-    ) {
+    if (initiatedHex && initiatedHex === currentHex) {
       // One-shot skip for the local round-trip; clear token immediately so
       // future external updates with the same hex still resync HSVA.
       lastInitiatedHex.current = null;

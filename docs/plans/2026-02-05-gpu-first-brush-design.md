@@ -1,7 +1,7 @@
 # GPU-First 笔刷与渲染架构设计（8K 目标，Tile 化）
 
 **日期**：2026-02-05
-**状态**：执行中（M2 主链路已打通，稳定性与无 readback 路线持续收敛）
+**状态**：执行中（M2 稳定性收敛持续；M3 最小闭环已落地并完成首轮缺陷修复）
 
 ## 0. 执行进度快照（2026-02-06）
 
@@ -758,3 +758,17 @@
   - `src/gpu/layers/layerStackCache.test.ts`。
 - Note：
   - 本记录仅代表代码落地状态；手工门禁与 4K 长时稳定性结果待后续验收回填。
+
+### 13.15 M3 首轮缺陷修复记录（2026-02-07）
+
+- Fixed：
+  - 修复多层显示路径 `GPUCommandEncoder` pass 嵌套，消除 `locked while RenderPassEncoder is open` 连锁报错。
+  - 修复 `tileLayerBlend` 的 alpha 合成公式遗漏项（补齐 `src * (1 - dstAlpha)`）。
+  - 修复 layer blend uniform 被同一 submit 内后写覆盖（改为按 pass 独立 offset）。
+  - 修复 GPU 吸色语义：从“active layer 单层采样”改为“可见合成结果采样”；透明像素不再回退黑色。
+  - 修复 ColorPanel 外部颜色更新时 HSVA 不同步（回环抑制改为 one-shot）。
+- Regression check：
+  - `pnpm -s typecheck`: PASS
+  - `pnpm -s test`: PASS（224 tests）
+- 复盘文档：
+  - `docs/postmortem/2026-02-07-m3-layer-stack-black-canvas-eyedropper-palette-sync.md`
