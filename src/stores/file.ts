@@ -148,6 +148,15 @@ function normalizeImageDataToDataUrl(imageData?: string): string | undefined {
   return `data:image/png;base64,${imageData}`;
 }
 
+function normalizeOpenPathOptions(options?: OpenPathOptions): OpenPathOptions {
+  return {
+    asUntitled: false,
+    rememberAsLastSaved: false,
+    clearUnsavedTemp: false,
+    ...options,
+  };
+}
+
 function parseSessionData(raw: string): AutosaveSessionData {
   try {
     const parsed = JSON.parse(raw) as Partial<AutosaveSessionData>;
@@ -355,7 +364,8 @@ async function saveProjectToTarget(
     const docStore = useDocumentStore.getState();
     if (options.updateDocumentPath) {
       docStore.setFilePath(targetPath, targetFormat);
-    } else if (options.markDocumentClean) {
+    }
+    if (!options.updateDocumentPath && options.markDocumentClean) {
       docStore.setDirty(false);
     }
 
@@ -461,12 +471,7 @@ export const useFileStore = create<FileState>((set, get) => ({
   },
 
   openPath: async (path: string, options?: OpenPathOptions) => {
-    const openOptions: OpenPathOptions = {
-      asUntitled: false,
-      rememberAsLastSaved: false,
-      clearUnsavedTemp: false,
-      ...options,
-    };
+    const openOptions = normalizeOpenPathOptions(options);
     return loadProjectIntoDocument(path, openOptions, set);
   },
 

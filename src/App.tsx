@@ -344,6 +344,53 @@ function App() {
     };
   }, [isReady, settingsLoaded, autosaveIntervalMinutes, runAutoSaveTick]);
 
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      void runAutoSaveTick();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [runAutoSaveTick]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    let closeRequestedHandled = false;
+
+    const registerCloseGuard = async () => {
+      if (!isTauri()) return;
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const appWindow = getCurrentWindow();
+        unlisten = await appWindow.onCloseRequested(async (event) => {
+          if (closeRequestedHandled) return;
+
+          event.preventDefault();
+          closeRequestedHandled = true;
+
+          try {
+            await runAutoSaveTick();
+          } catch (error) {
+            console.warn('[App] Autosave on close failed', error);
+          }
+
+          if (disposed) return;
+          await appWindow.close();
+        });
+      } catch (error) {
+        console.warn('[App] Failed to register close guard', error);
+      }
+    };
+
+    void registerCloseGuard();
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [runAutoSaveTick]);
+
   // Register floating panels (only Brush panel now uses FloatingPanel)
   const registerPanel = usePanelStore((s) => s.registerPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
