@@ -17,7 +17,7 @@ interface UseLayerOperationsParams {
   width: number;
   height: number;
   compositeAndRender: () => void;
-  markLayerDirty: () => void;
+  markLayerDirty: (layerIds?: string | string[]) => void;
   syncGpuLayerForHistory?: (layerId: string) => Promise<boolean>;
   gpuHistoryEnabled?: boolean;
   beginGpuStrokeHistory?: (
@@ -223,7 +223,7 @@ export function useLayerOperations({
       useDocumentStore.setState({ width: options.width, height: options.height });
 
       compositeAndRender();
-      markLayerDirty();
+      markLayerDirty(docState.layers.map((layer) => layer.id));
 
       for (const layer of docState.layers) {
         updateThumbnailWithSize(layer.id, options.width, options.height);
@@ -275,7 +275,7 @@ export function useLayerOperations({
         pushCpuStrokeHistory(activeLayerId, beforeImage);
 
         // Update thumbnail and re-render
-        markLayerDirty();
+        markLayerDirty(activeLayerId);
         updateThumbnail(activeLayerId);
         compositeAndRender();
       })();
@@ -339,7 +339,7 @@ export function useLayerOperations({
       pushCpuStrokeHistory(activeLayerId, beforeImage);
 
       // Update thumbnail and re-render
-      markLayerDirty();
+      markLayerDirty(activeLayerId);
       updateThumbnail(activeLayerId);
       compositeAndRender();
     })();
@@ -385,7 +385,7 @@ export function useLayerOperations({
             (await applyGpuStrokeHistory?.(entry.entryId, 'undo', entry.layerId));
           if (gpuApplied) {
             compositeAndRender();
-            markLayerDirty();
+            markLayerDirty(entry.layerId);
             updateThumbnail(entry.layerId);
             break;
           }
@@ -406,7 +406,7 @@ export function useLayerOperations({
           }
           renderer.setLayerImageData(entry.layerId, entry.beforeImage);
           compositeAndRender();
-          markLayerDirty();
+          markLayerDirty(entry.layerId);
           updateThumbnail(entry.layerId);
           break;
         }
@@ -429,7 +429,7 @@ export function useLayerOperations({
           useSelectionStore.getState().deselectAll();
 
           compositeAndRender();
-          markLayerDirty();
+          markLayerDirty(docState.layers.map((layer) => layer.id));
           for (const layer of docState.layers) {
             updateThumbnailWithSize(layer.id, entry.beforeWidth, entry.beforeHeight);
           }
@@ -441,7 +441,7 @@ export function useLayerOperations({
           renderer.removeLayer(entry.layerId);
           removeLayer(entry.layerId);
           compositeAndRender();
-          markLayerDirty();
+          markLayerDirty(entry.layerId);
           break;
         }
         case 'removeLayer': {
@@ -462,7 +462,7 @@ export function useLayerOperations({
           renderer.setLayerImageData(entry.layerId, entry.imageData);
           renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
           compositeAndRender();
-          markLayerDirty();
+          markLayerDirty(entry.layerId);
           updateThumbnail(entry.layerId);
           break;
         }
@@ -503,7 +503,7 @@ export function useLayerOperations({
             (await applyGpuStrokeHistory?.(entry.entryId, 'redo', entry.layerId));
           if (gpuApplied) {
             compositeAndRender();
-            markLayerDirty();
+            markLayerDirty(entry.layerId);
             updateThumbnail(entry.layerId);
             break;
           }
@@ -512,7 +512,7 @@ export function useLayerOperations({
           if (entry.afterImage) {
             renderer.setLayerImageData(entry.layerId, entry.afterImage);
             compositeAndRender();
-            markLayerDirty();
+            markLayerDirty(entry.layerId);
             updateThumbnail(entry.layerId);
           }
           break;
@@ -528,10 +528,9 @@ export function useLayerOperations({
           useDocumentStore.setState({ width: entry.after.width, height: entry.after.height });
           useSelectionStore.getState().deselectAll();
 
-          compositeAndRender();
-          markLayerDirty();
-
           const docState = useDocumentStore.getState();
+          compositeAndRender();
+          markLayerDirty(docState.layers.map((layer) => layer.id));
           for (const layer of docState.layers) {
             updateThumbnailWithSize(layer.id, entry.after.width, entry.after.height);
           }
@@ -552,7 +551,7 @@ export function useLayerOperations({
           });
           renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
           compositeAndRender();
-          markLayerDirty();
+          markLayerDirty(entry.layerId);
           updateThumbnail(entry.layerId);
           break;
         }
@@ -562,7 +561,7 @@ export function useLayerOperations({
           renderer.removeLayer(entry.layerId);
           removeLayer(entry.layerId);
           compositeAndRender();
-          markLayerDirty();
+          markLayerDirty(entry.layerId);
           break;
         }
       }
@@ -593,7 +592,7 @@ export function useLayerOperations({
 
       // Push to history
       saveStrokeToHistory();
-      markLayerDirty();
+      markLayerDirty(activeLayerId);
       updateThumbnail(activeLayerId);
     })();
   }, [
@@ -620,7 +619,7 @@ export function useLayerOperations({
       // Copy the source layer content to target layer
       targetLayer.ctx.drawImage(sourceLayer.canvas, 0, 0);
       compositeAndRender();
-      markLayerDirty();
+      markLayerDirty(toId);
       updateThumbnail(toId);
     },
     [compositeAndRender, markLayerDirty, updateThumbnail, layerRendererRef]
@@ -648,7 +647,7 @@ export function useLayerOperations({
       removeLayer(layerId);
 
       compositeAndRender();
-      markLayerDirty();
+      markLayerDirty(layerId);
     },
     [layers, pushRemoveLayer, compositeAndRender, markLayerDirty, layerRendererRef]
   );

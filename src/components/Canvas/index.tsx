@@ -34,10 +34,16 @@ import {
   GpuStrokeCommitCoordinator,
   GpuStrokeHistoryStore,
   loadResidencyBudget,
+  type GpuRenderableLayer,
   type GpuBrushCommitReadbackMode,
   type GpuBrushCommitMetricsSnapshot,
   type GpuStrokeCommitResult,
 } from '@/gpu';
+import {
+  bumpLayerRevisions,
+  isGpuLayerStackPathAvailable,
+  reconcileLayerRevisionMap,
+} from './gpuLayerStackPolicy';
 
 import './Canvas.css';
 
@@ -60,6 +66,7 @@ declare global {
     __gpuBrushDiagPendingMsThreshold?: number;
     __gpuBrushDiagnostics?: () => unknown;
     __gpuBrushDiagnosticsReset?: () => boolean;
+    __gpuLayerStackCacheStats?: () => unknown;
     __gpuBrushCommitMetrics?: () => GpuBrushCommitMetricsSnapshot | null;
     __gpuBrushCommitMetricsReset?: () => boolean;
     __gpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
@@ -115,14 +122,6 @@ function parseTileCoordKey(key: string): { x: number; y: number } | null {
   return { x, y };
 }
 
-function isSingleLayerGpuPathAvailable(
-  brushBackend: string,
-  gpuAvailable: boolean,
-  visibleLayerCount: number
-): boolean {
-  return brushBackend === 'gpu' && gpuAvailable && visibleLayerCount <= 1;
-}
-
 function resolveGpuHistoryBudgetBytes(residencyBudgetBytes: number): number {
   return Math.min(
     MAX_GPU_HISTORY_BUDGET_BYTES,
@@ -158,7 +157,7 @@ export function Canvas() {
   const gpuStrokeHistoryStoreRef = useRef<GpuStrokeHistoryStore | null>(null);
   const pendingGpuHistoryEntryIdRef = useRef<string | null>(null);
   const residencyBudgetLoggedRef = useRef(false);
-  const layerRevisionRef = useRef(0);
+  const layerRevisionMapRef = useRef<Map<string, number>>(new Map());
   const lagometerRef = useRef(new LagometerMonitor());
   const fpsCounterRef = useRef(new FPSCounter());
   const lastRenderedPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -390,19 +389,25 @@ export function Canvas() {
     benchmarkProfiler: latencyProfilerRef.current,
   });
 
-  const singleLayerGpuPathAvailable = useMemo(
-    () => isSingleLayerGpuPathAvailable(brushBackend, gpuAvailable, visibleLayerCount),
+  const singleLayerGpuHistoryAvailable = useMemo(
+    () => brushBackend === 'gpu' && gpuAvailable && visibleLayerCount <= 1,
     [brushBackend, gpuAvailable, visibleLayerCount]
   );
 
-  const gpuDisplayActive = useMemo(
+  const gpuLayerStackPathAvailable = useMemo(
     () =>
-      singleLayerGpuPathAvailable &&
-      (currentTool === 'brush' || currentTool === 'zoom' || currentTool === 'eyedropper'),
-    [singleLayerGpuPathAvailable, currentTool]
+      isGpuLayerStackPathAvailable({
+        brushBackend,
+        gpuAvailable,
+        currentTool,
+        layers: layers.map((layer) => ({ visible: layer.visible, blendMode: layer.blendMode })),
+      }),
+    [brushBackend, gpuAvailable, currentTool, layers]
   );
 
-  const gpuHistoryEnabled = singleLayerGpuPathAvailable;
+  const gpuDisplayActive = gpuLayerStackPathAvailable;
+
+  const gpuHistoryEnabled = singleLayerGpuHistoryAvailable;
 
   const collectLiveGpuHistoryEntries = useCallback(
     (entries: HistoryEntry[], liveIds: Set<string>) => {
@@ -548,9 +553,46 @@ export function Canvas() {
     needsRenderRef.current = true;
   }, []);
 
-  const markLayerDirty = useCallback(() => {
-    layerRevisionRef.current += 1;
+  useEffect(() => {
+    layerRevisionMapRef.current = reconcileLayerRevisionMap(
+      layerRevisionMapRef.current,
+      layers.map((layer) => layer.id)
+    );
+  }, [layers]);
+
+  const markLayerDirty = useCallback(
+    (dirtyLayerIds?: string | string[]) => {
+      const allLayerIds = layers.map((layer) => layer.id);
+      const normalizedDirtyLayerIds =
+        typeof dirtyLayerIds === 'string'
+          ? [dirtyLayerIds]
+          : Array.isArray(dirtyLayerIds)
+            ? dirtyLayerIds
+            : undefined;
+      layerRevisionMapRef.current = bumpLayerRevisions({
+        current: layerRevisionMapRef.current,
+        allLayerIds,
+        dirtyLayerIds: normalizedDirtyLayerIds,
+      });
+    },
+    [layers]
+  );
+
+  const getLayerRevision = useCallback((layerId: string): number => {
+    return layerRevisionMapRef.current.get(layerId) ?? 0;
   }, []);
+
+  const getVisibleGpuRenderableLayers = useCallback((): GpuRenderableLayer[] => {
+    return layers
+      .filter((layer) => layer.visible)
+      .map((layer) => ({
+        id: layer.id,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        blendMode: layer.blendMode,
+        revision: getLayerRevision(layer.id),
+      }));
+  }, [getLayerRevision, layers]);
 
   const trackPendingGpuCpuSyncTiles = useCallback(
     (layerId: string, tiles: Array<{ x: number; y: number }>) => {
@@ -734,17 +776,21 @@ export function Canvas() {
       if (gpuCanvas.height !== docHeight) gpuCanvas.height = docHeight;
     }
 
-    if (gpuDisplayActive && gpuRendererRef.current && activeLayerId) {
-      const layer = renderer.getLayer(activeLayerId);
-      if (!layer) return;
+    if (gpuDisplayActive && gpuRendererRef.current) {
+      const visibleGpuLayers = getVisibleGpuRenderableLayers();
+      for (const visibleLayer of visibleGpuLayers) {
+        const layer = renderer.getLayer(visibleLayer.id);
+        if (!layer) continue;
+        gpuRendererRef.current.syncLayerFromCanvas(
+          visibleLayer.id,
+          layer.canvas,
+          visibleLayer.revision
+        );
+      }
 
-      gpuRendererRef.current.syncLayerFromCanvas(
+      gpuRendererRef.current.renderLayerStackFrame({
+        layers: visibleGpuLayers,
         activeLayerId,
-        layer.canvas,
-        layerRevisionRef.current
-      );
-      gpuRendererRef.current.renderFrame({
-        layerId: activeLayerId,
         scratchTexture: null,
         strokeOpacity: 1,
         renderScale: getGpuRenderScale(),
@@ -763,7 +809,7 @@ export function Canvas() {
     // Clear and draw composite to display canvas
     ctx.clearRect(0, 0, docWidth, docHeight);
     ctx.drawImage(compositeCanvas, 0, 0);
-  }, [activeLayerId, getGpuRenderScale, gpuDisplayActive]);
+  }, [activeLayerId, getGpuRenderScale, getVisibleGpuRenderableLayers, gpuDisplayActive]);
 
   const beginGpuStrokeHistory = useCallback(
     (layerId: string): { entryId: string; snapshotMode: 'cpu' | 'gpu' } | null => {
@@ -851,24 +897,33 @@ export function Canvas() {
     (showScratch: boolean) => {
       const gpuRenderer = gpuRendererRef.current;
       const renderer = layerRendererRef.current;
-      if (!gpuRenderer || !renderer || !activeLayerId) return;
+      if (!gpuRenderer || !renderer) return;
 
-      const layer = renderer.getLayer(activeLayerId);
-      if (!layer) return;
-
-      gpuRenderer.syncLayerFromCanvas(activeLayerId, layer.canvas, layerRevisionRef.current);
+      const visibleGpuLayers = getVisibleGpuRenderableLayers();
+      for (const visibleLayer of visibleGpuLayers) {
+        const layer = renderer.getLayer(visibleLayer.id);
+        if (!layer) continue;
+        gpuRenderer.syncLayerFromCanvas(visibleLayer.id, layer.canvas, visibleLayer.revision);
+      }
 
       const scratchHandle = showScratch ? getScratchHandle() : null;
       const strokeOpacity = showScratch ? getPreviewOpacity() : 1;
 
-      gpuRenderer.renderFrame({
-        layerId: activeLayerId,
-        scratchTexture: scratchHandle?.texture ?? null,
-        strokeOpacity,
-        renderScale: scratchHandle?.renderScale ?? getGpuRenderScale(),
+      gpuRenderer.renderLayerStackFrame({
+        layers: visibleGpuLayers,
+        activeLayerId,
+        scratchTexture: showScratch ? (scratchHandle?.texture ?? null) : null,
+        strokeOpacity: showScratch ? strokeOpacity : 1,
+        renderScale: showScratch ? (scratchHandle?.renderScale ?? getGpuRenderScale()) : 1,
       });
     },
-    [activeLayerId, getScratchHandle, getPreviewOpacity, getGpuRenderScale]
+    [
+      activeLayerId,
+      getScratchHandle,
+      getPreviewOpacity,
+      getGpuRenderScale,
+      getVisibleGpuRenderableLayers,
+    ]
   );
 
   const commitStrokeGpu = useCallback(async (): Promise<GpuStrokeCommitResult> => {
@@ -920,6 +975,10 @@ export function Canvas() {
     }
     coordinator.resetCommitMetrics();
     return true;
+  }, []);
+
+  const getGpuLayerStackCacheStats = useCallback(() => {
+    return gpuRendererRef.current?.getLayerStackCacheStats() ?? null;
   }, []);
 
   const getGpuBrushCommitReadbackMode = useCallback((): GpuBrushCommitReadbackMode => {
@@ -990,6 +1049,7 @@ export function Canvas() {
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
+    getGpuLayerStackCacheStats,
     getGpuBrushCommitMetricsSnapshot,
     resetGpuBrushCommitMetrics,
     getGpuBrushCommitReadbackMode,

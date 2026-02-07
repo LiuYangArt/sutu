@@ -92,6 +92,14 @@ type GpuBrushDiagnosticsSnapshot = {
   deviceLost?: boolean;
 };
 
+type GpuLayerStackCacheStatsSnapshot = {
+  enabled?: boolean;
+  belowCacheHits?: number;
+  belowCacheMisses?: number;
+  belowCacheTileCount?: number;
+  lastInvalidationReason?: string | null;
+};
+
 type RAfFrameSamplingSummary = {
   sampleCount: number;
   avgMs: number;
@@ -170,6 +178,13 @@ function asGpuBrushCommitMetricsSnapshot(value: unknown): GpuBrushCommitMetricsS
     return null;
   }
   return value as GpuBrushCommitMetricsSnapshot;
+}
+
+function asGpuLayerStackCacheStatsSnapshot(value: unknown): GpuLayerStackCacheStatsSnapshot | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return value as GpuLayerStackCacheStatsSnapshot;
 }
 
 function isGpuBrushCommitReadbackMode(value: unknown): value is GpuBrushCommitReadbackMode {
@@ -776,6 +791,8 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [debugRectsEnabled, setDebugRectsEnabled] = useState(readDebugRectsFlag);
   const [batchUnionEnabled, setBatchUnionEnabled] = useState(readBatchUnionFlag);
   const [gpuDiagResetMessage, setGpuDiagResetMessage] = useState<string>('');
+  const [gpuLayerStackStats, setGpuLayerStackStats] =
+    useState<GpuLayerStackCacheStatsSnapshot | null>(null);
   const [noReadbackPilotEnabled, setNoReadbackPilotEnabled] = useState(false);
   const [noReadbackPilotMessage, setNoReadbackPilotMessage] = useState<string>('');
   const [phase6GateCaptureName, setPhase6GateCaptureName] = useState<string>('');
@@ -820,6 +837,15 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
           lagometer: bench.lagometer.getStats(),
           queueDepth: bench.getQueueDepth?.() ?? 0,
         });
+      }
+
+      const getLayerStackStats = (
+        window as Window & {
+          __gpuLayerStackCacheStats?: () => unknown;
+        }
+      ).__gpuLayerStackCacheStats;
+      if (typeof getLayerStackStats === 'function') {
+        setGpuLayerStackStats(asGpuLayerStackCacheStatsSnapshot(getLayerStackStats()));
       }
     }, 500);
     return () => clearInterval(timer);
@@ -2062,6 +2088,16 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
             {gpuDiagResetMessage && (
               <div className="debug-note" style={{ marginTop: '6px' }}>
                 {gpuDiagResetMessage}
+              </div>
+            )}
+            {gpuLayerStackStats?.enabled && (
+              <div className="debug-note" style={{ marginTop: '6px' }}>
+                LayerStack below-cache: hits={gpuLayerStackStats.belowCacheHits ?? 0}, misses=
+                {gpuLayerStackStats.belowCacheMisses ?? 0}, tiles=
+                {gpuLayerStackStats.belowCacheTileCount ?? 0}
+                {gpuLayerStackStats.lastInvalidationReason
+                  ? `, invalidation=${gpuLayerStackStats.lastInvalidationReason}`
+                  : ''}
               </div>
             )}
             <div className="debug-note">No console commands needed for these toggles.</div>

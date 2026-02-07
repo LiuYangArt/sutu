@@ -118,6 +118,20 @@
 ## Status
 **In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复；按 2026-02-06 当日决议停止追加复测，维持 Phase 6A `PARTIAL PASS`；Phase 6B-2/6B-3 已完成，当前进入 6B 后续落地与多层阶段说明整理
 
+## M3 最小闭环进展（2026-02-07）
+- 已落地多图层 GPU 显示合成主链路（`normal/multiply/screen/overlay`），不再由 `visibleLayerCount > 1` 直接触发回退。
+- 已落地 `below` tile cache（正确性优先策略）：
+  - active layer 变化、below 层顺序/opacity/blend/revision 或 GPU 内容代次变化时自动失效重建。
+  - `above` 仍按层实时叠加，未做独立像素缓存。
+- 已将图层脏标记从全局改为按 layer 维度（`markLayerDirty(layerId | layerIds)`），并引入 per-layer revision 同步策略。
+- 已新增调试指标：
+  - `window.__gpuLayerStackCacheStats()`；
+  - Debug Panel 增加 below cache hit/miss/tiles/invalidation 展示。
+- 已新增自动化测试：
+  - `gpuLayerStackPolicy.test.ts`（门禁与 revision 逻辑）；
+  - `layerStackCache.test.ts`（below cache 签名/失效条件）。
+- 待执行：M3 手工门禁回放与 4K/多层稳定性验收回填（本轮代码落地后统一执行）。
+
 ## 今日决议（2026-02-06）
 - 不再执行新增稳定性回归测试（含 3 轮 replay 与 20 笔手工短测）。
 - 现有结论保持不变：6A 维持 `PARTIAL PASS`，所有性能结论继续标注“非封版预结论”。

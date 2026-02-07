@@ -21,6 +21,8 @@ export type {
   GpuStrokeCommitResult,
   GpuBrushCommitReadbackMode,
   GpuBrushCommitMetricsSnapshot,
+  GpuLayerBlendModeM3,
+  GpuRenderableLayer,
 } from './types';
 
 export {

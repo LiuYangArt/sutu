@@ -7,6 +7,7 @@ import { DebugPanel } from './index';
 type TestWindow = Window & {
   __gpuBrushDiagnosticsReset?: () => boolean;
   __gpuBrushDiagnostics?: () => unknown;
+  __gpuLayerStackCacheStats?: () => unknown;
   __gpuBrushCommitMetrics?: () => unknown;
   __gpuBrushCommitMetricsReset?: () => boolean;
   __gpuBrushCommitReadbackMode?: () => 'enabled' | 'disabled';

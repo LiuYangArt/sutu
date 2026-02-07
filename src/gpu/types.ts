@@ -8,6 +8,7 @@ import type { Rect } from '@/utils/strokeBuffer';
 import type { BrushTexture } from '@/stores/tool';
 import type { TextureSettings, TextureBlendMode } from '@/components/BrushPanel/types';
 import type { TileCoord } from './layers/GpuLayerStore';
+import type { BlendMode } from '@/stores/document';
 
 /**
  * Dab instance data for GPU instancing
@@ -99,6 +100,16 @@ export interface GpuStrokeCommitResult {
 }
 
 export type GpuBrushCommitReadbackMode = 'enabled' | 'disabled';
+
+export type GpuLayerBlendModeM3 = 'normal' | 'multiply' | 'screen' | 'overlay';
+
+export interface GpuRenderableLayer {
+  id: string;
+  visible: boolean;
+  opacity: number;
+  blendMode: BlendMode;
+  revision: number;
+}
 
 export interface GpuBrushCommitMetricsSnapshot {
   attemptCount: number;

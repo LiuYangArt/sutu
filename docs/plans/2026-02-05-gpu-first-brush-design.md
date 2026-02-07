@@ -733,3 +733,28 @@
 - Guardrail:
   - 维持“非封版预结论”标记。
   - 封版前必须回到 6A 全量门禁并复验通过。
+
+### 13.14 M3 最小闭环实现记录（2026-02-07）
+
+- Scope（本轮）：
+  - 多图层 GPU 显示合成。
+  - blendMode 支持 `normal/multiply/screen/overlay`。
+  - `below` cache 启用；`above` 逐层实时叠加。
+  - commit 仍为单 active layer，历史链路维持 M2 现状。
+- Implemented：
+  - 新增 `GpuCanvasRenderer.renderLayerStackFrame()`，保留 `renderFrame()` 兼容单层调用。
+  - 新增 `tileLayerBlend.wgsl`（dst+src+layerOpacity+blendMode 单 pass 混合）。
+  - 新增 `below` cache 与统计接口 `getLayerStackCacheStats()`。
+  - `Canvas/index.tsx` 改为多层门禁：
+    - `isGpuLayerStackPathAvailable`：`gpu backend + gpuAvailable + tool∈{brush,zoom,eyedropper} + visible>=1 + visible blend 全在 M3 白名单`。
+    - `gpuHistoryEnabled` 保持单层条件，不随本轮扩展。
+  - 图层 revision 改为 per-layer：
+    - `markLayerDirty(layerId | layerIds)`；
+    - 每帧仅同步可见层，并按 layer revision 走 upload guard。
+  - 新增调试接口 `window.__gpuLayerStackCacheStats()`；
+    Debug Panel 已展示 below cache `hit/miss/tileCount/invalidationReason`。
+- Tests：
+  - `src/components/Canvas/__tests__/gpuLayerStackPolicy.test.ts`。
+  - `src/gpu/layers/layerStackCache.test.ts`。
+- Note：
+  - 本记录仅代表代码落地状态；手工门禁与 4K 长时稳定性结果待后续验收回填。

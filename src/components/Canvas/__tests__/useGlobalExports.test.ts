@@ -24,6 +24,7 @@ function cleanupGlobals(): void {
   delete win.__gpuTileSizeCompare;
   delete win.__gpuBrushDiagnostics;
   delete win.__gpuBrushDiagnosticsReset;
+  delete win.__gpuLayerStackCacheStats;
   delete win.__gpuBrushCommitMetrics;
   delete win.__gpuBrushCommitMetricsReset;
   delete win.__gpuBrushCommitReadbackMode;
@@ -136,6 +137,7 @@ describe('useGlobalExports', () => {
     const downloadStrokeCapture = vi.fn(() => true);
     const getGpuDiagnosticsSnapshot = vi.fn(() => ({ ok: true }));
     const resetGpuDiagnostics = vi.fn();
+    const getGpuLayerStackCacheStats = vi.fn(() => ({ enabled: true }));
     const getGpuBrushCommitMetricsSnapshot = vi.fn(() => ({
       attemptCount: 1,
       committedCount: 1,
@@ -171,6 +173,7 @@ describe('useGlobalExports', () => {
         handleResizeCanvas,
         getGpuDiagnosticsSnapshot,
         resetGpuDiagnostics,
+        getGpuLayerStackCacheStats,
         getGpuBrushCommitMetricsSnapshot,
         resetGpuBrushCommitMetrics,
         getGpuBrushCommitReadbackMode,
@@ -200,6 +203,7 @@ describe('useGlobalExports', () => {
     expect(typeof win.__getThumbnail).toBe('function');
     expect(typeof win.__gpuBrushDiagnostics).toBe('function');
     expect(typeof win.__gpuBrushDiagnosticsReset).toBe('function');
+    expect(typeof win.__gpuLayerStackCacheStats).toBe('function');
     expect(typeof win.__gpuBrushCommitMetrics).toBe('function');
     expect(typeof win.__gpuBrushCommitMetricsReset).toBe('function');
     expect(typeof win.__gpuBrushCommitReadbackMode).toBe('function');
@@ -236,6 +240,7 @@ describe('useGlobalExports', () => {
       win.__strokeCaptureDownload('case.json');
       win.__gpuBrushDiagnostics();
       win.__gpuBrushDiagnosticsReset();
+      win.__gpuLayerStackCacheStats();
       win.__gpuBrushCommitMetrics();
       win.__gpuBrushCommitMetricsReset();
       win.__gpuBrushCommitReadbackMode();
@@ -262,6 +267,7 @@ describe('useGlobalExports', () => {
     expect(downloadStrokeCapture).toHaveBeenCalledWith('case.json', undefined);
     expect(getGpuDiagnosticsSnapshot).toHaveBeenCalledTimes(1);
     expect(resetGpuDiagnostics).toHaveBeenCalledTimes(1);
+    expect(getGpuLayerStackCacheStats).toHaveBeenCalledTimes(1);
     expect(getGpuBrushCommitMetricsSnapshot).toHaveBeenCalledTimes(1);
     expect(resetGpuBrushCommitMetrics).toHaveBeenCalledTimes(1);
     expect(getGpuBrushCommitReadbackMode).toHaveBeenCalledTimes(1);
@@ -299,6 +305,7 @@ describe('useGlobalExports', () => {
     expect(win.__canvasResize).toBeUndefined();
     expect(win.__gpuBrushDiagnostics).toBeUndefined();
     expect(win.__gpuBrushDiagnosticsReset).toBeUndefined();
+    expect(win.__gpuLayerStackCacheStats).toBeUndefined();
     expect(win.__gpuBrushCommitMetrics).toBeUndefined();
     expect(win.__gpuBrushCommitMetricsReset).toBeUndefined();
     expect(win.__gpuBrushCommitReadbackMode).toBeUndefined();

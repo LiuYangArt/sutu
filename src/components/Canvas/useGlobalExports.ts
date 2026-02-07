@@ -39,6 +39,7 @@ interface UseGlobalExportsParams {
   handleResizeCanvas: (options: ResizeCanvasOptions) => void;
   getGpuDiagnosticsSnapshot?: () => unknown;
   resetGpuDiagnostics?: () => boolean;
+  getGpuLayerStackCacheStats?: () => unknown;
   getGpuBrushCommitMetricsSnapshot?: () => GpuBrushCommitMetricsSnapshot | null;
   resetGpuBrushCommitMetrics?: () => boolean;
   getGpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
@@ -133,6 +134,7 @@ export function useGlobalExports({
   handleResizeCanvas,
   getGpuDiagnosticsSnapshot,
   resetGpuDiagnostics,
+  getGpuLayerStackCacheStats,
   getGpuBrushCommitMetricsSnapshot,
   resetGpuBrushCommitMetrics,
   getGpuBrushCommitReadbackMode,
@@ -179,6 +181,7 @@ export function useGlobalExports({
       }) => Promise<unknown>;
       __gpuBrushDiagnostics?: () => unknown;
       __gpuBrushDiagnosticsReset?: () => boolean;
+      __gpuLayerStackCacheStats?: () => unknown;
       __gpuBrushCommitMetrics?: () => GpuBrushCommitMetricsSnapshot | null;
       __gpuBrushCommitMetricsReset?: () => boolean;
       __gpuBrushCommitReadbackMode?: () => GpuBrushCommitReadbackMode;
@@ -294,6 +297,9 @@ export function useGlobalExports({
     };
     win.__gpuBrushDiagnosticsReset = () => {
       return resetGpuDiagnostics?.() ?? false;
+    };
+    win.__gpuLayerStackCacheStats = () => {
+      return getGpuLayerStackCacheStats?.() ?? null;
     };
     win.__gpuBrushCommitMetrics = () => {
       return getGpuBrushCommitMetricsSnapshot?.() ?? null;
@@ -803,6 +809,7 @@ export function useGlobalExports({
       delete win.__gpuTileSizeCompare;
       delete win.__gpuBrushDiagnostics;
       delete win.__gpuBrushDiagnosticsReset;
+      delete win.__gpuLayerStackCacheStats;
       delete win.__gpuBrushCommitMetrics;
       delete win.__gpuBrushCommitMetricsReset;
       delete win.__gpuBrushCommitReadbackMode;
@@ -830,6 +837,7 @@ export function useGlobalExports({
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
+    getGpuLayerStackCacheStats,
     getGpuBrushCommitMetricsSnapshot,
     resetGpuBrushCommitMetrics,
     getGpuBrushCommitReadbackMode,
