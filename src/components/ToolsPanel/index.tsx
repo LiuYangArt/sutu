@@ -18,7 +18,7 @@ const TOOLS: { id: ToolType; label: string; icon: LucideIcon }[] = [
   { id: 'brush', label: 'Brush (B)', icon: Brush },
   { id: 'eraser', label: 'Eraser (E)', icon: Eraser },
   { id: 'eyedropper', label: 'Eyedropper (Alt)', icon: Pipette },
-  { id: 'move', label: 'Move', icon: Move },
+  { id: 'move', label: 'Move (V)', icon: Move },
   { id: 'select', label: 'Rectangular Select (M)', icon: SquareDashed },
   { id: 'lasso', label: 'Lasso (S)', icon: Lasso },
   { id: 'zoom', label: 'Zoom (Z) - Double-click to reset to 100%', icon: ZoomIcon },

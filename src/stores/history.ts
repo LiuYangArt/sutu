@@ -21,6 +21,8 @@ export interface StrokeEntry {
   snapshotMode: StrokeSnapshotMode;
   beforeImage?: ImageData;
   afterImage?: ImageData; // Filled during undo, used for redo
+  selectionBefore?: SelectionSnapshot;
+  selectionAfter?: SelectionSnapshot;
   timestamp: number;
 }
 
@@ -29,6 +31,8 @@ export interface PushStrokeParams {
   entryId: string;
   snapshotMode: StrokeSnapshotMode;
   beforeImage?: ImageData;
+  selectionBefore?: SelectionSnapshot;
+  selectionAfter?: SelectionSnapshot;
 }
 
 interface AddLayerEntry {
@@ -134,7 +138,14 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
     redoStack: [],
     maxHistorySize: 50,
 
-    pushStroke: ({ layerId, entryId, snapshotMode, beforeImage }) => {
+    pushStroke: ({
+      layerId,
+      entryId,
+      snapshotMode,
+      beforeImage,
+      selectionBefore,
+      selectionAfter,
+    }) => {
       if (snapshotMode === 'cpu' && !beforeImage) {
         console.warn('[HistoryStore] Missing beforeImage for CPU stroke entry', {
           layerId,
@@ -148,6 +159,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         entryId,
         snapshotMode,
         beforeImage: beforeImage ? cloneImageData(beforeImage) : undefined,
+        selectionBefore,
+        selectionAfter,
         timestamp: Date.now(),
       });
     },

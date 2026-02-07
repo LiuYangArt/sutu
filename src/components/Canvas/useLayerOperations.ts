@@ -1,5 +1,6 @@
 import { useCallback, useRef, type RefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
+import type { SelectionSnapshot } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
 import {
   createHistoryEntryId,
@@ -42,6 +43,11 @@ type PendingStrokeHistory =
       entryId: string;
       snapshotMode: 'gpu';
     };
+
+interface SaveStrokeHistoryOptions {
+  selectionBefore?: SelectionSnapshot;
+  selectionAfter?: SelectionSnapshot;
+}
 
 function toPushStrokeParams(pending: PendingStrokeHistory): PushStrokeParams {
   if (pending.snapshotMode === 'gpu') {
@@ -193,13 +199,20 @@ export function useLayerOperations({
   );
 
   // Push stroke to history using beforeImage
-  const saveStrokeToHistory = useCallback(() => {
-    const pending = beforeImageRef.current;
-    if (!pending) return;
+  const saveStrokeToHistory = useCallback(
+    (options?: SaveStrokeHistoryOptions) => {
+      const pending = beforeImageRef.current;
+      if (!pending) return;
 
-    pushStroke(toPushStrokeParams(pending));
-    beforeImageRef.current = null;
-  }, [pushStroke]);
+      pushStroke({
+        ...toPushStrokeParams(pending),
+        selectionBefore: options?.selectionBefore,
+        selectionAfter: options?.selectionAfter,
+      });
+      beforeImageRef.current = null;
+    },
+    [pushStroke]
+  );
 
   // Resize canvas with history support
   const handleResizeCanvas = useCallback(
@@ -384,6 +397,10 @@ export function useLayerOperations({
             entry.snapshotMode === 'gpu' &&
             (await applyGpuStrokeHistory?.(entry.entryId, 'undo', entry.layerId));
           if (gpuApplied) {
+            if (entry.selectionBefore) {
+              entry.selectionAfter = useSelectionStore.getState().createSnapshot();
+              useSelectionStore.getState().applySnapshot(entry.selectionBefore);
+            }
             compositeAndRender();
             markLayerDirty(entry.layerId);
             updateThumbnail(entry.layerId);
@@ -405,6 +422,10 @@ export function useLayerOperations({
             break;
           }
           renderer.setLayerImageData(entry.layerId, entry.beforeImage);
+          if (entry.selectionBefore) {
+            entry.selectionAfter = useSelectionStore.getState().createSnapshot();
+            useSelectionStore.getState().applySnapshot(entry.selectionBefore);
+          }
           compositeAndRender();
           markLayerDirty(entry.layerId);
           updateThumbnail(entry.layerId);
@@ -502,6 +523,9 @@ export function useLayerOperations({
             entry.snapshotMode === 'gpu' &&
             (await applyGpuStrokeHistory?.(entry.entryId, 'redo', entry.layerId));
           if (gpuApplied) {
+            if (entry.selectionAfter) {
+              useSelectionStore.getState().applySnapshot(entry.selectionAfter);
+            }
             compositeAndRender();
             markLayerDirty(entry.layerId);
             updateThumbnail(entry.layerId);
@@ -511,10 +535,13 @@ export function useLayerOperations({
           // Restore afterImage (saved during undo)
           if (entry.afterImage) {
             renderer.setLayerImageData(entry.layerId, entry.afterImage);
-            compositeAndRender();
-            markLayerDirty(entry.layerId);
-            updateThumbnail(entry.layerId);
           }
+          if (entry.selectionAfter) {
+            useSelectionStore.getState().applySnapshot(entry.selectionAfter);
+          }
+          compositeAndRender();
+          markLayerDirty(entry.layerId);
+          updateThumbnail(entry.layerId);
           break;
         }
         case 'resizeCanvas': {

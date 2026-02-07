@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useHistoryStore } from '../history';
+import type { SelectionSnapshot } from '../selection';
 
 describe('HistoryStore - stroke entry', () => {
   beforeEach(() => {
@@ -42,5 +43,39 @@ describe('HistoryStore - stroke entry', () => {
     expect(entry.entryId).toBe('gpu-entry-1');
     expect(entry.snapshotMode).toBe('gpu');
     expect(entry.beforeImage).toBeUndefined();
+  });
+
+  it('stores move stroke selection snapshots for undo/redo sync', () => {
+    const store = useHistoryStore.getState();
+    const image = new ImageData(new Uint8ClampedArray([1, 2, 3, 4]), 1, 1);
+    const selectionBefore: SelectionSnapshot = {
+      hasSelection: true,
+      selectionMask: new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1),
+      selectionMaskPending: false,
+      selectionPath: [[{ x: 1, y: 1, type: 'polygonal' }]],
+      bounds: { x: 1, y: 1, width: 5, height: 5 },
+    };
+    const selectionAfter: SelectionSnapshot = {
+      hasSelection: true,
+      selectionMask: new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1),
+      selectionMaskPending: false,
+      selectionPath: [[{ x: 3, y: 2, type: 'polygonal' }]],
+      bounds: { x: 3, y: 2, width: 5, height: 5 },
+    };
+
+    store.pushStroke({
+      layerId: 'layer_a',
+      entryId: 'move-entry-1',
+      snapshotMode: 'cpu',
+      beforeImage: image,
+      selectionBefore,
+      selectionAfter,
+    });
+
+    const entry = useHistoryStore.getState().undoStack[0];
+    expect(entry?.type).toBe('stroke');
+    if (!entry || entry.type !== 'stroke') return;
+    expect(entry.selectionBefore).toBe(selectionBefore);
+    expect(entry.selectionAfter).toBe(selectionAfter);
   });
 });

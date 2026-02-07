@@ -108,14 +108,18 @@ describe('useKeyboardShortcuts', () => {
       dispatchWindowKeyDown({ code: 'KeyE' });
       dispatchWindowKeyDown({ code: 'KeyM' });
       dispatchWindowKeyDown({ code: 'KeyS' });
+      dispatchWindowKeyDown({ code: 'KeyV' });
       dispatchWindowKeyDown({ code: 'KeyZ' });
+      dispatchWindowKeyDown({ code: 'KeyV', ctrlKey: true });
     });
 
     expect(setTool).toHaveBeenCalledWith('brush');
     expect(setTool).toHaveBeenCalledWith('eraser');
     expect(setTool).toHaveBeenCalledWith('select');
     expect(setTool).toHaveBeenCalledWith('lasso');
+    expect(setTool).toHaveBeenCalledWith('move');
     expect(setTool).toHaveBeenCalledWith('zoom');
+    expect(setTool).toHaveBeenCalledTimes(6);
 
     setTool.mockClear();
     setCurrentSize.mockClear();

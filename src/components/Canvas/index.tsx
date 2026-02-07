@@ -13,6 +13,7 @@ import { useRawPointerInput } from './useRawPointerInput';
 import { useAltEyedropper } from './useAltEyedropper';
 import { useShiftLineMode } from './useShiftLineMode';
 import { useLayerOperations } from './useLayerOperations';
+import { useMoveTool } from './useMoveTool';
 import { useGlobalExports } from './useGlobalExports';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { usePointerHandlers } from './usePointerHandlers';
@@ -258,6 +259,7 @@ export function Canvas() {
     width,
     height,
     activeLayerId,
+    setActiveLayer,
     layers,
     initDocument,
     backgroundFillColor,
@@ -266,6 +268,7 @@ export function Canvas() {
     width: s.width,
     height: s.height,
     activeLayerId: s.activeLayerId,
+    setActiveLayer: s.setActiveLayer,
     layers: s.layers,
     initDocument: s.initDocument,
     backgroundFillColor: s.backgroundFillColor,
@@ -971,6 +974,21 @@ export function Canvas() {
     applyGpuStrokeHistory,
   });
 
+  const { handleMovePointerDown, handleMovePointerMove, handleMovePointerUp } = useMoveTool({
+    layerRendererRef,
+    layers,
+    activeLayerId,
+    width,
+    height,
+    setActiveLayer,
+    syncAllPendingGpuLayersToCpu,
+    captureBeforeImage,
+    saveStrokeToHistory,
+    markLayerDirty,
+    compositeAndRender,
+    updateThumbnail,
+  });
+
   const renderGpuFrame = useCallback(
     (showScratch: boolean) => {
       const gpuRenderer = gpuRendererRef.current;
@@ -1526,6 +1544,9 @@ export function Canvas() {
     handleSelectionPointerDown,
     handleSelectionPointerMove,
     handleSelectionPointerUp,
+    handleMovePointerDown,
+    handleMovePointerMove,
+    handleMovePointerUp,
     updateShiftLineCursor,
     lockShiftLine,
     constrainShiftLinePoint,

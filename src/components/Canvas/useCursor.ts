@@ -3,12 +3,33 @@ import { ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
 import { clientToCanvasPoint } from './canvasGeometry';
 
+const MOVE_TOOL_CURSOR = (() => {
+  const iconPaths = [
+    'M12 2v20',
+    'm15 19-3 3-3-3',
+    'm19 9 3 3-3 3',
+    'M2 12h20',
+    'm5 9-3 3 3 3',
+    'm9 5 3-3 3 3',
+  ];
+  const strokeAttrs = 'fill="none" stroke-linecap="round" stroke-linejoin="round"';
+  const svg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <g stroke="white" stroke-width="3" ${strokeAttrs}>
+      ${iconPaths.map((d) => `<path d="${d}"/>`).join('')}
+    </g>
+    <g stroke="black" stroke-width="1.8" ${strokeAttrs}>
+      ${iconPaths.map((d) => `<path d="${d}"/>`).join('')}
+    </g>
+  </svg>`;
+  return `url("data:image/svg+xml;base64,${btoa(svg)}") 12 12, move`;
+})();
+
 /** Cursor style for each tool type */
 const TOOL_CURSORS: Record<ToolType, string> = {
   brush: 'none',
   eraser: 'none',
   eyedropper: 'none', // Custom SVG cursor is generated dynamically
-  move: 'move',
+  move: MOVE_TOOL_CURSOR,
   select: 'crosshair',
   lasso: 'crosshair',
   zoom: 'zoom-in',

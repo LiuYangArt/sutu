@@ -188,6 +188,13 @@ export function useKeyboardShortcuts({
             setTool('lasso');
           }
           break;
+
+        case 'KeyV':
+          if (!e.altKey && !e.ctrlKey) {
+            e.preventDefault();
+            setTool('move');
+          }
+          break;
       }
     };
 

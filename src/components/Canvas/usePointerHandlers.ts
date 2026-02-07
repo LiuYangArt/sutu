@@ -61,6 +61,21 @@ interface UsePointerHandlersParams {
     e: PointerEvent | React.PointerEvent
   ) => void;
   handleSelectionPointerUp: (canvasX: number, canvasY: number) => void;
+  handleMovePointerDown: (
+    canvasX: number,
+    canvasY: number,
+    e: PointerEvent | React.PointerEvent
+  ) => boolean;
+  handleMovePointerMove: (
+    canvasX: number,
+    canvasY: number,
+    e: PointerEvent | React.PointerEvent
+  ) => boolean;
+  handleMovePointerUp: (
+    canvasX: number,
+    canvasY: number,
+    e: PointerEvent | React.PointerEvent
+  ) => boolean;
   updateShiftLineCursor: (x: number, y: number) => void;
   lockShiftLine: (point: { x: number; y: number }) => void;
   constrainShiftLinePoint: (x: number, y: number) => { x: number; y: number };
@@ -105,6 +120,9 @@ export function usePointerHandlers({
   handleSelectionPointerDown,
   handleSelectionPointerMove,
   handleSelectionPointerUp,
+  handleMovePointerDown,
+  handleMovePointerMove,
+  handleMovePointerUp,
   updateShiftLineCursor,
   lockShiftLine,
   constrainShiftLinePoint,
@@ -269,6 +287,14 @@ export function usePointerHandlers({
         }
       }
 
+      if (currentTool === 'move') {
+        const handled = handleMovePointerDown(canvasX, canvasY, e.nativeEvent);
+        if (handled) {
+          trySetPointerCapture(canvas, e);
+          return;
+        }
+      }
+
       // Check Layer Validation
       const activeLayer = layers.find((l) => l.id === activeLayerId);
       if (!activeLayerId || !activeLayer?.visible) return;
@@ -283,6 +309,10 @@ export function usePointerHandlers({
       // Start Drawing
       trySetPointerCapture(canvas, e);
       usingRawInput.current = false;
+
+      if (currentTool !== 'brush' && currentTool !== 'eraser') {
+        return;
+      }
 
       // Brush Tool: Use State Machine Logic
       if (currentTool === 'brush') {
@@ -343,6 +373,7 @@ export function usePointerHandlers({
       setIsPanning,
       isSelectionToolActive,
       handleSelectionPointerDown,
+      handleMovePointerDown,
       updateShiftLineCursor,
       lockShiftLine,
       constrainShiftLinePoint,
@@ -414,6 +445,18 @@ export function usePointerHandlers({
         if (canvas) {
           const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, lastEvent);
           handleSelectionPointerMove(canvasX, canvasY, lastEvent);
+        }
+        return;
+      }
+
+      if (currentTool === 'move') {
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, lastEvent);
+          if (handleMovePointerMove(canvasX, canvasY, lastEvent)) {
+            return;
+          }
         }
         return;
       }
@@ -514,6 +557,7 @@ export function usePointerHandlers({
       usingRawInput,
       isSelectionToolActive,
       handleSelectionPointerMove,
+      handleMovePointerMove,
       updateShiftLineCursor,
       constrainShiftLinePoint,
       containerRef,
@@ -563,6 +607,16 @@ export function usePointerHandlers({
         return;
       }
 
+      if (currentTool === 'move') {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
+          handleMovePointerUp(canvasX, canvasY, e.nativeEvent);
+          tryReleasePointerCapture(canvas, e);
+        }
+        return;
+      }
+
       // 结束绘画
       const canvas = canvasRef.current;
       if (canvas) {
@@ -579,6 +633,8 @@ export function usePointerHandlers({
       finishCurrentStroke,
       isSelectionToolActive,
       handleSelectionPointerUp,
+      currentTool,
+      handleMovePointerUp,
       containerRef,
       canvasRef,
       panStartRef,
