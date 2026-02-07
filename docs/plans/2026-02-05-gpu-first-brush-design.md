@@ -1,7 +1,7 @@
 # GPU-First 笔刷与渲染架构设计（8K 目标，Tile 化）
 
 **日期**：2026-02-05
-**状态**：执行中（M2 稳定性收敛持续；M3 已完成收口并通过自动 + 手工回归）
+**状态**：执行中（M0~M4 已完成；M5 主链路已收口，PS `difference` 一致性问题已记录延期）
 
 ## 0. 执行进度快照（2026-02-07）
 
@@ -27,6 +27,13 @@
   - `commitStroke()` 新增 dirty-rect 局部裁剪：按 tile 交集区域设置 viewport/scissor，仅绘制脏区域。
   - 自动检查通过：`pnpm -s typecheck`、`pnpm -s test`（`230 passed`）。
   - 手工回归通过：本机绘制路径验证通过（含 `Temp Tile CopyDst` 缺陷修复后复测）。
+- `M4`：已完成并通过门禁（2026-02-07）：
+  - CPU 自动化 parity gate（`scatter/wet_edge/dual/texture/combo`）全 PASS。
+  - 手测发现的 `wet edge/dual` 白框与叠深问题已热修复并复测通过。
+- `M5`：主链路收尾完成（2026-02-07）：
+  - 全选区 GPU 裁剪链路可用，导出统一走 GPU 分块 readback。
+  - PSD 导入初始空白（需逐层开关）与 PSD 导出图层顺序异常已修复。
+  - 已知差异：`difference` 与 Photoshop 仍存在色彩偏差，列为后续专项，不阻塞 M5。
 
 ## 1. 目标与成功标准
 
@@ -926,3 +933,19 @@
 
 - 复盘文档：
   - `docs/postmortem/2026-02-07-m4-wetedge-dual-presentable-texture-residue.md`
+
+### 13.21 M5 收尾与延期项记录（2026-02-07）
+
+- Scope（本轮收尾）：
+  - 完成 `Selection/Mask GPU + 导出 GPU 分块 readback` 主链路可用性收口。
+  - 按用户实测反馈修复导入导出回归，并明确非阻塞延期项。
+- 用户实测结论：
+  - 选区切换时画布“瞬间变色”问题：已消失（PASS）。
+  - 导出 PSD 图层顺序反转：已修复（PASS）。
+  - 导入 PSD 画布初始空白（需逐层开关）：已修复（PASS）。
+  - `difference` 与 Photoshop 一致性：仍有偏差（OPEN，延期）。
+- 决策：
+  - 将 `difference` 一致性问题从 M5 主链路剥离，作为后续专项处理。
+  - M5 本轮以“功能闭环可用 + 回归项修复完成”收尾。
+- 延期问题记录：
+  - `docs/postmortem/2026-02-07-m5-difference-photoshop-parity-gap.md`

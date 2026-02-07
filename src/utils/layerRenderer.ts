@@ -39,6 +39,10 @@ function getCompositeOperation(blendMode: BlendMode): GlobalCompositeOperation {
   return BLEND_MODE_MAPPING[blendMode] ?? 'source-over';
 }
 
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
 function compositeDifferenceLayer(args: {
   dstCtx: CanvasRenderingContext2D;
   sourceCanvas: HTMLCanvasElement;
@@ -96,10 +100,10 @@ function compositeDifferenceLayer(args: {
         diffB * dstAlpha * srcAlpha) /
       outAlpha;
 
-    out[i] = Math.round(Math.max(0, Math.min(1, outR)) * 255);
-    out[i + 1] = Math.round(Math.max(0, Math.min(1, outG)) * 255);
-    out[i + 2] = Math.round(Math.max(0, Math.min(1, outB)) * 255);
-    out[i + 3] = Math.round(Math.max(0, Math.min(1, outAlpha)) * 255);
+    out[i] = Math.round(clampUnit(outR) * 255);
+    out[i + 1] = Math.round(clampUnit(outG) * 255);
+    out[i + 2] = Math.round(clampUnit(outB) * 255);
+    out[i + 3] = Math.round(clampUnit(outAlpha) * 255);
   }
 
   dstCtx.putImageData(dst, 0, 0);
@@ -345,6 +349,7 @@ export class LayerRenderer {
       if (preview && id === preview.activeLayerId && preview.opacity > 0) {
         sourceCanvas = this.composeLayerWithPreview(layer.canvas, preview.canvas, preview.opacity);
       }
+      const layerOpacity = layer.opacity / 100;
 
       if (layer.blendMode === 'difference') {
         compositeDifferenceLayer({
@@ -352,14 +357,14 @@ export class LayerRenderer {
           sourceCanvas,
           width: this.width,
           height: this.height,
-          layerOpacity: layer.opacity / 100,
+          layerOpacity,
         });
         continue;
       }
 
       // Draw the layer
       this.compositeCtx.save();
-      this.compositeCtx.globalAlpha = layer.opacity / 100;
+      this.compositeCtx.globalAlpha = layerOpacity;
       this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
       this.compositeCtx.drawImage(sourceCanvas, 0, 0);
       this.compositeCtx.restore();

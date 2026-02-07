@@ -192,19 +192,7 @@ export class GpuLayerStore {
     }
 
     const image = ctx.getImageData(rect.originX, rect.originY, rect.width, rect.height);
-    const rowBytes = rect.width * 4;
-    const bytesPerRow = alignTo(rowBytes, 256);
-    let upload = Uint8Array.from(image.data);
-
-    if (bytesPerRow !== rowBytes) {
-      const padded = new Uint8Array(bytesPerRow * rect.height);
-      for (let y = 0; y < rect.height; y += 1) {
-        const srcStart = y * rowBytes;
-        const dstStart = y * bytesPerRow;
-        padded.set(image.data.subarray(srcStart, srcStart + rowBytes), dstStart);
-      }
-      upload = padded;
-    }
+    const { upload, bytesPerRow } = this.createUploadBuffer(image.data, rect.width, rect.height);
 
     this.device.queue.writeTexture(
       { texture: handle.texture },
@@ -212,6 +200,28 @@ export class GpuLayerStore {
       { bytesPerRow, rowsPerImage: rect.height },
       { width: rect.width, height: rect.height }
     );
+  }
+
+  private createUploadBuffer(
+    source: Uint8ClampedArray,
+    width: number,
+    height: number
+  ): { upload: Uint8Array<ArrayBuffer>; bytesPerRow: number } {
+    const rowBytes = width * 4;
+    const bytesPerRow = alignTo(rowBytes, 256);
+    if (bytesPerRow === rowBytes) {
+      const upload = new Uint8Array(new ArrayBuffer(source.length));
+      upload.set(source);
+      return { upload, bytesPerRow };
+    }
+
+    const upload = new Uint8Array(new ArrayBuffer(bytesPerRow * height));
+    for (let y = 0; y < height; y += 1) {
+      const srcStart = y * rowBytes;
+      const dstStart = y * bytesPerRow;
+      upload.set(source.subarray(srcStart, srcStart + rowBytes), dstStart);
+    }
+    return { upload, bytesPerRow };
   }
 
   private getTileKey(coord: TileCoord): string {

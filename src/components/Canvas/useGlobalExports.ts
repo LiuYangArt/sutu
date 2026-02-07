@@ -145,6 +145,16 @@ function imageDataToDataUrl(imageData: ImageData): string | undefined {
   return canvas.toDataURL('image/png');
 }
 
+function imageDataToCanvas(imageData: ImageData): HTMLCanvasElement | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
 export function useGlobalExports({
   layerRendererRef,
   compositeAndRender,
@@ -715,18 +725,33 @@ export function useGlobalExports({
       getGpuDiagnosticsSnapshot,
     });
 
+    async function tryGpuLayerExportDataUrl(layerId: string): Promise<string | undefined> {
+      if (!exportGpuLayerImageData) return undefined;
+      try {
+        const image = await exportGpuLayerImageData(layerId);
+        return image ? imageDataToDataUrl(image) : undefined;
+      } catch (error) {
+        console.warn('[M5] GPU layer export failed, fallback to CPU path', error);
+        return undefined;
+      }
+    }
+
+    async function tryGpuFlattenedExportImageData(
+      context: 'flattened' | 'thumbnail'
+    ): Promise<ImageData | null> {
+      if (!exportGpuFlattenedImageData) return null;
+      try {
+        return await exportGpuFlattenedImageData();
+      } catch (error) {
+        console.warn(`[M5] GPU ${context} export failed, fallback to CPU path`, error);
+        return null;
+      }
+    }
+
     // Get single layer image data as Base64 PNG data URL
     win.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
-      if (exportGpuLayerImageData) {
-        try {
-          const image = await exportGpuLayerImageData(layerId);
-          if (image) {
-            return imageDataToDataUrl(image);
-          }
-        } catch (error) {
-          console.warn('[M5] GPU layer export failed, fallback to CPU path', error);
-        }
-      }
+      const gpuDataUrl = await tryGpuLayerExportDataUrl(layerId);
+      if (gpuDataUrl) return gpuDataUrl;
 
       await syncGpuLayerToCpu?.(layerId);
       if (!layerRendererRef.current) return undefined;
@@ -739,15 +764,9 @@ export function useGlobalExports({
 
     // Get flattened (composited) image
     win.__getFlattenedImage = async (): Promise<string | undefined> => {
-      if (exportGpuFlattenedImageData) {
-        try {
-          const image = await exportGpuFlattenedImageData();
-          if (image) {
-            return imageDataToDataUrl(image);
-          }
-        } catch (error) {
-          console.warn('[M5] GPU flattened export failed, fallback to CPU path', error);
-        }
+      const gpuImage = await tryGpuFlattenedExportImageData('flattened');
+      if (gpuImage) {
+        return imageDataToDataUrl(gpuImage);
       }
 
       await syncAllGpuLayersToCpu?.();
@@ -759,22 +778,9 @@ export function useGlobalExports({
     // Get thumbnail (256x256)
     win.__getThumbnail = async (): Promise<string | undefined> => {
       let compositeCanvas: HTMLCanvasElement | null = null;
-      if (exportGpuFlattenedImageData) {
-        try {
-          const image = await exportGpuFlattenedImageData();
-          if (image) {
-            const canvas = document.createElement('canvas');
-            canvas.width = image.width;
-            canvas.height = image.height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.putImageData(image, 0, 0);
-              compositeCanvas = canvas;
-            }
-          }
-        } catch (error) {
-          console.warn('[M5] GPU thumbnail export failed, fallback to CPU path', error);
-        }
+      const gpuImage = await tryGpuFlattenedExportImageData('thumbnail');
+      if (gpuImage) {
+        compositeCanvas = imageDataToCanvas(gpuImage);
       }
 
       if (!compositeCanvas) {
