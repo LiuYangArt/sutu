@@ -39,6 +39,72 @@ function getCompositeOperation(blendMode: BlendMode): GlobalCompositeOperation {
   return BLEND_MODE_MAPPING[blendMode] ?? 'source-over';
 }
 
+function compositeDifferenceLayer(args: {
+  dstCtx: CanvasRenderingContext2D;
+  sourceCanvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+  layerOpacity: number;
+}): void {
+  const { dstCtx, sourceCanvas, width, height, layerOpacity } = args;
+  const srcCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+  if (!srcCtx) return;
+
+  const dst = dstCtx.getImageData(0, 0, width, height);
+  const src = srcCtx.getImageData(0, 0, width, height);
+  const out = dst.data;
+  const srcData = src.data;
+
+  for (let i = 0; i < out.length; i += 4) {
+    const srcAlpha = ((srcData[i + 3] ?? 0) / 255) * layerOpacity;
+    if (srcAlpha <= 0) continue;
+
+    const dstAlpha = (out[i + 3] ?? 0) / 255;
+    const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
+    if (outAlpha <= 0) {
+      out[i] = 0;
+      out[i + 1] = 0;
+      out[i + 2] = 0;
+      out[i + 3] = 0;
+      continue;
+    }
+
+    const srcR = (srcData[i] ?? 0) / 255;
+    const srcG = (srcData[i + 1] ?? 0) / 255;
+    const srcB = (srcData[i + 2] ?? 0) / 255;
+    const dstR = (out[i] ?? 0) / 255;
+    const dstG = (out[i + 1] ?? 0) / 255;
+    const dstB = (out[i + 2] ?? 0) / 255;
+
+    const diffR = Math.abs(dstR - srcR);
+    const diffG = Math.abs(dstG - srcG);
+    const diffB = Math.abs(dstB - srcB);
+
+    const outR =
+      (srcR * srcAlpha * (1 - dstAlpha) +
+        dstR * dstAlpha * (1 - srcAlpha) +
+        diffR * dstAlpha * srcAlpha) /
+      outAlpha;
+    const outG =
+      (srcG * srcAlpha * (1 - dstAlpha) +
+        dstG * dstAlpha * (1 - srcAlpha) +
+        diffG * dstAlpha * srcAlpha) /
+      outAlpha;
+    const outB =
+      (srcB * srcAlpha * (1 - dstAlpha) +
+        dstB * dstAlpha * (1 - srcAlpha) +
+        diffB * dstAlpha * srcAlpha) /
+      outAlpha;
+
+    out[i] = Math.round(Math.max(0, Math.min(1, outR)) * 255);
+    out[i + 1] = Math.round(Math.max(0, Math.min(1, outG)) * 255);
+    out[i + 2] = Math.round(Math.max(0, Math.min(1, outB)) * 255);
+    out[i + 3] = Math.round(Math.max(0, Math.min(1, outAlpha)) * 255);
+  }
+
+  dstCtx.putImageData(dst, 0, 0);
+}
+
 function getAnchorOffset(
   anchor: ResizeCanvasOptions['anchor'],
   deltaX: number,
@@ -278,6 +344,17 @@ export class LayerRenderer {
       let sourceCanvas = layer.canvas;
       if (preview && id === preview.activeLayerId && preview.opacity > 0) {
         sourceCanvas = this.composeLayerWithPreview(layer.canvas, preview.canvas, preview.opacity);
+      }
+
+      if (layer.blendMode === 'difference') {
+        compositeDifferenceLayer({
+          dstCtx: this.compositeCtx,
+          sourceCanvas,
+          width: this.width,
+          height: this.height,
+          layerOpacity: layer.opacity / 100,
+        });
+        continue;
       }
 
       // Draw the layer

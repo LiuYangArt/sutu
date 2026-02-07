@@ -1,4 +1,5 @@
 import { TileResidencyManager } from './TileResidencyManager';
+import { alignTo } from '../utils/textureCopyRect';
 
 export interface TileCoord {
   x: number;
@@ -177,12 +178,38 @@ export class GpuLayerStore {
     if (rect.width <= 0 || rect.height <= 0) return;
 
     const handle = this.getOrCreateTile(layerId, coord);
-    this.device.queue.copyExternalImageToTexture(
-      {
-        source: canvas,
-        origin: { x: rect.originX, y: rect.originY },
-      },
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      this.device.queue.copyExternalImageToTexture(
+        {
+          source: canvas,
+          origin: { x: rect.originX, y: rect.originY },
+        },
+        { texture: handle.texture },
+        { width: rect.width, height: rect.height }
+      );
+      return;
+    }
+
+    const image = ctx.getImageData(rect.originX, rect.originY, rect.width, rect.height);
+    const rowBytes = rect.width * 4;
+    const bytesPerRow = alignTo(rowBytes, 256);
+    let upload = Uint8Array.from(image.data);
+
+    if (bytesPerRow !== rowBytes) {
+      const padded = new Uint8Array(bytesPerRow * rect.height);
+      for (let y = 0; y < rect.height; y += 1) {
+        const srcStart = y * rowBytes;
+        const dstStart = y * bytesPerRow;
+        padded.set(image.data.subarray(srcStart, srcStart + rowBytes), dstStart);
+      }
+      upload = padded;
+    }
+
+    this.device.queue.writeTexture(
       { texture: handle.texture },
+      upload,
+      { bytesPerRow, rowsPerImage: rect.height },
       { width: rect.width, height: rect.height }
     );
   }

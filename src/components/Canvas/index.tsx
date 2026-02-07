@@ -1148,6 +1148,7 @@ export function Canvas() {
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
+    markGpuLayerDirty: markLayerDirty,
     exportGpuLayerImageData,
     exportGpuFlattenedImageData,
     syncGpuLayerToCpu,

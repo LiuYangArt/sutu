@@ -57,6 +57,7 @@ interface UseGlobalExportsParams {
   setGpuBrushCommitReadbackMode?: (mode: GpuBrushCommitReadbackMode) => boolean;
   getGpuBrushNoReadbackPilot?: () => boolean;
   setGpuBrushNoReadbackPilot?: (enabled: boolean) => boolean;
+  markGpuLayerDirty?: (layerIds?: string | string[]) => void;
   exportGpuLayerImageData?: (layerId: string) => Promise<ImageData | null>;
   exportGpuFlattenedImageData?: () => Promise<ImageData | null>;
   syncGpuLayerToCpu?: (layerId: string) => Promise<boolean>;
@@ -164,6 +165,7 @@ export function useGlobalExports({
   setGpuBrushCommitReadbackMode,
   getGpuBrushNoReadbackPilot,
   setGpuBrushNoReadbackPilot,
+  markGpuLayerDirty,
   exportGpuLayerImageData,
   exportGpuFlattenedImageData,
   syncGpuLayerToCpu,
@@ -825,10 +827,12 @@ export function useGlobalExports({
       let fetchTotal = 0;
       let decompressTotal = 0;
       let renderTotal = 0;
+      const loadedLayerIds: string[] = [];
 
       for (const layerData of layersData) {
         const layer = layerRendererRef.current.getLayer(layerData.id);
         if (!layer) continue;
+        loadedLayerIds.push(layerData.id);
 
         // Get offset for layer positioning
         const offsetX = layerData.offsetX ?? 0;
@@ -909,6 +913,10 @@ export function useGlobalExports({
             console.warn(`Failed to load layer image: ${layerData.id}`, e);
           }
         }
+      }
+
+      if (loadedLayerIds.length > 0) {
+        markGpuLayerDirty?.(loadedLayerIds);
       }
 
       // Report benchmark phases to backend if session ID is provided
@@ -999,6 +1007,7 @@ export function useGlobalExports({
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
+    markGpuLayerDirty,
     exportGpuLayerImageData,
     exportGpuFlattenedImageData,
     syncGpuLayerToCpu,
