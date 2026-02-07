@@ -28,11 +28,14 @@ export function ColorPanel() {
       lastInitiatedHex.current &&
       lastInitiatedHex.current.toLowerCase() === brushColor.toLowerCase()
     ) {
-      // The color matches our local high-precision state, so don't overwrite it
-      // with the potentially lower-precision round-tripped value.
+      // One-shot skip for the local round-trip; clear token immediately so
+      // future external updates with the same hex still resync HSVA.
+      lastInitiatedHex.current = null;
       return;
     }
 
+    // Store-driven update (eyedropper/undo/etc): always trust it and clear stale token.
+    lastInitiatedHex.current = null;
     const newHsva = hexToHsva(brushColor);
     setHsva(newHsva);
   }, [brushColor]);
