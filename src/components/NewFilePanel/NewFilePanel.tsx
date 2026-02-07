@@ -9,6 +9,7 @@ import { useToastStore } from '@/stores/toast';
 import {
   buildAllSizePresets,
   findPresetMatchByDimensions,
+  type SizePreset,
   toOrientedPresetSize,
   resolveOrientationFromSize,
 } from './presets';
@@ -117,15 +118,17 @@ export function NewFilePanel({
     [customSizePresets, selectedPresetId]
   );
 
-  function updatePresetSelection(nextWidth: string, nextHeight: string): void {
-    const resolvedWidth = parsePositiveInt(nextWidth);
-    const resolvedHeight = parsePositiveInt(nextHeight);
-    if (resolvedWidth === null || resolvedHeight === null) {
-      setSelectedPresetId(null);
-      return;
-    }
+  function findPresetById(presetId: string | null): SizePreset | null {
+    if (!presetId) return null;
+    return allSizePresets.find((preset) => preset.id === presetId) ?? null;
+  }
 
-    const match = findPresetMatchByDimensions(resolvedWidth, resolvedHeight, allSizePresets);
+  function applyPresetMatch(
+    resolvedWidth: number,
+    resolvedHeight: number,
+    presets = allSizePresets
+  ): void {
+    const match = findPresetMatchByDimensions(resolvedWidth, resolvedHeight, presets);
     if (match) {
       setSelectedPresetId(match.presetId);
       setOrientation(match.orientation);
@@ -133,6 +136,16 @@ export function NewFilePanel({
     }
     setSelectedPresetId(null);
     setOrientation(resolveOrientationFromSize(resolvedWidth, resolvedHeight));
+  }
+
+  function updatePresetSelection(nextWidth: string, nextHeight: string): void {
+    const resolvedWidth = parsePositiveInt(nextWidth);
+    const resolvedHeight = parsePositiveInt(nextHeight);
+    if (resolvedWidth === null || resolvedHeight === null) {
+      setSelectedPresetId(null);
+      return;
+    }
+    applyPresetMatch(resolvedWidth, resolvedHeight);
   }
 
   function handleCreate(): void {
@@ -152,7 +165,7 @@ export function NewFilePanel({
       return;
     }
 
-    const preset = allSizePresets.find((item) => item.id === presetId);
+    const preset = findPresetById(presetId);
     if (!preset) return;
 
     const oriented = toOrientedPresetSize(preset, orientation);
@@ -165,7 +178,7 @@ export function NewFilePanel({
     setOrientation(nextOrientation);
     if (!selectedPresetId) return;
 
-    const preset = allSizePresets.find((item) => item.id === selectedPresetId);
+    const preset = findPresetById(selectedPresetId);
     if (!preset) return;
 
     const oriented = toOrientedPresetSize(preset, nextOrientation);
@@ -228,11 +241,7 @@ export function NewFilePanel({
     const remainingAllPresets = buildAllSizePresets(remainingCustom);
 
     if (resolvedWidth !== null && resolvedHeight !== null) {
-      const match = findPresetMatchByDimensions(resolvedWidth, resolvedHeight, remainingAllPresets);
-      setSelectedPresetId(match?.presetId ?? null);
-      if (match) {
-        setOrientation(match.orientation);
-      }
+      applyPresetMatch(resolvedWidth, resolvedHeight, remainingAllPresets);
     } else {
       setSelectedPresetId(null);
     }

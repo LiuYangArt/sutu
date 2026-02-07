@@ -75,15 +75,6 @@ export function buildAllSizePresets(customSizePresets: CustomSizePreset[]): Size
   return [...DEFAULT_SIZE_PRESETS, ...mapCustomSizePresets(customSizePresets)];
 }
 
-export function findSizePresetById(
-  presetId: string | null,
-  customSizePresets: CustomSizePreset[]
-): SizePreset | null {
-  if (!presetId) return null;
-  const allPresets = buildAllSizePresets(customSizePresets);
-  return allPresets.find((preset) => preset.id === presetId) ?? null;
-}
-
 export function findPresetMatchByDimensions(
   width: number,
   height: number,

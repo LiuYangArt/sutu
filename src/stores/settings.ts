@@ -167,6 +167,31 @@ export const DEFAULT_NEW_FILE_SETTINGS: NewFileSettings = {
   },
 };
 
+function cloneDefaultNewFileSettings(): NewFileSettings {
+  return {
+    customSizePresets: [...DEFAULT_NEW_FILE_SETTINGS.customSizePresets],
+    lastUsed: { ...DEFAULT_NEW_FILE_SETTINGS.lastUsed },
+  };
+}
+
+function mergeLoadedNewFileSettings(loadedNewFile: unknown): NewFileSettings {
+  const defaults = cloneDefaultNewFileSettings();
+  if (!loadedNewFile || typeof loadedNewFile !== 'object') {
+    return defaults;
+  }
+
+  const partial = loadedNewFile as Partial<NewFileSettings>;
+  return {
+    customSizePresets: Array.isArray(partial.customSizePresets)
+      ? partial.customSizePresets
+      : defaults.customSizePresets,
+    lastUsed: {
+      ...defaults.lastUsed,
+      ...(partial.lastUsed ?? {}),
+    },
+  };
+}
+
 // Default settings
 const defaultSettings: PersistedSettings = {
   appearance: {
@@ -186,10 +211,7 @@ const defaultSettings: PersistedSettings = {
     colorBlendMode: 'linear',
     gpuRenderScaleMode: 'off',
   },
-  newFile: {
-    customSizePresets: [],
-    lastUsed: { ...DEFAULT_NEW_FILE_SETTINGS.lastUsed },
-  },
+  newFile: cloneDefaultNewFileSettings(),
 };
 
 function createCustomSizePresetId(): string {
@@ -411,22 +433,7 @@ export const useSettingsStore = create<SettingsState>()(
             if (loaded.brush) {
               state.brush = { ...defaultSettings.brush, ...loaded.brush };
             }
-            if (loaded.newFile) {
-              state.newFile = {
-                customSizePresets: Array.isArray(loaded.newFile.customSizePresets)
-                  ? loaded.newFile.customSizePresets
-                  : defaultSettings.newFile.customSizePresets,
-                lastUsed: {
-                  ...defaultSettings.newFile.lastUsed,
-                  ...loaded.newFile.lastUsed,
-                },
-              };
-            } else {
-              state.newFile = {
-                customSizePresets: [...defaultSettings.newFile.customSizePresets],
-                lastUsed: { ...defaultSettings.newFile.lastUsed },
-              };
-            }
+            state.newFile = mergeLoadedNewFileSettings(loaded.newFile);
             state.isLoaded = true;
           });
         } else {
