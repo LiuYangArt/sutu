@@ -14,6 +14,10 @@ interface UseSelectionHandlerProps {
   scale: number;
 }
 
+function isSelectionTool(tool: ToolType): boolean {
+  return tool === 'select' || tool === 'lasso';
+}
+
 interface SelectionHandlerResult {
   /** Handle pointer down for selection tools. Returns true if handled. */
   handleSelectionPointerDown: (
@@ -113,6 +117,7 @@ export function useSelectionHandler({
   // Use ref to avoid stale closure in event handlers
   const currentToolRef = useRef(currentTool);
   currentToolRef.current = currentTool;
+  const previousToolRef = useRef(currentTool);
 
   const resetGestureRefs = useCallback(function resetGestureRefs(): void {
     selectionHistoryBeforeRef.current = null;
@@ -141,6 +146,21 @@ export function useSelectionHandler({
 
     selectionHistoryBeforeRef.current = null;
   }, []);
+
+  const commitCreationIfNeeded = useCallback(
+    function commitCreationIfNeeded(): void {
+      const state = useSelectionStore.getState();
+      const isCreatingSelection = isSelectingRef.current || state.isCreating;
+      if (!isCreatingSelection) return;
+
+      const { width, height } = useDocumentStore.getState();
+      setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
+      commitSelection(width, height);
+      finalizeHistoryIfChanged();
+      resetGestureRefs();
+    },
+    [commitSelection, finalizeHistoryIfChanged, resetGestureRefs, setLassoMode]
+  );
 
   // Listen for Alt key changes globally
   useEffect(() => {
@@ -181,20 +201,7 @@ export function useSelectionHandler({
         const tool = currentToolRef.current;
         // When releasing Alt during lasso selection:
         if (tool === 'lasso' && isSelectingRef.current && prevAltRef.current) {
-          const { width, height } = useDocumentStore.getState();
-
-          // Determine final lasso mode based on interaction history
-          setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
-          commitSelection(width, height);
-          finalizeHistoryIfChanged();
-
-          // Reset all selection state
-          isSelectingRef.current = false;
-          startPointRef.current = null;
-          lastPointRef.current = null;
-          hasDraggedRef.current = false;
-          polygonalDragStartRef.current = null;
-          isMouseDownRef.current = false;
+          commitCreationIfNeeded();
         }
 
         prevAltRef.current = false;
@@ -218,9 +225,19 @@ export function useSelectionHandler({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [addCreationPoint, commitSelection, finalizeHistoryIfChanged, resetGestureRefs, setLassoMode]);
+  }, [addCreationPoint, commitCreationIfNeeded, resetGestureRefs]);
 
-  const isSelectionToolActive = currentTool === 'select' || currentTool === 'lasso';
+  const isSelectionToolActive = isSelectionTool(currentTool);
+
+  useEffect(() => {
+    const prevTool = previousToolRef.current;
+    const wasSelectionTool = isSelectionTool(prevTool);
+    const isSelectionToolNow = isSelectionTool(currentTool);
+    if (wasSelectionTool && !isSelectionToolNow) {
+      commitCreationIfNeeded();
+    }
+    previousToolRef.current = currentTool;
+  }, [commitCreationIfNeeded, currentTool]);
 
   // Effective lasso mode: Alt pressed = polygonal, otherwise freehand
   const effectiveLassoMode = altPressed ? 'polygonal' : 'freehand';
@@ -437,31 +454,17 @@ export function useSelectionHandler({
       }
 
       // Commit selection for rect select and freehand lasso
-      const { width, height } = useDocumentStore.getState();
-
-      // Update lasso mode based on usage history
-      setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
-      commitSelection(width, height);
-      finalizeHistoryIfChanged();
-
-      isSelectingRef.current = false;
-      startPointRef.current = null;
-      lastPointRef.current = null;
-      polygonalDragStartRef.current = null;
-      hasDraggedRef.current = false;
-      startedOnSelectionRef.current = false;
+      commitCreationIfNeeded();
     },
     [
       currentTool,
       altPressed,
       isMoving,
       addCreationPoint,
-      commitSelection,
       commitMove,
       deselectAll,
       captureBeforeIfNeeded,
-      finalizeHistoryIfChanged,
-      setLassoMode,
+      commitCreationIfNeeded,
     ]
   );
 
@@ -469,16 +472,10 @@ export function useSelectionHandler({
     (_canvasX: number, _canvasY: number): void => {
       // Double-click completes lasso selection (works in both modes)
       if (currentTool === 'lasso' && isCreating) {
-        const { width, height } = useDocumentStore.getState();
-        setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
-        commitSelection(width, height);
-        finalizeHistoryIfChanged();
-        isSelectingRef.current = false;
-        startPointRef.current = null;
-        lastPointRef.current = null;
+        commitCreationIfNeeded();
       }
     },
-    [currentTool, isCreating, commitSelection, finalizeHistoryIfChanged, setLassoMode]
+    [commitCreationIfNeeded, currentTool, isCreating]
   );
 
   return {

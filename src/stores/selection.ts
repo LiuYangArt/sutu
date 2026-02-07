@@ -289,9 +289,15 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       ? newMask
       : combineMasks(state.selectionMask!, newMask, state.selectionMode);
 
-    // Always trace path from the final mask to ensure Marching Ants (View) match the Mask (Model).
-    // This guarantees "What You See Is What You Get" for both smoothed freehand and sharp polygonal selections.
-    const finalPath = traceMaskToPaths(finalMask);
+    let finalPath: SelectionPoint[][];
+    if (isNewSelection) {
+      // 大画布新建选区走快速路径：直接复用创建路径，避免全量轮廓追踪卡顿。
+      // 布尔合成仍需从 mask 追踪轮廓，确保拓扑与结果像素一致。
+      finalPath = [path.map((p) => ({ ...p }))];
+    } else {
+      // 布尔运算后的选区必须从合成 mask 反推轮廓，确保蚂蚁线与像素结果一致。
+      finalPath = traceMaskToPaths(finalMask);
+    }
 
     const bounds = calculateBounds(finalPath);
     const hasSelection = finalPath.length > 0 && !!bounds;
