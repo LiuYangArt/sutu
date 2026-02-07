@@ -61,23 +61,27 @@ interface GpuUncapturedErrorSnapshot {
 const FLOAT16_TO_FLOAT32_LUT = new Float32Array(65536);
 let float16LutReady = false;
 
+function initializeFloat16Lut(): void {
+  for (let i = 0; i < 65536; i += 1) {
+    const sign = (i & 0x8000) !== 0 ? -1 : 1;
+    const exponent = (i >> 10) & 0x1f;
+    const mantissa = i & 0x03ff;
+
+    let out = 0;
+    if (exponent === 0) {
+      out = mantissa === 0 ? 0 : sign * 2 ** -14 * (mantissa / 1024);
+    } else if (exponent === 0x1f) {
+      out = mantissa === 0 ? sign * Infinity : Number.NaN;
+    } else {
+      out = sign * 2 ** (exponent - 15) * (1 + mantissa / 1024);
+    }
+    FLOAT16_TO_FLOAT32_LUT[i] = out;
+  }
+}
+
 function decodeFloat16(value: number): number {
   if (!float16LutReady) {
-    for (let i = 0; i < 65536; i += 1) {
-      const sign = (i & 0x8000) !== 0 ? -1 : 1;
-      const exponent = (i >> 10) & 0x1f;
-      const mantissa = i & 0x03ff;
-
-      let out = 0;
-      if (exponent === 0) {
-        out = mantissa === 0 ? 0 : sign * 2 ** -14 * (mantissa / 1024);
-      } else if (exponent === 0x1f) {
-        out = mantissa === 0 ? sign * Infinity : Number.NaN;
-      } else {
-        out = sign * 2 ** (exponent - 15) * (1 + mantissa / 1024);
-      }
-      FLOAT16_TO_FLOAT32_LUT[i] = out;
-    }
+    initializeFloat16Lut();
     float16LutReady = true;
   }
   return FLOAT16_TO_FLOAT32_LUT[value & 0xffff] ?? 0;

@@ -1,7 +1,7 @@
 # GPU-First 笔刷与渲染架构设计（8K 目标，Tile 化）
 
 **日期**：2026-02-05
-**状态**：执行中（M2 稳定性收敛持续；M3 已完成收口实现并通过自动回归）
+**状态**：执行中（M2 稳定性收敛持续；M3 已完成收口并通过自动 + 手工回归）
 
 ## 0. 执行进度快照（2026-02-07）
 
@@ -26,6 +26,7 @@
   - `commitStroke()` 引入显式 `activeLayerTmp` 复用路径，避免同纹理读写冲突并减少每 tile 临时纹理抖动。
   - `commitStroke()` 新增 dirty-rect 局部裁剪：按 tile 交集区域设置 viewport/scissor，仅绘制脏区域。
   - 自动检查通过：`pnpm -s typecheck`、`pnpm -s test`（`230 passed`）。
+  - 手工回归通过：本机绘制路径验证通过（含 `Temp Tile CopyDst` 缺陷修复后复测）。
 
 ## 1. 目标与成功标准
 
@@ -825,3 +826,15 @@
   - `pnpm -s typecheck`: PASS
   - `pnpm -s test -- dirtyTileClip layerStackCache GpuStrokeCommitCoordinator gpuLayerStackPolicy`: PASS（20 tests）
   - `pnpm -s test`: PASS（230 tests）
+
+### 13.18 M3 最终手测确认（2026-02-07）
+
+- Context：
+  - 在 `13.17` 合入后，出现过一次运行期 `GPUValidationError`：
+    - `Texture "Temp Tile" usage ... doesn't include TextureUsage::CopyDst`
+    - 后续连锁为 `Invalid CommandBuffer`（`recentSubmitLabel: Preview Readback Encoder`）。
+- Fix：
+  - `GpuCanvasRenderer.createTempTileTexture()` 补齐 `GPUTextureUsage.COPY_DST`。
+- Verification：
+  - 用户本机手测反馈：绘制链路恢复正常，问题不可复现（PASS）。
+  - 自动检查：`pnpm -s typecheck` PASS，`pnpm -s test -- GpuStrokeCommitCoordinator dirtyTileClip layerStackCache` PASS。

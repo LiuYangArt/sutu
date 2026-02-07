@@ -117,7 +117,7 @@
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复；按 2026-02-06 当日决议停止追加复测，维持 Phase 6A `PARTIAL PASS`；Phase 6B-2/6B-3 已完成；M3 已完成收口实现并通过自动回归
+**In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复；按 2026-02-06 当日决议停止追加复测，维持 Phase 6A `PARTIAL PASS`；Phase 6B-2/6B-3 已完成；M3 已完成收口实现并通过自动 + 手工回归
 
 ## M3 收口进展（2026-02-07）
 - 已落地多图层 GPU 显示合成主链路（`normal/multiply/screen/overlay`），不再由 `visibleLayerCount > 1` 直接触发回退。
@@ -153,6 +153,9 @@
   - `commitStroke` 新增 `activeLayerTmp` 复用，避免每 tile 临时纹理反复创建销毁。
   - `commitStroke` 新增 dirty-rect 局部 viewport/scissor 裁剪（只绘制 tile 脏区交集）。
   - 新增 `dirtyTileClip` 单测并通过全量自动测试。
+- 已完成：M3 最终缺陷修复与手测确认（2026-02-07）：
+  - 修复 `Temp Tile` 缺失 `CopyDst` usage 导致的 `Invalid CommandBuffer` 连锁报错。
+  - 用户本机手测确认“绘图恢复正常，无复现”。
 
 ## 今日决议（2026-02-06）
 - 不再执行新增稳定性回归测试（含 3 轮 replay 与 20 笔手工短测）。

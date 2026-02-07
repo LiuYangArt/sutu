@@ -637,7 +637,7 @@ export class GpuCanvasRenderer {
       const rect = this.layerStore.getTileRect(coord);
       if (rect.width <= 0 || rect.height <= 0) continue;
       const drawRegion = computeTileDrawRegion(rect, dirtyRect);
-      if (!drawRegion || drawRegion.width <= 0 || drawRegion.height <= 0) continue;
+      if (!drawRegion) continue;
 
       let existingTile = this.layerStore.getTile(layerId, coord);
       if (!existingTile && baseLayerCanvas) {
@@ -660,8 +660,8 @@ export class GpuCanvasRenderer {
           activeLayerTmpTexture = this.createTempTileTexture();
           activeLayerTmpView = activeLayerTmpTexture.createView();
         }
-        const shouldPreserveOutsideDirtyRegion = !this.isFullTileDraw(drawRegion, rect);
-        if (shouldPreserveOutsideDirtyRegion) {
+        const preserveOutsideDirtyRegion = !this.isFullTileDraw(drawRegion, rect);
+        if (preserveOutsideDirtyRegion) {
           encoder.copyTextureToTexture(
             { texture: existingTile.texture },
             { texture: activeLayerTmpTexture },
@@ -681,7 +681,7 @@ export class GpuCanvasRenderer {
           renderScale,
           applyDither,
           ditherStrength,
-          loadExistingTarget: shouldPreserveOutsideDirtyRegion,
+          loadExistingTarget: preserveOutsideDirtyRegion,
           uniformIndex: drawIndex,
         });
 
