@@ -791,9 +791,8 @@
   - `pnpm -s typecheck`: PASS
   - `pnpm -s test -- gpuLayerStackPolicy GpuStrokeHistoryStore GpuStrokeCommitCoordinator`: PASS（15 tests）
 - Manual gate（4K/多层）：
-  - 本次会话为 CLI 环境，未直接执行桌面交互门禁。
-  - 待在本机 UI 环境执行并回填：
-    - 场景 A：3+ 可见层连续 30s，稳定性检查。
-    - 场景 B：多层 GPU 路径 undo/redo 连续回退与恢复。
-    - 场景 C：GPU 支持 blend -> fallback 切换后 undo/redo 一致性。
-    - 场景 D：CPU 笔刷路径回归不变。
+  - 用户在本机 UI 环境完成 A/B/C/D 场景手工门禁并反馈通过（2026-02-07）。
+  - 场景 A：3+ 可见层连续绘制 30s，稳定性检查：PASS（无黑屏/断笔/卡死/ValidationError）。
+  - 场景 B：多层 GPU 路径 undo/redo 连续回退与恢复：PASS（逐笔一致，无跨笔回退）。
+  - 场景 C：GPU 支持 blend -> fallback 切换后 undo/redo 一致性：PASS（历史链路一致）。
+  - 场景 D：CPU 笔刷路径回归：PASS（行为无新增回归）。

@@ -410,6 +410,10 @@ export function Canvas() {
     [gpuDisplayActive, currentTool]
   );
 
+  const clearPendingGpuHistoryEntry = useCallback((): void => {
+    pendingGpuHistoryEntryIdRef.current = null;
+  }, []);
+
   const collectLiveGpuHistoryEntries = useCallback(
     (entries: HistoryEntry[], liveIds: Set<string>) => {
       for (const entry of entries) {
@@ -526,9 +530,9 @@ export function Canvas() {
 
   useEffect(() => {
     if (!gpuHistoryEnabled && !isDrawingRef.current) {
-      pendingGpuHistoryEntryIdRef.current = null;
+      clearPendingGpuHistoryEntry();
     }
-  }, [gpuHistoryEnabled]);
+  }, [clearPendingGpuHistoryEntry, gpuHistoryEnabled]);
 
   // Tablet store: We use getState() directly in event handlers for real-time data
   // No need to subscribe to state changes here since we sync-read in handlers
@@ -815,13 +819,13 @@ export function Canvas() {
   const beginGpuStrokeHistory = useCallback(
     (layerId: string): { entryId: string; snapshotMode: 'cpu' | 'gpu' } | null => {
       if (!gpuHistoryEnabled) {
-        pendingGpuHistoryEntryIdRef.current = null;
+        clearPendingGpuHistoryEntry();
         return null;
       }
 
       const historyStore = gpuStrokeHistoryStoreRef.current;
       if (!historyStore) {
-        pendingGpuHistoryEntryIdRef.current = null;
+        clearPendingGpuHistoryEntry();
         return null;
       }
 
@@ -830,7 +834,7 @@ export function Canvas() {
       pendingGpuHistoryEntryIdRef.current = snapshotMode === 'gpu' ? entryId : null;
       return { entryId, snapshotMode };
     },
-    [gpuHistoryEnabled]
+    [clearPendingGpuHistoryEntry, gpuHistoryEnabled]
   );
 
   const applyGpuStrokeHistory = useCallback(
@@ -928,7 +932,7 @@ export function Canvas() {
   const commitStrokeGpu = useCallback(async (): Promise<GpuStrokeCommitResult> => {
     const coordinator = gpuCommitCoordinatorRef.current;
     if (!coordinator) {
-      pendingGpuHistoryEntryIdRef.current = null;
+      clearPendingGpuHistoryEntry();
       return {
         committed: false,
         dirtyRect: null,
@@ -950,7 +954,7 @@ export function Canvas() {
     try {
       result = await coordinator.commit(activeLayerId, commitOptions);
     } finally {
-      pendingGpuHistoryEntryIdRef.current = null;
+      clearPendingGpuHistoryEntry();
     }
     if (
       activeLayerId &&
@@ -961,7 +965,12 @@ export function Canvas() {
       schedulePendingGpuCpuSync(activeLayerId);
     }
     return result;
-  }, [activeLayerId, trackPendingGpuCpuSyncTiles, schedulePendingGpuCpuSync]);
+  }, [
+    activeLayerId,
+    clearPendingGpuHistoryEntry,
+    trackPendingGpuCpuSyncTiles,
+    schedulePendingGpuCpuSync,
+  ]);
 
   const getGpuBrushCommitMetricsSnapshot = useCallback((): GpuBrushCommitMetricsSnapshot | null => {
     return gpuCommitCoordinatorRef.current?.getCommitMetricsSnapshot() ?? null;

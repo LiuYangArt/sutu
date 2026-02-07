@@ -147,7 +147,7 @@
   - `GpuCanvasRenderer.ts`：layerBlend uniform 游标逻辑改为直接返回 offset，减少中间状态与误用风险。
   - `Canvas/index.tsx`：移除 `sampleGpuPixelColor` 冗余依赖。
   - `ColorPanel/index.tsx`：颜色同步判定分支简化，提升可读性。
-- 待执行：M3 手工门禁回放与 4K/多层稳定性验收回填（需桌面交互环境执行 `DebugPanel` 门禁后补录）。
+- 已完成：M3 手工门禁回放与 4K/多层稳定性验收回填（2026-02-07，用户本机 UI 环境 A/B/C/D 场景均 PASS）。
 
 ## 今日决议（2026-02-06）
 - 不再执行新增稳定性回归测试（含 3 轮 replay 与 20 笔手工短测）。
