@@ -2,8 +2,6 @@ import type { ToolType } from '@/stores/tool';
 import type { BlendMode } from '@/stores/document';
 import type { GpuLayerBlendModeM3 } from '@/gpu';
 
-const GPU_STACK_TOOLS = new Set<ToolType>(['brush', 'zoom', 'eyedropper']);
-
 const GPU_LAYER_BLEND_MODE_M3: readonly GpuLayerBlendModeM3[] = [
   'normal',
   'multiply',
@@ -41,12 +39,7 @@ export function isGpuLayerStackPathAvailable(args: {
   layers: GpuLayerStackGateLayer[];
 }): boolean {
   const { brushBackend, gpuAvailable, currentTool, layers } = args;
-  if (
-    brushBackend !== 'gpu' ||
-    !gpuAvailable ||
-    !currentTool ||
-    !GPU_STACK_TOOLS.has(currentTool)
-  ) {
+  if (brushBackend !== 'gpu' || !gpuAvailable || !currentTool) {
     return false;
   }
 

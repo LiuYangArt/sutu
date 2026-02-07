@@ -52,9 +52,8 @@ pub fn save_psd(path: &Path, project: &ProjectData) -> Result<(), FileError> {
 fn prepare_layers(project: &ProjectData) -> Result<Vec<PreparedLayer>, FileError> {
     let mut prepared = Vec::with_capacity(project.layers.len());
 
-    // PSD layer order: first layer in array appears at bottom in Photoshop panel
-    // PaintBoard layer order: first layer (index 0) is at bottom
-    // So we keep the same order (no reversal needed)
+    // Keep project layer order as-is.
+    // PaintBoard's current layer array order already matches Photoshop export expectation.
     for layer in project.layers.iter() {
         if let Some(ref image_data) = layer.image_data {
             let prepared_layer = prepare_layer(layer, image_data, project.width, project.height)?;
@@ -475,6 +474,8 @@ fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::file::types::LayerData;
+    use image::{ImageBuffer, ImageFormat, Rgba};
 
     #[test]
     fn test_write_pascal_string() {
@@ -512,5 +513,62 @@ mod tests {
         let img = result.unwrap();
         assert_eq!(img.width(), 10);
         assert_eq!(img.height(), 10);
+    }
+
+    #[test]
+    fn test_prepare_layers_preserves_project_order() {
+        let image_data = {
+            let img = ImageBuffer::from_pixel(1, 1, Rgba([255, 0, 0, 255]));
+            let mut cursor = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(img)
+                .write_to(&mut cursor, ImageFormat::Png)
+                .expect("encode png");
+            format!(
+                "data:image/png;base64,{}",
+                BASE64.encode(cursor.into_inner())
+            )
+        };
+
+        let project = ProjectData {
+            width: 1,
+            height: 1,
+            dpi: 72,
+            layers: vec![
+                LayerData {
+                    id: "bottom".to_string(),
+                    name: "Bottom".to_string(),
+                    layer_type: "raster".to_string(),
+                    visible: true,
+                    locked: false,
+                    opacity: 1.0,
+                    blend_mode: "normal".to_string(),
+                    is_background: Some(true),
+                    image_data: Some(image_data.clone()),
+                    offset_x: 0,
+                    offset_y: 0,
+                },
+                LayerData {
+                    id: "top".to_string(),
+                    name: "Top".to_string(),
+                    layer_type: "raster".to_string(),
+                    visible: true,
+                    locked: false,
+                    opacity: 1.0,
+                    blend_mode: "difference".to_string(),
+                    is_background: Some(false),
+                    image_data: Some(image_data),
+                    offset_x: 0,
+                    offset_y: 0,
+                },
+            ],
+            flattened_image: None,
+            thumbnail: None,
+            benchmark: None,
+        };
+
+        let prepared = prepare_layers(&project).expect("prepare layers");
+        assert_eq!(prepared.len(), 2);
+        assert_eq!(prepared[0].name, "Bottom");
+        assert_eq!(prepared[1].name, "Top");
     }
 }

@@ -114,6 +114,31 @@ fn hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
   );
 }
 
+fn lum(color: vec3<f32>) -> f32 {
+  return dot(color, vec3<f32>(0.3, 0.59, 0.11));
+}
+
+fn clip_color(color: vec3<f32>) -> vec3<f32> {
+  var out = color;
+  let l = lum(out);
+  let n = min(out.r, min(out.g, out.b));
+  let x = max(out.r, max(out.g, out.b));
+
+  if (n < 0.0) {
+    out = vec3<f32>(l) + ((out - vec3<f32>(l)) * l) / max(0.0001, l - n);
+  }
+  if (x > 1.0) {
+    out = vec3<f32>(l) + ((out - vec3<f32>(l)) * (1.0 - l)) / max(0.0001, x - l);
+  }
+
+  return out;
+}
+
+fn set_lum(color: vec3<f32>, l: f32) -> vec3<f32> {
+  let d = l - lum(color);
+  return clip_color(color + vec3<f32>(d));
+}
+
 fn blend_rgb(mode: u32, dst: vec3<f32>, src: vec3<f32>) -> vec3<f32> {
   switch mode {
     case 1u: {
@@ -176,14 +201,10 @@ fn blend_rgb(mode: u32, dst: vec3<f32>, src: vec3<f32>) -> vec3<f32> {
       return hsl_to_rgb(vec3<f32>(dst_hsl.x, src_hsl.y, dst_hsl.z));
     }
     case 14u: {
-      let dst_hsl = rgb_to_hsl(dst);
-      let src_hsl = rgb_to_hsl(src);
-      return hsl_to_rgb(vec3<f32>(src_hsl.x, src_hsl.y, dst_hsl.z));
+      return set_lum(src, lum(dst));
     }
     case 15u: {
-      let dst_hsl = rgb_to_hsl(dst);
-      let src_hsl = rgb_to_hsl(src);
-      return hsl_to_rgb(vec3<f32>(dst_hsl.x, dst_hsl.y, src_hsl.z));
+      return set_lum(dst, lum(src));
     }
     default: {
       return src;

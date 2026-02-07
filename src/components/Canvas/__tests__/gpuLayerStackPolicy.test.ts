@@ -8,7 +8,7 @@ import {
 } from '../gpuLayerStackPolicy';
 
 describe('gpuLayerStackPolicy', () => {
-  it('allows GPU stack path when backend/tool/visible blend are supported', () => {
+  it('allows GPU stack path when backend and visible blend are supported', () => {
     const allowed = isGpuLayerStackPathAvailable({
       brushBackend: 'gpu',
       gpuAvailable: true,
@@ -16,6 +16,19 @@ describe('gpuLayerStackPolicy', () => {
       layers: [
         { visible: true, blendMode: 'normal' },
         { visible: true, blendMode: 'multiply' },
+      ],
+    });
+    expect(allowed).toBe(true);
+  });
+
+  it('keeps GPU stack path enabled for non-brush tools to avoid display-path color shifts', () => {
+    const allowed = isGpuLayerStackPathAvailable({
+      brushBackend: 'gpu',
+      gpuAvailable: true,
+      currentTool: 'select',
+      layers: [
+        { visible: true, blendMode: 'normal' },
+        { visible: true, blendMode: 'luminosity' },
       ],
     });
     expect(allowed).toBe(true);
