@@ -38,6 +38,7 @@ interface UseKeyboardShortcutsParams {
   height: number;
   setIsPanning: (isPanning: boolean) => void;
   panStartRef: MutableRefObject<{ x: number; y: number } | null>;
+  onBeforeSelectionMutation?: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -54,6 +55,7 @@ export function useKeyboardShortcuts({
   height,
   setIsPanning,
   panStartRef,
+  onBeforeSelectionMutation,
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
   const pushSelection = useHistoryStore((s) => s.pushSelection);
@@ -61,13 +63,14 @@ export function useKeyboardShortcuts({
     (action: () => void): void => {
       const selStore = useSelectionStore.getState();
       const before = selStore.createSnapshot();
+      onBeforeSelectionMutation?.();
       action();
       const after = selStore.createSnapshot();
       if (didSelectionChange(before, after)) {
         pushSelection(before);
       }
     },
-    [pushSelection]
+    [onBeforeSelectionMutation, pushSelection]
   );
 
   useEffect(() => {
@@ -123,6 +126,7 @@ export function useKeyboardShortcuts({
       // ESC: Cancel selection move or creation
       if (e.code === 'Escape') {
         const selState = useSelectionStore.getState();
+        onBeforeSelectionMutation?.();
         if (selState.isMoving) {
           selState.cancelMove();
         } else {
@@ -230,6 +234,7 @@ export function useKeyboardShortcuts({
     pushSelection,
     panStartRef,
     recordSelectionChange,
+    onBeforeSelectionMutation,
   ]);
 
   return { spacePressed };

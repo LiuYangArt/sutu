@@ -123,6 +123,18 @@ const MIN_GPU_HISTORY_BUDGET_BYTES = 256 * 1024 * 1024;
 const MAX_GPU_HISTORY_BUDGET_BYTES = 1024 * 1024 * 1024;
 const GPU_HISTORY_BUDGET_RATIO = 0.2;
 
+interface CompositeClipRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+interface CompositeRenderOptions {
+  clipRect?: CompositeClipRect | null;
+  forceCpu?: boolean;
+}
+
 function isLineTool(tool: ToolType | null): boolean {
   return tool === 'brush' || tool === 'eraser';
 }
@@ -164,6 +176,7 @@ function parseTrackedTileCoordKeys(tileKeys: Set<string>): Array<{ x: number; y:
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
+  const movePreviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
   const brushCursorRef = useRef<HTMLDivElement>(null);
@@ -193,6 +206,8 @@ export function Canvas() {
   const prevGpuDisplayLayerIdRef = useRef<string | null>(null);
   const pendingGpuCpuSyncLayerRef = useRef<string | null>(null);
   const pendingGpuCpuSyncRafRef = useRef<number | null>(null);
+  const finalizeFloatingSelectionSessionRef = useRef<(reason?: string) => void>(() => undefined);
+  const hasFloatingSelectionSessionRef = useRef<() => boolean>(() => false);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
   const [gpuSelectionPipelineV2Enabled, setGpuSelectionPipelineV2Enabled] = useState(true);
   const [devicePixelRatio, setDevicePixelRatio] = useState(() =>
@@ -394,6 +409,19 @@ export function Canvas() {
     []
   );
 
+  const finalizeFloatingSessionIfNeeded = useCallback((reason: string): void => {
+    if (!hasFloatingSelectionSessionRef.current()) return;
+    finalizeFloatingSelectionSessionRef.current(reason);
+  }, []);
+
+  const onBeforeCanvasMutation = useCallback(() => {
+    finalizeFloatingSessionIfNeeded('canvas-mutation');
+  }, [finalizeFloatingSessionIfNeeded]);
+
+  const onBeforeSelectionMutation = useCallback(() => {
+    finalizeFloatingSessionIfNeeded('selection-mutation');
+  }, [finalizeFloatingSessionIfNeeded]);
+
   // Selection handler for rect select and lasso tools
   const {
     handleSelectionPointerDown,
@@ -401,7 +429,7 @@ export function Canvas() {
     handleSelectionPointerUp,
     handleSelectionDoubleClick: _handleSelectionDoubleClick,
     isSelectionToolActive,
-  } = useSelectionHandler({ currentTool, scale });
+  } = useSelectionHandler({ currentTool, scale, onBeforeSelectionMutation });
 
   // Get selection store actions for keyboard shortcuts
   const { selectAll, deselectAll, cancelSelection } = useSelectionStore();
@@ -843,56 +871,94 @@ export function Canvas() {
   });
 
   // Composite all layers and render to display canvas
-  const compositeAndRender = useCallback(() => {
-    const canvas = canvasRef.current;
-    const renderer = layerRendererRef.current;
+  const compositeAndRender = useCallback(
+    (options?: CompositeRenderOptions) => {
+      const canvas = canvasRef.current;
+      const renderer = layerRendererRef.current;
 
-    if (!canvas || !renderer) return;
+      if (!canvas || !renderer) return;
 
-    // Ensure display canvas buffer matches document size (needed for immediate resize/undo/redo)
-    const { width: docWidth, height: docHeight } = useDocumentStore.getState();
-    if (canvas.width !== docWidth) canvas.width = docWidth;
-    if (canvas.height !== docHeight) canvas.height = docHeight;
-    const gpuCanvas = gpuCanvasRef.current;
-    if (gpuCanvas) {
-      if (gpuCanvas.width !== docWidth) gpuCanvas.width = docWidth;
-      if (gpuCanvas.height !== docHeight) gpuCanvas.height = docHeight;
-    }
-
-    if (gpuDisplayActive && gpuRendererRef.current) {
-      const visibleGpuLayers = getVisibleGpuRenderableLayers();
-      for (const visibleLayer of visibleGpuLayers) {
-        const layer = renderer.getLayer(visibleLayer.id);
-        if (!layer) continue;
-        gpuRendererRef.current.syncLayerFromCanvas(
-          visibleLayer.id,
-          layer.canvas,
-          visibleLayer.revision
-        );
+      // Ensure display canvas buffer matches document size (needed for immediate resize/undo/redo)
+      const { width: docWidth, height: docHeight } = useDocumentStore.getState();
+      if (canvas.width !== docWidth) canvas.width = docWidth;
+      if (canvas.height !== docHeight) canvas.height = docHeight;
+      const gpuCanvas = gpuCanvasRef.current;
+      if (gpuCanvas) {
+        if (gpuCanvas.width !== docWidth) gpuCanvas.width = docWidth;
+        if (gpuCanvas.height !== docHeight) gpuCanvas.height = docHeight;
       }
 
-      gpuRendererRef.current.renderLayerStackFrame({
-        layers: visibleGpuLayers,
-        activeLayerId,
-        scratchTexture: null,
-        strokeOpacity: 1,
-        renderScale: getGpuRenderScale(),
-      });
+      const clipRect = options?.clipRect ?? null;
+      const normalizedRegion = clipRect
+        ? (() => {
+            const x = Math.max(0, Math.floor(clipRect.left));
+            const y = Math.max(0, Math.floor(clipRect.top));
+            const right = Math.min(docWidth, Math.ceil(clipRect.right));
+            const bottom = Math.min(docHeight, Math.ceil(clipRect.bottom));
+            const width = right - x;
+            const height = bottom - y;
+            if (width <= 0 || height <= 0) return null;
+            return { x, y, width, height };
+          })()
+        : null;
+
+      const useGpuPath =
+        gpuDisplayActive &&
+        !!gpuRendererRef.current &&
+        !options?.forceCpu &&
+        normalizedRegion === null;
+      if (useGpuPath) {
+        const gpuRenderer = gpuRendererRef.current;
+        if (!gpuRenderer) return;
+        const visibleGpuLayers = getVisibleGpuRenderableLayers();
+        for (const visibleLayer of visibleGpuLayers) {
+          const layer = renderer.getLayer(visibleLayer.id);
+          if (!layer) continue;
+          gpuRenderer.syncLayerFromCanvas(visibleLayer.id, layer.canvas, visibleLayer.revision);
+        }
+
+        gpuRenderer.renderLayerStackFrame({
+          layers: visibleGpuLayers,
+          activeLayerId,
+          scratchTexture: null,
+          strokeOpacity: 1,
+          renderScale: getGpuRenderScale(),
+        });
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, docWidth, docHeight);
+        return;
+      }
+
       const ctx = canvas.getContext('2d');
-      if (ctx) ctx.clearRect(0, 0, docWidth, docHeight);
-      return;
-    }
+      if (!ctx) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      const compositeCanvas = renderer.composite(undefined, normalizedRegion ?? undefined);
+      if (normalizedRegion) {
+        ctx.clearRect(
+          normalizedRegion.x,
+          normalizedRegion.y,
+          normalizedRegion.width,
+          normalizedRegion.height
+        );
+        ctx.drawImage(
+          compositeCanvas,
+          normalizedRegion.x,
+          normalizedRegion.y,
+          normalizedRegion.width,
+          normalizedRegion.height,
+          normalizedRegion.x,
+          normalizedRegion.y,
+          normalizedRegion.width,
+          normalizedRegion.height
+        );
+        return;
+      }
 
-    // Composite all layers
-    const compositeCanvas = renderer.composite();
-
-    // Clear and draw composite to display canvas
-    ctx.clearRect(0, 0, docWidth, docHeight);
-    ctx.drawImage(compositeCanvas, 0, 0);
-  }, [activeLayerId, getGpuRenderScale, getVisibleGpuRenderableLayers, gpuDisplayActive]);
+      ctx.clearRect(0, 0, docWidth, docHeight);
+      ctx.drawImage(compositeCanvas, 0, 0);
+    },
+    [activeLayerId, getGpuRenderScale, getVisibleGpuRenderableLayers, gpuDisplayActive]
+  );
 
   const beginGpuStrokeHistory = useCallback(
     (layerId: string): { entryId: string; snapshotMode: 'cpu' | 'gpu' } | null => {
@@ -972,10 +1038,18 @@ export function Canvas() {
     gpuHistoryEnabled,
     beginGpuStrokeHistory,
     applyGpuStrokeHistory,
+    onBeforeCanvasMutation,
   });
 
-  const { handleMovePointerDown, handleMovePointerMove, handleMovePointerUp } = useMoveTool({
+  const {
+    handleMovePointerDown,
+    handleMovePointerMove,
+    handleMovePointerUp,
+    finalizeFloatingSelectionSession,
+    hasFloatingSelectionSession,
+  } = useMoveTool({
     layerRendererRef,
+    movePreviewCanvasRef,
     currentTool,
     layers,
     activeLayerId,
@@ -988,7 +1062,21 @@ export function Canvas() {
     markLayerDirty,
     compositeAndRender,
     updateThumbnail,
+    getLayerRevision,
+    getVisibleCanvasRect: () => {
+      const container = containerRef.current;
+      if (!container || displayScale <= 0) return null;
+      const rect = container.getBoundingClientRect();
+      const left = Math.max(0, -offsetX / displayScale);
+      const top = Math.max(0, -offsetY / displayScale);
+      const right = Math.min(width, (rect.width - offsetX) / displayScale);
+      const bottom = Math.min(height, (rect.height - offsetY) / displayScale);
+      if (left >= right || top >= bottom) return null;
+      return { left, top, right, bottom };
+    },
   });
+  finalizeFloatingSelectionSessionRef.current = finalizeFloatingSelectionSession;
+  hasFloatingSelectionSessionRef.current = hasFloatingSelectionSession;
 
   const renderGpuFrame = useCallback(
     (showScratch: boolean) => {
@@ -1493,6 +1581,7 @@ export function Canvas() {
     height,
     setIsPanning,
     panStartRef,
+    onBeforeSelectionMutation,
   });
 
   const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
@@ -1561,6 +1650,7 @@ export function Canvas() {
     pendingEndRef,
     lastInputPosRef,
     latencyProfilerRef,
+    onBeforeCanvasMutation,
   });
 
   // 计算 viewport 变换样式
@@ -1605,6 +1695,13 @@ export function Canvas() {
           height={height}
           className="main-canvas"
           data-testid="main-canvas"
+        />
+        <canvas
+          ref={movePreviewCanvasRef}
+          width={width}
+          height={height}
+          className="move-preview-canvas"
+          data-testid="move-preview-canvas"
         />
       </div>
       {showDomCursor && (

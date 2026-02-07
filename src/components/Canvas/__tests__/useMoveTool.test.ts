@@ -235,4 +235,216 @@ describe('useMoveTool', () => {
     expect(payload?.selectionBefore).toBeTruthy();
     expect(payload?.selectionAfter).toBeTruthy();
   });
+
+  it('reuses floating selection source across consecutive drags before invalidation', async () => {
+    const width = 32;
+    const height = 32;
+    const layerA = makeLayerCanvas('layerA', width, height);
+    const renderer = {
+      getLayer: vi.fn(() => layerA),
+    } as unknown as LayerRenderer;
+
+    const maskData = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < maskData.length; i += 4) {
+      maskData[i + 3] = 255;
+    }
+    useSelectionStore.setState({
+      hasSelection: true,
+      selectionMask: new ImageData(maskData, width, height),
+      selectionMaskPending: false,
+      selectionPath: [
+        [
+          { x: 1, y: 1, type: 'polygonal' },
+          { x: 9, y: 1, type: 'polygonal' },
+          { x: 9, y: 9, type: 'polygonal' },
+          { x: 1, y: 9, type: 'polygonal' },
+          { x: 1, y: 1, type: 'polygonal' },
+        ],
+      ],
+      bounds: { x: 1, y: 1, width: 8, height: 8 },
+    });
+
+    let layerRevision = 0;
+    const markLayerDirty = vi.fn(() => {
+      layerRevision += 1;
+    });
+
+    const originalCreateElement = document.createElement.bind(document);
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation(((
+      tagName: string,
+      options?: ElementCreationOptions
+    ) => {
+      return originalCreateElement(tagName, options);
+    }) as typeof document.createElement);
+
+    const { result } = renderHook(() =>
+      useMoveTool({
+        layerRendererRef: { current: renderer },
+        currentTool: 'move',
+        layers: [{ id: 'layerA', visible: true, locked: false, opacity: 100 } as Layer],
+        activeLayerId: 'layerA',
+        width,
+        height,
+        setActiveLayer: vi.fn(),
+        syncAllPendingGpuLayersToCpu: vi.fn(async () => 0),
+        captureBeforeImage: vi.fn(async () => undefined),
+        saveStrokeToHistory: vi.fn(),
+        markLayerDirty,
+        compositeAndRender: vi.fn(),
+        updateThumbnail: vi.fn(),
+        getLayerRevision: () => layerRevision,
+      })
+    );
+
+    act(() => {
+      result.current.handleMovePointerDown(2, 2, { ctrlKey: false, pointerId: 41 });
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+    act(() => {
+      result.current.handleMovePointerMove(8, 8, { pointerId: 41 });
+      result.current.handleMovePointerUp(8, 8, { pointerId: 41 });
+    });
+
+    const canvasCreateCountAfterFirstDrag = createElementSpy.mock.calls.filter(
+      (call) => call[0] === 'canvas'
+    ).length;
+
+    act(() => {
+      result.current.handleMovePointerDown(8, 8, { ctrlKey: false, pointerId: 42 });
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+
+    const canvasCreateCountAfterSecondDown = createElementSpy.mock.calls.filter(
+      (call) => call[0] === 'canvas'
+    ).length;
+    expect(canvasCreateCountAfterSecondDown).toBe(canvasCreateCountAfterFirstDrag);
+
+    createElementSpy.mockRestore();
+  });
+
+  it('keeps selection move offsets when moving outside canvas bounds', async () => {
+    const width = 32;
+    const height = 32;
+    const layerA = makeLayerCanvas('layerA', width, height);
+    const renderer = {
+      getLayer: vi.fn(() => layerA),
+    } as unknown as LayerRenderer;
+
+    const maskData = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < maskData.length; i += 4) {
+      maskData[i + 3] = 255;
+    }
+    useSelectionStore.setState({
+      hasSelection: true,
+      selectionMask: new ImageData(maskData, width, height),
+      selectionMaskPending: false,
+      selectionPath: [
+        [
+          { x: 3, y: 3, type: 'polygonal' },
+          { x: 10, y: 3, type: 'polygonal' },
+          { x: 10, y: 10, type: 'polygonal' },
+          { x: 3, y: 10, type: 'polygonal' },
+          { x: 3, y: 3, type: 'polygonal' },
+        ],
+      ],
+      bounds: { x: 3, y: 3, width: 7, height: 7 },
+    });
+
+    const { result } = renderHook(() =>
+      useMoveTool({
+        layerRendererRef: { current: renderer },
+        currentTool: 'move',
+        layers: [{ id: 'layerA', visible: true, locked: false, opacity: 100 } as Layer],
+        activeLayerId: 'layerA',
+        width,
+        height,
+        setActiveLayer: vi.fn(),
+        syncAllPendingGpuLayersToCpu: vi.fn(async () => 0),
+        captureBeforeImage: vi.fn(async () => undefined),
+        saveStrokeToHistory: vi.fn(),
+        markLayerDirty: vi.fn(),
+        compositeAndRender: vi.fn(),
+        updateThumbnail: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.handleMovePointerDown(4, 4, { ctrlKey: false, pointerId: 21 });
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+
+    act(() => {
+      result.current.handleMovePointerMove(-12, 5, { pointerId: 21 });
+      result.current.handleMovePointerUp(-12, 5, { pointerId: 21 });
+    });
+
+    const drawCalls = (layerA.ctx.drawImage as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const hasNegativeOffsetRender = drawCalls.some(
+      (args: unknown[]) => typeof args[1] === 'number' && typeof args[2] === 'number' && args[1] < 0
+    );
+    expect(hasNegativeOffsetRender).toBe(true);
+  });
+
+  it('uses clipped CPU composite path during move preview', async () => {
+    const width = 32;
+    const height = 32;
+    const layerA = makeLayerCanvas('layerA', width, height);
+    const renderer = {
+      getLayer: vi.fn(() => layerA),
+    } as unknown as LayerRenderer;
+
+    const compositeAndRender = vi.fn();
+    const rafSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+
+    const { result } = renderHook(() =>
+      useMoveTool({
+        layerRendererRef: { current: renderer },
+        currentTool: 'move',
+        layers: [{ id: 'layerA', visible: true, locked: false, opacity: 100 } as Layer],
+        activeLayerId: 'layerA',
+        width,
+        height,
+        setActiveLayer: vi.fn(),
+        syncAllPendingGpuLayersToCpu: vi.fn(async () => 0),
+        captureBeforeImage: vi.fn(async () => undefined),
+        saveStrokeToHistory: vi.fn(),
+        markLayerDirty: vi.fn(),
+        compositeAndRender,
+        updateThumbnail: vi.fn(),
+        getVisibleCanvasRect: () => ({ left: 4, top: 5, right: 20, bottom: 21 }),
+      })
+    );
+
+    act(() => {
+      result.current.handleMovePointerDown(6, 7, { ctrlKey: false, pointerId: 31 });
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+
+    const previewCallMatched = compositeAndRender.mock.calls.some((call) => {
+      const payload = call[0] as
+        | { forceCpu?: boolean; clipRect?: { left: number; top: number } }
+        | undefined;
+      return (
+        payload?.forceCpu === true && payload.clipRect?.left === 4 && payload.clipRect?.top === 5
+      );
+    });
+    expect(previewCallMatched).toBe(true);
+
+    rafSpy.mockRestore();
+    cancelSpy.mockRestore();
+  });
 });

@@ -12,6 +12,7 @@ import { ToolType } from '@/stores/tool';
 interface UseSelectionHandlerProps {
   currentTool: ToolType;
   scale: number;
+  onBeforeSelectionMutation?: () => void;
 }
 
 function isSelectionTool(tool: ToolType): boolean {
@@ -64,6 +65,7 @@ interface SelectionHandlerResult {
  */
 export function useSelectionHandler({
   currentTool,
+  onBeforeSelectionMutation,
 }: UseSelectionHandlerProps): SelectionHandlerResult {
   const {
     isCreating,
@@ -130,10 +132,14 @@ export function useSelectionHandler({
     startedOnSelectionRef.current = false;
   }, []);
 
-  const captureBeforeIfNeeded = useCallback(function captureBeforeIfNeeded(): void {
-    if (selectionHistoryBeforeRef.current) return;
-    selectionHistoryBeforeRef.current = useSelectionStore.getState().createSnapshot();
-  }, []);
+  const captureBeforeIfNeeded = useCallback(
+    function captureBeforeIfNeeded(): void {
+      if (selectionHistoryBeforeRef.current) return;
+      onBeforeSelectionMutation?.();
+      selectionHistoryBeforeRef.current = useSelectionStore.getState().createSnapshot();
+    },
+    [onBeforeSelectionMutation]
+  );
 
   const finalizeHistoryIfChanged = useCallback(function finalizeHistoryIfChanged(): void {
     const before = selectionHistoryBeforeRef.current;

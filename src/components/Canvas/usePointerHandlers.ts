@@ -89,6 +89,7 @@ interface UsePointerHandlersParams {
   pendingEndRef: MutableRefObject<boolean>;
   lastInputPosRef: MutableRefObject<{ x: number; y: number } | null>;
   latencyProfilerRef: MutableRefObject<LatencyProfiler>;
+  onBeforeCanvasMutation?: () => void;
 }
 
 export function usePointerHandlers({
@@ -136,6 +137,7 @@ export function usePointerHandlers({
   pendingEndRef,
   lastInputPosRef,
   latencyProfilerRef,
+  onBeforeCanvasMutation,
 }: UsePointerHandlersParams) {
   const trySetPointerCapture = useCallback((target: Element, event: React.PointerEvent) => {
     const native = event.nativeEvent as PointerEvent;
@@ -314,6 +316,8 @@ export function usePointerHandlers({
         return;
       }
 
+      onBeforeCanvasMutation?.();
+
       // Brush Tool: Use State Machine Logic
       if (currentTool === 'brush') {
         isDrawingRef.current = true;
@@ -392,6 +396,7 @@ export function usePointerHandlers({
       latencyProfilerRef,
       trySetPointerCapture,
       usingRawInput,
+      onBeforeCanvasMutation,
     ]
   );
 

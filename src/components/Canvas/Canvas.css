@@ -19,7 +19,8 @@
 }
 
 .gpu-canvas,
-.main-canvas {
+.main-canvas,
+.move-preview-canvas {
   position: absolute;
   top: 0;
   left: 0;
@@ -33,6 +34,10 @@
 
 .main-canvas {
   z-index: 1;
+}
+
+.move-preview-canvas {
+  z-index: 2;
 }
 
 /* Screen-space checkerboard background */

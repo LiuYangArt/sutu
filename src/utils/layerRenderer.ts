@@ -13,6 +13,13 @@ export interface LayerCanvas {
   isBackground: boolean; // Background layer cannot be erased to transparency
 }
 
+interface CompositeRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /**
  * Map CSS blend mode names to canvas globalCompositeOperation
  */
@@ -43,19 +50,54 @@ function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+function normalizeCompositeRegion(
+  region: CompositeRegion | undefined,
+  width: number,
+  height: number
+): CompositeRegion | null {
+  if (!region) return null;
+  const x = Math.max(0, Math.floor(region.x));
+  const y = Math.max(0, Math.floor(region.y));
+  const right = Math.min(width, Math.ceil(region.x + region.width));
+  const bottom = Math.min(height, Math.ceil(region.y + region.height));
+  const w = right - x;
+  const h = bottom - y;
+  if (w <= 0 || h <= 0) return null;
+  return { x, y, width: w, height: h };
+}
+
 function compositeDifferenceLayer(args: {
   dstCtx: CanvasRenderingContext2D;
   sourceCanvas: HTMLCanvasElement;
   width: number;
   height: number;
   layerOpacity: number;
+  region?: CompositeRegion | null;
 }): void {
-  const { dstCtx, sourceCanvas, width, height, layerOpacity } = args;
+  const { dstCtx, sourceCanvas, width, height, layerOpacity, region } = args;
   const srcCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
   if (!srcCtx) return;
 
-  const dst = dstCtx.getImageData(0, 0, width, height);
-  const src = srcCtx.getImageData(0, 0, width, height);
+  const targetRegion = normalizeCompositeRegion(region ?? undefined, width, height) ?? {
+    x: 0,
+    y: 0,
+    width,
+    height,
+  };
+  if (targetRegion.width <= 0 || targetRegion.height <= 0) return;
+
+  const dst = dstCtx.getImageData(
+    targetRegion.x,
+    targetRegion.y,
+    targetRegion.width,
+    targetRegion.height
+  );
+  const src = srcCtx.getImageData(
+    targetRegion.x,
+    targetRegion.y,
+    targetRegion.width,
+    targetRegion.height
+  );
   const out = dst.data;
   const srcData = src.data;
 
@@ -106,7 +148,7 @@ function compositeDifferenceLayer(args: {
     out[i + 3] = Math.round(clampUnit(outAlpha) * 255);
   }
 
-  dstCtx.putImageData(dst, 0, 0);
+  dstCtx.putImageData(dst, targetRegion.x, targetRegion.y);
 }
 
 function getAnchorOffset(
@@ -212,21 +254,44 @@ export class LayerRenderer {
   private composeLayerWithPreview(
     layerCanvas: HTMLCanvasElement,
     previewCanvas: HTMLCanvasElement,
-    previewOpacity: number
+    previewOpacity: number,
+    region?: CompositeRegion | null
   ): HTMLCanvasElement {
     const opacity = Math.max(0, Math.min(1, previewOpacity));
     const ctx = this.previewLayerCtx;
+    const normalizedRegion = normalizeCompositeRegion(region ?? undefined, this.width, this.height);
 
-    // Copy layer content including transparent pixels
+    if (!normalizedRegion) {
+      // Copy layer content including transparent pixels
+      ctx.save();
+      ctx.globalCompositeOperation = 'copy';
+      ctx.globalAlpha = 1;
+      ctx.drawImage(layerCanvas, 0, 0);
+
+      if (opacity > 0) {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = opacity;
+        ctx.drawImage(previewCanvas, 0, 0);
+      }
+
+      ctx.restore();
+      return this.previewLayerCanvas;
+    }
+
+    const { x, y, width, height } = normalizedRegion;
     ctx.save();
-    ctx.globalCompositeOperation = 'copy';
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    ctx.clip();
+
+    ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
-    ctx.drawImage(layerCanvas, 0, 0);
+    ctx.clearRect(x, y, width, height);
+    ctx.drawImage(layerCanvas, x, y, width, height, x, y, width, height);
 
     if (opacity > 0) {
-      ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = opacity;
-      ctx.drawImage(previewCanvas, 0, 0);
+      ctx.drawImage(previewCanvas, x, y, width, height, x, y, width, height);
     }
 
     ctx.restore();
@@ -332,13 +397,26 @@ export class LayerRenderer {
    *
    * @param preview - Optional stroke preview config for the active layer
    */
-  composite(preview?: {
-    activeLayerId: string;
-    canvas: HTMLCanvasElement;
-    opacity: number;
-  }): HTMLCanvasElement {
-    // Clear composite canvas
-    this.compositeCtx.clearRect(0, 0, this.width, this.height);
+  composite(
+    preview?: {
+      activeLayerId: string;
+      canvas: HTMLCanvasElement;
+      opacity: number;
+    },
+    region?: CompositeRegion
+  ): HTMLCanvasElement {
+    const normalizedRegion = normalizeCompositeRegion(region, this.width, this.height);
+
+    if (normalizedRegion) {
+      this.compositeCtx.clearRect(
+        normalizedRegion.x,
+        normalizedRegion.y,
+        normalizedRegion.width,
+        normalizedRegion.height
+      );
+    } else {
+      this.compositeCtx.clearRect(0, 0, this.width, this.height);
+    }
 
     // Draw layers in order (bottom to top)
     for (const id of this.layerOrder) {
@@ -347,7 +425,12 @@ export class LayerRenderer {
 
       let sourceCanvas = layer.canvas;
       if (preview && id === preview.activeLayerId && preview.opacity > 0) {
-        sourceCanvas = this.composeLayerWithPreview(layer.canvas, preview.canvas, preview.opacity);
+        sourceCanvas = this.composeLayerWithPreview(
+          layer.canvas,
+          preview.canvas,
+          preview.opacity,
+          normalizedRegion
+        );
       }
       const layerOpacity = layer.opacity / 100;
 
@@ -358,6 +441,7 @@ export class LayerRenderer {
           width: this.width,
           height: this.height,
           layerOpacity,
+          region: normalizedRegion,
         });
         continue;
       }
@@ -366,7 +450,21 @@ export class LayerRenderer {
       this.compositeCtx.save();
       this.compositeCtx.globalAlpha = layerOpacity;
       this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
-      this.compositeCtx.drawImage(sourceCanvas, 0, 0);
+      if (normalizedRegion) {
+        this.compositeCtx.drawImage(
+          sourceCanvas,
+          normalizedRegion.x,
+          normalizedRegion.y,
+          normalizedRegion.width,
+          normalizedRegion.height,
+          normalizedRegion.x,
+          normalizedRegion.y,
+          normalizedRegion.width,
+          normalizedRegion.height
+        );
+      } else {
+        this.compositeCtx.drawImage(sourceCanvas, 0, 0);
+      }
       this.compositeCtx.restore();
     }
 

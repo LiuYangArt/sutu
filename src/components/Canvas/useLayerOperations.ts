@@ -17,7 +17,7 @@ interface UseLayerOperationsParams {
   layers: Layer[];
   width: number;
   height: number;
-  compositeAndRender: () => void;
+  compositeAndRender: (options?: { forceCpu?: boolean }) => void;
   markLayerDirty: (layerIds?: string | string[]) => void;
   syncGpuLayerForHistory?: (layerId: string) => Promise<boolean>;
   gpuHistoryEnabled?: boolean;
@@ -29,6 +29,7 @@ interface UseLayerOperationsParams {
     direction: 'undo' | 'redo',
     layerId: string
   ) => Promise<boolean>;
+  onBeforeCanvasMutation?: () => void;
 }
 
 type PendingStrokeHistory =
@@ -120,6 +121,7 @@ export function useLayerOperations({
   gpuHistoryEnabled = false,
   beginGpuStrokeHistory,
   applyGpuStrokeHistory,
+  onBeforeCanvasMutation,
 }: UseLayerOperationsParams) {
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
   const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
@@ -229,6 +231,7 @@ export function useLayerOperations({
       const beforeLayers = snapshotLayers(renderer, docState.layers);
       if (!beforeLayers) return;
 
+      onBeforeCanvasMutation?.();
       pushResizeCanvas(beforeWidth, beforeHeight, beforeLayers);
       useSelectionStore.getState().deselectAll();
 
@@ -248,6 +251,7 @@ export function useLayerOperations({
       layerRendererRef,
       pushResizeCanvas,
       updateThumbnailWithSize,
+      onBeforeCanvasMutation,
     ]
   );
 
@@ -267,6 +271,8 @@ export function useLayerOperations({
 
         const layer = renderer.getLayer(activeLayerId);
         if (!layer) return;
+
+        onBeforeCanvasMutation?.();
 
         // Capture before image for undo
         const beforeImage = renderer.getLayerImageData(activeLayerId);
@@ -304,6 +310,7 @@ export function useLayerOperations({
       compositeAndRender,
       syncGpuLayerForHistory,
       layerRendererRef,
+      onBeforeCanvasMutation,
     ]
   );
 
@@ -322,6 +329,8 @@ export function useLayerOperations({
 
       const layer = renderer.getLayer(activeLayerId);
       if (!layer) return;
+
+      onBeforeCanvasMutation?.();
 
       // Check for active selection
       const { hasSelection, selectionMask } = useSelectionStore.getState();
@@ -367,6 +376,7 @@ export function useLayerOperations({
     compositeAndRender,
     syncGpuLayerForHistory,
     layerRendererRef,
+    onBeforeCanvasMutation,
   ]);
 
   // Handle undo for all operation types
@@ -381,6 +391,8 @@ export function useLayerOperations({
         entry = undo();
       }
       if (!entry) return;
+
+      onBeforeCanvasMutation?.();
 
       if (entry.type === 'selection') {
         entry.after = useSelectionStore.getState().createSnapshot();
@@ -499,6 +511,7 @@ export function useLayerOperations({
     updateThumbnail,
     updateThumbnailWithSize,
     layerRendererRef,
+    onBeforeCanvasMutation,
   ]);
 
   // Handle redo for all operation types
@@ -506,6 +519,8 @@ export function useLayerOperations({
     void (async () => {
       const entry = redo();
       if (!entry) return;
+
+      onBeforeCanvasMutation?.();
 
       if (entry.type === 'selection') {
         if (entry.after) {
@@ -601,6 +616,7 @@ export function useLayerOperations({
     updateThumbnail,
     updateThumbnailWithSize,
     layerRendererRef,
+    onBeforeCanvasMutation,
   ]);
 
   // Clear current layer content
@@ -609,6 +625,8 @@ export function useLayerOperations({
     void (async () => {
       const renderer = layerRendererRef.current;
       if (!renderer) return;
+
+      onBeforeCanvasMutation?.();
 
       // Capture state before clearing for undo
       await captureBeforeImage(false);
@@ -630,6 +648,7 @@ export function useLayerOperations({
     markLayerDirty,
     updateThumbnail,
     layerRendererRef,
+    onBeforeCanvasMutation,
   ]);
 
   // Duplicate layer content from source to target
@@ -643,13 +662,15 @@ export function useLayerOperations({
 
       if (!sourceLayer || !targetLayer) return;
 
+      onBeforeCanvasMutation?.();
+
       // Copy the source layer content to target layer
       targetLayer.ctx.drawImage(sourceLayer.canvas, 0, 0);
       compositeAndRender();
       markLayerDirty(toId);
       updateThumbnail(toId);
     },
-    [compositeAndRender, markLayerDirty, updateThumbnail, layerRendererRef]
+    [compositeAndRender, markLayerDirty, updateThumbnail, layerRendererRef, onBeforeCanvasMutation]
   );
 
   // Remove layer with history support
@@ -665,6 +686,8 @@ export function useLayerOperations({
 
       if (!layerState || layerIndex === -1 || !imageData) return;
 
+      onBeforeCanvasMutation?.();
+
       // Save to history
       pushRemoveLayer(layerId, layerState, layerIndex, imageData);
 
@@ -676,7 +699,14 @@ export function useLayerOperations({
       compositeAndRender();
       markLayerDirty(layerId);
     },
-    [layers, pushRemoveLayer, compositeAndRender, markLayerDirty, layerRendererRef]
+    [
+      layers,
+      pushRemoveLayer,
+      compositeAndRender,
+      markLayerDirty,
+      layerRendererRef,
+      onBeforeCanvasMutation,
+    ]
   );
 
   return {
