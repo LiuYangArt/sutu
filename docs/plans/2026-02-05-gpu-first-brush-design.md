@@ -772,3 +772,28 @@
   - `pnpm -s test`: PASS（224 tests）
 - 复盘文档：
   - `docs/postmortem/2026-02-07-m3-layer-stack-black-canvas-eyedropper-palette-sync.md`
+
+### 13.16 M3 多层 GPU 历史收口记录（2026-02-07）
+
+- Scope（本轮）：
+  - 优先打通多层 GPU 显示路径下的历史闭环（undo/redo 一致性）。
+  - 不涉及 `rgba32float -> rgba16float` 迁移，不新增 `above` cache，不改 commit pass 架构。
+- Implemented：
+  - `gpuLayerStackPolicy` 新增 `isGpuHistoryPathAvailable`：
+    - 历史 gate 规则改为 `gpuDisplayActive && currentTool === 'brush'`。
+  - `Canvas/index.tsx`：
+    - `gpuHistoryEnabled` 从“单层条件”改为“跟随 GPU 显示路径 + brush 工具”。
+    - `commitStrokeGpu` 使用 `pendingGpuHistoryEntryIdRef.current` 直读，不再依赖提交瞬间 gate。
+    - `applyGpuStrokeHistory` 移除 `gpuHistoryEnabled` 的运行时硬短路，仅要求 `historyStore + gpuRenderer` 可用即可应用 GPU 快照（失败仍回退 CPU 历史）。
+    - 清理逻辑调整为：仅在 `!gpuHistoryEnabled && !isDrawing` 时清空 pending entry，降低路径切换时丢历史风险。
+  - `gpuLayerStackPolicy.test.ts` 新增历史 gate 用例（brush-only + inactive/non-brush 拦截）。
+- Regression check：
+  - `pnpm -s typecheck`: PASS
+  - `pnpm -s test -- gpuLayerStackPolicy GpuStrokeHistoryStore GpuStrokeCommitCoordinator`: PASS（15 tests）
+- Manual gate（4K/多层）：
+  - 本次会话为 CLI 环境，未直接执行桌面交互门禁。
+  - 待在本机 UI 环境执行并回填：
+    - 场景 A：3+ 可见层连续 30s，稳定性检查。
+    - 场景 B：多层 GPU 路径 undo/redo 连续回退与恢复。
+    - 场景 C：GPU 支持 blend -> fallback 切换后 undo/redo 一致性。
+    - 场景 D：CPU 笔刷路径回归不变。

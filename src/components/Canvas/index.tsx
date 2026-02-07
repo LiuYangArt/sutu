@@ -41,6 +41,7 @@ import {
 } from '@/gpu';
 import {
   bumpLayerRevisions,
+  isGpuHistoryPathAvailable,
   isGpuLayerStackPathAvailable,
   reconcileLayerRevisionMap,
 } from './gpuLayerStackPolicy';
@@ -251,8 +252,6 @@ export function Canvas() {
     consumePendingHistoryLayerAdd: s.consumePendingHistoryLayerAdd,
   }));
 
-  const visibleLayerCount = useMemo(() => layers.filter((layer) => layer.visible).length, [layers]);
-
   const { pushAddLayer } = useHistoryStore();
 
   const { isPanning, scale, setScale, setIsPanning, pan, zoomIn, zoomOut, offsetX, offsetY } =
@@ -389,11 +388,6 @@ export function Canvas() {
     benchmarkProfiler: latencyProfilerRef.current,
   });
 
-  const singleLayerGpuHistoryAvailable = useMemo(
-    () => brushBackend === 'gpu' && gpuAvailable && visibleLayerCount <= 1,
-    [brushBackend, gpuAvailable, visibleLayerCount]
-  );
-
   const gpuLayerStackPathAvailable = useMemo(
     () =>
       isGpuLayerStackPathAvailable({
@@ -407,7 +401,14 @@ export function Canvas() {
 
   const gpuDisplayActive = gpuLayerStackPathAvailable;
 
-  const gpuHistoryEnabled = singleLayerGpuHistoryAvailable;
+  const gpuHistoryEnabled = useMemo(
+    () =>
+      isGpuHistoryPathAvailable({
+        gpuDisplayActive,
+        currentTool,
+      }),
+    [gpuDisplayActive, currentTool]
+  );
 
   const collectLiveGpuHistoryEntries = useCallback(
     (entries: HistoryEntry[], liveIds: Set<string>) => {
@@ -524,7 +525,7 @@ export function Canvas() {
   }, []);
 
   useEffect(() => {
-    if (!gpuHistoryEnabled) {
+    if (!gpuHistoryEnabled && !isDrawingRef.current) {
       pendingGpuHistoryEntryIdRef.current = null;
     }
   }, [gpuHistoryEnabled]);
@@ -834,8 +835,6 @@ export function Canvas() {
 
   const applyGpuStrokeHistory = useCallback(
     async (entryId: string, direction: 'undo' | 'redo', layerId: string): Promise<boolean> => {
-      if (!gpuHistoryEnabled) return false;
-
       const historyStore = gpuStrokeHistoryStoreRef.current;
       const gpuRenderer = gpuRendererRef.current;
       if (!historyStore || !gpuRenderer) return false;
@@ -864,7 +863,7 @@ export function Canvas() {
         return false;
       }
     },
-    [gpuHistoryEnabled, syncGpuLayerTilesToCpu]
+    [syncGpuLayerTilesToCpu]
   );
 
   const {
@@ -938,7 +937,7 @@ export function Canvas() {
       };
     }
     const historyStore = gpuStrokeHistoryStoreRef.current;
-    const historyEntryId = gpuHistoryEnabled ? pendingGpuHistoryEntryIdRef.current : null;
+    const historyEntryId = pendingGpuHistoryEntryIdRef.current;
     const commitOptions =
       historyStore && historyEntryId
         ? {
@@ -962,7 +961,7 @@ export function Canvas() {
       schedulePendingGpuCpuSync(activeLayerId);
     }
     return result;
-  }, [activeLayerId, gpuHistoryEnabled, trackPendingGpuCpuSyncTiles, schedulePendingGpuCpuSync]);
+  }, [activeLayerId, trackPendingGpuCpuSyncTiles, schedulePendingGpuCpuSync]);
 
   const getGpuBrushCommitMetricsSnapshot = useCallback((): GpuBrushCommitMetricsSnapshot | null => {
     return gpuCommitCoordinatorRef.current?.getCommitMetricsSnapshot() ?? null;

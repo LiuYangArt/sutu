@@ -46,6 +46,14 @@ export function isGpuLayerStackPathAvailable(args: {
   return visibleLayers.every((layer) => isGpuLayerBlendModeM3(layer.blendMode));
 }
 
+export function isGpuHistoryPathAvailable(args: {
+  gpuDisplayActive: boolean;
+  currentTool: ToolType | null;
+}): boolean {
+  const { gpuDisplayActive, currentTool } = args;
+  return gpuDisplayActive && currentTool === 'brush';
+}
+
 export function reconcileLayerRevisionMap(
   current: ReadonlyMap<string, number>,
   layerIds: readonly string[]

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bumpLayerRevisions,
+  isGpuHistoryPathAvailable,
   isGpuLayerBlendModeM3,
   isGpuLayerStackPathAvailable,
   reconcileLayerRevisionMap,
@@ -100,5 +101,30 @@ describe('gpuLayerStackPolicy', () => {
     expect(next.get('a')).toBe(2);
     expect(next.get('b')).toBe(0);
     expect(next.has('legacy')).toBe(false);
+  });
+
+  it('enables gpu history only on gpu display brush path', () => {
+    expect(
+      isGpuHistoryPathAvailable({
+        gpuDisplayActive: true,
+        currentTool: 'brush',
+      })
+    ).toBe(true);
+  });
+
+  it('disables gpu history when gpu display is inactive or tool is not brush', () => {
+    expect(
+      isGpuHistoryPathAvailable({
+        gpuDisplayActive: false,
+        currentTool: 'brush',
+      })
+    ).toBe(false);
+
+    expect(
+      isGpuHistoryPathAvailable({
+        gpuDisplayActive: true,
+        currentTool: 'zoom',
+      })
+    ).toBe(false);
   });
 });

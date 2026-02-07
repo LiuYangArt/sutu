@@ -79,7 +79,8 @@
 ## 已确认决策
 - Layer 格式：`rgba8unorm (linear + dither)`（M0 阶段先锁定）
 - Tile size：M2 先用 `512`
-- GPU 显示条件：`renderMode=gpu && currentTool in {brush, zoom, eyedropper} && visibleLayerCount<=1`
+- GPU 显示条件：`brushBackend=gpu && gpuAvailable && tool∈{brush,zoom,eyedropper} && visible>=1 && visible blend∈{normal,multiply,screen,overlay}`
+- GPU 历史条件（M3 收口后）：`gpuDisplayActive && currentTool==='brush'`
 - readback 策略：仅 stroke end（dirty）与导出时执行
 
 ## 下一步（先稳定，再性能）
@@ -130,6 +131,11 @@
 - 已新增自动化测试：
   - `gpuLayerStackPolicy.test.ts`（门禁与 revision 逻辑）；
   - `layerStackCache.test.ts`（below cache 签名/失效条件）。
+- 已完成 M3 多层 GPU 历史收口（2026-02-07）：
+  - 新增 `isGpuHistoryPathAvailable`，`gpuHistoryEnabled` 从“单层限制”改为“跟随 GPU 显示 + brush 工具”。
+  - `commitStrokeGpu` 提交历史 entry 改为直接读取 `pendingGpuHistoryEntryIdRef`，不再受瞬时 gate 抖动影响。
+  - `applyGpuStrokeHistory` 取消对当前 `gpuHistoryEnabled` 的硬短路；仅要求 `historyStore + gpuRenderer` 可用即可应用 GPU 快照（失败仍回退 CPU 历史）。
+  - 自动检查：`pnpm -s typecheck`、`pnpm -s test -- gpuLayerStackPolicy GpuStrokeHistoryStore GpuStrokeCommitCoordinator` 均 PASS。
 - 已完成首轮线上问题修复（2026-02-07）：
   - 修复 `renderLayerStackFrame` pass 嵌套导致的 `GPUValidationError`（画布不显示）。
   - 修复非 normal blend 在可见性切换后的整屏发黑（blend 公式 + uniform 覆盖问题）。
@@ -141,7 +147,7 @@
   - `GpuCanvasRenderer.ts`：layerBlend uniform 游标逻辑改为直接返回 offset，减少中间状态与误用风险。
   - `Canvas/index.tsx`：移除 `sampleGpuPixelColor` 冗余依赖。
   - `ColorPanel/index.tsx`：颜色同步判定分支简化，提升可读性。
-- 待执行：M3 手工门禁回放与 4K/多层稳定性验收回填（本轮代码落地后统一执行）。
+- 待执行：M3 手工门禁回放与 4K/多层稳定性验收回填（需桌面交互环境执行 `DebugPanel` 门禁后补录）。
 
 ## 今日决议（2026-02-06）
 - 不再执行新增稳定性回归测试（含 3 轮 replay 与 20 笔手工短测）。
