@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
+import { clientToCanvasPoint } from './canvasGeometry';
 
 /** Cursor style for each tool type */
 const TOOL_CURSORS: Record<ToolType, string> = {
@@ -264,9 +265,7 @@ export function useCursor({
       }
 
       const canvas = canvasRef.current;
-      const rect = canvas.getBoundingClientRect();
-      const canvasX = (clientX - rect.left) / scale;
-      const canvasY = (clientY - rect.top) / scale;
+      const { x: canvasX, y: canvasY } = clientToCanvasPoint(canvas, clientX, clientY);
 
       // Use isPointInSelection to check actual mask, not just bounding box
       const isOver = isPointInSelection(canvasX, canvasY);
@@ -279,7 +278,6 @@ export function useCursor({
       hasSelection,
       isCreatingSelection,
       canvasRef,
-      scale,
       isPointInSelection,
       isOverSelection,
     ]

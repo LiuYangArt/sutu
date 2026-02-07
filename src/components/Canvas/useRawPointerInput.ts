@@ -1,6 +1,7 @@
 import { useEffect, useRef, MutableRefObject } from 'react';
 import { useTabletStore, drainPointBuffer } from '@/stores/tablet';
 import { getEffectiveInputData } from './inputUtils';
+import { clientToCanvasPoint } from './canvasGeometry';
 
 /**
  * Q1 Optimization: Use pointerrawupdate event for lower-latency input.
@@ -20,7 +21,6 @@ type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number 
 interface RawPointerInputConfig {
   containerRef: React.RefObject<HTMLDivElement | null>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  scale: number;
   isDrawingRef: MutableRefObject<boolean>;
   currentTool: string;
   strokeStateRef: MutableRefObject<string>;
@@ -38,7 +38,6 @@ interface RawPointerInputConfig {
 export function useRawPointerInput({
   containerRef,
   canvasRef,
-  scale,
   isDrawingRef,
   currentTool,
   strokeStateRef,
@@ -91,8 +90,12 @@ export function useRawPointerInput({
       const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
 
       for (const evt of coalescedEvents) {
-        const canvasX = (evt.clientX - rect.left) / scale;
-        const canvasY = (evt.clientY - rect.top) / scale;
+        const { x: canvasX, y: canvasY } = clientToCanvasPoint(
+          canvas,
+          evt.clientX,
+          evt.clientY,
+          rect
+        );
 
         // Resolve pressure/tilt from WinTab or PointerEvent
         const { pressure } = getEffectiveInputData(
@@ -127,7 +130,6 @@ export function useRawPointerInput({
   }, [
     containerRef,
     canvasRef,
-    scale,
     isDrawingRef,
     currentTool,
     strokeStateRef,

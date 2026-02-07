@@ -18,6 +18,7 @@ import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { usePointerHandlers } from './usePointerHandlers';
 import { useStrokeProcessor } from './useStrokeProcessor';
 import { SelectionOverlay } from './SelectionOverlay';
+import { getDisplayScale } from './canvasGeometry';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
@@ -193,6 +194,11 @@ export function Canvas() {
   const pendingGpuCpuSyncRafRef = useRef<number | null>(null);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
   const [gpuSelectionPipelineV2Enabled, setGpuSelectionPipelineV2Enabled] = useState(true);
+  const [devicePixelRatio, setDevicePixelRatio] = useState(() => {
+    if (typeof window === 'undefined') return 1;
+    const dpr = window.devicePixelRatio;
+    return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  });
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -272,6 +278,10 @@ export function Canvas() {
 
   const { isPanning, scale, setScale, setIsPanning, pan, zoomIn, zoomOut, offsetX, offsetY } =
     useViewportStore();
+  const displayScale = useMemo(
+    () => getDisplayScale(scale, devicePixelRatio),
+    [scale, devicePixelRatio]
+  );
 
   useEffect(() => {
     if (!strokeCaptureRef.current) {
@@ -584,6 +594,25 @@ export function Canvas() {
     }
   }, [clearPendingGpuHistoryEntry, gpuHistoryEnabled]);
 
+  useEffect(() => {
+    const updateDevicePixelRatio = () => {
+      const nextDpr = window.devicePixelRatio;
+      const normalizedDpr = Number.isFinite(nextDpr) && nextDpr > 0 ? nextDpr : 1;
+      setDevicePixelRatio((prev) => {
+        return Math.abs(prev - normalizedDpr) < 0.0001 ? prev : normalizedDpr;
+      });
+    };
+
+    updateDevicePixelRatio();
+    window.addEventListener('resize', updateDevicePixelRatio);
+    window.visualViewport?.addEventListener('resize', updateDevicePixelRatio);
+
+    return () => {
+      window.removeEventListener('resize', updateDevicePixelRatio);
+      window.visualViewport?.removeEventListener('resize', updateDevicePixelRatio);
+    };
+  }, []);
+
   // Tablet store: We use getState() directly in event handlers for real-time data
   // No need to subscribe to state changes here since we sync-read in handlers
 
@@ -591,7 +620,6 @@ export function Canvas() {
   const { usingRawInput } = useRawPointerInput({
     containerRef,
     canvasRef,
-    scale,
     isDrawingRef,
     currentTool,
     strokeStateRef,
@@ -1378,7 +1406,7 @@ export function Canvas() {
     layerRendererRef,
     width,
     height,
-    scale,
+    scale: displayScale,
     activeLayerId,
     currentTool,
     currentSize,
@@ -1454,7 +1482,7 @@ export function Canvas() {
   const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
     currentTool,
     currentSize,
-    scale,
+    scale: displayScale,
     showCrosshair,
     spacePressed,
     isPanning,
@@ -1518,15 +1546,15 @@ export function Canvas() {
 
   // 计算 viewport 变换样式
   const viewportStyle: React.CSSProperties = {
-    transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
+    transform: `translate(${offsetX}px, ${offsetY}px) scale(${displayScale})`,
     transformOrigin: '0 0',
   };
 
   // Calculate clip-path for checkerboard
   const x = offsetX;
   const y = offsetY;
-  const w = width * scale;
-  const h = height * scale;
+  const w = width * displayScale;
+  const h = height * displayScale;
   const clipPathKey = `polygon(${x}px ${y}px, ${x + w}px ${y}px, ${x + w}px ${y + h}px, ${x}px ${y + h}px)`;
 
   return (
@@ -1542,7 +1570,7 @@ export function Canvas() {
       style={{ cursor: cursorStyle }}
     >
       <div className="canvas-checkerboard" style={{ clipPath: clipPathKey }} />
-      <SelectionOverlay scale={scale} offsetX={offsetX} offsetY={offsetY} />
+      <SelectionOverlay scale={displayScale} offsetX={offsetX} offsetY={offsetY} />
       <div className="canvas-viewport" style={viewportStyle}>
         <canvas
           ref={gpuCanvasRef}
@@ -1565,8 +1593,8 @@ export function Canvas() {
           ref={brushCursorRef}
           className={`brush-cursor ${brushTexture?.cursorPath ? 'brush-cursor--texture' : ''}`}
           style={{
-            width: currentSize * scale,
-            height: currentSize * scale * (brushRoundness / 100),
+            width: currentSize * displayScale,
+            height: currentSize * displayScale * (brushRoundness / 100),
             // Note: position transform is set by useCursor via JS
             // rotation is applied to inner content, not the container
           }}

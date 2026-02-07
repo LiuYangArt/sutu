@@ -6,6 +6,7 @@ import { LatencyProfiler } from '@/benchmark';
 import { StrokeBuffer, Point as BufferPoint } from '@/utils/interpolation';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { getEffectiveInputData } from './inputUtils';
+import { clientToCanvasPoint } from './canvasGeometry';
 import type { RawInputPoint } from '@/stores/tablet';
 
 interface QueuedPoint {
@@ -241,9 +242,7 @@ export function usePointerHandlers({
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      const rect = canvas.getBoundingClientRect();
-      const canvasX = (e.clientX - rect.left) / scale;
-      const canvasY = (e.clientY - rect.top) / scale;
+      const { x: canvasX, y: canvasY } = clientToCanvasPoint(canvas, e.clientX, e.clientY);
 
       updateShiftLineCursor(canvasX, canvasY);
 
@@ -332,6 +331,7 @@ export function usePointerHandlers({
       captureBeforeImage,
       initializeBrushStroke,
       drawPoints,
+      finishCurrentStroke,
       setIsPanning,
       isSelectionToolActive,
       handleSelectionPointerDown,
@@ -404,9 +404,11 @@ export function usePointerHandlers({
         const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
         const canvas = canvasRef.current;
         if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          const canvasX = (lastEvent.clientX - rect.left) / scale;
-          const canvasY = (lastEvent.clientY - rect.top) / scale;
+          const { x: canvasX, y: canvasY } = clientToCanvasPoint(
+            canvas,
+            lastEvent.clientX,
+            lastEvent.clientY
+          );
           handleSelectionPointerMove(canvasX, canvasY, lastEvent);
         }
         return;
@@ -416,9 +418,13 @@ export function usePointerHandlers({
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
-      const hoverX = (lastEvent.clientX - rect.left) / scale;
-      const hoverY = (lastEvent.clientY - rect.top) / scale;
-      updateShiftLineCursor(hoverX, hoverY);
+      const mappedHoverPoint = clientToCanvasPoint(
+        canvas,
+        lastEvent.clientX,
+        lastEvent.clientY,
+        rect
+      );
+      updateShiftLineCursor(mappedHoverPoint.x, mappedHoverPoint.y);
 
       // Note: cursor position is updated by native event listener for zero-lag
 
@@ -447,8 +453,12 @@ export function usePointerHandlers({
       // 遍历所有合并事件，恢复完整输入轨迹
       for (const evt of coalescedEvents) {
         // 始终使用 PointerEvent 的坐标（它们是准确的屏幕坐标）
-        const canvasX = (evt.clientX - rect.left) / scale;
-        const canvasY = (evt.clientY - rect.top) / scale;
+        const { x: canvasX, y: canvasY } = clientToCanvasPoint(
+          canvas,
+          evt.clientX,
+          evt.clientY,
+          rect
+        );
 
         // Resolve input pressure/tilt (handling WinTab buffering if active)
         const { pressure, tiltX, tiltY } = getEffectiveInputData(
@@ -505,7 +515,6 @@ export function usePointerHandlers({
       isPanning,
       pan,
       drawPoints,
-      scale,
       setScale,
       currentTool,
       usingRawInput,
@@ -553,9 +562,7 @@ export function usePointerHandlers({
       if (isSelectionToolActive) {
         const canvas = canvasRef.current;
         if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          const canvasX = (e.clientX - rect.left) / scale;
-          const canvasY = (e.clientY - rect.top) / scale;
+          const { x: canvasX, y: canvasY } = clientToCanvasPoint(canvas, e.clientX, e.clientY);
           handleSelectionPointerUp(canvasX, canvasY);
           tryReleasePointerCapture(canvas, e);
         }
@@ -578,7 +585,6 @@ export function usePointerHandlers({
       finishCurrentStroke,
       isSelectionToolActive,
       handleSelectionPointerUp,
-      scale,
       containerRef,
       canvasRef,
       panStartRef,
