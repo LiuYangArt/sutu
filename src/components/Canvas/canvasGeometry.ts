@@ -5,6 +5,10 @@ interface CanvasClientRect {
   height: number;
 }
 
+function normalizePositiveNumber(value: number, fallback: number = 1): number {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 /**
  * Convert client-space coordinates to canvas logical pixel coordinates.
  * Works with any CSS transform/scale by using the actual rendered rect size.
@@ -16,8 +20,8 @@ export function clientToCanvasPoint(
   rect?: CanvasClientRect
 ): { x: number; y: number } {
   const resolvedRect = rect ?? canvas.getBoundingClientRect();
-  const rectWidth = resolvedRect.width > 0 ? resolvedRect.width : Math.max(1, canvas.width);
-  const rectHeight = resolvedRect.height > 0 ? resolvedRect.height : Math.max(1, canvas.height);
+  const rectWidth = normalizePositiveNumber(resolvedRect.width, Math.max(1, canvas.width));
+  const rectHeight = normalizePositiveNumber(resolvedRect.height, Math.max(1, canvas.height));
   const scaleX = canvas.width / rectWidth;
   const scaleY = canvas.height / rectHeight;
 
@@ -28,7 +32,12 @@ export function clientToCanvasPoint(
 }
 
 export function getDisplayScale(scale: number, devicePixelRatio: number): number {
-  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-  const safeDpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const safeScale = normalizePositiveNumber(scale);
+  const safeDpr = normalizePositiveNumber(devicePixelRatio);
   return safeScale / safeDpr;
+}
+
+export function getSafeDevicePixelRatio(viewport?: Pick<Window, 'devicePixelRatio'>): number {
+  if (!viewport) return 1;
+  return normalizePositiveNumber(viewport.devicePixelRatio);
 }

@@ -18,7 +18,7 @@ import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { usePointerHandlers } from './usePointerHandlers';
 import { useStrokeProcessor } from './useStrokeProcessor';
 import { SelectionOverlay } from './SelectionOverlay';
-import { getDisplayScale } from './canvasGeometry';
+import { getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
@@ -194,11 +194,9 @@ export function Canvas() {
   const pendingGpuCpuSyncRafRef = useRef<number | null>(null);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
   const [gpuSelectionPipelineV2Enabled, setGpuSelectionPipelineV2Enabled] = useState(true);
-  const [devicePixelRatio, setDevicePixelRatio] = useState(() => {
-    if (typeof window === 'undefined') return 1;
-    const dpr = window.devicePixelRatio;
-    return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  });
+  const [devicePixelRatio, setDevicePixelRatio] = useState(() =>
+    getSafeDevicePixelRatio(typeof window === 'undefined' ? undefined : window)
+  );
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -596,8 +594,7 @@ export function Canvas() {
 
   useEffect(() => {
     const updateDevicePixelRatio = () => {
-      const nextDpr = window.devicePixelRatio;
-      const normalizedDpr = Number.isFinite(nextDpr) && nextDpr > 0 ? nextDpr : 1;
+      const normalizedDpr = getSafeDevicePixelRatio(window);
       setDevicePixelRatio((prev) => {
         return Math.abs(prev - normalizedDpr) < 0.0001 ? prev : normalizedDpr;
       });

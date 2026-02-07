@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clientToCanvasPoint, getDisplayScale } from '../canvasGeometry';
+import { clientToCanvasPoint, getDisplayScale, getSafeDevicePixelRatio } from '../canvasGeometry';
 
 describe('canvasGeometry.getDisplayScale', () => {
   it('DPR=1 时保持原缩放', () => {
@@ -16,6 +16,18 @@ describe('canvasGeometry.getDisplayScale', () => {
     expect(getDisplayScale(0, 2)).toBe(0.5);
     expect(getDisplayScale(1, 0)).toBe(1);
     expect(getDisplayScale(Number.NaN, Number.NaN)).toBe(1);
+  });
+});
+
+describe('canvasGeometry.getSafeDevicePixelRatio', () => {
+  it('从 viewport 读取有效 DPR', () => {
+    expect(getSafeDevicePixelRatio({ devicePixelRatio: 1.5 })).toBe(1.5);
+  });
+
+  it('无效输入回退到 1', () => {
+    expect(getSafeDevicePixelRatio()).toBe(1);
+    expect(getSafeDevicePixelRatio({ devicePixelRatio: 0 })).toBe(1);
+    expect(getSafeDevicePixelRatio({ devicePixelRatio: Number.NaN })).toBe(1);
   });
 });
 

@@ -9,6 +9,14 @@ import { getEffectiveInputData } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 import type { RawInputPoint } from '@/stores/tablet';
 
+function pointerEventToCanvasPoint(
+  canvas: HTMLCanvasElement,
+  event: Pick<PointerEvent, 'clientX' | 'clientY'>,
+  rect?: DOMRect
+): { x: number; y: number } {
+  return clientToCanvasPoint(canvas, event.clientX, event.clientY, rect);
+}
+
 interface QueuedPoint {
   x: number;
   y: number;
@@ -242,7 +250,7 @@ export function usePointerHandlers({
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      const { x: canvasX, y: canvasY } = clientToCanvasPoint(canvas, e.clientX, e.clientY);
+      const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
 
       updateShiftLineCursor(canvasX, canvasY);
 
@@ -404,11 +412,7 @@ export function usePointerHandlers({
         const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
         const canvas = canvasRef.current;
         if (canvas) {
-          const { x: canvasX, y: canvasY } = clientToCanvasPoint(
-            canvas,
-            lastEvent.clientX,
-            lastEvent.clientY
-          );
+          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, lastEvent);
           handleSelectionPointerMove(canvasX, canvasY, lastEvent);
         }
         return;
@@ -418,12 +422,7 @@ export function usePointerHandlers({
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
-      const mappedHoverPoint = clientToCanvasPoint(
-        canvas,
-        lastEvent.clientX,
-        lastEvent.clientY,
-        rect
-      );
+      const mappedHoverPoint = pointerEventToCanvasPoint(canvas, lastEvent, rect);
       updateShiftLineCursor(mappedHoverPoint.x, mappedHoverPoint.y);
 
       // Note: cursor position is updated by native event listener for zero-lag
@@ -453,12 +452,7 @@ export function usePointerHandlers({
       // 遍历所有合并事件，恢复完整输入轨迹
       for (const evt of coalescedEvents) {
         // 始终使用 PointerEvent 的坐标（它们是准确的屏幕坐标）
-        const { x: canvasX, y: canvasY } = clientToCanvasPoint(
-          canvas,
-          evt.clientX,
-          evt.clientY,
-          rect
-        );
+        const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
 
         // Resolve input pressure/tilt (handling WinTab buffering if active)
         const { pressure, tiltX, tiltY } = getEffectiveInputData(
@@ -562,7 +556,7 @@ export function usePointerHandlers({
       if (isSelectionToolActive) {
         const canvas = canvasRef.current;
         if (canvas) {
-          const { x: canvasX, y: canvasY } = clientToCanvasPoint(canvas, e.clientX, e.clientY);
+          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
           handleSelectionPointerUp(canvasX, canvasY);
           tryReleasePointerCapture(canvas, e);
         }
