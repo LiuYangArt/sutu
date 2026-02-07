@@ -976,6 +976,7 @@ export function Canvas() {
 
   const { handleMovePointerDown, handleMovePointerMove, handleMovePointerUp } = useMoveTool({
     layerRendererRef,
+    currentTool,
     layers,
     activeLayerId,
     width,

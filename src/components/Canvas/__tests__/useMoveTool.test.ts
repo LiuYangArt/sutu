@@ -95,6 +95,7 @@ describe('useMoveTool', () => {
     const { result } = renderHook(() =>
       useMoveTool({
         layerRendererRef: { current: renderer },
+        currentTool: 'move',
         layers: [
           { id: 'bottom', visible: true, opacity: 100 } as Layer,
           { id: 'top', visible: true, opacity: 100 } as Layer,
@@ -137,6 +138,7 @@ describe('useMoveTool', () => {
     const { result } = renderHook(() =>
       useMoveTool({
         layerRendererRef: { current: renderer },
+        currentTool: 'move',
         layers: [{ id: 'layerA', visible: true, locked: false, opacity: 100 } as Layer],
         activeLayerId: 'layerA',
         width,
@@ -201,6 +203,7 @@ describe('useMoveTool', () => {
     const { result } = renderHook(() =>
       useMoveTool({
         layerRendererRef: { current: renderer },
+        currentTool: 'move',
         layers: [{ id: 'layerA', visible: true, locked: false, opacity: 100 } as Layer],
         activeLayerId: 'layerA',
         width,

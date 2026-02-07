@@ -1,5 +1,6 @@
-import { useCallback, useRef, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import type { Layer } from '@/stores/document';
+import type { ToolType } from '@/stores/tool';
 import { useSelectionStore, type SelectionSnapshot } from '@/stores/selection';
 import { LayerRenderer } from '@/utils/layerRenderer';
 
@@ -10,6 +11,7 @@ interface SaveMoveHistoryOptions {
 
 interface UseMoveToolParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
+  currentTool: ToolType;
   layers: Layer[];
   activeLayerId: string | null;
   width: number;
@@ -47,13 +49,12 @@ interface MoveSession {
   ready: boolean;
   cancelled: boolean;
   mode: MoveMode;
+  baseOffsetX: number;
+  baseOffsetY: number;
   layerCtx: CanvasRenderingContext2D;
   sourceCanvas: HTMLCanvasElement | null;
-  workCanvas: HTMLCanvasElement | null;
-  workCtx: CanvasRenderingContext2D | null;
-  movedCanvas: HTMLCanvasElement | null;
-  movedCtx: CanvasRenderingContext2D | null;
-  maskCanvas: HTMLCanvasElement | null;
+  selectionBaseCanvas: HTMLCanvasElement | null;
+  selectionCutoutCanvas: HTMLCanvasElement | null;
   selectionBefore?: SelectionSnapshot;
 }
 
@@ -88,6 +89,7 @@ function cloneCanvas(
 
 export function useMoveTool({
   layerRendererRef,
+  currentTool,
   layers,
   activeLayerId,
   width,
@@ -101,6 +103,29 @@ export function useMoveTool({
   updateThumbnail,
 }: UseMoveToolParams) {
   const moveSessionRef = useRef<MoveSession | null>(null);
+  const movePreviewRafRef = useRef<number | null>(null);
+  const preservedLayerOffsetRef = useRef<
+    Map<string, { sourceCanvas: HTMLCanvasElement; offsetX: number; offsetY: number }>
+  >(new Map());
+
+  const clearPreviewRaf = useCallback(() => {
+    if (movePreviewRafRef.current !== null) {
+      cancelAnimationFrame(movePreviewRafRef.current);
+      movePreviewRafRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentTool !== 'move') {
+      preservedLayerOffsetRef.current.clear();
+    }
+  }, [currentTool]);
+
+  useEffect(() => {
+    return () => {
+      clearPreviewRaf();
+    };
+  }, [clearPreviewRaf]);
 
   const restoreLayerFromSource = useCallback(
     (session: MoveSession): void => {
@@ -122,74 +147,103 @@ export function useMoveTool({
 
   const renderSelectionLayerMove = useCallback(
     (session: MoveSession, deltaX: number, deltaY: number): void => {
-      if (!session.sourceCanvas || !session.maskCanvas) return;
-      if (!session.workCanvas || !session.workCtx || !session.movedCanvas || !session.movedCtx)
-        return;
-
-      const workCtx = session.workCtx;
-      const movedCtx = session.movedCtx;
-
-      workCtx.clearRect(0, 0, width, height);
-      workCtx.globalCompositeOperation = 'source-over';
-      workCtx.drawImage(session.sourceCanvas, 0, 0);
-
-      workCtx.globalCompositeOperation = 'destination-out';
-      workCtx.drawImage(session.maskCanvas, 0, 0);
-      workCtx.globalCompositeOperation = 'source-over';
-
-      movedCtx.clearRect(0, 0, width, height);
-      movedCtx.globalCompositeOperation = 'source-over';
-      movedCtx.drawImage(session.sourceCanvas, deltaX, deltaY);
-      movedCtx.globalCompositeOperation = 'destination-in';
-      movedCtx.drawImage(session.maskCanvas, deltaX, deltaY);
-      movedCtx.globalCompositeOperation = 'source-over';
-
-      workCtx.drawImage(session.movedCanvas, 0, 0);
-
+      if (!session.selectionBaseCanvas || !session.selectionCutoutCanvas) return;
       session.layerCtx.clearRect(0, 0, width, height);
-      session.layerCtx.drawImage(session.workCanvas, 0, 0);
+      session.layerCtx.drawImage(session.selectionBaseCanvas, 0, 0);
+      session.layerCtx.drawImage(session.selectionCutoutCanvas, deltaX, deltaY);
     },
     [width, height]
+  );
+
+  const calculateBounds = useCallback((paths: Array<Array<{ x: number; y: number }>>) => {
+    if (paths.length === 0) return null;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let hasPoint = false;
+    for (const contour of paths) {
+      for (const point of contour) {
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
+        hasPoint = true;
+      }
+    }
+    if (!hasPoint) return null;
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }, []);
+
+  const applySelectionPreviewPath = useCallback(
+    (deltaX: number, deltaY: number) => {
+      const state = useSelectionStore.getState();
+      if (!state.isMoving || !state.originalPath) return;
+      const newPath = state.originalPath.map((contour) =>
+        contour.map((point) => ({
+          ...point,
+          x: point.x + deltaX,
+          y: point.y + deltaY,
+        }))
+      );
+      useSelectionStore.setState({
+        selectionPath: newPath,
+        bounds: calculateBounds(newPath),
+      });
+    },
+    [calculateBounds]
   );
 
   const applyMovePreview = useCallback(
     (session: MoveSession, canvasX: number, canvasY: number): void => {
       if (session.mode === 'selection') {
-        const selectionStore = useSelectionStore.getState();
-        selectionStore.updateMove({ x: canvasX, y: canvasY, type: 'freehand' }, width, height);
-        const latest = useSelectionStore.getState();
-        const origin = latest.originalBounds;
-        const bounds = latest.bounds;
-        if (!origin || !bounds) return;
-
-        const deltaX = clampToCanvas(bounds.x - origin.x);
-        const deltaY = clampToCanvas(bounds.y - origin.y);
+        const deltaX = clampToCanvas(canvasX - session.startX);
+        const deltaY = clampToCanvas(canvasY - session.startY);
+        applySelectionPreviewPath(deltaX, deltaY);
         renderSelectionLayerMove(session, deltaX, deltaY);
         session.deltaX = deltaX;
         session.deltaY = deltaY;
       } else {
-        const deltaX = clampToCanvas(canvasX - session.startX);
-        const deltaY = clampToCanvas(canvasY - session.startY);
+        const deltaX = session.baseOffsetX + clampToCanvas(canvasX - session.startX);
+        const deltaY = session.baseOffsetY + clampToCanvas(canvasY - session.startY);
         renderFullLayerMove(session, deltaX, deltaY);
         session.deltaX = deltaX;
         session.deltaY = deltaY;
       }
 
-      if (session.deltaX !== 0 || session.deltaY !== 0) {
+      const movedFromBase =
+        session.mode === 'selection'
+          ? session.deltaX !== 0 || session.deltaY !== 0
+          : session.deltaX !== session.baseOffsetX || session.deltaY !== session.baseOffsetY;
+      if (movedFromBase) {
         session.moved = true;
       }
       markLayerDirty(session.layerId);
       compositeAndRender();
     },
     [
+      applySelectionPreviewPath,
       compositeAndRender,
-      height,
       markLayerDirty,
       renderFullLayerMove,
       renderSelectionLayerMove,
-      width,
     ]
   );
+
+  const scheduleMovePreview = useCallback(() => {
+    if (movePreviewRafRef.current !== null) return;
+    movePreviewRafRef.current = requestAnimationFrame(() => {
+      movePreviewRafRef.current = null;
+      const session = moveSessionRef.current;
+      if (!session || !session.ready) return;
+      applyMovePreview(session, session.latestX, session.latestY);
+    });
+  }, [applyMovePreview]);
 
   const pickLayerByPixel = useCallback(
     async (canvasX: number, canvasY: number): Promise<void> => {
@@ -247,13 +301,12 @@ export function useMoveTool({
         ready: false,
         cancelled: false,
         mode: 'full',
+        baseOffsetX: 0,
+        baseOffsetY: 0,
         layerCtx: layer.ctx,
         sourceCanvas: null,
-        workCanvas: null,
-        workCtx: null,
-        movedCanvas: null,
-        movedCtx: null,
-        maskCanvas: null,
+        selectionBaseCanvas: null,
+        selectionCutoutCanvas: null,
       };
       moveSessionRef.current = session;
 
@@ -264,35 +317,58 @@ export function useMoveTool({
         await captureBeforeImage(false);
         if (moveSessionRef.current !== session || session.cancelled) return;
 
-        session.sourceCanvas = cloneCanvas(layer.canvas, width, height);
-        const work = createCanvasWithContext(width, height);
-        if (!session.sourceCanvas || !work) {
+        const preserved = preservedLayerOffsetRef.current.get(activeLayerId);
+        if (preserved) {
+          session.sourceCanvas = preserved.sourceCanvas;
+          session.baseOffsetX = preserved.offsetX;
+          session.baseOffsetY = preserved.offsetY;
+        } else {
+          session.sourceCanvas = cloneCanvas(layer.canvas, width, height);
+        }
+        if (!session.sourceCanvas) {
           moveSessionRef.current = null;
           return;
         }
-        session.workCanvas = work.canvas;
-        session.workCtx = work.ctx;
 
         const selectionStore = useSelectionStore.getState();
         const selectionMask = selectionStore.hasSelection ? selectionStore.selectionMask : null;
         if (selectionMask) {
           const mask = createCanvasWithContext(width, height);
-          const moved = createCanvasWithContext(width, height);
-          if (!mask || !moved) {
+          const selectionBase = createCanvasWithContext(width, height);
+          const selectionCutout = createCanvasWithContext(width, height);
+          if (!mask || !selectionBase || !selectionCutout) {
             moveSessionRef.current = null;
             return;
           }
           mask.ctx.putImageData(selectionMask, 0, 0);
-          session.maskCanvas = mask.canvas;
-          session.movedCanvas = moved.canvas;
-          session.movedCtx = moved.ctx;
+          session.selectionBaseCanvas = selectionBase.canvas;
+          session.selectionCutoutCanvas = selectionCutout.canvas;
+          selectionBase.ctx.clearRect(0, 0, width, height);
+          selectionBase.ctx.drawImage(
+            session.sourceCanvas,
+            session.baseOffsetX,
+            session.baseOffsetY
+          );
+          selectionBase.ctx.globalCompositeOperation = 'destination-out';
+          selectionBase.ctx.drawImage(mask.canvas, 0, 0);
+          selectionBase.ctx.globalCompositeOperation = 'source-over';
+
+          selectionCutout.ctx.clearRect(0, 0, width, height);
+          selectionCutout.ctx.drawImage(
+            session.sourceCanvas,
+            session.baseOffsetX,
+            session.baseOffsetY
+          );
+          selectionCutout.ctx.globalCompositeOperation = 'destination-in';
+          selectionCutout.ctx.drawImage(mask.canvas, 0, 0);
+          selectionCutout.ctx.globalCompositeOperation = 'source-over';
           session.selectionBefore = selectionStore.createSnapshot();
           session.mode = 'selection';
           selectionStore.beginMove({ x: canvasX, y: canvasY, type: 'freehand' });
         }
 
         session.ready = true;
-        applyMovePreview(session, session.latestX, session.latestY);
+        scheduleMovePreview();
       })();
 
       return true;
@@ -319,10 +395,10 @@ export function useMoveTool({
       session.latestY = canvasY;
       if (!session.ready) return true;
 
-      applyMovePreview(session, canvasX, canvasY);
+      scheduleMovePreview();
       return true;
     },
-    [applyMovePreview]
+    [scheduleMovePreview]
   );
 
   const handleMovePointerUp = useCallback(
@@ -331,6 +407,7 @@ export function useMoveTool({
       if (!session || session.pointerId !== event.pointerId) return false;
       moveSessionRef.current = null;
       session.cancelled = true;
+      clearPreviewRaf();
 
       if (!session.ready) {
         return true;
@@ -342,6 +419,7 @@ export function useMoveTool({
         const selectionStore = useSelectionStore.getState();
         if (session.moved) {
           selectionStore.commitMove(width, height);
+          preservedLayerOffsetRef.current.delete(session.layerId);
         } else {
           selectionStore.cancelMove();
         }
@@ -361,6 +439,13 @@ export function useMoveTool({
           selectionAfter,
         });
       } else {
+        if (session.sourceCanvas) {
+          preservedLayerOffsetRef.current.set(session.layerId, {
+            sourceCanvas: session.sourceCanvas,
+            offsetX: session.deltaX,
+            offsetY: session.deltaY,
+          });
+        }
         saveStrokeToHistory();
       }
 
@@ -371,6 +456,7 @@ export function useMoveTool({
     },
     [
       applyMovePreview,
+      clearPreviewRaf,
       compositeAndRender,
       height,
       markLayerDirty,
