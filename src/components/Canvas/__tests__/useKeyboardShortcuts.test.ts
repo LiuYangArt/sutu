@@ -236,6 +236,7 @@ describe('useKeyboardShortcuts', () => {
     const beforeA: SelectionSnapshot = {
       hasSelection: false,
       selectionMask: null,
+      selectionMaskPending: false,
       selectionPath: [],
       bounds: null,
     };
@@ -243,6 +244,7 @@ describe('useKeyboardShortcuts', () => {
     const afterA: SelectionSnapshot = {
       hasSelection: true,
       selectionMask: afterMaskA,
+      selectionMaskPending: false,
       selectionPath: [[{ x: 0, y: 0, type: 'polygonal' }]],
       bounds: { x: 0, y: 0, width: 1, height: 1 },
     };
@@ -251,6 +253,7 @@ describe('useKeyboardShortcuts', () => {
     const afterD: SelectionSnapshot = {
       hasSelection: false,
       selectionMask: null,
+      selectionMaskPending: false,
       selectionPath: [],
       bounds: null,
     };

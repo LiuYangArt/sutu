@@ -6,6 +6,7 @@ describe('SelectionStore - snapshot', () => {
     useSelectionStore.setState({
       hasSelection: false,
       selectionMask: null,
+      selectionMaskPending: false,
       selectionPath: [],
       bounds: null,
 

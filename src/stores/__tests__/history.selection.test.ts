@@ -24,6 +24,7 @@ describe('HistoryStore - selection', () => {
     const before: SelectionSnapshot = {
       hasSelection: true,
       selectionMask: new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1),
+      selectionMaskPending: false,
       selectionPath: [[{ x: 0, y: 0, type: 'polygonal' }]],
       bounds: { x: 0, y: 0, width: 1, height: 1 },
     };

@@ -89,4 +89,56 @@ describe('SelectionStore commitSelection', () => {
     expect(state.isPointInSelection(20, 20)).toBe(true);
     expect(state.isPointInSelection(60, 60)).toBe(false);
   });
+
+  it('布尔选区提交时先进入 pending 再异步回填最终 mask/path', async () => {
+    const width = 64;
+    const height = 64;
+    const baseMask = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+    for (let y = 8; y < 24; y += 1) {
+      for (let x = 8; x < 24; x += 1) {
+        const idx = (y * width + x) * 4;
+        baseMask.data[idx] = 255;
+        baseMask.data[idx + 1] = 255;
+        baseMask.data[idx + 2] = 255;
+        baseMask.data[idx + 3] = 255;
+      }
+    }
+
+    useSelectionStore.setState({
+      hasSelection: true,
+      selectionMask: baseMask,
+      selectionPath: [
+        [
+          { x: 8, y: 8, type: 'polygonal' },
+          { x: 24, y: 8, type: 'polygonal' },
+          { x: 24, y: 24, type: 'polygonal' },
+          { x: 8, y: 24, type: 'polygonal' },
+          { x: 8, y: 8, type: 'polygonal' },
+        ],
+      ],
+      bounds: { x: 8, y: 8, width: 16, height: 16 },
+    } as Partial<ReturnType<typeof useSelectionStore.getState>>);
+
+    const store = useSelectionStore.getState();
+    store.setSelectionMode('add');
+    store.beginSelection({ x: 20, y: 20, type: 'polygonal' });
+    store.updateCreationRect(
+      { x: 20, y: 20, type: 'polygonal' },
+      { x: 40, y: 40, type: 'polygonal' }
+    );
+    store.commitSelection(width, height);
+
+    const pendingState = useSelectionStore.getState();
+    expect(pendingState.selectionMaskPending).toBe(true);
+    expect(pendingState.isCreating).toBe(false);
+    expect(pendingState.creationPoints).toHaveLength(0);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+
+    const doneState = useSelectionStore.getState();
+    expect(doneState.selectionMaskPending).toBe(false);
+    expect(doneState.hasSelection).toBe(true);
+    expect(doneState.selectionMask).not.toBeNull();
+    expect(doneState.selectionPath.length).toBeGreaterThan(0);
+  });
 });

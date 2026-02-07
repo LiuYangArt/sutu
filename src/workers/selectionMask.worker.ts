@@ -1,3 +1,5 @@
+type BooleanSelectionMode = 'add' | 'subtract' | 'intersect';
+
 type SelectionPoint = {
   x: number;
   y: number;
@@ -12,21 +14,52 @@ type BuildMaskRequest = {
   height: number;
 };
 
-type BuildMaskResponse =
-  | {
-      type: 'build_mask_done';
-      requestId: number;
-      width: number;
-      height: number;
-      buffer: ArrayBuffer;
-    }
-  | {
-      type: 'build_mask_error';
-      requestId: number;
-      reason: string;
-    };
+type CommitBooleanSelectionRequest = {
+  type: 'commit_boolean_selection';
+  requestId: number;
+  mode: BooleanSelectionMode;
+  path: SelectionPoint[];
+  width: number;
+  height: number;
+  baseBuffer: ArrayBuffer;
+};
+
+type WorkerRequest = BuildMaskRequest | CommitBooleanSelectionRequest;
+
+type BuildMaskResponse = {
+  type: 'build_mask_done';
+  requestId: number;
+  width: number;
+  height: number;
+  buffer: ArrayBuffer;
+};
+
+type CommitBooleanSelectionResponse = {
+  type: 'commit_boolean_selection_done';
+  requestId: number;
+  width: number;
+  height: number;
+  buffer: ArrayBuffer;
+  path: SelectionPoint[][];
+};
+
+type WorkerErrorResponse = {
+  type: 'build_mask_error' | 'commit_boolean_selection_error';
+  requestId: number;
+  reason: string;
+};
+
+type WorkerResponse = BuildMaskResponse | CommitBooleanSelectionResponse | WorkerErrorResponse;
 
 type Point = { x: number; y: number };
+
+type LocalMask = {
+  data: Uint8ClampedArray;
+  originX: number;
+  originY: number;
+  width: number;
+  height: number;
+};
 
 function perpendicularDistance(point: Point, lineStart: Point, lineEnd: Point): number {
   let dx = lineEnd.x - lineStart.x;
@@ -101,15 +134,28 @@ function drawSmoothMaskPath(
   }
 }
 
-function pathToMaskData(path: SelectionPoint[], width: number, height: number): Uint8ClampedArray {
-  if (path.length === 0) {
-    return new Uint8ClampedArray(width * height * 4);
-  }
-
+function ensureOffscreenCanvasCtor(): typeof OffscreenCanvas {
   const OffscreenCanvasCtor = (globalThis as { OffscreenCanvas?: typeof OffscreenCanvas })
     .OffscreenCanvas;
   if (!OffscreenCanvasCtor) {
     throw new Error('OffscreenCanvas is not available in selection mask worker');
+  }
+  return OffscreenCanvasCtor;
+}
+
+function rasterizePathToLocalMask(
+  path: SelectionPoint[],
+  fullWidth: number,
+  fullHeight: number
+): LocalMask {
+  if (path.length === 0) {
+    return {
+      data: new Uint8ClampedArray(4),
+      originX: 0,
+      originY: 0,
+      width: 1,
+      height: 1,
+    };
   }
 
   let minX = Infinity;
@@ -125,11 +171,12 @@ function pathToMaskData(path: SelectionPoint[], width: number, height: number): 
 
   const originX = Math.max(0, Math.floor(minX) - 1);
   const originY = Math.max(0, Math.floor(minY) - 1);
-  const endX = Math.min(width, Math.ceil(maxX) + 2);
-  const endY = Math.min(height, Math.ceil(maxY) + 2);
+  const endX = Math.min(fullWidth, Math.ceil(maxX) + 2);
+  const endY = Math.min(fullHeight, Math.ceil(maxY) + 2);
   const localWidth = Math.max(1, endX - originX);
   const localHeight = Math.max(1, endY - originY);
 
+  const OffscreenCanvasCtor = ensureOffscreenCanvasCtor();
   const canvas = new OffscreenCanvasCtor(localWidth, localHeight);
   const ctx = canvas.getContext('2d');
   if (!ctx) {
@@ -179,51 +226,283 @@ function pathToMaskData(path: SelectionPoint[], width: number, height: number): 
   }
 
   const localMask = ctx.getImageData(0, 0, localWidth, localHeight);
-  if (originX === 0 && originY === 0 && localWidth === width && localHeight === height) {
+  return {
+    data: localMask.data,
+    originX,
+    originY,
+    width: localWidth,
+    height: localHeight,
+  };
+}
+
+function expandLocalMaskToFullMask(
+  localMask: LocalMask,
+  fullWidth: number,
+  fullHeight: number
+): Uint8ClampedArray {
+  if (
+    localMask.originX === 0 &&
+    localMask.originY === 0 &&
+    localMask.width === fullWidth &&
+    localMask.height === fullHeight
+  ) {
     return localMask.data;
   }
 
-  const fullData = new Uint8ClampedArray(width * height * 4);
-  const localData = localMask.data;
-  for (let y = 0; y < localHeight; y += 1) {
-    const srcStart = y * localWidth * 4;
-    const srcEnd = srcStart + localWidth * 4;
-    const dstStart = ((y + originY) * width + originX) * 4;
-    fullData.set(localData.subarray(srcStart, srcEnd), dstStart);
+  const fullData = new Uint8ClampedArray(fullWidth * fullHeight * 4);
+  for (let y = 0; y < localMask.height; y += 1) {
+    const srcStart = y * localMask.width * 4;
+    const srcEnd = srcStart + localMask.width * 4;
+    const dstStart = ((y + localMask.originY) * fullWidth + localMask.originX) * 4;
+    fullData.set(localMask.data.subarray(srcStart, srcEnd), dstStart);
   }
   return fullData;
 }
 
+function combineBooleanMaskData(
+  baseData: Uint8ClampedArray,
+  addedMask: LocalMask,
+  mode: BooleanSelectionMode,
+  fullWidth: number,
+  fullHeight: number
+): Uint8ClampedArray {
+  const result =
+    mode === 'intersect' ? new Uint8ClampedArray(fullWidth * fullHeight * 4) : baseData;
+  const localData = addedMask.data;
+
+  for (let y = 0; y < addedMask.height; y += 1) {
+    const fullY = y + addedMask.originY;
+    for (let x = 0; x < addedMask.width; x += 1) {
+      const fullX = x + addedMask.originX;
+      const fullIdx = (fullY * fullWidth + fullX) * 4;
+      const localIdx = (y * addedMask.width + x) * 4;
+      const baseAlpha = baseData[fullIdx + 3] ?? 0;
+      const addedAlpha = localData[localIdx + 3] ?? 0;
+
+      let finalAlpha = 0;
+      if (mode === 'add') {
+        if (addedAlpha <= 0) continue;
+        finalAlpha = Math.max(baseAlpha, addedAlpha);
+      } else if (mode === 'subtract') {
+        if (addedAlpha <= 0) continue;
+        finalAlpha = Math.max(0, baseAlpha - addedAlpha);
+      } else {
+        finalAlpha = Math.min(baseAlpha, addedAlpha);
+      }
+
+      if (finalAlpha > 0) {
+        result[fullIdx] = 255;
+        result[fullIdx + 1] = 255;
+        result[fullIdx + 2] = 255;
+        result[fullIdx + 3] = finalAlpha;
+      } else {
+        result[fullIdx] = 0;
+        result[fullIdx + 1] = 0;
+        result[fullIdx + 2] = 0;
+        result[fullIdx + 3] = 0;
+      }
+    }
+  }
+
+  return result;
+}
+
+function toTransferableArrayBuffer(data: Uint8ClampedArray): ArrayBuffer {
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  return buffer;
+}
+
+function traceMaskToPathsFromData(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): SelectionPoint[][] {
+  const paths: SelectionPoint[][] = [];
+  const visitedStart = new Uint8Array(width * height);
+
+  const isSelected = (x: number, y: number): boolean => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    const idx = (y * width + x) * 4 + 3;
+    return (data[idx] ?? 0) > 128;
+  };
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const idx = y * width + x;
+      if (!isSelected(x, y) || visitedStart[idx]) continue;
+
+      const isBoundary =
+        !isSelected(x - 1, y) ||
+        !isSelected(x + 1, y) ||
+        !isSelected(x, y - 1) ||
+        !isSelected(x, y + 1);
+      if (!isBoundary) continue;
+
+      let backtrack: { x: number; y: number } | null = null;
+      if (!isSelected(x - 1, y)) backtrack = { x: x - 1, y };
+      else if (!isSelected(x, y - 1)) backtrack = { x, y: y - 1 };
+      else if (!isSelected(x + 1, y)) backtrack = { x: x + 1, y };
+      else if (!isSelected(x, y + 1)) backtrack = { x, y: y + 1 };
+      if (!backtrack) continue;
+
+      const path = mooreNeighborTraceFromData(data, width, height, x, y, backtrack, visitedStart);
+      if (path.length > 2) {
+        paths.push(path);
+      }
+    }
+  }
+
+  return paths;
+}
+
+function mooreNeighborTraceFromData(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  startX: number,
+  startY: number,
+  startBacktrack: { x: number; y: number },
+  visitedMap: Uint8Array
+): SelectionPoint[] {
+  const path: SelectionPoint[] = [];
+
+  const isSelected = (x: number, y: number): boolean => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    const idx = (y * width + x) * 4 + 3;
+    return (data[idx] ?? 0) > 128;
+  };
+
+  let cx = startX;
+  let cy = startY;
+  let bx = startBacktrack.x;
+  let by = startBacktrack.y;
+
+  path.push({ x: cx, y: cy });
+  visitedMap[cy * width + cx] = 1;
+
+  let i = 0;
+  const maxIter = width * height * 4;
+  while (i < maxIter) {
+    const neighbors = [
+      { x: cx, y: cy - 1 },
+      { x: cx + 1, y: cy - 1 },
+      { x: cx + 1, y: cy },
+      { x: cx + 1, y: cy + 1 },
+      { x: cx, y: cy + 1 },
+      { x: cx - 1, y: cy + 1 },
+      { x: cx - 1, y: cy },
+      { x: cx - 1, y: cy - 1 },
+    ];
+
+    let bIdx = -1;
+    for (let k = 0; k < 8; k += 1) {
+      const n = neighbors[k];
+      if (n && n.x === bx && n.y === by) {
+        bIdx = k;
+        break;
+      }
+    }
+    if (bIdx < 0) {
+      break;
+    }
+
+    let nextPixel: { x: number; y: number } | null = null;
+    let nextBacktrack: { x: number; y: number } | null = null;
+    for (let j = 0; j < 8; j += 1) {
+      const idx = (bIdx + 1 + j) % 8;
+      const n = neighbors[idx];
+      if (n && isSelected(n.x, n.y)) {
+        nextPixel = n;
+        const prevIdx = (idx + 7) % 8;
+        nextBacktrack = neighbors[prevIdx] ?? null;
+        break;
+      }
+    }
+
+    if (!nextPixel || !nextBacktrack) {
+      break;
+    }
+    if (nextPixel.x === startX && nextPixel.y === startY) {
+      break;
+    }
+
+    path.push(nextPixel);
+    visitedMap[nextPixel.y * width + nextPixel.x] = 1;
+    cx = nextPixel.x;
+    cy = nextPixel.y;
+    bx = nextBacktrack.x;
+    by = nextBacktrack.y;
+    i += 1;
+  }
+
+  return path;
+}
+
 const workerScope = self as unknown as {
-  onmessage: ((event: MessageEvent<BuildMaskRequest>) => void) | null;
-  postMessage: (message: BuildMaskResponse, transfer?: Transferable[]) => void;
+  onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null;
+  postMessage: (message: WorkerResponse, transfer?: Transferable[]) => void;
 };
 
-workerScope.onmessage = (event: MessageEvent<BuildMaskRequest>) => {
+workerScope.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const payload = event.data;
-  if (!payload || payload.type !== 'build_mask') return;
+  if (!payload) return;
 
-  try {
-    const data = pathToMaskData(payload.path, payload.width, payload.height);
-    const transferableBuffer = new ArrayBuffer(data.byteLength);
-    new Uint8Array(transferableBuffer).set(
-      new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-    );
-    workerScope.postMessage(
-      {
-        type: 'build_mask_done',
+  if (payload.type === 'build_mask') {
+    try {
+      const localMask = rasterizePathToLocalMask(payload.path, payload.width, payload.height);
+      const data = expandLocalMaskToFullMask(localMask, payload.width, payload.height);
+      const buffer = toTransferableArrayBuffer(data);
+      workerScope.postMessage(
+        {
+          type: 'build_mask_done',
+          requestId: payload.requestId,
+          width: payload.width,
+          height: payload.height,
+          buffer,
+        },
+        [buffer]
+      );
+    } catch (error) {
+      workerScope.postMessage({
+        type: 'build_mask_error',
         requestId: payload.requestId,
-        width: payload.width,
-        height: payload.height,
-        buffer: transferableBuffer,
-      },
-      [transferableBuffer]
-    );
-  } catch (error) {
-    workerScope.postMessage({
-      type: 'build_mask_error',
-      requestId: payload.requestId,
-      reason: String(error),
-    });
+        reason: String(error),
+      });
+    }
+    return;
+  }
+
+  if (payload.type === 'commit_boolean_selection') {
+    try {
+      const baseData = new Uint8ClampedArray(payload.baseBuffer);
+      const localAddedMask = rasterizePathToLocalMask(payload.path, payload.width, payload.height);
+      const finalData = combineBooleanMaskData(
+        baseData,
+        localAddedMask,
+        payload.mode,
+        payload.width,
+        payload.height
+      );
+      const finalPath = traceMaskToPathsFromData(finalData, payload.width, payload.height);
+      const buffer = toTransferableArrayBuffer(finalData);
+      workerScope.postMessage(
+        {
+          type: 'commit_boolean_selection_done',
+          requestId: payload.requestId,
+          width: payload.width,
+          height: payload.height,
+          buffer,
+          path: finalPath,
+        },
+        [buffer]
+      );
+    } catch (error) {
+      workerScope.postMessage({
+        type: 'commit_boolean_selection_error',
+        requestId: payload.requestId,
+        reason: String(error),
+      });
+    }
   }
 };

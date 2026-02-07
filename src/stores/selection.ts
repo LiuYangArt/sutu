@@ -33,7 +33,7 @@ export interface SelectionBounds {
   height: number;
 }
 
-interface SelectionMaskWorkerRequest {
+interface SelectionMaskWorkerBuildRequest {
   type: 'build_mask';
   requestId: number;
   path: SelectionPoint[];
@@ -41,24 +41,68 @@ interface SelectionMaskWorkerRequest {
   height: number;
 }
 
-interface SelectionMaskWorkerResponse {
-  type: 'build_mask_done' | 'build_mask_error';
+interface SelectionMaskWorkerBooleanRequest {
+  type: 'commit_boolean_selection';
   requestId: number;
-  width?: number;
-  height?: number;
-  buffer?: ArrayBuffer;
-  reason?: string;
+  mode: Exclude<SelectionMode, 'new'>;
+  path: SelectionPoint[];
+  width: number;
+  height: number;
+  baseBuffer: ArrayBuffer;
 }
+
+type SelectionMaskWorkerRequest =
+  | SelectionMaskWorkerBuildRequest
+  | SelectionMaskWorkerBooleanRequest;
+
+interface SelectionMaskWorkerBuildResponse {
+  type: 'build_mask_done';
+  requestId: number;
+  width: number;
+  height: number;
+  buffer: ArrayBuffer;
+}
+
+interface SelectionMaskWorkerBooleanResponse {
+  type: 'commit_boolean_selection_done';
+  requestId: number;
+  width: number;
+  height: number;
+  buffer: ArrayBuffer;
+  path: SelectionPoint[][];
+}
+
+interface SelectionMaskWorkerErrorResponse {
+  type: 'build_mask_error' | 'commit_boolean_selection_error';
+  requestId: number;
+  reason: string;
+}
+
+type SelectionMaskWorkerResponse =
+  | SelectionMaskWorkerBuildResponse
+  | SelectionMaskWorkerBooleanResponse
+  | SelectionMaskWorkerErrorResponse;
+
+type BooleanSelectionWorkerResult = {
+  mask: ImageData;
+  path: SelectionPoint[][];
+};
+
+type SelectionMaskWorkerPendingHandler =
+  | {
+      kind: 'build';
+      resolve: (mask: ImageData | null) => void;
+      reject: (error: unknown) => void;
+    }
+  | {
+      kind: 'boolean';
+      resolve: (result: BooleanSelectionWorkerResult | null) => void;
+      reject: (error: unknown) => void;
+    };
 
 let selectionMaskWorker: Worker | null | undefined;
 let selectionMaskWorkerRequestSeq = 1;
-const selectionMaskWorkerPending = new Map<
-  number,
-  {
-    resolve: (mask: ImageData | null) => void;
-    reject: (error: unknown) => void;
-  }
->();
+const selectionMaskWorkerPending = new Map<number, SelectionMaskWorkerPendingHandler>();
 
 function ensureSelectionMaskWorker(): Worker | null {
   if (selectionMaskWorker !== undefined) return selectionMaskWorker;
@@ -77,18 +121,25 @@ function ensureSelectionMaskWorker(): Worker | null {
       if (!pending) return;
       selectionMaskWorkerPending.delete(payload.requestId);
 
-      if (
-        payload.type === 'build_mask_done' &&
-        typeof payload.width === 'number' &&
-        typeof payload.height === 'number' &&
-        payload.buffer
-      ) {
+      if (pending.kind === 'build' && payload.type === 'build_mask_done') {
         const data = new Uint8ClampedArray(payload.buffer);
         pending.resolve(new ImageData(data, payload.width, payload.height));
         return;
       }
 
-      if (payload.type === 'build_mask_error') {
+      if (pending.kind === 'boolean' && payload.type === 'commit_boolean_selection_done') {
+        const data = new Uint8ClampedArray(payload.buffer);
+        pending.resolve({
+          mask: new ImageData(data, payload.width, payload.height),
+          path: payload.path,
+        });
+        return;
+      }
+
+      if (
+        payload.type === 'build_mask_error' ||
+        payload.type === 'commit_boolean_selection_error'
+      ) {
         pending.reject(new Error(payload.reason ?? 'selection mask worker error'));
         return;
       }
@@ -122,7 +173,7 @@ function rasterizeSelectionMaskInWorker(
 
   return new Promise<ImageData | null>((resolve, reject) => {
     const requestId = selectionMaskWorkerRequestSeq++;
-    selectionMaskWorkerPending.set(requestId, { resolve, reject });
+    selectionMaskWorkerPending.set(requestId, { kind: 'build', resolve, reject });
     const payload: SelectionMaskWorkerRequest = {
       type: 'build_mask',
       requestId,
@@ -132,6 +183,44 @@ function rasterizeSelectionMaskInWorker(
     };
     worker.postMessage(payload);
   }).catch(() => null);
+}
+
+function buildBooleanSelectionInWorker(
+  baseMask: ImageData,
+  path: SelectionPoint[],
+  mode: Exclude<SelectionMode, 'new'>,
+  width: number,
+  height: number
+): Promise<BooleanSelectionWorkerResult | null> {
+  const worker = ensureSelectionMaskWorker();
+  if (!worker) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise<BooleanSelectionWorkerResult | null>((resolve, reject) => {
+    const requestId = selectionMaskWorkerRequestSeq++;
+    selectionMaskWorkerPending.set(requestId, { kind: 'boolean', resolve, reject });
+    const baseBuffer = new Uint8ClampedArray(baseMask.data).buffer;
+    const payload: SelectionMaskWorkerRequest = {
+      type: 'commit_boolean_selection',
+      requestId,
+      mode,
+      path,
+      width,
+      height,
+      baseBuffer,
+    };
+    worker.postMessage(payload, [baseBuffer]);
+  }).catch(() => null);
+}
+
+function waitForRenderTick(): Promise<void> {
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    return new Promise((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  }
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function isPointInPolygon(path: SelectionPoint[], x: number, y: number): boolean {
@@ -169,13 +258,19 @@ function isPointInSelectionPath(paths: SelectionPoint[][], x: number, y: number)
 export interface SelectionSnapshot {
   hasSelection: boolean;
   selectionMask: ImageData | null;
+  selectionMaskPending: boolean;
   selectionPath: SelectionPoint[][];
   bounds: SelectionBounds | null;
 }
 
 export function didSelectionChange(before: SelectionSnapshot, after: SelectionSnapshot): boolean {
-  if (!before.hasSelection && !after.hasSelection) return false;
-  return before.selectionMask !== after.selectionMask;
+  return (
+    before.hasSelection !== after.hasSelection ||
+    before.selectionMask !== after.selectionMask ||
+    before.selectionMaskPending !== after.selectionMaskPending ||
+    before.selectionPath !== after.selectionPath ||
+    before.bounds !== after.bounds
+  );
 }
 
 interface SelectionState {
@@ -512,26 +607,57 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       return;
     }
 
-    const newMask = pathToMask(path, documentWidth, documentHeight);
-    const finalMask = combineMasks(state.selectionMask!, newMask, state.selectionMode);
-    // 布尔运算后的选区必须从合成 mask 反推轮廓，确保蚂蚁线与像素结果一致。
-    const finalPath = traceMaskToPaths(finalMask);
-
-    const bounds = calculateBounds(finalPath);
-    const hasSelection = finalPath.length > 0 && !!bounds;
-
+    const buildId = state.selectionMaskBuildId + 1;
+    const mode = state.selectionMode as Exclude<SelectionMode, 'new'>;
+    const baseMask = state.selectionMask!;
+    const pathForMask = path.map((p) => ({ ...p }));
     set({
-      hasSelection,
-      selectionMask: hasSelection ? finalMask : null,
-      selectionMaskPending: false,
-      selectionMaskBuildId: state.selectionMaskBuildId + 1,
-      selectionPath: hasSelection ? finalPath : [],
-      bounds: hasSelection ? bounds : null,
+      selectionMaskPending: true,
+      selectionMaskBuildId: buildId,
       isCreating: false,
       creationPoints: [],
       previewPoint: null, // Clear preview point
       creationStart: null,
     });
+
+    void (async () => {
+      await waitForRenderTick();
+      let result = await buildBooleanSelectionInWorker(
+        baseMask,
+        pathForMask,
+        mode,
+        documentWidth,
+        documentHeight
+      );
+      if (!result) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        const latest = get();
+        if (latest.selectionMaskBuildId !== buildId || !latest.selectionMask) {
+          return;
+        }
+        const newMask = pathToMask(pathForMask, documentWidth, documentHeight);
+        const finalMask = combineMasks(latest.selectionMask, newMask, mode);
+        result = {
+          mask: finalMask,
+          path: traceMaskToPaths(finalMask),
+        };
+      }
+
+      set((current) => {
+        if (current.selectionMaskBuildId !== buildId) {
+          return current;
+        }
+        const bounds = calculateBounds(result.path);
+        const hasSelection = result.path.length > 0 && !!bounds;
+        return {
+          hasSelection,
+          selectionMask: hasSelection ? result.mask : null,
+          selectionMaskPending: false,
+          selectionPath: hasSelection ? result.path : [],
+          bounds: hasSelection ? bounds : null,
+        };
+      });
+    })();
   },
 
   cancelSelection: () =>
@@ -753,8 +879,8 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   },
 
   createSnapshot: () => {
-    const { hasSelection, selectionMask, selectionPath, bounds } = get();
-    return { hasSelection, selectionMask, selectionPath, bounds };
+    const { hasSelection, selectionMask, selectionMaskPending, selectionPath, bounds } = get();
+    return { hasSelection, selectionMask, selectionMaskPending, selectionPath, bounds };
   },
 
   applySnapshot: (snapshot) => {
