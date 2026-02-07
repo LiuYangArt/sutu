@@ -68,6 +68,18 @@ interface ManualGateChecklist {
   noTailDab: boolean;
 }
 
+interface ResultsSectionProps {
+  results: TestResult[];
+  expandedResult: number | null;
+  copiedResultIndex: number | null;
+  onToggleExpanded: (index: number) => void;
+  onCopyReport: (
+    event: React.MouseEvent<HTMLButtonElement>,
+    index: number,
+    result: TestResult
+  ) => void;
+}
+
 const DEFAULT_MANUAL_GATE_CHECKLIST: ManualGateChecklist = {
   noThinStart: false,
   noMissingOrDisappear: false,
@@ -1827,6 +1839,9 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     []
   );
 
+  const hasResults = results.length > 0;
+  const hasExportableData = Boolean(lastReport) || hasResults;
+
   const panelStyle: React.CSSProperties = {
     width: size.width,
     height: size.height,
@@ -2106,60 +2121,27 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
                 <button
                   className="debug-btn secondary"
                   onClick={exportReport}
-                  disabled={!lastReport && results.length === 0}
+                  disabled={!hasExportableData}
                 >
                   <Download size={16} />
                   <span>Export</span>
                 </button>
               </div>
             </div>
-
-            {results.length > 0 && (
-              <div className="debug-section">
-                <h3>Results</h3>
-                <div className="debug-results">
-                  {results.map((result, index) => (
-                    <div
-                      key={index}
-                      className={`debug-result ${result.status}`}
-                      onClick={() => setExpandedResult(expandedResult === index ? null : index)}
-                    >
-                      <div className="debug-result-header">
-                        <StatusIcon status={result.status} />
-                        <span className="debug-result-name">{result.name}</span>
-                        {result.report && (
-                          <button
-                            type="button"
-                            className="debug-result-copy-btn"
-                            aria-label="Copy Report"
-                            title="Copy this report to clipboard"
-                            onClick={(event) => {
-                              void copyResultReport(event, index, result);
-                            }}
-                          >
-                            {copiedResultIndex === index ? 'Copied' : 'Copy'}
-                          </button>
-                        )}
-                        <span className="debug-result-time">
-                          {result.timestamp.toLocaleTimeString()}
-                        </span>
-                        {result.report &&
-                          (expandedResult === index ? (
-                            <ChevronUp size={14} />
-                          ) : (
-                            <ChevronDown size={14} />
-                          ))}
-                      </div>
-                      {expandedResult === index && result.report && (
-                        <pre className="debug-result-report">{result.report}</pre>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </>
         )}
+
+        <ResultsSection
+          results={results}
+          expandedResult={expandedResult}
+          copiedResultIndex={copiedResultIndex}
+          onToggleExpanded={(index) => {
+            setExpandedResult(expandedResult === index ? null : index);
+          }}
+          onCopyReport={(event, index, result) => {
+            void copyResultReport(event, index, result);
+          }}
+        />
       </div>
 
       <div
@@ -2175,6 +2157,57 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
 
       <div className="debug-panel-footer">
         <span className="debug-hint">Press Shift+Ctrl+D to toggle</span>
+      </div>
+    </div>
+  );
+}
+
+function ResultsSection({
+  results,
+  expandedResult,
+  copiedResultIndex,
+  onToggleExpanded,
+  onCopyReport,
+}: ResultsSectionProps) {
+  if (results.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="debug-section">
+      <h3>Results</h3>
+      <div className="debug-results">
+        {results.map((result, index) => (
+          <div
+            key={index}
+            className={`debug-result ${result.status}`}
+            onClick={() => onToggleExpanded(index)}
+          >
+            <div className="debug-result-header">
+              <StatusIcon status={result.status} />
+              <span className="debug-result-name">{result.name}</span>
+              {result.report && (
+                <button
+                  type="button"
+                  className="debug-result-copy-btn"
+                  aria-label="Copy Report"
+                  title="Copy this report to clipboard"
+                  onClick={(event) => {
+                    onCopyReport(event, index, result);
+                  }}
+                >
+                  {copiedResultIndex === index ? 'Copied' : 'Copy'}
+                </button>
+              )}
+              <span className="debug-result-time">{result.timestamp.toLocaleTimeString()}</span>
+              {result.report &&
+                (expandedResult === index ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+            </div>
+            {expandedResult === index && result.report && (
+              <pre className="debug-result-report">{result.report}</pre>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
