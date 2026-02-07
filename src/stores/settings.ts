@@ -86,10 +86,34 @@ export interface BrushSettings {
   gpuRenderScaleMode: GPURenderScaleMode;
 }
 
+export type NewFileBackgroundPreset = 'transparent' | 'white' | 'black' | 'current-bg';
+export type NewFileOrientation = 'portrait' | 'landscape';
+
+export interface CustomSizePreset {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+}
+
+export interface NewFileLastUsedSettings {
+  width: number;
+  height: number;
+  backgroundPreset: NewFileBackgroundPreset;
+  presetId: string | null;
+  orientation: NewFileOrientation;
+}
+
+export interface NewFileSettings {
+  customSizePresets: CustomSizePreset[];
+  lastUsed: NewFileLastUsedSettings;
+}
+
 interface PersistedSettings {
   appearance: AppearanceSettings;
   tablet: TabletSettings;
   brush: BrushSettings;
+  newFile: NewFileSettings;
 }
 
 interface SettingsState extends PersistedSettings {
@@ -122,10 +146,26 @@ interface SettingsState extends PersistedSettings {
   setColorBlendMode: (mode: ColorBlendMode) => void;
   setGpuRenderScaleMode: (mode: GPURenderScaleMode) => void;
 
+  // New file preset actions
+  addCustomSizePreset: (preset: { name: string; width: number; height: number }) => string;
+  removeCustomSizePreset: (id: string) => void;
+  setNewFileLastUsed: (lastUsed: NewFileLastUsedSettings) => void;
+
   // Persistence
   _loadSettings: () => Promise<void>;
   _saveSettings: () => Promise<void>;
 }
+
+export const DEFAULT_NEW_FILE_SETTINGS: NewFileSettings = {
+  customSizePresets: [],
+  lastUsed: {
+    width: 1920,
+    height: 1080,
+    backgroundPreset: 'white',
+    presetId: 'device-1080p',
+    orientation: 'landscape',
+  },
+};
 
 // Default settings
 const defaultSettings: PersistedSettings = {
@@ -146,7 +186,15 @@ const defaultSettings: PersistedSettings = {
     colorBlendMode: 'linear',
     gpuRenderScaleMode: 'off',
   },
+  newFile: {
+    customSizePresets: [],
+    lastUsed: { ...DEFAULT_NEW_FILE_SETTINGS.lastUsed },
+  },
 };
+
+function createCustomSizePresetId(): string {
+  return `custom_size_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 // Apply CSS variables based on settings
 function applyAppearanceSettings(appearance: AppearanceSettings): void {
@@ -313,6 +361,36 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    addCustomSizePreset: ({ name, width, height }) => {
+      const id = createCustomSizePresetId();
+      set((state) => {
+        state.newFile.customSizePresets.push({
+          id,
+          name,
+          width,
+          height,
+        });
+      });
+      debouncedSave(() => get()._saveSettings());
+      return id;
+    },
+
+    removeCustomSizePreset: (id) => {
+      set((state) => {
+        state.newFile.customSizePresets = state.newFile.customSizePresets.filter(
+          (preset) => preset.id !== id
+        );
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setNewFileLastUsed: (lastUsed) => {
+      set((state) => {
+        state.newFile.lastUsed = lastUsed;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     // Load settings from file
     _loadSettings: async () => {
       try {
@@ -332,6 +410,22 @@ export const useSettingsStore = create<SettingsState>()(
             }
             if (loaded.brush) {
               state.brush = { ...defaultSettings.brush, ...loaded.brush };
+            }
+            if (loaded.newFile) {
+              state.newFile = {
+                customSizePresets: Array.isArray(loaded.newFile.customSizePresets)
+                  ? loaded.newFile.customSizePresets
+                  : defaultSettings.newFile.customSizePresets,
+                lastUsed: {
+                  ...defaultSettings.newFile.lastUsed,
+                  ...loaded.newFile.lastUsed,
+                },
+              };
+            } else {
+              state.newFile = {
+                customSizePresets: [...defaultSettings.newFile.customSizePresets],
+                lastUsed: { ...defaultSettings.newFile.lastUsed },
+              };
             }
             state.isLoaded = true;
           });
@@ -360,6 +454,7 @@ export const useSettingsStore = create<SettingsState>()(
           appearance: state.appearance,
           tablet: state.tablet,
           brush: state.brush,
+          newFile: state.newFile,
         };
 
         await writeTextFile(SETTINGS_FILE, JSON.stringify(data, null, 2), {

@@ -74,11 +74,11 @@ function App() {
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState(false);
   const [showNewFilePanel, setShowNewFilePanel] = useState(false);
   const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] = useState(false);
+  const setNewFileLastUsed = useSettingsStore((s) => s.setNewFileLastUsed);
   const initDocument = useDocumentStore((s) => s.initDocument);
   const docDefaults = useDocumentStore((s) => ({
     width: s.width,
     height: s.height,
-    dpi: s.dpi,
   }));
   const tabletInitializedRef = useRef(false);
 
@@ -343,8 +343,9 @@ function App() {
   function handleCreateNewDocument(v: {
     width: number;
     height: number;
-    dpi: number;
     backgroundPreset: BackgroundPreset;
+    presetId: string | null;
+    orientation: 'portrait' | 'landscape';
   }): void {
     const currentToolBackground = useToolStore.getState().backgroundColor;
     const fillColor = resolveBackgroundFillColor(v.backgroundPreset, currentToolBackground);
@@ -357,8 +358,16 @@ function App() {
     useDocumentStore.getState().initDocument({
       width: v.width,
       height: v.height,
-      dpi: v.dpi,
+      dpi: 72,
       background: { preset: v.backgroundPreset, fillColor },
+    });
+
+    setNewFileLastUsed({
+      width: v.width,
+      height: v.height,
+      backgroundPreset: v.backgroundPreset,
+      presetId: v.presetId,
+      orientation: v.orientation,
     });
 
     setShowNewFilePanel(false);
