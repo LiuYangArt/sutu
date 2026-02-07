@@ -827,6 +827,8 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     useState<GpuLayerStackCacheStatsSnapshot | null>(null);
   const [noReadbackPilotEnabled, setNoReadbackPilotEnabled] = useState(false);
   const [noReadbackPilotMessage, setNoReadbackPilotMessage] = useState<string>('');
+  const [gpuSelectionPipelineV2Enabled, setGpuSelectionPipelineV2Enabled] = useState(false);
+  const [gpuSelectionPipelineV2Message, setGpuSelectionPipelineV2Message] = useState<string>('');
   const [phase6GateCaptureName, setPhase6GateCaptureName] = useState<string>('');
   const [captureSourceLabel, setCaptureSourceLabel] = useState<string>('');
   const [capturePathLabel, setCapturePathLabel] = useState<string>('');
@@ -940,6 +942,19 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     refreshNoReadbackPilotState();
   }, [refreshNoReadbackPilotState]);
 
+  const refreshGpuSelectionPipelineV2State = useCallback(() => {
+    const getter = window.__gpuSelectionPipelineV2;
+    if (typeof getter === 'function') {
+      setGpuSelectionPipelineV2Enabled(Boolean(getter()));
+      return;
+    }
+    setGpuSelectionPipelineV2Enabled(false);
+  }, []);
+
+  useEffect(() => {
+    refreshGpuSelectionPipelineV2State();
+  }, [refreshGpuSelectionPipelineV2State]);
+
   const toggleNoReadbackPilot = useCallback(() => {
     const getter = window.__gpuBrushNoReadbackPilot;
     const setter = window.__gpuBrushNoReadbackPilotSet;
@@ -958,6 +973,25 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     const current = Boolean(getter());
     setNoReadbackPilotEnabled(current);
     setNoReadbackPilotMessage(`No-Readback Pilot ${current ? 'ON' : 'OFF'}`);
+  }, []);
+
+  const toggleGpuSelectionPipelineV2 = useCallback(() => {
+    const getter = window.__gpuSelectionPipelineV2;
+    const setter = window.__gpuSelectionPipelineV2Set;
+    if (typeof getter !== 'function' || typeof setter !== 'function') {
+      setGpuSelectionPipelineV2Message('GPU Selection Pipeline API unavailable');
+      return;
+    }
+
+    const next = !getter();
+    const ok = setter(next);
+    if (!ok) {
+      setGpuSelectionPipelineV2Message(`GPU Selection Pipeline ${next ? 'ON' : 'OFF'} failed`);
+      return;
+    }
+    const current = Boolean(getter());
+    setGpuSelectionPipelineV2Enabled(current);
+    setGpuSelectionPipelineV2Message(`GPU Selection Pipeline ${current ? 'ON' : 'OFF'}`);
   }, []);
 
   const applyCaptureMeta = useCallback((captureResult: Phase6B3CaptureResult) => {
@@ -2128,9 +2162,19 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
                 className={`debug-btn secondary ${noReadbackPilotEnabled ? 'active' : ''}`}
                 onClick={toggleNoReadbackPilot}
                 disabled={!!runningTest}
-                title="No-readback live mode toggle. History/export paths will sync GPU tiles to CPU on demand."
+                title="No-readback live mode toggle. Undo/Redo still use on-demand GPU-to-CPU sync; export uses GPU export readback path."
               >
                 <span>No-Readback Pilot: {noReadbackPilotEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+            </div>
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className={`debug-btn secondary ${gpuSelectionPipelineV2Enabled ? 'active' : ''}`}
+                onClick={toggleGpuSelectionPipelineV2}
+                disabled={!!runningTest}
+                title="Toggle M5 full-GPU selection pipeline. OFF means dab prefilter falls back to CPU point-in-selection check."
+              >
+                <span>GPU Selection Pipeline: {gpuSelectionPipelineV2Enabled ? 'ON' : 'OFF'}</span>
               </button>
             </div>
             <div className="debug-button-row" style={{ marginTop: '8px' }}>
@@ -2145,12 +2189,18 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
             </div>
             {noReadbackPilotEnabled && (
               <div className="debug-note" style={{ marginTop: '6px' }}>
-                No-Readback active: Undo/Redo and export use on-demand GPU-to-CPU sync.
+                No-Readback active: Undo/Redo use on-demand GPU-to-CPU sync; export uses GPU export
+                readback path.
               </div>
             )}
             {noReadbackPilotMessage && (
               <div className="debug-note" style={{ marginTop: '6px' }}>
                 {noReadbackPilotMessage}
+              </div>
+            )}
+            {gpuSelectionPipelineV2Message && (
+              <div className="debug-note" style={{ marginTop: '6px' }}>
+                {gpuSelectionPipelineV2Message}
               </div>
             )}
             <div className="debug-note" style={{ marginTop: '8px' }}>

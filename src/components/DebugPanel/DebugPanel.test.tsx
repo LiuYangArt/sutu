@@ -372,7 +372,9 @@ describe('DebugPanel', () => {
       expect(screen.getByRole('button', { name: 'No-Readback Pilot: ON' })).toBeInTheDocument();
     });
     expect(
-      screen.getByText('No-Readback active: Undo/Redo and export use on-demand GPU-to-CPU sync.')
+      screen.getByText(
+        'No-Readback active: Undo/Redo use on-demand GPU-to-CPU sync; export uses GPU export readback path.'
+      )
     ).toBeInTheDocument();
   });
 

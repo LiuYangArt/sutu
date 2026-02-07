@@ -142,6 +142,8 @@ export interface BrushRenderConfig {
   // Dual Brush settings (Photoshop-compatible)
   dualBrushEnabled: boolean;
   dualBrush?: DualBrushSettings;
+  // When true, selection clipping is fully handled in GPU compositing shader.
+  selectionHandledByGpu?: boolean;
 }
 
 export interface UseBrushRendererProps {
@@ -498,10 +500,15 @@ export function useBrushRenderer({
       // Selection constraint: get state once before loop for performance
       const selectionState = useSelectionStore.getState();
       const hasSelection = selectionState.hasSelection;
+      const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
 
       for (const dab of dabs) {
         // Selection constraint: skip dabs outside selection
-        if (hasSelection && !selectionState.isPointInSelection(dab.x, dab.y)) {
+        if (
+          !skipCpuSelectionCheck &&
+          hasSelection &&
+          !selectionState.isPointInSelection(dab.x, dab.y)
+        ) {
           continue;
         }
 

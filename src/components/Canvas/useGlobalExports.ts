@@ -57,6 +57,8 @@ interface UseGlobalExportsParams {
   setGpuBrushCommitReadbackMode?: (mode: GpuBrushCommitReadbackMode) => boolean;
   getGpuBrushNoReadbackPilot?: () => boolean;
   setGpuBrushNoReadbackPilot?: (enabled: boolean) => boolean;
+  exportGpuLayerImageData?: (layerId: string) => Promise<ImageData | null>;
+  exportGpuFlattenedImageData?: () => Promise<ImageData | null>;
   syncGpuLayerToCpu?: (layerId: string) => Promise<boolean>;
   syncAllGpuLayersToCpu?: () => Promise<number>;
   startStrokeCapture?: () => boolean;
@@ -132,6 +134,16 @@ function waitForAnimationFrame(): Promise<void> {
   });
 }
 
+function imageDataToDataUrl(imageData: ImageData): string | undefined {
+  const canvas = document.createElement('canvas');
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return undefined;
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
 export function useGlobalExports({
   layerRendererRef,
   compositeAndRender,
@@ -152,6 +164,8 @@ export function useGlobalExports({
   setGpuBrushCommitReadbackMode,
   getGpuBrushNoReadbackPilot,
   setGpuBrushNoReadbackPilot,
+  exportGpuLayerImageData,
+  exportGpuFlattenedImageData,
   syncGpuLayerToCpu,
   syncAllGpuLayersToCpu,
   startStrokeCapture,
@@ -701,6 +715,17 @@ export function useGlobalExports({
 
     // Get single layer image data as Base64 PNG data URL
     win.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
+      if (exportGpuLayerImageData) {
+        try {
+          const image = await exportGpuLayerImageData(layerId);
+          if (image) {
+            return imageDataToDataUrl(image);
+          }
+        } catch (error) {
+          console.warn('[M5] GPU layer export failed, fallback to CPU path', error);
+        }
+      }
+
       await syncGpuLayerToCpu?.(layerId);
       if (!layerRendererRef.current) return undefined;
       const layer = layerRendererRef.current.getLayer(layerId);
@@ -712,6 +737,17 @@ export function useGlobalExports({
 
     // Get flattened (composited) image
     win.__getFlattenedImage = async (): Promise<string | undefined> => {
+      if (exportGpuFlattenedImageData) {
+        try {
+          const image = await exportGpuFlattenedImageData();
+          if (image) {
+            return imageDataToDataUrl(image);
+          }
+        } catch (error) {
+          console.warn('[M5] GPU flattened export failed, fallback to CPU path', error);
+        }
+      }
+
       await syncAllGpuLayersToCpu?.();
       if (!layerRendererRef.current) return undefined;
       const compositeCanvas = layerRendererRef.current.composite();
@@ -720,9 +756,31 @@ export function useGlobalExports({
 
     // Get thumbnail (256x256)
     win.__getThumbnail = async (): Promise<string | undefined> => {
-      await syncAllGpuLayersToCpu?.();
-      if (!layerRendererRef.current) return undefined;
-      const compositeCanvas = layerRendererRef.current.composite();
+      let compositeCanvas: HTMLCanvasElement | null = null;
+      if (exportGpuFlattenedImageData) {
+        try {
+          const image = await exportGpuFlattenedImageData();
+          if (image) {
+            const canvas = document.createElement('canvas');
+            canvas.width = image.width;
+            canvas.height = image.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.putImageData(image, 0, 0);
+              compositeCanvas = canvas;
+            }
+          }
+        } catch (error) {
+          console.warn('[M5] GPU thumbnail export failed, fallback to CPU path', error);
+        }
+      }
+
+      if (!compositeCanvas) {
+        await syncAllGpuLayersToCpu?.();
+        if (!layerRendererRef.current) return undefined;
+        compositeCanvas = layerRendererRef.current.composite();
+      }
+      if (!compositeCanvas) return undefined;
 
       // Create thumbnail canvas
       const thumbCanvas = document.createElement('canvas');
@@ -941,6 +999,8 @@ export function useGlobalExports({
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
+    exportGpuLayerImageData,
+    exportGpuFlattenedImageData,
     syncGpuLayerToCpu,
     syncAllGpuLayersToCpu,
     startStrokeCapture,

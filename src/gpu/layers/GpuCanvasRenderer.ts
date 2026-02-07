@@ -6,6 +6,12 @@ import { SelectionMaskGpu } from './SelectionMaskGpu';
 import type { GpuStrokeHistoryStore, GpuStrokeHistoryTileApplyItem } from './GpuStrokeHistoryStore';
 import { buildBelowCacheSignature } from './layerStackCache';
 import { computeTileDrawRegion, type TileDrawRegion } from './dirtyTileClip';
+import {
+  buildExportChunkRects,
+  computeReadbackBytesPerRow,
+  copyMappedRowsToImageData,
+  normalizeExportChunkSize,
+} from './exportReadback';
 import { alignTo } from '../utils/textureCopyRect';
 import type { Rect } from '@/utils/strokeBuffer';
 import type { GpuRenderableLayer } from '../types';
@@ -51,6 +57,18 @@ interface ReadbackTarget {
   layerId: string;
   tiles: TileCoord[];
   targetCtx: CanvasRenderingContext2D;
+}
+
+interface ReadbackLayerExportParams {
+  layerId: string;
+  chunkSize?: number;
+  targetCtx?: CanvasRenderingContext2D;
+}
+
+interface ReadbackFlattenedExportParams {
+  layers: GpuRenderableLayer[];
+  chunkSize?: number;
+  targetCtx?: CanvasRenderingContext2D;
 }
 
 export interface GpuLayerStackCacheStats {
@@ -814,6 +832,84 @@ export class GpuCanvasRenderer {
     }
   }
 
+  async readbackLayerExport(params: ReadbackLayerExportParams): Promise<ImageData> {
+    const { layerId, targetCtx } = params;
+    const chunkSize = normalizeExportChunkSize(params.chunkSize, this.tileSize);
+    const out = new Uint8ClampedArray(this.width * this.height * 4);
+    const chunks = buildExportChunkRects(this.width, this.height, chunkSize);
+
+    for (const chunk of chunks) {
+      const tiles = this.getTilesForRect({
+        left: chunk.x,
+        top: chunk.y,
+        right: chunk.x + chunk.width,
+        bottom: chunk.y + chunk.height,
+      });
+
+      for (const coord of tiles) {
+        const rect = this.layerStore.getTileRect(coord);
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const tile = this.layerStore.getTile(layerId, coord);
+        const sourceTexture = tile?.texture ?? this.transparentLayerTexture;
+        await this.readbackTextureRectToImageData({
+          texture: sourceTexture,
+          rect,
+          out,
+          destroyTextureAfterReadback: false,
+        });
+      }
+    }
+
+    const image = new ImageData(out, this.width, this.height);
+    targetCtx?.putImageData(image, 0, 0);
+    return image;
+  }
+
+  async readbackFlattenedExport(params: ReadbackFlattenedExportParams): Promise<ImageData> {
+    const { targetCtx } = params;
+    const visibleLayers = params.layers.filter((layer) => layer.visible);
+    const chunkSize = normalizeExportChunkSize(params.chunkSize, this.tileSize);
+    const out = new Uint8ClampedArray(this.width * this.height * 4);
+
+    if (visibleLayers.length === 0) {
+      const image = new ImageData(out, this.width, this.height);
+      targetCtx?.putImageData(image, 0, 0);
+      return image;
+    }
+
+    this.layerBlendUniformWriteIndex = 0;
+
+    const chunks = buildExportChunkRects(this.width, this.height, chunkSize);
+    for (const chunk of chunks) {
+      const tiles = this.getTilesForRect({
+        left: chunk.x,
+        top: chunk.y,
+        right: chunk.x + chunk.width,
+        bottom: chunk.y + chunk.height,
+      });
+
+      for (const coord of tiles) {
+        const rect = this.layerStore.getTileRect(coord);
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const sourceTexture = await this.composeFlattenedTileTexture({
+          coord,
+          tileRect: rect,
+          layers: visibleLayers,
+        });
+        await this.readbackTextureRectToImageData({
+          texture: sourceTexture,
+          rect,
+          out,
+          destroyTextureAfterReadback: true,
+        });
+      }
+    }
+
+    const image = new ImageData(out, this.width, this.height);
+    targetCtx?.putImageData(image, 0, 0);
+    return image;
+  }
+
   async sampleLayerPixel(
     layerId: string,
     canvasX: number,
@@ -1018,6 +1114,88 @@ export class GpuCanvasRenderer {
     pass.draw(6, 1, 0, 0);
   }
 
+  private async composeFlattenedTileTexture(args: {
+    coord: TileCoord;
+    tileRect: TileRect;
+    layers: GpuRenderableLayer[];
+  }): Promise<GPUTexture> {
+    const { coord, tileRect, layers } = args;
+    const encoder = this.device.createCommandEncoder();
+
+    let current: TileSourceRef = {
+      texture: this.transparentLayerTexture,
+      view: this.transparentLayerView,
+      source: 'transparent',
+    };
+
+    for (const layer of layers) {
+      const source = this.resolveLayerTileRef(layer.id, coord);
+      current = this.blendLayerIntoCurrent({
+        encoder,
+        current,
+        layer,
+        source,
+        tileRect,
+      });
+    }
+
+    const copyTarget = this.createTempTileTexture();
+    encoder.copyTextureToTexture({ texture: current.texture }, { texture: copyTarget }, [
+      this.tileSize,
+      this.tileSize,
+      1,
+    ]);
+    this.device.queue.submit([encoder.finish()]);
+    await this.device.queue.onSubmittedWorkDone();
+    return copyTarget;
+  }
+
+  private async readbackTextureRectToImageData(args: {
+    texture: GPUTexture;
+    rect: TileRect;
+    out: Uint8ClampedArray;
+    destroyTextureAfterReadback: boolean;
+  }): Promise<void> {
+    const { texture, rect, out, destroyTextureAfterReadback } = args;
+    const bytesPerRow = computeReadbackBytesPerRow(rect.width);
+    const bufferSize = bytesPerRow * rect.height;
+    const readbackBuffer = this.device.createBuffer({
+      label: 'Export Tile Readback',
+      size: bufferSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    try {
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture, origin: { x: 0, y: 0 } },
+        { buffer: readbackBuffer, bytesPerRow },
+        [rect.width, rect.height]
+      );
+      this.device.queue.submit([encoder.finish()]);
+      await readbackBuffer.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(readbackBuffer.getMappedRange());
+      copyMappedRowsToImageData({
+        mapped,
+        bytesPerRow,
+        width: rect.width,
+        height: rect.height,
+        dest: out,
+        destWidth: this.width,
+        destX: rect.originX,
+        destY: rect.originY,
+      });
+    } finally {
+      if (readbackBuffer.mapState === 'mapped') {
+        readbackBuffer.unmap();
+      }
+      readbackBuffer.destroy();
+      if (destroyTextureAfterReadback) {
+        texture.destroy();
+      }
+    }
+  }
+
   private renderLayerBlendPass(args: {
     encoder: GPUCommandEncoder;
     targetView: GPUTextureView;
@@ -1025,7 +1203,7 @@ export class GpuCanvasRenderer {
     sourceView: GPUTextureView;
     tileRect: TileRect;
     layerOpacity: number;
-    blendMode: 'normal' | 'multiply' | 'screen' | 'overlay';
+    blendMode: GpuRenderableLayer['blendMode'];
   }): void {
     const { encoder, targetView, baseView, sourceView, tileRect, layerOpacity, blendMode } = args;
     const uniformOffset = this.nextLayerBlendUniformOffset();
@@ -1071,27 +1249,44 @@ export class GpuCanvasRenderer {
 
   private normalizeBlendMode(
     blendMode: GpuRenderableLayer['blendMode']
-  ): 'normal' | 'multiply' | 'screen' | 'overlay' {
-    if (
-      blendMode === 'normal' ||
-      blendMode === 'multiply' ||
-      blendMode === 'screen' ||
-      blendMode === 'overlay'
-    ) {
-      return blendMode;
-    }
-    return 'normal';
+  ): GpuRenderableLayer['blendMode'] {
+    return blendMode;
   }
 
-  private encodeBlendMode(blendMode: 'normal' | 'multiply' | 'screen' | 'overlay'): number {
+  private encodeBlendMode(blendMode: GpuRenderableLayer['blendMode']): number {
     switch (blendMode) {
+      case 'normal':
+        return 0;
       case 'multiply':
         return 1;
       case 'screen':
         return 2;
       case 'overlay':
         return 3;
-      case 'normal':
+      case 'darken':
+        return 4;
+      case 'lighten':
+        return 5;
+      case 'color-dodge':
+        return 6;
+      case 'color-burn':
+        return 7;
+      case 'hard-light':
+        return 8;
+      case 'soft-light':
+        return 9;
+      case 'difference':
+        return 10;
+      case 'exclusion':
+        return 11;
+      case 'hue':
+        return 12;
+      case 'saturation':
+        return 13;
+      case 'color':
+        return 14;
+      case 'luminosity':
+        return 15;
       default:
         return 0;
     }

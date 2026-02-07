@@ -9,6 +9,18 @@ const GPU_LAYER_BLEND_MODE_M3: readonly GpuLayerBlendModeM3[] = [
   'multiply',
   'screen',
   'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
 ];
 
 const GPU_LAYER_BLEND_MODE_M3_SET = new Set<BlendMode>(GPU_LAYER_BLEND_MODE_M3);

@@ -28,6 +28,92 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VertexOut {
   return out;
 }
 
+fn channel_color_dodge(dst: f32, src: f32) -> f32 {
+  if (src >= 0.9999) {
+    return 1.0;
+  }
+  return min(1.0, dst / max(0.0001, 1.0 - src));
+}
+
+fn channel_color_burn(dst: f32, src: f32) -> f32 {
+  if (src <= 0.0001) {
+    return 0.0;
+  }
+  return max(0.0, 1.0 - (1.0 - dst) / src);
+}
+
+fn channel_soft_light(dst: f32, src: f32) -> f32 {
+  if (src <= 0.5) {
+    return dst - (1.0 - 2.0 * src) * dst * (1.0 - dst);
+  }
+  let g = select(((16.0 * dst - 12.0) * dst + 4.0) * dst, sqrt(dst), dst > 0.25);
+  return dst + (2.0 * src - 1.0) * (g - dst);
+}
+
+fn rgb_to_hsl(color: vec3<f32>) -> vec3<f32> {
+  let cmax = max(color.r, max(color.g, color.b));
+  let cmin = min(color.r, min(color.g, color.b));
+  let delta = cmax - cmin;
+  let l = (cmax + cmin) * 0.5;
+  var h = 0.0;
+  var s = 0.0;
+
+  if (delta > 0.0001) {
+    s = delta / max(0.0001, 1.0 - abs(2.0 * l - 1.0));
+    if (cmax == color.r) {
+      h = (color.g - color.b) / delta;
+      if (color.g < color.b) {
+        h = h + 6.0;
+      }
+    } else if (cmax == color.g) {
+      h = (color.b - color.r) / delta + 2.0;
+    } else {
+      h = (color.r - color.g) / delta + 4.0;
+    }
+    h = h / 6.0;
+  }
+
+  return vec3<f32>(h, s, l);
+}
+
+fn hue_to_rgb(p: f32, q: f32, t_value: f32) -> f32 {
+  var t = t_value;
+  if (t < 0.0) {
+    t = t + 1.0;
+  }
+  if (t > 1.0) {
+    t = t - 1.0;
+  }
+  if (t < 1.0 / 6.0) {
+    return p + (q - p) * 6.0 * t;
+  }
+  if (t < 0.5) {
+    return q;
+  }
+  if (t < 2.0 / 3.0) {
+    return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+  }
+  return p;
+}
+
+fn hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
+  let h = hsl.x;
+  let s = hsl.y;
+  let l = hsl.z;
+
+  if (s <= 0.0001) {
+    return vec3<f32>(l, l, l);
+  }
+
+  let q = select(l * (1.0 + s), l + s - l * s, l >= 0.5);
+  let p = 2.0 * l - q;
+  return vec3<f32>(
+    hue_to_rgb(p, q, h + 1.0 / 3.0),
+    hue_to_rgb(p, q, h),
+    hue_to_rgb(p, q, h - 1.0 / 3.0)
+  );
+}
+
 fn blend_rgb(mode: u32, dst: vec3<f32>, src: vec3<f32>) -> vec3<f32> {
   switch mode {
     case 1u: {
@@ -40,6 +126,64 @@ fn blend_rgb(mode: u32, dst: vec3<f32>, src: vec3<f32>) -> vec3<f32> {
       let low = 2.0 * dst * src;
       let high = 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
       return select(low, high, dst >= vec3<f32>(0.5));
+    }
+    case 4u: {
+      return min(dst, src);
+    }
+    case 5u: {
+      return max(dst, src);
+    }
+    case 6u: {
+      return vec3<f32>(
+        channel_color_dodge(dst.r, src.r),
+        channel_color_dodge(dst.g, src.g),
+        channel_color_dodge(dst.b, src.b)
+      );
+    }
+    case 7u: {
+      return vec3<f32>(
+        channel_color_burn(dst.r, src.r),
+        channel_color_burn(dst.g, src.g),
+        channel_color_burn(dst.b, src.b)
+      );
+    }
+    case 8u: {
+      let low = 2.0 * dst * src;
+      let high = 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
+      return select(low, high, src >= vec3<f32>(0.5));
+    }
+    case 9u: {
+      return vec3<f32>(
+        channel_soft_light(dst.r, src.r),
+        channel_soft_light(dst.g, src.g),
+        channel_soft_light(dst.b, src.b)
+      );
+    }
+    case 10u: {
+      return abs(dst - src);
+    }
+    case 11u: {
+      return dst + src - 2.0 * dst * src;
+    }
+    case 12u: {
+      let dst_hsl = rgb_to_hsl(dst);
+      let src_hsl = rgb_to_hsl(src);
+      return hsl_to_rgb(vec3<f32>(src_hsl.x, dst_hsl.y, dst_hsl.z));
+    }
+    case 13u: {
+      let dst_hsl = rgb_to_hsl(dst);
+      let src_hsl = rgb_to_hsl(src);
+      return hsl_to_rgb(vec3<f32>(dst_hsl.x, src_hsl.y, dst_hsl.z));
+    }
+    case 14u: {
+      let dst_hsl = rgb_to_hsl(dst);
+      let src_hsl = rgb_to_hsl(src);
+      return hsl_to_rgb(vec3<f32>(src_hsl.x, src_hsl.y, dst_hsl.z));
+    }
+    case 15u: {
+      let dst_hsl = rgb_to_hsl(dst);
+      let src_hsl = rgb_to_hsl(src);
+      return hsl_to_rgb(vec3<f32>(dst_hsl.x, dst_hsl.y, src_hsl.z));
     }
     default: {
       return src;

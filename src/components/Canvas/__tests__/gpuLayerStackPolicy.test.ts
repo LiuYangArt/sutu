@@ -21,7 +21,7 @@ describe('gpuLayerStackPolicy', () => {
     expect(allowed).toBe(true);
   });
 
-  it('rejects GPU stack path when any visible layer blend is unsupported', () => {
+  it('allows GPU stack path for full blend-mode set', () => {
     const allowed = isGpuLayerStackPathAvailable({
       brushBackend: 'gpu',
       gpuAvailable: true,
@@ -31,7 +31,7 @@ describe('gpuLayerStackPolicy', () => {
         { visible: true, blendMode: 'difference' },
       ],
     });
-    expect(allowed).toBe(false);
+    expect(allowed).toBe(true);
   });
 
   it('ignores unsupported blend mode on hidden layers', () => {
@@ -60,7 +60,8 @@ describe('gpuLayerStackPolicy', () => {
   it('exposes M3 blend whitelist', () => {
     expect(isGpuLayerBlendModeM3('normal')).toBe(true);
     expect(isGpuLayerBlendModeM3('overlay')).toBe(true);
-    expect(isGpuLayerBlendModeM3('difference')).toBe(false);
+    expect(isGpuLayerBlendModeM3('difference')).toBe(true);
+    expect(isGpuLayerBlendModeM3('luminosity')).toBe(true);
   });
 
   it('bumps only dirty layer revisions when dirty list is provided', () => {

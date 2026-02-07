@@ -100,6 +100,8 @@ declare global {
         mismatchRatio: number;
       }>;
     }>;
+    __gpuSelectionPipelineV2?: () => boolean;
+    __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;
@@ -190,6 +192,7 @@ export function Canvas() {
   const pendingGpuCpuSyncLayerRef = useRef<string | null>(null);
   const pendingGpuCpuSyncRafRef = useRef<number | null>(null);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
+  const [gpuSelectionPipelineV2Enabled, setGpuSelectionPipelineV2Enabled] = useState(true);
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -542,6 +545,19 @@ export function Canvas() {
       gpuRendererRef.current.setSelectionMask(selectionMask ?? null);
     }
   }, [selectionMask]);
+
+  useEffect(() => {
+    window.__gpuSelectionPipelineV2 = () => gpuSelectionPipelineV2Enabled;
+    window.__gpuSelectionPipelineV2Set = (enabled: boolean) => {
+      if (typeof enabled !== 'boolean') return false;
+      setGpuSelectionPipelineV2Enabled(enabled);
+      return true;
+    };
+    return () => {
+      delete window.__gpuSelectionPipelineV2;
+      delete window.__gpuSelectionPipelineV2Set;
+    };
+  }, [gpuSelectionPipelineV2Enabled]);
 
   useEffect(() => {
     pruneGpuStrokeHistory();
@@ -1091,6 +1107,27 @@ export function Canvas() {
 
   const showGpuCanvas = gpuDisplayActive || keepGpuCanvasVisible;
 
+  const exportGpuLayerImageData = useCallback(
+    async (layerId: string): Promise<ImageData | null> => {
+      const gpuRenderer = gpuRendererRef.current;
+      if (!gpuRenderer || !gpuDisplayActive) return null;
+      return gpuRenderer.readbackLayerExport({
+        layerId,
+        chunkSize: 2048,
+      });
+    },
+    [gpuDisplayActive]
+  );
+
+  const exportGpuFlattenedImageData = useCallback(async (): Promise<ImageData | null> => {
+    const gpuRenderer = gpuRendererRef.current;
+    if (!gpuRenderer || !gpuDisplayActive) return null;
+    return gpuRenderer.readbackFlattenedExport({
+      layers: getVisibleGpuRenderableLayers(),
+      chunkSize: 2048,
+    });
+  }, [getVisibleGpuRenderableLayers, gpuDisplayActive]);
+
   useGlobalExports({
     layerRendererRef,
     compositeAndRender,
@@ -1111,6 +1148,8 @@ export function Canvas() {
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
+    exportGpuLayerImageData,
+    exportGpuFlattenedImageData,
     syncGpuLayerToCpu,
     syncAllGpuLayersToCpu: syncAllPendingGpuLayersToCpu,
     startStrokeCapture,
@@ -1286,6 +1325,7 @@ export function Canvas() {
       noiseEnabled,
       dualBrushEnabled,
       dualBrush,
+      selectionHandledByGpu: gpuDisplayActive && gpuSelectionPipelineV2Enabled,
     };
   }, [
     currentSize,
@@ -1319,6 +1359,8 @@ export function Canvas() {
     noiseEnabled,
     dualBrushEnabled,
     dualBrush,
+    gpuDisplayActive,
+    gpuSelectionPipelineV2Enabled,
   ]);
 
   const { drawPoints, finishCurrentStroke, initializeBrushStroke } = useStrokeProcessor({

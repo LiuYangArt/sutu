@@ -101,7 +101,23 @@ export interface GpuStrokeCommitResult {
 
 export type GpuBrushCommitReadbackMode = 'enabled' | 'disabled';
 
-export type GpuLayerBlendModeM3 = 'normal' | 'multiply' | 'screen' | 'overlay';
+export type GpuLayerBlendModeM3 =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity';
 
 export interface GpuRenderableLayer {
   id: string;

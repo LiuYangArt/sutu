@@ -4,6 +4,7 @@ import { useGlobalExports } from '../useGlobalExports';
 import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { useToolStore } from '@/stores/tool';
+import { patternManager } from '@/utils/patternManager';
 
 function cleanupGlobals(): void {
   const win = window as any;
@@ -95,11 +96,19 @@ describe('useGlobalExports', () => {
       cb(0);
       return 1;
     });
+
+    patternManager.registerPattern({
+      id: '__m4_checker__',
+      width: 1,
+      height: 1,
+      data: new Uint8Array([255, 255, 255, 255]),
+    });
   });
 
   afterEach(() => {
     cleanupGlobals();
     window.localStorage.clear();
+    patternManager.removePattern('__m4_checker__');
     vi.restoreAllMocks();
   });
 
@@ -328,6 +337,88 @@ describe('useGlobalExports', () => {
     expect(win.__strokeCaptureSaveFixed).toBeUndefined();
     expect(win.__strokeCaptureLoadFixed).toBeUndefined();
     expect(win.__gpuM4ParityGate).toBeUndefined();
+  });
+
+  it('prefers GPU export callbacks and falls back to CPU path on failure', async () => {
+    const canvasA = document.createElement('canvas');
+    const compositeCanvas = document.createElement('canvas');
+    const layerRenderer = {
+      getLayer: (id: string) => {
+        if (id === 'layerA') return { canvas: canvasA, ctx: canvasA.getContext('2d') };
+        return null;
+      },
+      composite: () => compositeCanvas,
+    } as any;
+
+    const syncGpuLayerToCpu = vi.fn(async () => true);
+    const syncAllGpuLayersToCpu = vi.fn(async () => 1);
+    const exportGpuLayerImageData = vi.fn(async () => {
+      return new ImageData(new Uint8ClampedArray([12, 34, 56, 255]), 1, 1);
+    });
+    const exportGpuFlattenedImageData = vi.fn(async () => {
+      return new ImageData(new Uint8ClampedArray([80, 90, 100, 255]), 1, 1);
+    });
+
+    const { unmount } = renderHook(() =>
+      useGlobalExports({
+        layerRendererRef: { current: layerRenderer } as any,
+        compositeAndRender: vi.fn(),
+        fillActiveLayer: vi.fn(),
+        handleClearSelection: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        handleClearLayer: vi.fn(),
+        handleDuplicateLayer: vi.fn(),
+        handleRemoveLayer: vi.fn(),
+        handleResizeCanvas: vi.fn(),
+        exportGpuLayerImageData,
+        exportGpuFlattenedImageData,
+        syncGpuLayerToCpu,
+        syncAllGpuLayersToCpu,
+      })
+    );
+
+    const win = window as any;
+    await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
+    await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
+    await expect(win.__getThumbnail()).resolves.toMatch(/^data:/);
+    expect(exportGpuLayerImageData).toHaveBeenCalledTimes(1);
+    expect(exportGpuFlattenedImageData).toHaveBeenCalledTimes(2);
+    expect(syncGpuLayerToCpu).not.toHaveBeenCalled();
+    expect(syncAllGpuLayersToCpu).not.toHaveBeenCalled();
+
+    unmount();
+
+    const failGpuLayerExport = vi.fn(async () => {
+      throw new Error('gpu layer export failed');
+    });
+    const failGpuFlattenExport = vi.fn(async () => {
+      throw new Error('gpu flattened export failed');
+    });
+
+    renderHook(() =>
+      useGlobalExports({
+        layerRendererRef: { current: layerRenderer } as any,
+        compositeAndRender: vi.fn(),
+        fillActiveLayer: vi.fn(),
+        handleClearSelection: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        handleClearLayer: vi.fn(),
+        handleDuplicateLayer: vi.fn(),
+        handleRemoveLayer: vi.fn(),
+        handleResizeCanvas: vi.fn(),
+        exportGpuLayerImageData: failGpuLayerExport,
+        exportGpuFlattenedImageData: failGpuFlattenExport,
+        syncGpuLayerToCpu,
+        syncAllGpuLayersToCpu,
+      })
+    );
+
+    await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
+    await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
+    expect(syncGpuLayerToCpu).toHaveBeenCalled();
+    expect(syncAllGpuLayersToCpu).toHaveBeenCalled();
   });
 
   it('updates layer thumbnail after __loadLayerImages draws pixels (legacy base64 path)', async () => {
