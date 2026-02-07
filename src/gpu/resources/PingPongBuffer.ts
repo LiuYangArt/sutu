@@ -115,6 +115,7 @@ export class PingPongBuffer {
         usage:
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.STORAGE_BINDING |
+          GPUTextureUsage.RENDER_ATTACHMENT |
           GPUTextureUsage.COPY_SRC,
       });
     }
@@ -196,8 +197,13 @@ export class PingPongBuffer {
       pass.end();
     };
 
-    clearTexture(this.textureA);
-    clearTexture(this.textureB);
+    const texturesToClear: GPUTexture[] = [this.textureA, this.textureB];
+    if (this.displayTexture) {
+      texturesToClear.push(this.displayTexture);
+    }
+    for (const texture of texturesToClear) {
+      clearTexture(texture);
+    }
 
     device.queue.submit([encoder.finish()]);
   }

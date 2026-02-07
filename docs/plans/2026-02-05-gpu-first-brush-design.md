@@ -894,3 +894,35 @@
   - M4 Gate: PASS/FAIL
   - Blockers / Next action:
 ```
+
+### 13.20 M4 门禁实测通过与热修复记录（2026-02-07）
+
+- Gate run（用户实测）：
+  - 时间：`2026-02-07T05:03:22.689Z`
+  - Capture：`debug-stroke-capture.json`
+  - Capture source：`appconfig`
+  - Capture path：`AppConfig/debug-data/debug-stroke-capture.json`
+  - Threshold：`meanAbsDiff <= 3.00`，`mismatchRatio <= 1.50%`
+  - Cases：
+    - `scatter_core`：PASS | `meanAbsDiff=0.327` `mismatchRatio=0.487%`
+    - `wet_edge_core`：PASS | `meanAbsDiff=0.251` `mismatchRatio=0.442%`
+    - `dual_core`：PASS | `meanAbsDiff=0.300` `mismatchRatio=0.450%`
+    - `texture_core`：PASS | `meanAbsDiff=0.280` `mismatchRatio=0.452%`
+    - `combo_core`：PASS | `meanAbsDiff=0.249` `mismatchRatio=0.336%`
+  - Stability：`uncapturedErrors=0`，`deviceLost=NO`
+  - Final：`M4 Gate: PASS`
+
+- 手测回归与修复闭环：
+  - 手测曾发现：
+    - `wet edge` 绘制时笔刷下出现白色矩形区域，且历史笔触有“变深”现象；
+    - `dual brush` 在 `opacity != 100%` 时出现类似矩形/叠深异常。
+  - 已完成热修复并复测通过：
+    - 对 presentable 输出纹理补齐“每笔可控清理”；
+    - 清理时序调整为“renderScale/状态同步后再清理”，避免重建后纹理残留。
+
+- 自动检查（修复后）：
+  - `pnpm -s typecheck`：PASS
+  - `pnpm -s test`：PASS（238 tests）
+
+- 复盘文档：
+  - `docs/postmortem/2026-02-07-m4-wetedge-dual-presentable-texture-residue.md`

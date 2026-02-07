@@ -323,8 +323,27 @@ export class GPUStrokeAccumulator {
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.STORAGE_BINDING |
+        GPUTextureUsage.RENDER_ATTACHMENT |
         GPUTextureUsage.COPY_SRC,
     });
+  }
+
+  private clearDualBlendTexture(): void {
+    const encoder = this.device.createCommandEncoder({
+      label: 'Clear Dual Blend Texture',
+    });
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.dualBlendTexture.createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        },
+      ],
+    });
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
   }
 
   private createNoiseTexture(): GPUTexture {
@@ -720,9 +739,6 @@ export class GPUStrokeAccumulator {
     this.active = true;
     this.dabsSinceLastFlush = 0;
 
-    // Clear GPU buffers
-    this.pingPongBuffer.clear(this.device);
-
     // Sync color blend mode from store
     this.syncColorBlendMode();
 
@@ -732,13 +748,24 @@ export class GPUStrokeAccumulator {
     // Sync wet edge settings from store
     this.syncWetEdgeSettings();
 
+    const toolState = useToolStore.getState();
+    const dualBrushEnabled = Boolean(toolState.dualBrushEnabled);
+
     // Sync noise state from store (used as compute shader uniform)
-    this.currentNoiseEnabled = Boolean(useToolStore.getState().noiseEnabled);
+    this.currentNoiseEnabled = Boolean(toolState.noiseEnabled);
 
     // Pre-warm display texture if wet edge is enabled
     // This moves the lazy initialization cost from the first flushBatch to beginStroke
     if (this.wetEdgeEnabled) {
       this.pingPongBuffer.ensureDisplayTexture();
+    }
+
+    // Clear GPU buffers after all potential texture reallocations (e.g. render-scale changes).
+    // This avoids carrying stale texels into wet-edge/dual presentable outputs.
+    this.pingPongBuffer.clear(this.device);
+    if (dualBrushEnabled) {
+      this.dualMaskBuffer.clear(this.device);
+      this.clearDualBlendTexture();
     }
   }
 
@@ -866,7 +893,6 @@ export class GPUStrokeAccumulator {
       right: 0,
       bottom: 0,
     };
-    this.previewCtx.clearRect(0, 0, this.width, this.height);
     this.previewCtx.clearRect(0, 0, this.width, this.height);
     this.dabsSinceLastFlush = 0;
     this.currentPatternSettings = null;
