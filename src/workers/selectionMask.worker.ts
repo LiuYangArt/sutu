@@ -290,21 +290,25 @@ function combineBooleanMaskData(
         finalAlpha = Math.min(baseAlpha, addedAlpha);
       }
 
-      if (finalAlpha > 0) {
-        result[fullIdx] = 255;
-        result[fullIdx + 1] = 255;
-        result[fullIdx + 2] = 255;
-        result[fullIdx + 3] = finalAlpha;
-      } else {
-        result[fullIdx] = 0;
-        result[fullIdx + 1] = 0;
-        result[fullIdx + 2] = 0;
-        result[fullIdx + 3] = 0;
-      }
+      writeMaskPixel(result, fullIdx, finalAlpha);
     }
   }
 
   return result;
+}
+
+function writeMaskPixel(target: Uint8ClampedArray, index: number, alpha: number): void {
+  if (alpha > 0) {
+    target[index] = 255;
+    target[index + 1] = 255;
+    target[index + 2] = 255;
+    target[index + 3] = alpha;
+    return;
+  }
+  target[index] = 0;
+  target[index + 1] = 0;
+  target[index + 2] = 0;
+  target[index + 3] = 0;
 }
 
 function toTransferableArrayBuffer(data: Uint8ClampedArray): ArrayBuffer {
@@ -444,6 +448,18 @@ const workerScope = self as unknown as {
   postMessage: (message: WorkerResponse, transfer?: Transferable[]) => void;
 };
 
+function postWorkerError(
+  requestId: number,
+  type: WorkerErrorResponse['type'],
+  error: unknown
+): void {
+  workerScope.postMessage({
+    type,
+    requestId,
+    reason: String(error),
+  });
+}
+
 workerScope.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const payload = event.data;
   if (!payload) return;
@@ -464,11 +480,7 @@ workerScope.onmessage = (event: MessageEvent<WorkerRequest>) => {
         [buffer]
       );
     } catch (error) {
-      workerScope.postMessage({
-        type: 'build_mask_error',
-        requestId: payload.requestId,
-        reason: String(error),
-      });
+      postWorkerError(payload.requestId, 'build_mask_error', error);
     }
     return;
   }
@@ -498,11 +510,7 @@ workerScope.onmessage = (event: MessageEvent<WorkerRequest>) => {
         [buffer]
       );
     } catch (error) {
-      workerScope.postMessage({
-        type: 'commit_boolean_selection_error',
-        requestId: payload.requestId,
-        reason: String(error),
-      });
+      postWorkerError(payload.requestId, 'commit_boolean_selection_error', error);
     }
   }
 };

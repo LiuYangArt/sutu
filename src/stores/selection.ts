@@ -223,6 +223,10 @@ function waitForRenderTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function waitForNextMacrotask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function isPointInPolygon(path: SelectionPoint[], x: number, y: number): boolean {
   let inside = false;
   for (let i = 0, j = path.length - 1; i < path.length; j = i, i += 1) {
@@ -585,7 +589,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       void (async () => {
         let mask = await rasterizeSelectionMaskInWorker(pathForMask, documentWidth, documentHeight);
         if (!mask) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          await waitForNextMacrotask();
           const latest = get();
           if (latest.selectionMaskBuildId !== buildId || !latest.hasSelection) {
             return;
@@ -608,8 +612,11 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }
 
     const buildId = state.selectionMaskBuildId + 1;
-    const mode = state.selectionMode as Exclude<SelectionMode, 'new'>;
-    const baseMask = state.selectionMask!;
+    const mode = state.selectionMode;
+    const baseMask = state.selectionMask;
+    if (mode === 'new' || !baseMask) {
+      return;
+    }
     const pathForMask = path.map((p) => ({ ...p }));
     set({
       selectionMaskPending: true,
@@ -630,7 +637,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
         documentHeight
       );
       if (!result) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await waitForNextMacrotask();
         const latest = get();
         if (latest.selectionMaskBuildId !== buildId || !latest.selectionMask) {
           return;
