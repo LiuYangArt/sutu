@@ -47,6 +47,33 @@ class PatternManager {
   }
 
   /**
+   * Register an in-memory pattern for deterministic/local test cases.
+   * This does not persist to backend resources.
+   */
+  public registerPattern(pattern: PatternData): void {
+    if (!pattern.id || pattern.width <= 0 || pattern.height <= 0) {
+      throw new Error('Invalid pattern metadata');
+    }
+    const expectedBytes = pattern.width * pattern.height * 4;
+    if (pattern.data.length !== expectedBytes) {
+      throw new Error(
+        `Invalid pattern data length for ${pattern.id}. Expected ${expectedBytes}, got ${pattern.data.length}`
+      );
+    }
+    this.pendingRequests.delete(pattern.id);
+    this.patterns.set(pattern.id, pattern);
+  }
+
+  /**
+   * Remove an in-memory pattern from cache.
+   * Returns true when a cached pattern existed.
+   */
+  public removePattern(id: string): boolean {
+    this.pendingRequests.delete(id);
+    return this.patterns.delete(id);
+  }
+
+  /**
    * Load a pattern from the backend
    * Deduplicates concurrent requests for the same ID
    */

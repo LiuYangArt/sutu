@@ -87,6 +87,19 @@ declare global {
       capture?: StrokeCaptureData | string
     ) => Promise<FixedStrokeCaptureSaveResult>;
     __strokeCaptureLoadFixed?: () => Promise<FixedStrokeCaptureLoadResult | null>;
+    __gpuM4ParityGate?: (options?: {
+      seed?: number;
+      capture?: StrokeCaptureData | string;
+    }) => Promise<{
+      passed: boolean;
+      report: string;
+      cases: Array<{
+        caseId: string;
+        passed: boolean;
+        meanAbsDiff: number;
+        mismatchRatio: number;
+      }>;
+    }>;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;
@@ -290,6 +303,7 @@ export function Canvas() {
           const docState = useDocumentStore.getState();
           const toolState = useToolStore.getState();
           const viewportState = useViewportStore.getState();
+          const { texture: _ignoredDualTexture, ...dualBrushWithoutTexture } = toolState.dualBrush;
           return {
             canvasWidth: docState.width,
             canvasHeight: docState.height,
@@ -309,6 +323,24 @@ export function Canvas() {
               pressureSizeEnabled: toolState.pressureSizeEnabled,
               pressureFlowEnabled: toolState.pressureFlowEnabled,
               pressureOpacityEnabled: toolState.pressureOpacityEnabled,
+              scatterEnabled: toolState.scatterEnabled,
+              scatter: { ...toolState.scatter },
+              textureEnabled: toolState.textureEnabled,
+              textureSettings: {
+                patternId: toolState.textureSettings.patternId,
+                scale: toolState.textureSettings.scale,
+                brightness: toolState.textureSettings.brightness,
+                contrast: toolState.textureSettings.contrast,
+                mode: toolState.textureSettings.mode,
+                depth: toolState.textureSettings.depth,
+                invert: toolState.textureSettings.invert,
+              },
+              dualBrushEnabled: toolState.dualBrushEnabled,
+              dualBrush: dualBrushWithoutTexture,
+              wetEdgeEnabled: toolState.wetEdgeEnabled,
+              wetEdge: toolState.wetEdge,
+              noiseEnabled: toolState.noiseEnabled,
+              buildupEnabled: toolState.buildupEnabled,
             },
           };
         },

@@ -13,6 +13,30 @@ export interface StrokeCaptureSample {
   buttons: number;
 }
 
+export interface StrokeCaptureToolMetadata extends Record<string, unknown> {
+  currentTool?: string;
+  brushColor?: string;
+  brushSize?: number;
+  brushFlow?: number;
+  brushOpacity?: number;
+  brushHardness?: number;
+  brushSpacing?: number;
+  pressureCurve?: string;
+  pressureSizeEnabled?: boolean;
+  pressureFlowEnabled?: boolean;
+  pressureOpacityEnabled?: boolean;
+  scatterEnabled?: boolean;
+  scatter?: Record<string, unknown>;
+  textureEnabled?: boolean;
+  textureSettings?: Record<string, unknown>;
+  dualBrushEnabled?: boolean;
+  dualBrush?: Record<string, unknown>;
+  wetEdgeEnabled?: boolean;
+  wetEdge?: number;
+  noiseEnabled?: boolean;
+  buildupEnabled?: boolean;
+}
+
 export interface StrokeCaptureMetadata {
   canvasWidth: number;
   canvasHeight: number;
@@ -20,7 +44,7 @@ export interface StrokeCaptureMetadata {
   viewportOffsetX?: number;
   viewportOffsetY?: number;
   activeLayerId?: string | null;
-  tool: Record<string, unknown>;
+  tool: StrokeCaptureToolMetadata;
 }
 
 export interface StrokeCaptureData {

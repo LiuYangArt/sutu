@@ -1,10 +1,16 @@
 import { useEffect, type RefObject } from 'react';
 import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
+import { useSettingsStore } from '@/stores/settings';
 import { useToolStore, type ToolType, type PressureCurve } from '@/stores/tool';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
+import {
+  parseDualBrushSettings,
+  parseScatterSettings,
+  parseTextureSettings,
+} from './replayContextParsers';
 import {
   DEBUG_CAPTURE_DIR,
   DEBUG_CAPTURE_FILE_NAME,
@@ -16,6 +22,11 @@ import {
   type StrokeCaptureData,
   type StrokeReplayOptions,
 } from '@/test';
+import {
+  createM4ParityGate,
+  type M4ParityGateOptions,
+  type M4ParityGateResult,
+} from '@/test/m4FeatureParityGate';
 import {
   GPUContext,
   type GpuBrushCommitReadbackMode,
@@ -203,6 +214,7 @@ export function useGlobalExports({
         capture?: StrokeCaptureData | string
       ) => Promise<FixedStrokeCaptureSaveResult>;
       __strokeCaptureLoadFixed?: () => Promise<FixedStrokeCaptureLoadResult | null>;
+      __gpuM4ParityGate?: (options?: M4ParityGateOptions) => Promise<M4ParityGateResult>;
     };
 
     const isTauriRuntime = '__TAURI_INTERNALS__' in window;
@@ -446,6 +458,53 @@ export function useGlobalExports({
           pressureOpacityEnabled === null ? state.pressureOpacityEnabled : pressureOpacityEnabled,
       }));
 
+      const scatterEnabled = asBoolean(toolMeta.scatterEnabled);
+      if (scatterEnabled !== null) {
+        toolStore.setScatterEnabled(scatterEnabled);
+      }
+      const scatterPatch = parseScatterSettings(toolMeta.scatter);
+      if (scatterPatch) {
+        toolStore.setScatter(scatterPatch as Parameters<typeof toolStore.setScatter>[0]);
+      }
+
+      const textureEnabled = asBoolean(toolMeta.textureEnabled);
+      if (textureEnabled !== null) {
+        toolStore.setTextureEnabled(textureEnabled);
+      }
+      const texturePatch = parseTextureSettings(toolMeta.textureSettings);
+      if (texturePatch) {
+        toolStore.setTextureSettings(
+          texturePatch as Parameters<typeof toolStore.setTextureSettings>[0]
+        );
+      }
+
+      const dualBrushEnabled = asBoolean(toolMeta.dualBrushEnabled);
+      if (dualBrushEnabled !== null) {
+        toolStore.setDualBrushEnabled(dualBrushEnabled);
+      }
+      const dualBrushPatch = parseDualBrushSettings(toolMeta.dualBrush);
+      if (dualBrushPatch) {
+        toolStore.setDualBrush(dualBrushPatch as Parameters<typeof toolStore.setDualBrush>[0]);
+      }
+
+      const wetEdgeEnabled = asBoolean(toolMeta.wetEdgeEnabled);
+      if (wetEdgeEnabled !== null) {
+        toolStore.setWetEdgeEnabled(wetEdgeEnabled);
+      }
+      const wetEdge = asFiniteNumber(toolMeta.wetEdge);
+      if (wetEdge !== null) {
+        toolStore.setWetEdge(wetEdge);
+      }
+
+      const noiseEnabled = asBoolean(toolMeta.noiseEnabled);
+      if (noiseEnabled !== null) {
+        toolStore.setNoiseEnabled(noiseEnabled);
+      }
+      const buildupEnabled = asBoolean(toolMeta.buildupEnabled);
+      if (buildupEnabled !== null) {
+        toolStore.setBuildupEnabled(buildupEnabled);
+      }
+
       if (applied.length > 0) {
         // eslint-disable-next-line no-console
         console.info('[StrokeCapture] replay context applied', applied);
@@ -602,6 +661,43 @@ export function useGlobalExports({
         return null;
       }
     };
+
+    win.__gpuM4ParityGate = createM4ParityGate({
+      replay: async (capture, options): Promise<{ events: number; durationMs: number } | null> => {
+        const fn = win.__strokeCaptureReplay;
+        if (typeof fn !== 'function') {
+          throw new Error('Missing API: window.__strokeCaptureReplay');
+        }
+        return fn(capture, options);
+      },
+      clearLayer: () => {
+        const fn = win.__canvasClearLayer;
+        if (typeof fn !== 'function') {
+          throw new Error('Missing API: window.__canvasClearLayer');
+        }
+        fn();
+      },
+      getFlattenedImage: async () => {
+        const fn = win.__getFlattenedImage;
+        if (typeof fn !== 'function') {
+          throw new Error('Missing API: window.__getFlattenedImage');
+        }
+        return fn();
+      },
+      loadFixedCapture: async () => {
+        const fn = win.__strokeCaptureLoadFixed;
+        if (typeof fn !== 'function') {
+          throw new Error('Missing API: window.__strokeCaptureLoadFixed');
+        }
+        return fn();
+      },
+      parseStrokeCaptureInput,
+      getRenderMode: () => useSettingsStore.getState().brush.renderMode,
+      setRenderMode: (mode) => useSettingsStore.getState().setRenderMode(mode),
+      waitForAnimationFrame,
+      resetGpuDiagnostics,
+      getGpuDiagnosticsSnapshot,
+    });
 
     // Get single layer image data as Base64 PNG data URL
     win.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
@@ -823,6 +919,7 @@ export function useGlobalExports({
       delete win.__strokeCaptureDownload;
       delete win.__strokeCaptureSaveFixed;
       delete win.__strokeCaptureLoadFixed;
+      delete win.__gpuM4ParityGate;
     };
   }, [
     layerRendererRef,

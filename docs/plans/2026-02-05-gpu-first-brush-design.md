@@ -194,7 +194,9 @@
 ### M4：主要特性恢复
 
 - dual / texture / wet-edge / scatter
-- 回归一致性验证
+- 回归一致性验证（先落地 CPU 自动化门禁，不做 PS 抽样对照）
+- 固定门禁 case：`scatter_core` / `wet_edge_core` / `dual_core` / `texture_core` / `combo_core`
+- 固定阈值：`meanAbsDiff <= 3.0` 且 `mismatchRatio <= 1.5%`
 
 ### M5：Selection/Mask GPU 化 + 导出
 
@@ -838,3 +840,57 @@
 - Verification：
   - 用户本机手测反馈：绘制链路恢复正常，问题不可复现（PASS）。
   - 自动检查：`pnpm -s typecheck` PASS，`pnpm -s test -- GpuStrokeCommitCoordinator dirtyTileClip layerStackCache` PASS。
+
+### 13.19 M4 直接落地记录（CPU 自动化门禁）
+
+- Scope（本轮锁定）：
+  - 实现并门禁 `dual / texture / wet-edge / scatter` 四大特性主链路；
+  - 一致性基准仅使用 CPU 自动化（GPU replay 对 CPU replay）；
+  - 不纳入 `textureEachTip / minimumDepth / depthJitter / depthControl`。
+- Gate API：
+  - 新增 `window.__gpuM4ParityGate(options?)`，固定读取 `debug-stroke-capture.json`（缺失时直接失败并提示先录制）。
+  - 输出结构化结果（`cases/thresholds/diagnostics`）+ 文本报告（可直接贴到 DebugPanel Results）。
+- 执行步骤（每个 case）：
+  1. 注入内存纹理 `__m4_checker__`；
+  2. GPU 模式 replay 并导出扁平图；
+  3. 清层；
+  4. CPU 模式 replay 并导出扁平图；
+  5. 计算像素指标：`meanAbsDiff / mismatchRatio / maxDiff / pixelCount`；
+  6. 按固定阈值判定 PASS/FAIL；
+  7. 清理注入纹理并恢复原 renderMode。
+- 自动门禁口径：
+  - Case 列表固定：`scatter_core`、`wet_edge_core`、`dual_core`、`texture_core`、`combo_core`。
+  - 单 case PASS：`meanAbsDiff <= 3.0` 且 `mismatchRatio <= 1.5%`。
+  - 总体 PASS：5 个 case 全部 PASS，且 `uncapturedErrors=0`、`deviceLost=NO`。
+- 失败分流规则：
+  - 固定录制缺失：先录制并保存 `debug-stroke-capture.json` 再重跑；
+  - 单特性 case 失败：优先定位对应链路（scatter / wet-edge / dual / texture）并单独回放复现；
+  - 诊断失败（`uncapturedErrors>0` 或 `deviceLost=YES`）：先处理稳定性，不做阈值调宽；
+  - 连续两次结果 PASS/FAIL 翻转：判定为随机性问题，需先固定随机源再分析。
+- 记录模板（复制填写）：
+
+```md
+#### M4 Feature Parity Gate - YYYY-MM-DD HH:mm
+
+- Build/Checks:
+  - `pnpm -s typecheck`: PASS/FAIL
+  - `pnpm -s test -- useGlobalExports DebugPanel imageParity patternManager`: PASS/FAIL
+- Capture:
+  - name:
+  - source/path:
+- Threshold:
+  - meanAbsDiff <= 3.0
+  - mismatchRatio <= 1.5%
+- Cases:
+  - scatter_core: PASS/FAIL | meanAbsDiff= | mismatchRatio= | maxDiff=
+  - wet_edge_core: PASS/FAIL | meanAbsDiff= | mismatchRatio= | maxDiff=
+  - dual_core: PASS/FAIL | meanAbsDiff= | mismatchRatio= | maxDiff=
+  - texture_core: PASS/FAIL | meanAbsDiff= | mismatchRatio= | maxDiff=
+  - combo_core: PASS/FAIL | meanAbsDiff= | mismatchRatio= | maxDiff=
+- Stability:
+  - uncapturedErrors:
+  - deviceLost: YES/NO
+- Final:
+  - M4 Gate: PASS/FAIL
+  - Blockers / Next action:
+```

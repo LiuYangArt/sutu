@@ -166,6 +166,31 @@ type Phase6B3CaptureResult = {
   path: string;
 };
 
+type M4ParityGateCaseResult = {
+  caseId: string;
+  passed: boolean;
+  meanAbsDiff: number;
+  mismatchRatio: number;
+  maxDiff: number;
+  pixelCount: number;
+  error?: string;
+};
+
+type M4ParityGateResult = {
+  passed: boolean;
+  report: string;
+  captureName: string;
+  captureSource: string;
+  capturePath: string;
+  thresholds: {
+    meanAbsDiffMax: number;
+    mismatchRatioMax: number;
+  };
+  uncapturedErrors: number;
+  deviceLost: boolean;
+  cases: M4ParityGateCaseResult[];
+};
+
 function asGpuDiagnosticsSnapshot(value: unknown): GpuBrushDiagnosticsSnapshot {
   if (!value || typeof value !== 'object') {
     return {};
@@ -185,6 +210,13 @@ function asGpuLayerStackCacheStatsSnapshot(value: unknown): GpuLayerStackCacheSt
     return null;
   }
   return value as GpuLayerStackCacheStatsSnapshot;
+}
+
+function asM4ParityGateResult(value: unknown): M4ParityGateResult | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return value as M4ParityGateResult;
 }
 
 function isGpuBrushCommitReadbackMode(value: unknown): value is GpuBrushCommitReadbackMode {
@@ -1084,6 +1116,67 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       setProgress(0);
     }
   }, [runningTest, addResult, applyCaptureMeta]);
+
+  const runM4FeatureParityGate = useCallback(async () => {
+    if (runningTest) return;
+    setRunningTest('m4:feature-parity');
+    setProgress(0);
+    addResult('M4 Feature Parity Gate', 'running');
+
+    try {
+      const gate = (
+        window as Window & {
+          __gpuM4ParityGate?: () => Promise<unknown>;
+        }
+      ).__gpuM4ParityGate;
+      if (typeof gate !== 'function') {
+        throw new Error('Missing API: window.__gpuM4ParityGate');
+      }
+
+      setProgress(0.2);
+      const rawResult = await gate();
+      const result = asM4ParityGateResult(rawResult);
+      if (!result) {
+        throw new Error('Invalid result from window.__gpuM4ParityGate');
+      }
+
+      setPhase6GateCaptureName(result.captureName);
+      setCaptureSourceLabel(
+        result.captureSource === 'appconfig' || result.captureSource === 'localstorage'
+          ? result.captureSource
+          : ''
+      );
+      setCapturePathLabel(result.capturePath);
+
+      const caseLines = result.cases.map((caseResult) => {
+        if (caseResult.error) {
+          return `${caseResult.caseId}: FAIL (${caseResult.error})`;
+        }
+        return `${caseResult.caseId}: ${caseResult.passed ? 'PASS' : 'FAIL'} | meanAbsDiff=${caseResult.meanAbsDiff.toFixed(3)} mismatchRatio=${caseResult.mismatchRatio.toFixed(3)}%`;
+      });
+      const report = [
+        `Capture: ${result.captureName}`,
+        `Capture source: ${result.captureSource}`,
+        `Capture path: ${result.capturePath}`,
+        `Threshold meanAbsDiff <= ${result.thresholds.meanAbsDiffMax.toFixed(2)}`,
+        `Threshold mismatchRatio <= ${result.thresholds.mismatchRatioMax.toFixed(2)}%`,
+        '',
+        ...caseLines,
+        '',
+        `uncapturedErrors=${result.uncapturedErrors}`,
+        `deviceLost=${result.deviceLost ? 'YES' : 'NO'}`,
+        `M4 Gate: ${result.passed ? 'PASS' : 'FAIL'}`,
+      ].join('\n');
+
+      setProgress(1);
+      addResult('M4 Feature Parity Gate', result.passed ? 'passed' : 'failed', report);
+    } catch (error) {
+      addResult('M4 Feature Parity Gate', 'failed', String(error));
+    } finally {
+      setRunningTest(null);
+      setProgress(0);
+    }
+  }, [runningTest, addResult]);
 
   const runPhase6BPerfGate = useCallback(async () => {
     if (runningTest) return;
@@ -1988,6 +2081,16 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
                 title={`Reset diagnostics and replay fixed capture ${DEBUG_CAPTURE_FILE_NAME} 3 times`}
               >
                 <span>Run Phase6A Auto Gate</span>
+              </button>
+            </div>
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className="debug-btn secondary"
+                onClick={runM4FeatureParityGate}
+                disabled={!!runningTest}
+                title={`Run M4 feature parity gate with fixed capture ${DEBUG_CAPTURE_FILE_NAME}`}
+              >
+                <span>Run M4 Feature Parity Gate</span>
               </button>
             </div>
             <div className="debug-button-row" style={{ marginTop: '8px' }}>

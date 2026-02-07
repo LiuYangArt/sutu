@@ -44,3 +44,12 @@ export type {
   FixedStrokeCaptureSaveResult,
   FixedStrokeCaptureLoadResult,
 } from './strokeCaptureFixedFile';
+
+export {
+  computeImageParityMetrics,
+  isImageParityPass,
+  decodeDataUrlToImageData,
+  compareImageDataUrls,
+  DEFAULT_MISMATCH_PIXEL_DELTA,
+} from './imageParity';
+export type { ImageParityMetrics, ImageParityThresholds } from './imageParity';

@@ -38,6 +38,7 @@ function cleanupGlobals(): void {
   delete win.__strokeCaptureDownload;
   delete win.__strokeCaptureSaveFixed;
   delete win.__strokeCaptureLoadFixed;
+  delete win.__gpuM4ParityGate;
 }
 
 describe('useGlobalExports', () => {
@@ -59,6 +60,12 @@ describe('useGlobalExports', () => {
       pressureSizeEnabled: false,
       pressureFlowEnabled: false,
       pressureOpacityEnabled: true,
+      scatterEnabled: false,
+      textureEnabled: false,
+      dualBrushEnabled: false,
+      wetEdgeEnabled: false,
+      noiseEnabled: false,
+      buildupEnabled: false,
     });
 
     // JSDOM does not implement Canvas APIs. Stub minimal surface to avoid Not Implemented errors.
@@ -217,6 +224,7 @@ describe('useGlobalExports', () => {
     expect(typeof win.__strokeCaptureDownload).toBe('function');
     expect(typeof win.__strokeCaptureSaveFixed).toBe('function');
     expect(typeof win.__strokeCaptureLoadFixed).toBe('function');
+    expect(typeof win.__gpuM4ParityGate).toBe('function');
 
     act(() => {
       win.__canvasFillLayer('#ffffff');
@@ -319,6 +327,7 @@ describe('useGlobalExports', () => {
     expect(win.__strokeCaptureDownload).toBeUndefined();
     expect(win.__strokeCaptureSaveFixed).toBeUndefined();
     expect(win.__strokeCaptureLoadFixed).toBeUndefined();
+    expect(win.__gpuM4ParityGate).toBeUndefined();
   });
 
   it('updates layer thumbnail after __loadLayerImages draws pixels (legacy base64 path)', async () => {
@@ -427,6 +436,50 @@ describe('useGlobalExports', () => {
           pressureSizeEnabled: true,
           pressureFlowEnabled: true,
           pressureOpacityEnabled: false,
+          scatterEnabled: true,
+          scatter: {
+            scatter: 140,
+            scatterControl: 'off',
+            bothAxes: true,
+            count: 3,
+            countControl: 'off',
+            countJitter: 0,
+          },
+          textureEnabled: true,
+          textureSettings: {
+            patternId: '__m4_checker__',
+            scale: 125,
+            brightness: 10,
+            contrast: -5,
+            mode: 'multiply',
+            depth: 75,
+            invert: true,
+            textureEachTip: true,
+            minimumDepth: 33,
+            depthJitter: 44,
+            depthControl: 2,
+          },
+          dualBrushEnabled: true,
+          dualBrush: {
+            enabled: true,
+            brushId: 'dual-1',
+            brushIndex: 2,
+            brushName: 'Dual One',
+            mode: 'overlay',
+            flip: true,
+            size: 44,
+            sizeRatio: 1.4,
+            spacing: 0.6,
+            roundness: 88,
+            scatter: 25,
+            bothAxes: true,
+            count: 2,
+            texture: { data: 'ignored' },
+          },
+          wetEdgeEnabled: true,
+          wetEdge: 0.66,
+          noiseEnabled: true,
+          buildupEnabled: true,
         },
       },
       samples: [],
@@ -482,6 +535,26 @@ describe('useGlobalExports', () => {
     expect(tool.pressureSizeEnabled).toBe(true);
     expect(tool.pressureFlowEnabled).toBe(true);
     expect(tool.pressureOpacityEnabled).toBe(false);
+    expect(tool.scatterEnabled).toBe(true);
+    expect(tool.scatter.scatter).toBe(140);
+    expect(tool.scatter.count).toBe(3);
+    expect(tool.textureEnabled).toBe(true);
+    expect(tool.textureSettings.patternId).toBe('__m4_checker__');
+    expect(tool.textureSettings.scale).toBe(125);
+    expect(tool.textureSettings.textureEachTip).toBe(false);
+    expect(tool.textureSettings.minimumDepth).toBe(0);
+    expect(tool.textureSettings.depthJitter).toBe(0);
+    expect(tool.textureSettings.depthControl).toBe(0);
+    expect(tool.dualBrushEnabled).toBe(true);
+    expect(tool.dualBrush.enabled).toBe(true);
+    expect(tool.dualBrush.mode).toBe('overlay');
+    expect(tool.dualBrush.sizeRatio).toBeCloseTo(1.4);
+    expect(tool.dualBrush.size).toBeCloseTo(107.8);
+    expect(tool.dualBrush.texture).toBeUndefined();
+    expect(tool.wetEdgeEnabled).toBe(true);
+    expect(tool.wetEdge).toBeCloseTo(0.66);
+    expect(tool.noiseEnabled).toBe(true);
+    expect(tool.buildupEnabled).toBe(true);
 
     expect(replayStrokeCapture).toHaveBeenCalledWith(replayCapture, undefined);
     expect(

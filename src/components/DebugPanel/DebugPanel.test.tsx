@@ -27,6 +27,25 @@ type TestWindow = Window & {
   } | null>;
   __strokeCaptureReplay?: (capture?: unknown) => Promise<unknown>;
   __canvasClearLayer?: () => void;
+  __gpuM4ParityGate?: () => Promise<{
+    passed: boolean;
+    report: string;
+    captureName: string;
+    captureSource: 'appconfig' | 'localstorage';
+    capturePath: string;
+    thresholds: { meanAbsDiffMax: number; mismatchRatioMax: number };
+    uncapturedErrors: number;
+    deviceLost: boolean;
+    cases: Array<{
+      caseId: string;
+      passed: boolean;
+      meanAbsDiff: number;
+      mismatchRatio: number;
+      maxDiff: number;
+      pixelCount: number;
+      error?: string;
+    }>;
+  }>;
 };
 
 function createFixedCapture(): StrokeCaptureData {
@@ -114,6 +133,26 @@ describe('DebugPanel', () => {
       name: 'debug-stroke-capture.json',
       source: 'appconfig' as const,
     }));
+    (window as TestWindow).__gpuM4ParityGate = vi.fn(async () => ({
+      passed: true,
+      report: 'M4 Gate: PASS',
+      captureName: 'debug-stroke-capture.json',
+      captureSource: 'appconfig' as const,
+      capturePath: 'AppConfig/debug-data/debug-stroke-capture.json',
+      thresholds: { meanAbsDiffMax: 3, mismatchRatioMax: 1.5 },
+      uncapturedErrors: 0,
+      deviceLost: false,
+      cases: [
+        {
+          caseId: 'scatter_core',
+          passed: true,
+          meanAbsDiff: 0.6,
+          mismatchRatio: 0.4,
+          maxDiff: 3,
+          pixelCount: 128 * 128,
+        },
+      ],
+    }));
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       cb(0);
       return 1;
@@ -135,6 +174,7 @@ describe('DebugPanel', () => {
     delete (window as TestWindow).__strokeCaptureLoadFixed;
     delete (window as TestWindow).__strokeCaptureReplay;
     delete (window as TestWindow).__canvasClearLayer;
+    delete (window as TestWindow).__gpuM4ParityGate;
     vi.restoreAllMocks();
   });
 
@@ -215,6 +255,58 @@ describe('DebugPanel', () => {
       expect((window as TestWindow).__strokeCaptureLoadFixed).toHaveBeenCalledTimes(1);
     });
     expectLatestResultStatus('Phase6A Auto Gate', 'passed');
+  });
+
+  it('M4 Feature Parity Gate 调用全局 API 并写入结果', async () => {
+    const user = userEvent.setup();
+    const gateSpy = vi.fn(async () => ({
+      passed: false,
+      report: 'M4 Gate: FAIL',
+      captureName: 'debug-stroke-capture.json',
+      captureSource: 'appconfig' as const,
+      capturePath: 'AppConfig/debug-data/debug-stroke-capture.json',
+      thresholds: { meanAbsDiffMax: 3, mismatchRatioMax: 1.5 },
+      uncapturedErrors: 1,
+      deviceLost: false,
+      cases: [
+        {
+          caseId: 'texture_core',
+          passed: false,
+          meanAbsDiff: 3.8,
+          mismatchRatio: 2.1,
+          maxDiff: 18,
+          pixelCount: 4096,
+        },
+      ],
+    }));
+    (window as TestWindow).__gpuM4ParityGate = gateSpy;
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run M4 Feature Parity Gate' }));
+
+    await waitFor(() => {
+      expect(gateSpy).toHaveBeenCalledTimes(1);
+      expectLatestResultStatus('M4 Feature Parity Gate', 'failed');
+    });
+    const latest = getLatestResultNode('M4 Feature Parity Gate');
+    await user.click(latest);
+    expect(screen.getByText(/M4 Gate: FAIL/)).toBeInTheDocument();
+    expect(screen.getByText(/texture_core: FAIL/)).toBeInTheDocument();
+  });
+
+  it('M4 Feature Parity Gate 缺失 API 时失败并提示', async () => {
+    const user = userEvent.setup();
+    delete (window as TestWindow).__gpuM4ParityGate;
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run M4 Feature Parity Gate' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('M4 Feature Parity Gate', 'failed');
+    });
+    const latest = getLatestResultNode('M4 Feature Parity Gate');
+    await user.click(latest);
+    expect(screen.getByText(/Missing API: window.__gpuM4ParityGate/)).toBeInTheDocument();
   });
 
   it('固定录制文件缺失时 Phase6A Auto Gate 失败并提示', async () => {
