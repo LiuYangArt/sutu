@@ -54,14 +54,14 @@
 │  │                 前端 (React + WebGPU)                       │ │
 │  │                                                             │ │
 │  │  ┌─────────────┐  ┌────────────────────┐  ┌──────────────┐ │ │
-│  │  │ Canvas      │  │ Hybrid Brush       │  │ UI Systems   │ │ │
+│  │  │ Canvas      │  │ GPU-First Brush    │  │ UI Systems   │ │ │
 │  │  │ Renderer    │  │ Engine             │  │              │ │ │
 │  │  │             │  │                    │  │ - Layers     │ │ │
-│  │  │ WebGPU      │◄─┤ 1. Compute Shader  │  │ - Tools      │ │ │
-│  │  │ (Main)      │  │    (GPU, Primary)  │  │ - Settings   │ │ │
-│  │  │             │  │ 2. TS/WASM         │  │              │ │ │
-│  │  │ Canvas2D    │◄─┤    (CPU, Fallback) │  │              │ │ │
-│  │  │ (Fallback)  │  │                    │  │              │ │ │
+│  │  │ WebGPU      │◄─┤ 1. 实时绘画主链路   │  │ - Tools      │ │ │
+│  │  │ (Primary)   │  │    (GPU, No-Readback)│ │ - Settings   │ │ │
+│  │  │             │  │ 2. CPU Fallback /  │  │              │ │ │
+│  │  │ CPU Fallback│◄─┤    Parity Gate     │  │              │ │ │
+│  │  │ (Conditional)│ │                    │  │              │ │ │
 │  │  └─────────────┘  └────────────────────┘  └──────────────┘ │ │
 │  │                                                             │ │
 │  └────────────────────────────────────────────────────────────┘ │
@@ -73,21 +73,21 @@
 
 ## 4. 核心模块设计
 
-### 4.1 混合笔刷引擎 (Hybrid Brush Engine)
+### 4.1 GPU-First 笔刷引擎 (GPU-First Brush Engine)
 
-鉴于 IPC 通信在高频图像传输上的瓶颈，生产环境采用 **Frontend-First** 的混合架构，Rust 后端主要负责 I/O 和纯数值计算。
+鉴于 IPC 通信在高频图像传输上的瓶颈，生产环境采用 **GPU-First + Tile** 架构。Rust 后端主要负责 I/O 与输入采集，前端 GPU 负责实时绘画与合成。
 
 **渲染路径优先级**:
 
-1.  **GPU Path (Primary)**:
-    - **技术**: WebGPU Compute Shader
-    - **场景**: 大部分笔刷，尤其是大尺寸 (>50px) 和复杂混合模式。
-    - **优势**: 极大并行度，无数据回传开销。
+1.  **GPU 实时路径 (Primary)**:
+    - **技术**: WebGPU + tile 化存储与合成
+    - **场景**: 默认实时绘画路径
+    - **约束**: 绘画阶段不执行 GPU→CPU readback
 
-2.  **CPU Path (Fallback/Proto)**:
-    - **技术**: TypeScript (v8 optimized)
-    - **场景**: 不支持 WebGPU 的设备，或极小尺寸笔刷 (<5px)。
-    - **现状**: 当前主力 CPU 引擎，Rust SIMD 路径因 IPC 开销暂时被禁用 (Reserved)。
+2.  **CPU 路径 (Fallback)**:
+    - **技术**: TypeScript CPU 渲染
+    - **场景**: WebGPU 不可用或 GPU 路径异常时
+    - **定位**: 兼容性兜底，不是实时主链路
 
 ```
 Input Event (Pointer/Wintab)
@@ -107,25 +107,21 @@ Input Event (Pointer/Wintab)
 │ - 生成 Dab 序列                  │
 └──────────────┬──────────────────┘
                │ Dabs
-    ┌──────────┴──────────┐
-    ▼                     ▼
-┌──────────────┐  ┌──────────────┐
-│ GPU Path     │  │ CPU Path     │
-│ (WebGPU)     │  │ (TypeScript) │
-│              │  │              │
-│ Compute      │  │ MaskCache    │
-│ Shader       │  │ (Pre-calc)   │
-│              │  │      │       │
-│ Stroke       │  │ Pixel Loop   │
-│ Buffer       │  │ (Alpha       │
-│ (TexStorage) │  │  Darken)     │
-└──────┬───────┘  └──────┬───────┘
-       │                 │
-       ▼                 ▼
+               ▼
+┌─────────────────────────────────┐
+│ GPU Stroke Path (Primary)       │
+│ - GPUStrokeAccumulator          │
+│ - activeScratch (rgba16float)  │
+│ - Tile dirty-rect commit       │
+└──────────────┬──────────────────┘
+               │
+               ├──────────────► CPU Fallback (Conditional)
+               │
+               ▼
 ┌─────────────────────────────────┐
 │ Compositor                      │
-│ - Layer Blending                │
-│ - Display Canvas Updated        │
+│ - Tile Layer Blending           │
+│ - Display Surface Updated       │
 └─────────────────────────────────┘
 ```
 

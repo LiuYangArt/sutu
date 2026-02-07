@@ -5,7 +5,7 @@
 # PaintBoard
 
 个人用绘画软件，支持 Wacom 压感输入，基于 Tauri + React + Rust 构建。目前只支持windows平台。 
-目前实现了compute shader gpu笔刷，笔刷性能应该相当不错。
+当前主链路为 GPU-First（WebGPU + Tile）：实时绘画默认不做 readback，仅在导出/截图时执行分块 readback。
 目标是做一个接近ps绘画体验的轻量级项目。
 
 ## 下载

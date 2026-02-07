@@ -1,6 +1,10 @@
 # 测试与验证策略
 
-> 版本: 0.1.0 | 最后更新: 2026-01-11
+> 版本: 0.2.0 | 最后更新: 2026-02-07
+
+> [!IMPORTANT]
+> 当前绘画主链路是 GPU-First。测试策略以 `docs/plans/2026-02-05-gpu-first-brush-design.md` 为准：
+> 1) 实时绘画不走 GPU→CPU readback；2) 导出/截图允许显式分块 readback；3) GPU 改动需通过 parity gate 与稳定性门禁。
 
 ## 1. 测试哲学
 
@@ -10,8 +14,9 @@
 
 1. **快速反馈** — 本地检查应在 30 秒内完成
 2. **防止回归** — 核心功能必须有自动化保护
-3. **低维护成本** — 测试代码不应成为负担
+3. **GPU 主链路可信** — 实时绘画路径要有 no-readback 与 parity 门禁
 4. **性能监控** — 延迟敏感的部分需要持续基准测试
+5. **低维护成本** — 测试代码不应成为负担
 
 ### 1.2 测试金字塔
 
@@ -235,7 +240,7 @@ describe('Color Utils', () => {
 ### 4.1 Tauri IPC 测试
 
 ```rust
-// src-tauri/tests/integration/commands.rs
+// src-tauri/src/commands.rs
 #[cfg(test)]
 mod tests {
     use tauri::test::{mock_builder, MockRuntime};
@@ -277,53 +282,83 @@ mod tests {
 }
 ```
 
-### 4.2 WebGPU 渲染测试
+### 4.2 WebGPU 渲染测试（GPU-first）
 
 ```typescript
-// src/gpu/__tests__/renderer.test.ts
-import { describe, it, expect, beforeAll } from 'vitest';
-import { CanvasRenderer } from '../renderer';
+// src/gpu/layers/GpuStrokeCommitCoordinator.test.ts
+import { describe, it, expect, vi } from 'vitest';
+import { GpuStrokeCommitCoordinator } from './GpuStrokeCommitCoordinator';
 
-describe('CanvasRenderer', () => {
-  let renderer: CanvasRenderer;
+describe('GpuStrokeCommitCoordinator', () => {
+  it('accumulates readbackBypassedCount across multiple disabled commits', async () => {
+    const coordinator = new GpuStrokeCommitCoordinator({
+      gpuRenderer: {
+        commitStroke: vi.fn(() => [{ x: 0, y: 0 }]),
+        readbackTilesToLayer: vi.fn(async () => undefined),
+      } as never,
+      prepareStrokeEndGpu: vi.fn(async () => ({
+        dirtyRect: { left: 0, top: 0, right: 10, bottom: 10 },
+        strokeOpacity: 1,
+        scratch: { texture: {} as GPUTexture, renderScale: 1 },
+      })),
+      clearScratchGpu: vi.fn(),
+      getTargetLayer: vi.fn(
+        () => ({ canvas: {} as HTMLCanvasElement, ctx: {} as CanvasRenderingContext2D }) as const
+      ),
+    });
 
-  beforeAll(async () => {
-    // 使用 headless WebGPU (如果可用) 或 mock
-    if (!navigator.gpu) {
-      console.warn('WebGPU not available, skipping GPU tests');
-      return;
-    }
+    coordinator.setReadbackMode('disabled');
+    await coordinator.commit('layer-1');
+    await coordinator.commit('layer-1');
 
-    const adapter = await navigator.gpu.requestAdapter();
-    const device = await adapter!.requestDevice();
-    renderer = new CanvasRenderer(device);
-  });
-
-  it('should create a texture of specified size', async () => {
-    if (!renderer) return;
-
-    const texture = renderer.createLayerTexture(1024, 1024);
-
-    expect(texture.width).toBe(1024);
-    expect(texture.height).toBe(1024);
-    expect(texture.format).toBe('rgba8unorm');
-  });
-
-  it('should composite layers in correct order', async () => {
-    if (!renderer) return;
-
-    const layer1 = renderer.createLayerTexture(100, 100);
-    const layer2 = renderer.createLayerTexture(100, 100);
-
-    // 填充测试数据...
-
-    const result = renderer.compositeLayers([layer1, layer2]);
-
-    // 验证合成结果...
-    expect(result).toBeDefined();
+    const snapshot = coordinator.getCommitMetricsSnapshot();
+    expect(snapshot.readbackMode).toBe('disabled');
+    expect(snapshot.readbackBypassedCount).toBe(2);
   });
 });
 ```
+
+```typescript
+// src/gpu/layers/exportReadback.test.ts
+import { describe, expect, it } from 'vitest';
+import { buildExportChunkRects, computeReadbackBytesPerRow } from './exportReadback';
+
+describe('exportReadback', () => {
+  it('builds chunk rects with edge clipping', () => {
+    const rects = buildExportChunkRects(5000, 3000, 2048);
+    expect(rects).toHaveLength(6);
+  });
+
+  it('aligns bytesPerRow for GPU readback requirements', () => {
+    expect(computeReadbackBytesPerRow(65)).toBe(512);
+  });
+});
+```
+
+建议重点覆盖以下现有模块：
+- `src/gpu/layers/GpuStrokeCommitCoordinator.test.ts`
+- `src/gpu/layers/GpuStrokeHistoryStore.test.ts`
+- `src/gpu/layers/layerStackCache.test.ts`
+- `src/gpu/layers/dirtyTileClip.test.ts`
+- `src/gpu/layers/exportReadback.test.ts`
+
+### 4.3 GPU 一致性门禁（M4 Parity Gate）
+
+在 GPU 笔刷特性（scatter/wet-edge/dual/texture/combo）变更时，必须执行 parity gate：
+
+```typescript
+// 浏览器控制台（开发模式）
+const result = await window.__gpuM4ParityGate?.();
+if (!result?.passed) {
+  throw new Error(result?.report ?? 'M4 parity gate failed');
+}
+console.log(result.report);
+```
+
+手工前置条件：
+1. 先准备或录制 `debug-stroke-capture` 数据。
+2. 确保 `window.__gpuM4ParityGate` 可用（Canvas 全局导出已挂载）。
+3. 结果至少包含：每个 case 的通过状态、阈值、最终 PASS/FAIL。
 
 ---
 
@@ -336,103 +371,63 @@ describe('CanvasRenderer', () => {
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests/e2e',
-  timeout: 30000,
-  retries: 1,
+  testDir: './e2e',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: 'html',
 
   use: {
-    headless: true,
-    viewport: { width: 1920, height: 1080 },
+    baseURL: 'http://localhost:1420',
+    trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    video: 'on-first-retry',
   },
 
   projects: [
     {
-      name: 'Tauri App',
-      use: {
-        // Tauri 测试需要特殊配置
-        ...devices['Desktop Chrome'],
-      },
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
+
+  webServer: {
+    command: 'pnpm dev:frontend',
+    url: 'http://localhost:1420',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120000,
+  },
 });
 ```
 
 ### 5.2 关键路径 E2E 测试
 
 ```typescript
-// tests/e2e/critical-path.spec.ts
+// e2e/stroke-flicker.spec.ts
 import { test, expect } from '@playwright/test';
 
-test.describe('Critical User Journeys', () => {
-  test('create document and draw a stroke', async ({ page }) => {
+test.describe('Stroke Flicker Tests', () => {
+  test('should not drop strokes in grid test (10x10)', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
 
-    // 创建新文档
-    await page.click('[data-testid="new-document-btn"]');
-    await page.fill('[data-testid="width-input"]', '1920');
-    await page.fill('[data-testid="height-input"]', '1080');
-    await page.click('[data-testid="create-btn"]');
+    const canvas = page.getByTestId('main-canvas');
+    await canvas.waitFor({ state: 'visible', timeout: 10000 });
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('Canvas not found');
 
-    // 验证画布出现
-    const canvas = page.locator('[data-testid="main-canvas"]');
+    for (let i = 0; i < 100; i += 1) {
+      const x = box.x + 50 + (i % 10) * 30;
+      const y = box.y + 50 + Math.floor(i / 10) * 30;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.waitForTimeout(5);
+      await page.mouse.up();
+      await page.waitForTimeout(15);
+    }
+
     await expect(canvas).toBeVisible();
-
-    // 模拟绘制（用鼠标模拟，压感测试需要真实设备）
-    await canvas.hover({ position: { x: 100, y: 100 } });
-    await page.mouse.down();
-    await page.mouse.move(200, 200, { steps: 10 });
-    await page.mouse.up();
-
-    // 验证图层有内容（通过检查 undo 按钮可用）
-    await expect(page.locator('[data-testid="undo-btn"]')).toBeEnabled();
-  });
-
-  test('save and load document', async ({ page }) => {
-    await page.goto('/');
-
-    // 创建并保存
-    await page.click('[data-testid="new-document-btn"]');
-    await page.click('[data-testid="create-btn"]');
-
-    // 绘制一些内容
-    const canvas = page.locator('[data-testid="main-canvas"]');
-    await canvas.click({ position: { x: 500, y: 500 } });
-
-    // 保存
-    await page.keyboard.press('Control+S');
-    await page.fill('[data-testid="filename-input"]', 'test-document');
-    await page.click('[data-testid="save-btn"]');
-
-    // 关闭并重新打开
-    await page.click('[data-testid="close-document-btn"]');
-    await page.click('[data-testid="open-document-btn"]');
-    await page.click('text=test-document.pbp');
-
-    // 验证内容恢复
-    await expect(canvas).toBeVisible();
-    await expect(page.locator('[data-testid="undo-btn"]')).toBeEnabled();
-  });
-
-  test('layer operations', async ({ page }) => {
-    await page.goto('/');
-    await page.click('[data-testid="new-document-btn"]');
-    await page.click('[data-testid="create-btn"]');
-
-    // 添加图层
-    await page.click('[data-testid="add-layer-btn"]');
-    await expect(page.locator('[data-testid="layer-item"]')).toHaveCount(2);
-
-    // 重命名图层
-    await page.dblclick('[data-testid="layer-item"]:first-child');
-    await page.fill('[data-testid="layer-name-input"]', 'My Layer');
-    await page.keyboard.press('Enter');
-    await expect(page.locator('text=My Layer')).toBeVisible();
-
-    // 切换可见性
-    await page.click('[data-testid="layer-visibility-toggle"]:first-child');
-    // 验证图层内容隐藏（需要视觉检查或像素比较）
   });
 });
 ```
@@ -545,40 +540,20 @@ function renderLoop() {
 }
 ```
 
-### 6.3 延迟测试脚本
+### 6.3 实时链路指标采集（no-readback 门禁）
 
 ```typescript
-// tests/performance/latency.test.ts
-import { describe, it, expect } from 'vitest';
+// 浏览器控制台（开发模式）
+window.__gpuBrushCommitMetricsReset?.();
+window.__gpuBrushCommitReadbackModeSet?.('disabled');
+// 手动画 20~50 笔后执行：
+const snapshot = window.__gpuBrushCommitMetrics?.();
+console.log(snapshot);
 
-describe('Input Latency', () => {
-  it('should process input within 12ms budget', async () => {
-    const samples: number[] = [];
-
-    for (let i = 0; i < 100; i++) {
-      const inputTime = performance.now();
-
-      // 模拟输入处理
-      await simulateInputProcessing({
-        x: Math.random() * 1000,
-        y: Math.random() * 1000,
-        pressure: Math.random(),
-      });
-
-      const renderTime = performance.now();
-      samples.push(renderTime - inputTime);
-    }
-
-    const average = samples.reduce((a, b) => a + b, 0) / samples.length;
-    const p95 = samples.sort((a, b) => a - b)[Math.floor(samples.length * 0.95)];
-
-    console.log(`Average latency: ${average.toFixed(2)}ms`);
-    console.log(`P95 latency: ${p95.toFixed(2)}ms`);
-
-    expect(average).toBeLessThan(8);   // 平均 < 8ms
-    expect(p95).toBeLessThan(12);      // P95 < 12ms
-  });
-});
+if (!snapshot) throw new Error('Missing commit metrics snapshot');
+if (snapshot.readbackMode !== 'disabled') throw new Error('readback mode is not disabled');
+if (snapshot.readbackBypassedCount <= 0) throw new Error('readback was not bypassed');
+if (snapshot.avgReadbackMs > 2) throw new Error(`readback regression: ${snapshot.avgReadbackMs}ms`);
 ```
 
 ---
@@ -593,12 +568,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   # 静态分析
@@ -606,6 +582,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -619,7 +600,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: TypeScript check
         run: pnpm typecheck
@@ -640,6 +621,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -650,16 +636,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Run frontend tests
-        run: pnpm test
+        run: pnpm test -- --coverage
 
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-features
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           files: ./coverage/lcov.info
 
@@ -670,6 +656,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -680,7 +671,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         run: pnpm build
@@ -694,7 +685,7 @@ jobs:
   # 性能基准（仅 main 分支）
   benchmark:
     runs-on: windows-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -710,6 +701,7 @@ jobs:
         with:
           name: benchmark-results
           path: src-tauri/target/criterion/
+          retention-days: 30
 ```
 
 ### 7.2 质量门禁标准
@@ -723,32 +715,23 @@ jobs:
 | 代码覆盖率 | ≥ 60% | ⚠️ 警告 |
 | 构建成功 | 必须 | 🚫 阻断合并 |
 | 性能回归 | < 10% | ⚠️ 警告 |
+| GPU M4 parity gate | PASS（涉及 GPU 笔刷变更时） | ⚠️ 警告 |
+| no-readback 门禁 | `readbackBypassedCount > 0`（disabled 模式） | ⚠️ 警告 |
 
 ---
 
 ## 8. 本地快速检查
 
-### 8.1 一键检查脚本
+### 8.1 本地一键检查命令
 
 ```bash
-# scripts/check.sh (Windows: scripts/check.ps1)
-#!/bin/bash
-set -e
-
-echo "🔍 Running type check..."
 pnpm typecheck
-
-echo "🔍 Running ESLint..."
 pnpm lint
-
-echo "🔍 Running Clippy..."
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-
-echo "🧪 Running tests..."
+pnpm lint:rust
 pnpm test
-cargo test --manifest-path src-tauri/Cargo.toml
-
-echo "✅ All checks passed!"
+cargo test --manifest-path src-tauri/Cargo.toml --all-features
+# 可选：端到端
+pnpm test:e2e
 ```
 
 ### 8.2 VSCode 任务
@@ -771,7 +754,7 @@ echo "✅ All checks passed!"
     {
       "label": "Run Tests",
       "type": "shell",
-      "command": "pnpm test && cargo test --manifest-path src-tauri/Cargo.toml",
+      "command": "pnpm test && cargo test --manifest-path src-tauri/Cargo.toml --all-features",
       "problemMatcher": []
     }
   ]

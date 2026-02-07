@@ -6,6 +6,9 @@
 
 本文档规划 PaintBoard 从脚手架到可用产品的完整开发路径。采用**渐进式开发**策略，优先实现核心绘画功能，逐步完善专业特性。
 
+> [!IMPORTANT]
+> 本文档是产品路线图（M0~M7）。`docs/plans/2026-02-05-gpu-first-brush-design.md` 使用的是独立里程碑编号（同样含 M0~M5），两者编号不一一对应。涉及 GPU-first 实时绘画链路时，以计划文档为准。
+
 ---
 
 ## 里程碑总览
@@ -204,7 +207,7 @@
 
 ---
 
-## M3: 笔刷系统 (Brushes) 🚧 进行中
+## M3: 笔刷系统 (Brushes) ✅ GPU-first 主链路已收口（2026-02-07）
 
 **目标**: 实现兼容 Photoshop ABR 的专业笔刷系统，优先保证手感。
 参考设计：`docs/design/m3-brush-system.md` (Index)
@@ -215,18 +218,17 @@
 
 ### 渲染后端策略
 
-> **CPU 先行 + GPU 复刻（双轨开发）**
+> **GPU-First（实时链路）+ CPU Fallback（兼容）**
 >
-> 笔刷功能开发采用双轨模式：
+> 当前笔刷链路采用以下优先级：
 >
 > | 阶段         | 目标       | 说明                                       |
 > | ------------ | ---------- | ------------------------------------------ |
-> | **CPU 先行** | 正确性验证 | 可调试、可逐步验证、作为 Ground Truth      |
-> | **GPU 复刻** | 性能加速   | 通过 CPU vs GPU diff test 确保像素一致性   |
-> | **GPU 优化** | 极致性能   | Tile Culling、BBox batching、Shared Memory |
+> | **GPU 主链路** | 低延迟绘画 | WebGPU + tile 合成；实时绘画不走 readback |
+> | **CPU Fallback** | 兼容兜底 | 仅在无 WebGPU 或 GPU 异常时启用           |
+> | **一致性门禁** | 回归保护 | 通过 replay/parity gate 做回归，不阻塞主链路 |
 >
-> **核心原则**：CPU 是"真理"，GPU 是"加速器"。
-> 复杂笔刷行为（Dynamics/Scatter/Dual Brush）必须先有 CPU 参考实现。
+> **核心原则**：GPU 是实时真链路；CPU 是兜底与校验，不再作为实时主实现。
 
 ### 任务清单
 
@@ -250,11 +252,11 @@
 - [x] 实现参数化圆形笔刷生成 (硬度/圆度/角度)
 - [x] 支持采样笔刷 (Sampled Brush Tip)
 - [x] 实现动态参数系统 (压感/倾斜 -> 大小/透明度) - 基础版已实现
-- [ ] 纹理缓存系统
-- [ ] CPU 笔刷引擎 (Ground Truth 实现)
+- [x] 纹理缓存系统（GPU 路径）- 已落地
+- [ ] CPU 参考实现补完（可选，非主链路 gate）
   - [ ] 抽取笔刷数学模型为纯函数 (`brushMath.ts`)
-  - [ ] 实现 CPU 版完整笔刷渲染
-  - [ ] 建立 CPU vs GPU 像素一致性测试 (error < 2/255)
+  - [ ] 完善 CPU 参考渲染（用于 debug/回归）
+  - [ ] 维护 CPU replay 与 GPU parity 自动化门禁
 
 #### 3.3 ABR 解析与兼容 (Phase 3) ✅ 已完成
 
@@ -289,15 +291,16 @@
 
 - [ ] GPU Instancing 批量渲染优化
 - [ ] Texture Arrays 纹理图集管理
-- [ ] 瓦片化渲染支持 (Tiled Rendering)
-- [ ] 双重画笔 (Dual Brush) - Virtual Masking 优化
-- [ ] 湿边效果 (Wet Edges) - LUT 实现
+- [x] 瓦片化渲染支持 (Tiled Rendering) - 已落地
+- [x] 双重画笔 (Dual Brush) 主链路恢复 - 后续做 Virtual Masking 优化
+- [x] 湿边效果 (Wet Edges) 主链路恢复 - 后续做 LUT 优化
 
 ### 验收标准
 
 - ✓ 能够正确解析并导入常用 ABR 文件
 - ✓ Flow/Opacity 表现与 Photoshop 一致 (关键手感指标)
 - ✓ 高分辨率画布下笔刷绘制流畅 (GPU 加速)
+- ✓ 实时绘画链路默认不做 readback（导出/截图除外）
 - ✓ 支持双重画笔等高级效果
 
 ---

@@ -13,8 +13,10 @@
 **目标**: Wacom 数位板输入延迟 < 12ms
 
 ## 笔刷系统
-当前支持typescript cpu和compute shader gpu 笔刷。 cpu笔刷用于快速开发和debug提供ground truth 为gpu提供效果参考。用户最后使用gpu笔刷以获得最优性能。
-笔刷系统目标是对齐photoshop的效果。
+当前采用 **GPU-First** 架构：实时绘画链路以 WebGPU 为主，默认不走 GPU→CPU readback。
+CPU 路径仅用于 fallback（设备不支持 WebGPU）和一致性校验，不再作为实时主链路。
+笔刷系统目标是对齐 Photoshop 的手感与视觉结果。
+当前阶段进度与约束以 `docs/plans/2026-02-05-gpu-first-brush-design.md` 为准。
 
 ## 常用命令
 
@@ -47,8 +49,8 @@ pnpm format           # 格式化代码
 │  │   ├── Canvas/    → 画布核心 (拆分为多个 hooks)    │
 │  │   ├── Toolbar/   → 工具栏 (按工具动态切换)       │
 │  │   └── ...                                        │
-│  ├── gpu/       → WebGPU 渲染 (Primary Engine)      │
-│  └── utils/     → TypeScript 渲染 (Fallback Engine) │
+│  ├── gpu/       → WebGPU 绘画/合成主链路             │
+│  └── utils/     → TypeScript 工具与 fallback 逻辑    │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -57,7 +59,8 @@ pnpm format           # 格式化代码
 1. **WinTab/PointerEvent** 捕获原始输入 (Rust)
 2. **IPC** 传输至前端
 3. **Frontend Brush Engine** (TS): 插值、抖动、生成 Dabs
-4. **Renderer** (WebGPU/Canvas2D): 绘制到 Stroke Buffer 并合成
+4. **Renderer** (WebGPU): 实时写入 Stroke Buffer 并合成到显示层（绘画阶段不做 readback）
+5. **Export/Snapshot**: 仅在导出/截图时执行显式 readback
 
 ## 代码规范
 
@@ -102,7 +105,12 @@ pnpm format           # 格式化代码
 
 - `DabParams` - 笔刷印章参数 (x, y, size, flow, etc.)
 - `BrushRenderConfig` - 渲染配置
-- `StrokeAccumulator` - 笔划累积缓冲 (CPU/GPU)
+- `GPUStrokeAccumulator` - GPU 笔划累积缓冲（active scratch）
+- `GpuLayerStore` - 图层 tile 纹理存储
+- `TileResidencyManager` - tile 常驻/LRU 预算管理
+- `GpuStrokeCommitCoordinator` - 笔触提交与历史回写协调
+- `GpuStrokeHistoryStore` - GPU 脏 tile 历史快照
+- `exportReadback` - 导出/截图 readback 路径
 
 **State Management** (`src/stores/`):
 
@@ -118,6 +126,7 @@ pnpm format           # 格式化代码
 - **测试策略**: [testing-strategy.md](file:///f:/CodeProjects/PaintBoard/docs/testing-strategy.md)
 - **开发环境搭建**: [development-setup.md](file:///f:/CodeProjects/PaintBoard/docs/development-setup.md)
 - **开发路线图**: [development-roadmap.md](file:///f:/CodeProjects/PaintBoard/docs/todo/development-roadmap.md)
+- **GPU-First 计划**: [2026-02-05-gpu-first-brush-design.md](file:///f:/CodeProjects/PaintBoard/docs/plans/2026-02-05-gpu-first-brush-design.md)
 - **项目灵感**: [project_idea.md](file:///f:/CodeProjects/PaintBoard/docs/project_idea.md)
 - **DEBUG经验**: @docs/postmortem/
 - **kirta源码**: F:\CodeProjects\krita\
