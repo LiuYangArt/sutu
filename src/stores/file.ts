@@ -53,6 +53,29 @@ type CanvasExportWindow = Window & {
   __getFlattenedImage?: () => Promise<string | undefined>;
 };
 
+function detectFileFormatFromPath(path: string): FileFormat | null {
+  const lowerPath = path.toLowerCase();
+  if (lowerPath.endsWith('.psd')) return 'psd';
+  if (lowerPath.endsWith('.ora')) return 'ora';
+  return null;
+}
+
+function resolveSaveTarget(path: string): { path: string; format: FileFormat } {
+  const detectedFormat = detectFileFormatFromPath(path);
+  if (detectedFormat) {
+    return { path, format: detectedFormat };
+  }
+
+  // Default to PSD if no recognized extension
+  return { path: `${path}.psd`, format: 'psd' };
+}
+
+function normalizeImageDataToDataUrl(imageData?: string): string | undefined {
+  if (!imageData) return undefined;
+  if (imageData.startsWith('data:')) return imageData;
+  return `data:image/png;base64,${imageData}`;
+}
+
 interface FileState {
   isSaving: boolean;
   isLoading: boolean;
@@ -113,15 +136,6 @@ function layerToLayerData(layer: Layer, imageData?: string): LayerData {
  * Convert backend LayerData to frontend Layer format
  */
 function layerDataToLayer(data: LayerData): Layer {
-  let thumbnail: string | undefined;
-  if (data.imageData) {
-    if (data.imageData.startsWith('data:')) {
-      thumbnail = data.imageData;
-    } else {
-      thumbnail = `data:image/png;base64,${data.imageData}`;
-    }
-  }
-
   return {
     id: data.id,
     name: data.name,
@@ -131,7 +145,7 @@ function layerDataToLayer(data: LayerData): Layer {
     opacity: Math.round(data.opacity * 100), // Convert 0.0-1.0 to 0-100
     blendMode: data.blendMode as Layer['blendMode'],
     isBackground: data.isBackground,
-    thumbnail,
+    thumbnail: normalizeImageDataToDataUrl(data.imageData),
   };
 }
 
@@ -150,28 +164,20 @@ export const useFileStore = create<FileState>((set) => ({
       const result = await save({
         title: 'Save Project',
         filters: [
-          { name: 'OpenRaster', extensions: ['ora'] },
           { name: 'Photoshop', extensions: ['psd'] },
+          { name: 'OpenRaster', extensions: ['ora'] },
           // TIFF layer support disabled - see docs/postmortem/tiff-layer-support.md
         ],
-        defaultPath: targetPath || 'Untitled.ora',
+        defaultPath: targetPath || 'Untitled.psd',
       });
 
       if (!result) {
         return false; // User cancelled
       }
 
-      targetPath = result;
-      // Detect format from extension
-      if (result.toLowerCase().endsWith('.psd')) {
-        targetFormat = 'psd';
-      } else if (result.toLowerCase().endsWith('.ora')) {
-        targetFormat = 'ora';
-      } else {
-        // Default to ORA if no recognized extension
-        targetPath = result + '.ora';
-        targetFormat = 'ora';
-      }
+      const resolvedTarget = resolveSaveTarget(result);
+      targetPath = resolvedTarget.path;
+      targetFormat = resolvedTarget.format;
     }
 
     set({ isSaving: true, error: null });
@@ -266,7 +272,7 @@ export const useFileStore = create<FileState>((set) => ({
 
       // Convert and set document state in one operation
       const loadedLayers = projectData.layers.map(layerDataToLayer);
-      const format: FileFormat = filePath.toLowerCase().endsWith('.psd') ? 'psd' : 'ora';
+      const format = detectFileFormatFromPath(filePath) ?? 'ora';
 
       useDocumentStore.setState({
         width: projectData.width,
