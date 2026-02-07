@@ -78,6 +78,7 @@ const DEFAULT_DITHER_STRENGTH = 1.0;
 const UNIFORM_STRUCT_BYTES = 48;
 const INITIAL_UNIFORM_SLOTS = 1024;
 const LAYER_BLEND_UNIFORM_BYTES = 16;
+const INITIAL_LAYER_BLEND_UNIFORM_SLOTS = 1024;
 
 function createSolidMaskTexture1x1(device: GPUDevice, label: string, value: number): GPUTexture {
   const texture = device.createTexture({
@@ -161,6 +162,9 @@ export class GpuCanvasRenderer {
   private layerBlendPipelineLayout: GPUPipelineLayout;
   private layerBlendPipeline: GPURenderPipeline;
   private layerBlendUniformBuffer: GPUBuffer;
+  private layerBlendUniformStride: number;
+  private layerBlendUniformSlots: number;
+  private layerBlendUniformWriteIndex = 0;
 
   private whiteMaskTexture: GPUTexture;
   private whiteMaskView: GPUTextureView;
@@ -311,11 +315,12 @@ export class GpuCanvasRenderer {
       },
       primitive: { topology: 'triangle-list' },
     });
-    this.layerBlendUniformBuffer = device.createBuffer({
-      label: 'Tile Layer Blend Uniforms',
-      size: LAYER_BLEND_UNIFORM_BYTES,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    this.layerBlendUniformStride = alignTo(
+      LAYER_BLEND_UNIFORM_BYTES,
+      device.limits.minUniformBufferOffsetAlignment
+    );
+    this.layerBlendUniformSlots = INITIAL_LAYER_BLEND_UNIFORM_SLOTS;
+    this.layerBlendUniformBuffer = this.createLayerBlendUniformBuffer(this.layerBlendUniformSlots);
 
     this.whiteMaskTexture = createSolidMaskTexture1x1(device, 'Selection Mask Fallback', 255);
     this.whiteMaskView = this.whiteMaskTexture.createView();
@@ -494,6 +499,10 @@ export class GpuCanvasRenderer {
     }
 
     this.ensureUniformBufferCapacity(this.visibleTiles.length * 2);
+    const estimatedBlendPasses =
+      this.visibleTiles.length * Math.max(1, visibleLayers.length) + visibleLayers.length;
+    this.ensureLayerBlendUniformCapacity(estimatedBlendPasses);
+    this.layerBlendUniformWriteIndex = 0;
     const selectionView = this.selectionMask.getTextureView() ?? this.whiteMaskView;
     const scratchView = scratchTexture ? scratchTexture.createView() : null;
     const clampedStrokeOpacity = Math.max(0, Math.min(1, strokeOpacity));
@@ -999,16 +1008,25 @@ export class GpuCanvasRenderer {
     blendMode: 'normal' | 'multiply' | 'screen' | 'overlay';
   }): void {
     const { encoder, targetView, baseView, sourceView, tileRect, layerOpacity, blendMode } = args;
+    const uniformIndex = this.nextLayerBlendUniformSlot();
+    const uniformOffset = uniformIndex * this.layerBlendUniformStride;
     const blendData = new ArrayBuffer(LAYER_BLEND_UNIFORM_BYTES);
     const blendView = new DataView(blendData);
     blendView.setUint32(0, this.encodeBlendMode(blendMode), true);
     blendView.setFloat32(4, layerOpacity, true);
-    this.device.queue.writeBuffer(this.layerBlendUniformBuffer, 0, blendData);
+    this.device.queue.writeBuffer(this.layerBlendUniformBuffer, uniformOffset, blendData);
 
     const bindGroup = this.device.createBindGroup({
       layout: this.layerBlendBindGroupLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.layerBlendUniformBuffer } },
+        {
+          binding: 0,
+          resource: {
+            buffer: this.layerBlendUniformBuffer,
+            offset: uniformOffset,
+            size: LAYER_BLEND_UNIFORM_BYTES,
+          },
+        },
         { binding: 1, resource: baseView },
         { binding: 2, resource: sourceView },
       ],
@@ -1224,6 +1242,35 @@ export class GpuCanvasRenderer {
     this.uniformBuffer.destroy();
     this.uniformSlots = nextSlots;
     this.uniformBuffer = this.createUniformBuffer(this.uniformSlots);
+  }
+
+  private createLayerBlendUniformBuffer(slots: number): GPUBuffer {
+    const size = Math.max(this.layerBlendUniformStride, this.layerBlendUniformStride * slots);
+    return this.device.createBuffer({
+      label: 'Tile Layer Blend Uniforms',
+      size,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  private ensureLayerBlendUniformCapacity(requiredSlots: number): void {
+    if (requiredSlots <= this.layerBlendUniformSlots) return;
+    let nextSlots = this.layerBlendUniformSlots;
+    while (nextSlots < requiredSlots) {
+      nextSlots *= 2;
+    }
+    this.layerBlendUniformBuffer.destroy();
+    this.layerBlendUniformSlots = nextSlots;
+    this.layerBlendUniformBuffer = this.createLayerBlendUniformBuffer(this.layerBlendUniformSlots);
+  }
+
+  private nextLayerBlendUniformSlot(): number {
+    const slot = this.layerBlendUniformWriteIndex;
+    this.layerBlendUniformWriteIndex += 1;
+    if (this.layerBlendUniformWriteIndex > this.layerBlendUniformSlots) {
+      this.ensureLayerBlendUniformCapacity(this.layerBlendUniformWriteIndex);
+    }
+    return slot;
   }
 
   private rebuildVisibleTiles(): void {

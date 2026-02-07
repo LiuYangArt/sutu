@@ -156,6 +156,8 @@ export function usePointerHandlers({
       if (!sourceCanvas || !ctx) return;
 
       const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const alpha = pixel[3] ?? 0;
+      if (alpha <= 0) return;
       const r = pixel[0] ?? 0;
       const g = pixel[1] ?? 0;
       const b = pixel[2] ?? 0;

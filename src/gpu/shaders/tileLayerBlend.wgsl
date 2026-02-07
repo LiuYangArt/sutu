@@ -70,7 +70,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   }
 
   let blended_src = blend_rgb(uniforms.blend_mode, dst.rgb, src.rgb);
-  let out_rgb = (blended_src * src_alpha + dst.rgb * dst_alpha * (1.0 - src_alpha)) / out_alpha;
+  // Porter-Duff source-over with blend mode:
+  // out_premul = src*(1-dst_a) + dst*(1-src_a) + blend(dst,src)*dst_a*src_a
+  let out_rgb =
+    (src.rgb * src_alpha * (1.0 - dst_alpha) +
+      dst.rgb * dst_alpha * (1.0 - src_alpha) +
+      blended_src * dst_alpha * src_alpha) / out_alpha;
   return vec4<f32>(clamp(out_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), out_alpha);
 }
-

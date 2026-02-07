@@ -995,16 +995,32 @@ export function Canvas() {
   const sampleGpuPixelColor = useCallback(
     async (canvasX: number, canvasY: number): Promise<string | null> => {
       const gpuRenderer = gpuRendererRef.current;
-      if (!gpuRenderer || !activeLayerId) return null;
-      const rgba = await gpuRenderer.sampleLayerPixel(activeLayerId, canvasX, canvasY);
-      if (!rgba) return null;
-      const [r, g, b, a] = rgba;
-      if ((a ?? 0) <= 0) return '#000000';
-      return `#${(r ?? 0).toString(16).padStart(2, '0')}${(g ?? 0)
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return null;
+
+      // Eyedropper must sample what is currently visible; sync pending no-readback tiles first.
+      await syncAllPendingGpuLayersToCpu();
+
+      const x = Math.floor(canvasX);
+      const y = Math.floor(canvasY);
+      if (x < 0 || x >= width || y < 0 || y >= height) return null;
+
+      const compositeCanvas = renderer.composite();
+      const ctx = compositeCanvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
+
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const alpha = pixel[3] ?? 0;
+      if (alpha <= 0) return null;
+
+      const r = pixel[0] ?? 0;
+      const g = pixel[1] ?? 0;
+      const b = pixel[2] ?? 0;
+      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b
         .toString(16)
-        .padStart(2, '0')}${(b ?? 0).toString(16).padStart(2, '0')}`;
+        .padStart(2, '0')}`;
     },
-    [activeLayerId]
+    [height, syncAllPendingGpuLayersToCpu, width]
   );
 
   useEffect(() => {
