@@ -85,7 +85,7 @@ export class ComputeBrushPipeline {
   private cachedBindGroups: Map<string, GPUBindGroup> = new Map();
 
   // Dummy texture for pattern binding (when pattern_enabled = 0)
-  // Must be compatible with sampleType: 'float' (rgba8unorm safe, rgba32float not safe without extension)
+  // Must be compatible with sampleType: 'float' (rgba8unorm safe, rgba16float not safe without extension)
   private dummyPatternTexture: GPUTexture;
   // Dummy texture for noise binding (when noise_enabled = 0)
   private dummyNoiseTexture: GPUTexture;
@@ -174,7 +174,7 @@ export class ComputeBrushPipeline {
         {
           binding: 3,
           visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba32float' },
+          storageTexture: { access: 'write-only', format: 'rgba16float' },
         },
         {
           binding: 4,

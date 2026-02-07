@@ -1,9 +1,9 @@
 # GPU-First 笔刷与渲染架构设计（8K 目标，Tile 化）
 
 **日期**：2026-02-05
-**状态**：执行中（M2 稳定性收敛持续；M3 最小闭环已落地并完成首轮缺陷修复）
+**状态**：执行中（M2 稳定性收敛持续；M3 已完成收口实现并通过自动回归）
 
-## 0. 执行进度快照（2026-02-06）
+## 0. 执行进度快照（2026-02-07）
 
 - `M0`：已完成（能力探测、配额 probe、格式与 tile 基线已回填）。
 - `M1`：已完成（tile 基础设施与单层显示链路可运行）。
@@ -21,6 +21,11 @@
   - 代码收敛阶段继续沿用“当日不追加重复复测”口径，仅在封版前窗口执行统一复验。
   - 无 readback 路线继续按 gate 数据推进（当前为非封版预结论）。
   - 多层 GPU 历史与多层合成仍在 `M3` 范围，本轮不纳入代码实现。
+- `M3`：已完成收口（2026-02-07）：
+  - `activeScratch` 主链路格式从 `rgba32float` 迁移为 `rgba16float`，相关 compute pipeline/shader 与 preview readback 已完成配套调整。
+  - `commitStroke()` 引入显式 `activeLayerTmp` 复用路径，避免同纹理读写冲突并减少每 tile 临时纹理抖动。
+  - `commitStroke()` 新增 dirty-rect 局部裁剪：按 tile 交集区域设置 viewport/scissor，仅绘制脏区域。
+  - 自动检查通过：`pnpm -s typecheck`、`pnpm -s test`（`230 passed`）。
 
 ## 1. 目标与成功标准
 
@@ -796,3 +801,27 @@
   - 场景 B：多层 GPU 路径 undo/redo 连续回退与恢复：PASS（逐笔一致，无跨笔回退）。
   - 场景 C：GPU 支持 blend -> fallback 切换后 undo/redo 一致性：PASS（历史链路一致）。
   - 场景 D：CPU 笔刷路径回归：PASS（行为无新增回归）。
+
+### 13.17 M3 收尾补全记录（2026-02-07）
+
+- Scope（本轮）：
+  - 完成 M3 剩余项：`rgba16float` scratch 格式收口、`commit` 临时纹理方案固化、dirty-rect 局部绘制裁剪。
+- Implemented：
+  - `PingPongBuffer` 默认格式恢复为 `rgba16float`，并同步更新：
+    - `BaseBrushPipeline` 渲染目标格式；
+    - `ComputeBrush/Texture/DualMask/DualTextureMask/DualBlend/WetEdge` 的 storage texture format；
+    - 对应 `compute*.wgsl` shader 的 `texture_storage_2d<rgba16float, write>` 声明。
+  - `GPUStrokeAccumulator`：
+    - `dualBlendTexture` 与预热 dummy texture 改为跟随 ping-pong 格式；
+    - preview readback 路径按 `rgba16float`（8B/px）重算 `bytesPerRow`；
+    - 新增 half-float 解码（`decodeFloat16`）用于预览像素还原。
+  - `GpuCanvasRenderer.commitStroke()`：
+    - 新增 `activeLayerTmp` 复用（按提交生命周期创建/销毁一次）；
+    - 新增 tile 交集裁剪（`computeTileDrawRegion`），局部 viewport/scissor 只覆盖脏区域；
+    - 当 dirty 只覆盖 tile 子区域时，先复制原 tile 到 `activeLayerTmp`，再 `loadOp=load` 局部覆盖，避免非脏区被清空。
+  - 新增测试：
+    - `src/gpu/layers/dirtyTileClip.test.ts`（交集裁剪与取整策略）。
+- Regression check：
+  - `pnpm -s typecheck`: PASS
+  - `pnpm -s test -- dirtyTileClip layerStackCache GpuStrokeCommitCoordinator gpuLayerStackPolicy`: PASS（20 tests）
+  - `pnpm -s test`: PASS（230 tests）

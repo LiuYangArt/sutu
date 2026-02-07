@@ -32,7 +32,7 @@ struct Uniforms {
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var<storage, read> dabs: array<DabData>;
 @group(0) @binding(2) var input_tex: texture_2d<f32>;
-@group(0) @binding(3) var output_tex: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(3) var output_tex: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(4) var<storage, read> gaussian_table: array<f32>;
 
 const MAX_SHARED_DABS: u32 = 128u;

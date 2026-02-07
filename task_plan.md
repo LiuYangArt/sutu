@@ -117,9 +117,9 @@
    - 新建可见图层后会走 Canvas2D fallback，性能回落属于当前边界。
 
 ## Status
-**In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复；按 2026-02-06 当日决议停止追加复测，维持 Phase 6A `PARTIAL PASS`；Phase 6B-2/6B-3 已完成，当前进入 6B 后续落地与多层阶段说明整理
+**In Progress** - M2 功能链路已打通；交互稳定性问题（undo/切工具闪烁/吸色卡顿/切 zoom 丢笔）已修复；按 2026-02-06 当日决议停止追加复测，维持 Phase 6A `PARTIAL PASS`；Phase 6B-2/6B-3 已完成；M3 已完成收口实现并通过自动回归
 
-## M3 最小闭环进展（2026-02-07）
+## M3 收口进展（2026-02-07）
 - 已落地多图层 GPU 显示合成主链路（`normal/multiply/screen/overlay`），不再由 `visibleLayerCount > 1` 直接触发回退。
 - 已落地 `below` tile cache（正确性优先策略）：
   - active layer 变化、below 层顺序/opacity/blend/revision 或 GPU 内容代次变化时自动失效重建。
@@ -148,6 +148,11 @@
   - `Canvas/index.tsx`：移除 `sampleGpuPixelColor` 冗余依赖。
   - `ColorPanel/index.tsx`：颜色同步判定分支简化，提升可读性。
 - 已完成：M3 手工门禁回放与 4K/多层稳定性验收回填（2026-02-07，用户本机 UI 环境 A/B/C/D 场景均 PASS）。
+- 已完成：M3 剩余技术项补全（2026-02-07）：
+  - `activeScratch` 主链路从 `rgba32float` 切换为 `rgba16float`，compute pipeline + shader + preview readback 全链路同步。
+  - `commitStroke` 新增 `activeLayerTmp` 复用，避免每 tile 临时纹理反复创建销毁。
+  - `commitStroke` 新增 dirty-rect 局部 viewport/scissor 裁剪（只绘制 tile 脏区交集）。
+  - 新增 `dirtyTileClip` 单测并通过全量自动测试。
 
 ## 今日决议（2026-02-06）
 - 不再执行新增稳定性回归测试（含 3 轮 replay 与 20 笔手工短测）。

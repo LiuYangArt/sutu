@@ -65,7 +65,7 @@ struct Uniforms {
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var<storage, read> dabs: array<TextureDabData>;
 @group(0) @binding(2) var input_tex: texture_2d<f32>;   // Read source (Ping)
-@group(0) @binding(3) var output_tex: texture_storage_2d<rgba32float, write>; // Write target (Pong)
+@group(0) @binding(3) var output_tex: texture_storage_2d<rgba16float, write>; // Write target (Pong)
 @group(0) @binding(4) var brush_texture: texture_2d<f32>;  // Brush tip texture
 @group(0) @binding(5) var pattern_texture: texture_2d<f32>; // Pattern texture
 @group(0) @binding(6) var noise_texture: texture_2d<f32>; // Noise texture (RGBA8, grayscale)

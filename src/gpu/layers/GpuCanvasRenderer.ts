@@ -5,6 +5,7 @@ import { TileResidencyManager } from './TileResidencyManager';
 import { SelectionMaskGpu } from './SelectionMaskGpu';
 import type { GpuStrokeHistoryStore, GpuStrokeHistoryTileApplyItem } from './GpuStrokeHistoryStore';
 import { buildBelowCacheSignature } from './layerStackCache';
+import { computeTileDrawRegion, type TileDrawRegion } from './dirtyTileClip';
 import { alignTo } from '../utils/textureCopyRect';
 import type { Rect } from '@/utils/strokeBuffer';
 import type { GpuRenderableLayer } from '../types';
@@ -626,12 +627,17 @@ export class GpuCanvasRenderer {
     const selectionView = this.selectionMask.getTextureView() ?? this.whiteMaskView;
 
     const encoder = this.device.createCommandEncoder();
-    const tempTexturesToDestroy: GPUTexture[] = [];
+    let activeLayerTmpTexture: GPUTexture | null = null;
+    let activeLayerTmpView: GPUTextureView | null = null;
+    const committedTiles: TileCoord[] = [];
+
     let drawIndex = 0;
 
     for (const coord of tiles) {
       const rect = this.layerStore.getTileRect(coord);
       if (rect.width <= 0 || rect.height <= 0) continue;
+      const drawRegion = computeTileDrawRegion(rect, dirtyRect);
+      if (!drawRegion || drawRegion.width <= 0 || drawRegion.height <= 0) continue;
 
       let existingTile = this.layerStore.getTile(layerId, coord);
       if (!existingTile && baseLayerCanvas) {
@@ -650,27 +656,40 @@ export class GpuCanvasRenderer {
       );
 
       if (existingTile) {
-        const tempTexture = this.createTempTileTexture();
-        const tempView = tempTexture.createView();
+        if (!activeLayerTmpTexture || !activeLayerTmpView) {
+          activeLayerTmpTexture = this.createTempTileTexture();
+          activeLayerTmpView = activeLayerTmpTexture.createView();
+        }
+        const shouldPreserveOutsideDirtyRegion = !this.isFullTileDraw(drawRegion, rect);
+        if (shouldPreserveOutsideDirtyRegion) {
+          encoder.copyTextureToTexture(
+            { texture: existingTile.texture },
+            { texture: activeLayerTmpTexture },
+            [this.tileSize, this.tileSize, 1]
+          );
+        }
 
         this.renderCompositePass({
           encoder,
-          targetView: tempView,
+          targetView: activeLayerTmpView,
           tileView: existingTile.view,
           scratchView,
           selectionView,
           tileRect: rect,
+          drawRegion,
           strokeOpacity: clampedOpacity,
           renderScale,
           applyDither,
           ditherStrength,
+          loadExistingTarget: shouldPreserveOutsideDirtyRegion,
           uniformIndex: drawIndex,
         });
 
-        encoder.copyTextureToTexture({ texture: tempTexture }, { texture: existingTile.texture }, [
-          this.tileSize,
-          this.tileSize,
-        ]);
+        encoder.copyTextureToTexture(
+          { texture: activeLayerTmpTexture },
+          { texture: existingTile.texture },
+          [this.tileSize, this.tileSize, 1]
+        );
         historyCapture?.store.captureAfterTile(
           historyCapture.entryId,
           encoder,
@@ -678,7 +697,6 @@ export class GpuCanvasRenderer {
           coord,
           existingTile.texture
         );
-        tempTexturesToDestroy.push(tempTexture);
       } else {
         const newTile = this.layerStore.getOrCreateTile(layerId, coord);
         this.renderCompositePass({
@@ -688,6 +706,7 @@ export class GpuCanvasRenderer {
           scratchView,
           selectionView,
           tileRect: rect,
+          drawRegion,
           strokeOpacity: clampedOpacity,
           renderScale,
           applyDither,
@@ -702,17 +721,18 @@ export class GpuCanvasRenderer {
           newTile.texture
         );
       }
+      committedTiles.push(coord);
       drawIndex += 1;
     }
 
     this.device.queue.submit([encoder.finish()]);
-    for (const texture of tempTexturesToDestroy) {
-      texture.destroy();
+    if (activeLayerTmpTexture) {
+      activeLayerTmpTexture.destroy();
     }
-    if (tiles.length > 0) {
+    if (committedTiles.length > 0) {
       this.bumpLayerContentGeneration(layerId);
     }
-    return tiles;
+    return committedTiles;
   }
 
   applyHistoryTiles(params: {
@@ -1123,6 +1143,15 @@ export class GpuCanvasRenderer {
     return `${coord.x}_${coord.y}`;
   }
 
+  private isFullTileDraw(drawRegion: TileDrawRegion, tileRect: TileRect): boolean {
+    return (
+      drawRegion.x === 0 &&
+      drawRegion.y === 0 &&
+      drawRegion.width === tileRect.width &&
+      drawRegion.height === tileRect.height
+    );
+  }
+
   private renderCompositePass(args: {
     encoder: GPUCommandEncoder;
     targetView: GPUTextureView;
@@ -1130,10 +1159,12 @@ export class GpuCanvasRenderer {
     scratchView: GPUTextureView;
     selectionView: GPUTextureView;
     tileRect: TileRect;
+    drawRegion?: TileDrawRegion;
     strokeOpacity: number;
     renderScale: number;
     applyDither: boolean;
     ditherStrength: number;
+    loadExistingTarget?: boolean;
     uniformIndex: number;
   }): void {
     const {
@@ -1143,10 +1174,12 @@ export class GpuCanvasRenderer {
       scratchView,
       selectionView,
       tileRect,
+      drawRegion,
       strokeOpacity,
       renderScale,
       applyDither,
       ditherStrength,
+      loadExistingTarget,
       uniformIndex,
     } = args;
 
@@ -1178,7 +1211,7 @@ export class GpuCanvasRenderer {
         {
           view: targetView,
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
+          loadOp: loadExistingTarget ? 'load' : 'clear',
           storeOp: 'store',
         },
       ],
@@ -1186,8 +1219,9 @@ export class GpuCanvasRenderer {
 
     pass.setPipeline(this.commitPipeline);
     pass.setBindGroup(0, bindGroup, [uniformOffset]);
-    pass.setViewport(0, 0, tileRect.width, tileRect.height, 0, 1);
-    pass.setScissorRect(0, 0, tileRect.width, tileRect.height);
+    const viewport = drawRegion ?? { x: 0, y: 0, width: tileRect.width, height: tileRect.height };
+    pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+    pass.setScissorRect(viewport.x, viewport.y, viewport.width, viewport.height);
     pass.draw(6, 1, 0, 0);
     pass.end();
   }
@@ -1307,7 +1341,8 @@ export class GpuCanvasRenderer {
       label: 'Temp Tile',
       size: [this.tileSize, this.tileSize],
       format: this.layerFormat,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
     });
   }
 

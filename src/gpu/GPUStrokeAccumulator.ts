@@ -58,6 +58,31 @@ interface GpuUncapturedErrorSnapshot {
   recentSubmitLabel: string | null;
 }
 
+const FLOAT16_TO_FLOAT32_LUT = new Float32Array(65536);
+let float16LutReady = false;
+
+function decodeFloat16(value: number): number {
+  if (!float16LutReady) {
+    for (let i = 0; i < 65536; i += 1) {
+      const sign = (i & 0x8000) !== 0 ? -1 : 1;
+      const exponent = (i >> 10) & 0x1f;
+      const mantissa = i & 0x03ff;
+
+      let out = 0;
+      if (exponent === 0) {
+        out = mantissa === 0 ? 0 : sign * 2 ** -14 * (mantissa / 1024);
+      } else if (exponent === 0x1f) {
+        out = mantissa === 0 ? sign * Infinity : Number.NaN;
+      } else {
+        out = sign * 2 ** (exponent - 15) * (1 + mantissa / 1024);
+      }
+      FLOAT16_TO_FLOAT32_LUT[i] = out;
+    }
+    float16LutReady = true;
+  }
+  return FLOAT16_TO_FLOAT32_LUT[value & 0xffff] ?? 0;
+}
+
 export class GPUStrokeAccumulator {
   private device: GPUDevice;
   private pingPongBuffer: PingPongBuffer;
@@ -290,7 +315,7 @@ export class GPUStrokeAccumulator {
     return this.device.createTexture({
       label: 'Dual Blend Texture',
       size: [this.pingPongBuffer.textureWidth, this.pingPongBuffer.textureHeight],
-      format: 'rgba32float',
+      format: this.pingPongBuffer.format,
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.STORAGE_BINDING |
@@ -331,14 +356,14 @@ export class GPUStrokeAccumulator {
       const dummyInput = this.device.createTexture({
         label: 'Prewarm Input',
         size: [1, 1],
-        format: 'rgba32float',
+        format: this.pingPongBuffer.format,
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
 
       const dummyOutput = this.device.createTexture({
         label: 'Prewarm Output',
         size: [1, 1],
-        format: 'rgba32float',
+        format: this.pingPongBuffer.format,
         usage:
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.STORAGE_BINDING |
@@ -348,7 +373,7 @@ export class GPUStrokeAccumulator {
       const dummyDual = this.device.createTexture({
         label: 'Prewarm Dual',
         size: [1, 1],
-        format: 'rgba32float',
+        format: this.pingPongBuffer.format,
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
 
@@ -557,7 +582,7 @@ export class GPUStrokeAccumulator {
       // Only read back a tiny region to warm driver paths without allocating huge buffers.
       const copyWidth = Math.max(1, Math.min(16, texW));
       const copyHeight = Math.max(1, Math.min(1, texH));
-      const bytesPerRow = 256; // >= 16px * 16B, and 256-byte aligned
+      const bytesPerRow = 256; // >= 16px * 8B, and 256-byte aligned
       const size = bytesPerRow * copyHeight;
 
       const buffer = this.device.createBuffer({
@@ -2428,8 +2453,8 @@ export class GPUStrokeAccumulator {
             return;
           }
 
-          // rgba32float = 16 bytes/pixel. bytesPerRow must be 256-byte aligned.
-          const bytesPerRow = alignTo(copyRect.width * 16, 256);
+          // rgba16float = 8 bytes/pixel. bytesPerRow must be 256-byte aligned.
+          const bytesPerRow = alignTo(copyRect.width * 8, 256);
           const copyBytes = bytesPerRow * copyRect.height;
           this.previewMaxCopyBytes = Math.max(this.previewMaxCopyBytes, copyBytes);
           this.diagPreviewMaxCopyBytes = Math.max(this.diagPreviewMaxCopyBytes, copyBytes);
@@ -2475,10 +2500,10 @@ export class GPUStrokeAccumulator {
           try {
             await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ, 0, copyBytes);
             mapped = true;
-            const gpuData = new Float32Array(
+            const gpuData = new Uint16Array(
               this.previewReadbackBuffer!.getMappedRange(0, copyBytes)
             );
-            const floatsPerRow = bytesPerRow / 4;
+            const componentsPerRow = bytesPerRow / 2;
 
             // Create ImageData for the dirty region (full resolution preview)
             const imageData = this.previewCtx.createImageData(rectWidth, rectHeight);
@@ -2519,16 +2544,19 @@ export class GPUStrokeAccumulator {
                   continue;
                 }
 
-                const srcIdx = texY * floatsPerRow + texX * 4;
+                const srcIdx = texY * componentsPerRow + texX * 4;
                 const dstIdx = (py * rectWidth + px) * 4;
 
+                const srcR = decodeFloat16(gpuData[srcIdx] ?? 0);
+                const srcG = decodeFloat16(gpuData[srcIdx + 1] ?? 0);
+                const srcB = decodeFloat16(gpuData[srcIdx + 2] ?? 0);
+                const srcA = decodeFloat16(gpuData[srcIdx + 3] ?? 0);
+
                 // Convert float (0-1) to uint8 (0-255), applying mask blend for AA
-                imageData.data[dstIdx] = Math.round((gpuData[srcIdx] ?? 0) * 255);
-                imageData.data[dstIdx + 1] = Math.round((gpuData[srcIdx + 1] ?? 0) * 255);
-                imageData.data[dstIdx + 2] = Math.round((gpuData[srcIdx + 2] ?? 0) * 255);
-                imageData.data[dstIdx + 3] = Math.round(
-                  (gpuData[srcIdx + 3] ?? 0) * 255 * maskBlend
-                );
+                imageData.data[dstIdx] = Math.round(srcR * 255);
+                imageData.data[dstIdx + 1] = Math.round(srcG * 255);
+                imageData.data[dstIdx + 2] = Math.round(srcB * 255);
+                imageData.data[dstIdx + 3] = Math.round(srcA * 255 * maskBlend);
               }
             }
 

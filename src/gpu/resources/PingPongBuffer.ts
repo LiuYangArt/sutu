@@ -20,7 +20,7 @@ export class PingPongBuffer {
   // This texture is separate from ping-pong to avoid idempotency issues
   private displayTexture: GPUTexture | null = null;
 
-  readonly format: GPUTextureFormat = 'rgba32float'; // Changed from rgba16float for easy readback
+  readonly format: GPUTextureFormat = 'rgba16float';
   private _width: number; // Logical width (canvas size)
   private _height: number; // Logical height (canvas size)
   private _renderScale: number = 1.0; // Render scale (1.0 = full res)

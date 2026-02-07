@@ -59,7 +59,7 @@ export class BrushPipeline extends BaseBrushPipeline {
           // Stroke source texture (previous frame for Alpha Darken read)
           binding: 1,
           visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: 'unfilterable-float' }, // rgba32float requires unfilterable-float
+          texture: { sampleType: 'unfilterable-float' }, // rgba16float requires unfilterable-float
         },
         {
           // Gaussian LUT storage buffer

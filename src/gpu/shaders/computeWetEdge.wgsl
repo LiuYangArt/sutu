@@ -32,7 +32,7 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var input_tex: texture_2d<f32>;   // Raw accumulator (read-only)
-@group(0) @binding(2) var output_tex: texture_storage_2d<rgba32float, write>; // Display output
+@group(0) @binding(2) var output_tex: texture_storage_2d<rgba16float, write>; // Display output
 
 // ============================================================================
 // Wet Edge Alpha Calculation

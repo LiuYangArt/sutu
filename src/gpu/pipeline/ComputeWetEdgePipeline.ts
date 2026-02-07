@@ -59,7 +59,7 @@ export class ComputeWetEdgePipeline {
         {
           binding: 2,
           visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba32float' },
+          storageTexture: { access: 'write-only', format: 'rgba16float' },
         },
       ],
     });

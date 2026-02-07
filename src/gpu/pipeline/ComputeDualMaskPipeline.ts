@@ -108,7 +108,7 @@ export class ComputeDualMaskPipeline {
         {
           binding: 3,
           visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba32float' },
+          storageTexture: { access: 'write-only', format: 'rgba16float' },
         },
         { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
       ],

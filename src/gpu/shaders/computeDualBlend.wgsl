@@ -2,7 +2,7 @@
 // Compute Dual Blend Shader - Stroke-level Dual Brush Alpha Modulation
 // ============================================================================
 //
-// Reads primary stroke color (rgba32float) and secondary mask (.r),
+// Reads primary stroke color (rgba16float) and secondary mask (.r),
 // applies PS-compatible dual blend mode, and writes modified alpha only.
 // ============================================================================
 
@@ -17,7 +17,7 @@ struct Uniforms {
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var primary_tex: texture_2d<f32>;
 @group(0) @binding(2) var dual_tex: texture_2d<f32>;
-@group(0) @binding(3) var output_tex: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(3) var output_tex: texture_storage_2d<rgba16float, write>;
 
 fn blend_dual(primary: f32, secondary: f32, mode: u32) -> f32 {
   let p = clamp(primary, 0.0, 1.0);

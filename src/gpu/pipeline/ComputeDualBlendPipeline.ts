@@ -48,7 +48,7 @@ export class ComputeDualBlendPipeline {
         {
           binding: 3,
           visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { access: 'write-only', format: 'rgba32float' },
+          storageTexture: { access: 'write-only', format: 'rgba16float' },
         },
       ],
     });

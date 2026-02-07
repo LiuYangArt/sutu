@@ -187,7 +187,7 @@ export abstract class BaseBrushPipeline {
         entryPoint: 'fs_main',
         targets: [
           {
-            format: 'rgba32float',
+            format: 'rgba16float',
             // No hardware blend - Alpha Darken is done in shader
             blend: undefined,
           },
