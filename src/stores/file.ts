@@ -48,6 +48,11 @@ interface FileOperationResult {
   error?: string;
 }
 
+type CanvasExportWindow = Window & {
+  __getThumbnail?: () => Promise<string | undefined>;
+  __getFlattenedImage?: () => Promise<string | undefined>;
+};
+
 interface FileState {
   isSaving: boolean;
   isLoading: boolean;
@@ -73,9 +78,7 @@ async function getLayerImageData(layerId: string): Promise<string | undefined> {
  * Get thumbnail image (256x256) for ORA
  */
 async function getThumbnail(): Promise<string | undefined> {
-  const win = window as Window & {
-    __getThumbnail?: () => Promise<string | undefined>;
-  };
+  const win = window as CanvasExportWindow;
   return win.__getThumbnail?.();
 }
 
@@ -83,9 +86,7 @@ async function getThumbnail(): Promise<string | undefined> {
  * Get flattened composited image for PSD/TIFF exports
  */
 async function getFlattenedImage(): Promise<string | undefined> {
-  const win = window as Window & {
-    __getFlattenedImage?: () => Promise<string | undefined>;
-  };
+  const win = window as CanvasExportWindow;
   return win.__getFlattenedImage?.();
 }
 
