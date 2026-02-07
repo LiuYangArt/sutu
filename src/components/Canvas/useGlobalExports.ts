@@ -5,7 +5,17 @@ import { useToolStore, type ToolType, type PressureCurve } from '@/stores/tool';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
-import type { StrokeCaptureData, StrokeReplayOptions } from '@/test';
+import {
+  DEBUG_CAPTURE_DIR,
+  DEBUG_CAPTURE_FILE_NAME,
+  DEBUG_CAPTURE_LOCAL_KEY,
+  DEBUG_CAPTURE_RELATIVE_PATH,
+  type FixedCaptureSource,
+  type FixedStrokeCaptureLoadResult,
+  type FixedStrokeCaptureSaveResult,
+  type StrokeCaptureData,
+  type StrokeReplayOptions,
+} from '@/test';
 import {
   GPUContext,
   type GpuBrushCommitReadbackMode,
@@ -186,6 +196,18 @@ export function useGlobalExports({
         fileName?: string,
         capture?: StrokeCaptureData | string
       ) => boolean;
+      __strokeCaptureSaveFixed?: (
+        capture?: StrokeCaptureData | string
+      ) => Promise<FixedStrokeCaptureSaveResult>;
+      __strokeCaptureLoadFixed?: () => Promise<FixedStrokeCaptureLoadResult | null>;
+    };
+
+    const isTauriRuntime = '__TAURI_INTERNALS__' in window;
+    const appConfigPath = `AppConfig/${DEBUG_CAPTURE_RELATIVE_PATH}`;
+    const localStoragePath = `localStorage:${DEBUG_CAPTURE_LOCAL_KEY}`;
+
+    const getFallbackPath = (source: FixedCaptureSource): string => {
+      return source === 'appconfig' ? appConfigPath : localStoragePath;
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -469,6 +491,111 @@ export function useGlobalExports({
     win.__strokeCaptureDownload = (fileName, capture) => {
       return downloadStrokeCapture?.(fileName, capture) ?? false;
     };
+    win.__strokeCaptureSaveFixed = async (capture): Promise<FixedStrokeCaptureSaveResult> => {
+      const fallbackCapture = getLastStrokeCapture?.() ?? null;
+      const resolvedCapture = parseStrokeCaptureInput(capture, fallbackCapture);
+      const fallbackSource: FixedCaptureSource = isTauriRuntime ? 'appconfig' : 'localstorage';
+      const fallbackPath = getFallbackPath(fallbackSource);
+
+      if (!resolvedCapture) {
+        return {
+          ok: false,
+          path: fallbackPath,
+          name: DEBUG_CAPTURE_FILE_NAME,
+          source: fallbackSource,
+          error: 'invalid capture input',
+        };
+      }
+
+      const serialized = JSON.stringify(resolvedCapture, null, 2);
+
+      if (isTauriRuntime) {
+        try {
+          const { BaseDirectory, mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
+          await mkdir(DEBUG_CAPTURE_DIR, { baseDir: BaseDirectory.AppConfig, recursive: true });
+          await writeTextFile(DEBUG_CAPTURE_RELATIVE_PATH, serialized, {
+            baseDir: BaseDirectory.AppConfig,
+          });
+          return {
+            ok: true,
+            path: appConfigPath,
+            name: DEBUG_CAPTURE_FILE_NAME,
+            source: 'appconfig',
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            path: appConfigPath,
+            name: DEBUG_CAPTURE_FILE_NAME,
+            source: 'appconfig',
+            error: String(error),
+          };
+        }
+      }
+
+      try {
+        window.localStorage.setItem(DEBUG_CAPTURE_LOCAL_KEY, serialized);
+        return {
+          ok: true,
+          path: localStoragePath,
+          name: DEBUG_CAPTURE_FILE_NAME,
+          source: 'localstorage',
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          path: localStoragePath,
+          name: DEBUG_CAPTURE_FILE_NAME,
+          source: 'localstorage',
+          error: String(error),
+        };
+      }
+    };
+    win.__strokeCaptureLoadFixed = async (): Promise<FixedStrokeCaptureLoadResult | null> => {
+      if (isTauriRuntime) {
+        try {
+          const { BaseDirectory, exists, readTextFile } = await import('@tauri-apps/plugin-fs');
+          const hasFile = await exists(DEBUG_CAPTURE_RELATIVE_PATH, {
+            baseDir: BaseDirectory.AppConfig,
+          });
+          if (!hasFile) {
+            return null;
+          }
+
+          const serialized = await readTextFile(DEBUG_CAPTURE_RELATIVE_PATH, {
+            baseDir: BaseDirectory.AppConfig,
+          });
+          const capture = parseStrokeCaptureInput(serialized, null);
+          if (!capture) {
+            return null;
+          }
+
+          return {
+            capture,
+            path: appConfigPath,
+            name: DEBUG_CAPTURE_FILE_NAME,
+            source: 'appconfig',
+          };
+        } catch {
+          return null;
+        }
+      }
+
+      try {
+        const serialized = window.localStorage.getItem(DEBUG_CAPTURE_LOCAL_KEY);
+        if (!serialized) return null;
+        const capture = parseStrokeCaptureInput(serialized, null);
+        if (!capture) return null;
+        return {
+          capture,
+          path: localStoragePath,
+          name: DEBUG_CAPTURE_FILE_NAME,
+          source: 'localstorage',
+        };
+      } catch {
+        return null;
+      }
+    };
 
     // Get single layer image data as Base64 PNG data URL
     win.__getLayerImageData = async (layerId: string): Promise<string | undefined> => {
@@ -687,6 +814,8 @@ export function useGlobalExports({
       delete win.__strokeCaptureLast;
       delete win.__strokeCaptureReplay;
       delete win.__strokeCaptureDownload;
+      delete win.__strokeCaptureSaveFixed;
+      delete win.__strokeCaptureLoadFixed;
     };
   }, [
     layerRendererRef,

@@ -21,7 +21,13 @@ import { SelectionOverlay } from './SelectionOverlay';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { StrokeBuffer } from '@/utils/interpolation';
-import { StrokeCaptureController, type StrokeCaptureData, type StrokeReplayOptions } from '@/test';
+import {
+  StrokeCaptureController,
+  type FixedStrokeCaptureLoadResult,
+  type FixedStrokeCaptureSaveResult,
+  type StrokeCaptureData,
+  type StrokeReplayOptions,
+} from '@/test';
 import {
   GPUContext,
   GpuCanvasRenderer,
@@ -69,6 +75,10 @@ declare global {
       options?: StrokeReplayOptions
     ) => Promise<{ events: number; durationMs: number } | null>;
     __strokeCaptureDownload?: (fileName?: string, capture?: StrokeCaptureData | string) => boolean;
+    __strokeCaptureSaveFixed?: (
+      capture?: StrokeCaptureData | string
+    ) => Promise<FixedStrokeCaptureSaveResult>;
+    __strokeCaptureLoadFixed?: () => Promise<FixedStrokeCaptureLoadResult | null>;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;

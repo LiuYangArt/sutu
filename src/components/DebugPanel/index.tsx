@@ -12,6 +12,7 @@ import {
   Timer,
 } from 'lucide-react';
 import {
+  DEBUG_CAPTURE_FILE_NAME,
   InputSimulator,
   verifyGrid,
   formatVerificationReport,
@@ -19,6 +20,7 @@ import {
   formatChaosReport,
   installDiagnosticHooks,
   getTestReport,
+  type FixedStrokeCaptureLoadResult,
   type ChaosTestResult,
   type DiagnosticHooks,
   type StrokeCaptureData,
@@ -87,8 +89,6 @@ type RAfFrameSamplingSummary = {
 };
 
 const PHASE6B_TARGET_DURATION_MS = 30_000;
-const PHASE6B3_FIXED_CAPTURE_NAME = 'case-5000-04.json';
-const PHASE6B3_FIXED_CAPTURE_PATH = `/abr/${PHASE6B3_FIXED_CAPTURE_NAME}`;
 const PILOT_BASELINE_A_TOTAL_MS = 62.27;
 const PILOT_READBACK_NEAR_ZERO_MS = 2;
 const PHASE6B3_READBACK_SEQUENCE: GpuBrushCommitReadbackMode[] = [
@@ -97,6 +97,13 @@ const PHASE6B3_READBACK_SEQUENCE: GpuBrushCommitReadbackMode[] = [
   'disabled',
   'enabled',
 ];
+const FIXED_CAPTURE_MISSING_MESSAGE =
+  'Fixed capture not found. Please click "Start Recording" and then "Stop & Save Fixed Case".';
+const DEBUG_PANEL_MIN_WIDTH = 320;
+const DEBUG_PANEL_MIN_HEIGHT = 300;
+const DEBUG_PANEL_DEFAULT_WIDTH = 680;
+const DEBUG_PANEL_DEFAULT_HEIGHT = 820;
+type DebugPanelTab = 'gpu-tests' | 'general';
 
 type RAfFrameSlice = {
   frameTimes: number[];
@@ -135,7 +142,8 @@ type Phase6B3ModeAggregate = {
 type Phase6B3CaptureResult = {
   capture: StrokeCaptureData;
   name: string;
-  source: string;
+  source: 'appconfig' | 'localstorage';
+  path: string;
 };
 
 function asGpuDiagnosticsSnapshot(value: unknown): GpuBrushDiagnosticsSnapshot {
@@ -154,16 +162,6 @@ function asGpuBrushCommitMetricsSnapshot(value: unknown): GpuBrushCommitMetricsS
 
 function isGpuBrushCommitReadbackMode(value: unknown): value is GpuBrushCommitReadbackMode {
   return value === 'enabled' || value === 'disabled';
-}
-
-function assertStrokeCaptureData(value: unknown): asserts value is StrokeCaptureData {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Invalid capture JSON: expected object');
-  }
-  const capture = value as StrokeCaptureData;
-  if (!Array.isArray(capture.samples) || !capture.metadata) {
-    throw new Error('Invalid capture JSON: missing samples/metadata');
-  }
 }
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -282,72 +280,22 @@ function startRafFrameSampler(): { stop: () => Promise<RAfFrameSamplingSummary> 
   };
 }
 
-async function pickStrokeCaptureFromFile(): Promise<{
-  capture: StrokeCaptureData;
-  name: string;
-} | null> {
-  const picker = (
+async function loadFixedCaptureFromGlobalApi(): Promise<Phase6B3CaptureResult | null> {
+  const loader = (
     window as Window & {
-      showOpenFilePicker?: (options?: unknown) => Promise<Array<{ getFile: () => Promise<File> }>>;
+      __strokeCaptureLoadFixed?: () => Promise<FixedStrokeCaptureLoadResult | null>;
     }
-  ).showOpenFilePicker;
-
-  let file: File | null = null;
-
-  if (typeof picker === 'function') {
-    const handles = await picker({
-      types: [{ description: 'Stroke Capture JSON', accept: { 'application/json': ['.json'] } }],
-      multiple: false,
-      excludeAcceptAllOption: false,
-    });
-    const first = handles?.[0];
-    if (!first) return null;
-    file = await first.getFile();
-  } else {
-    file = await new Promise<File | null>((resolve) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.json,application/json';
-      input.onchange = () => resolve(input.files?.[0] ?? null);
-      input.oncancel = () => resolve(null);
-      input.click();
-    });
+  ).__strokeCaptureLoadFixed;
+  if (typeof loader !== 'function') {
+    throw new Error('Missing API: window.__strokeCaptureLoadFixed');
   }
-
-  if (!file) return null;
-  const text = await file.text();
-  const parsed = JSON.parse(text) as unknown;
-  assertStrokeCaptureData(parsed);
-  const capture = parsed;
-  return { capture, name: file.name };
-}
-
-async function loadFixedPhase6B3Capture(): Promise<Phase6B3CaptureResult | null> {
-  try {
-    const response = await fetch(PHASE6B3_FIXED_CAPTURE_PATH, { cache: 'no-store' });
-    if (response.ok) {
-      const parsed = (await response.json()) as unknown;
-      assertStrokeCaptureData(parsed);
-      return {
-        capture: parsed,
-        name: PHASE6B3_FIXED_CAPTURE_NAME,
-        source: PHASE6B3_FIXED_CAPTURE_PATH,
-      };
-    }
-  } catch {
-    // Fall back to local file picker.
-  }
-
-  const picked = await pickStrokeCaptureFromFile();
-  if (!picked) return null;
-  if (picked.name !== PHASE6B3_FIXED_CAPTURE_NAME) {
-    throw new Error(`Expected capture file: ${PHASE6B3_FIXED_CAPTURE_NAME}`);
-  }
-
+  const loaded = await loader();
+  if (!loaded) return null;
   return {
-    capture: picked.capture,
-    name: picked.name,
-    source: 'file-picker',
+    capture: loaded.capture,
+    name: loaded.name,
+    source: loaded.source,
+    path: loaded.path,
   };
 }
 
@@ -508,6 +456,166 @@ function useDraggable(initialPosition: { x: number; y: number } | null = null) {
   return { position, handleDragStart, handleDragMove, handleDragEnd };
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+type ResizePointerLikeEvent = {
+  clientX?: number;
+  clientY?: number;
+  pageX?: number;
+  pageY?: number;
+  screenX?: number;
+  screenY?: number;
+};
+
+function readResizeEventPosition(event: ResizePointerLikeEvent): { x: number; y: number } | null {
+  const pickFinite = (values: Array<number | undefined>): number | null => {
+    for (const value of values) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+    }
+    return null;
+  };
+
+  const x = pickFinite([event.clientX, event.pageX, event.screenX]);
+  const y = pickFinite([event.clientY, event.pageY, event.screenY]);
+  if (x === null || y === null) return null;
+  return { x, y };
+}
+
+function useResizable(initialSize: { width: number; height: number }) {
+  const [size, setSize] = useState(initialSize);
+  const isResizingRef = useRef(false);
+  const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(
+    null
+  );
+  const activePointerIdRef = useRef<number | null>(null);
+  const resizeTargetRef = useRef<HTMLElement | null>(null);
+  const detachListenersRef = useRef<(() => void) | null>(null);
+
+  const detachResizeListeners = useCallback(() => {
+    detachListenersRef.current?.();
+    detachListenersRef.current = null;
+  }, []);
+
+  const applyResizeByPosition = useCallback((movePosition: { x: number; y: number }) => {
+    if (!isResizingRef.current || !resizeStartRef.current) return;
+
+    const deltaX = movePosition.x - resizeStartRef.current.x;
+    const deltaY = movePosition.y - resizeStartRef.current.y;
+    const viewportWidth =
+      typeof window.innerWidth === 'number' && Number.isFinite(window.innerWidth)
+        ? window.innerWidth
+        : (document.documentElement?.clientWidth ?? DEBUG_PANEL_DEFAULT_WIDTH);
+    const viewportHeight =
+      typeof window.innerHeight === 'number' && Number.isFinite(window.innerHeight)
+        ? window.innerHeight
+        : (document.documentElement?.clientHeight ?? DEBUG_PANEL_DEFAULT_HEIGHT);
+    const maxWidth = Math.max(DEBUG_PANEL_MIN_WIDTH, viewportWidth - 16);
+    const maxHeight = Math.max(DEBUG_PANEL_MIN_HEIGHT, viewportHeight - 16);
+    const nextWidth = clamp(resizeStartRef.current.width + deltaX, DEBUG_PANEL_MIN_WIDTH, maxWidth);
+    const nextHeight = clamp(
+      resizeStartRef.current.height + deltaY,
+      DEBUG_PANEL_MIN_HEIGHT,
+      maxHeight
+    );
+    setSize({ width: nextWidth, height: nextHeight });
+  }, []);
+
+  const stopResize = useCallback(
+    (pointerId?: number) => {
+      if (!isResizingRef.current) return;
+      isResizingRef.current = false;
+      detachResizeListeners();
+
+      const target = resizeTargetRef.current;
+      if (target && pointerId !== undefined && pointerId !== null) {
+        const maybeTarget = target as HTMLElement & {
+          releasePointerCapture?: (id: number) => void;
+        };
+        if (typeof maybeTarget.releasePointerCapture === 'function') {
+          try {
+            maybeTarget.releasePointerCapture(pointerId);
+          } catch {
+            // Ignore release errors from environments without active capture state.
+          }
+        }
+      }
+      resizeTargetRef.current = null;
+      activePointerIdRef.current = null;
+    },
+    [detachResizeListeners]
+  );
+
+  const handleResizeStart = (e: React.PointerEvent, element: HTMLElement | null) => {
+    if (!element) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startPosition = readResizeEventPosition(e);
+    if (!startPosition) return;
+    detachResizeListeners();
+    isResizingRef.current = true;
+    const rect = element.getBoundingClientRect();
+    resizeStartRef.current = {
+      x: startPosition.x,
+      y: startPosition.y,
+      width: rect.width,
+      height: rect.height,
+    };
+    const resizeTarget = e.target as HTMLElement;
+    const pointerId =
+      typeof e.pointerId === 'number' && Number.isFinite(e.pointerId) ? e.pointerId : null;
+    resizeTargetRef.current = resizeTarget;
+    activePointerIdRef.current = pointerId;
+    const maybeTarget = resizeTarget as HTMLElement & { setPointerCapture?: (id: number) => void };
+    if (pointerId !== null && typeof maybeTarget.setPointerCapture === 'function') {
+      maybeTarget.setPointerCapture(pointerId);
+    }
+
+    const onMove = (event: PointerEvent | MouseEvent) => {
+      const movePosition = readResizeEventPosition(event);
+      if (!movePosition) return;
+      applyResizeByPosition(movePosition);
+    };
+    const onPointerUp = (event: PointerEvent) => stopResize(event.pointerId);
+    const onMouseUp = () => stopResize(activePointerIdRef.current ?? undefined);
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    detachListenersRef.current = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  };
+
+  const handleResizeMove = (e: React.PointerEvent) => {
+    const movePosition = readResizeEventPosition(e);
+    if (!movePosition) return;
+    applyResizeByPosition(movePosition);
+  };
+
+  const handleResizeEnd = (e: React.PointerEvent) => {
+    stopResize(e.pointerId);
+  };
+
+  useEffect(() => {
+    return () => {
+      stopResize(activePointerIdRef.current ?? undefined);
+    };
+  }, [stopResize]);
+
+  return { size, handleResizeStart, handleResizeMove, handleResizeEnd };
+}
+
 // --- Sub-components ---
 
 function BenchmarkStatsView({
@@ -645,6 +753,7 @@ function ActionGrid({
 
 export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const isDevBuild = import.meta.env.DEV || import.meta.env.MODE === 'test';
+  const [activeTab, setActiveTab] = useState<DebugPanelTab>('gpu-tests');
   const [results, setResults] = useState<TestResult[]>([]);
   const [runningTest, setRunningTest] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -658,6 +767,10 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const [noReadbackPilotEnabled, setNoReadbackPilotEnabled] = useState(false);
   const [noReadbackPilotMessage, setNoReadbackPilotMessage] = useState<string>('');
   const [phase6GateCaptureName, setPhase6GateCaptureName] = useState<string>('');
+  const [captureSourceLabel, setCaptureSourceLabel] = useState<string>('');
+  const [capturePathLabel, setCapturePathLabel] = useState<string>('');
+  const [recordingActive, setRecordingActive] = useState(false);
+  const [recordingMessage, setRecordingMessage] = useState<string>('');
   const [manualGateChecklist, setManualGateChecklist] = useState<ManualGateChecklist>(
     DEFAULT_MANUAL_GATE_CHECKLIST
   );
@@ -666,6 +779,10 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   const { position, handleDragStart, handleDragMove, handleDragEnd } = useDraggable();
+  const { size, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizable({
+    width: DEBUG_PANEL_DEFAULT_WIDTH,
+    height: DEBUG_PANEL_DEFAULT_HEIGHT,
+  });
 
   // Environment detection
   const envInfo = useMemo(() => {
@@ -773,6 +890,54 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     setNoReadbackPilotMessage(`No-Readback Pilot ${current ? 'ON' : 'OFF'}`);
   }, []);
 
+  const applyCaptureMeta = useCallback((captureResult: Phase6B3CaptureResult) => {
+    setPhase6GateCaptureName(captureResult.name);
+    setCaptureSourceLabel(captureResult.source);
+    setCapturePathLabel(captureResult.path);
+  }, []);
+
+  const startFixedRecording = useCallback(() => {
+    const start = window.__strokeCaptureStart;
+    if (typeof start !== 'function') {
+      setRecordingMessage('Stroke capture API unavailable');
+      return;
+    }
+    const started = start();
+    if (!started) {
+      setRecordingMessage('Recording did not start (canvas unavailable or already recording)');
+      return;
+    }
+    setRecordingActive(true);
+    setRecordingMessage('Recording started');
+  }, []);
+
+  const stopAndSaveFixedRecording = useCallback(async () => {
+    const stop = window.__strokeCaptureStop;
+    const saveFixed = window.__strokeCaptureSaveFixed;
+    if (typeof stop !== 'function' || typeof saveFixed !== 'function') {
+      setRecordingMessage('Fixed capture save API unavailable');
+      return;
+    }
+
+    const capture = stop();
+    setRecordingActive(false);
+    if (!capture) {
+      setRecordingMessage('No capture data to save');
+      return;
+    }
+
+    const saved = await saveFixed(capture);
+    if (!saved.ok) {
+      setRecordingMessage(`Save failed: ${saved.error ?? 'unknown error'}`);
+      return;
+    }
+
+    setPhase6GateCaptureName(saved.name);
+    setCaptureSourceLabel(saved.source);
+    setCapturePathLabel(saved.path);
+    setRecordingMessage(`Saved fixed capture: ${saved.path}`);
+  }, []);
+
   const addResult = useCallback((name: string, status: TestStatus, report?: string) => {
     const next = { name, status, report, timestamp: new Date() };
     setResults((prev) => {
@@ -830,12 +995,12 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       diagnosticsRef.current?.reset();
       const didReset = reset();
       const resetSnapshot = asGpuDiagnosticsSnapshot(getDiag());
-      const picked = await pickStrokeCaptureFromFile();
-      if (!picked) {
-        addResult('Phase6A Auto Gate', 'failed', 'Capture selection cancelled.');
+      const captureResult = await loadFixedCaptureFromGlobalApi();
+      if (!captureResult) {
+        addResult('Phase6A Auto Gate', 'failed', FIXED_CAPTURE_MISSING_MESSAGE);
         return;
       }
-      setPhase6GateCaptureName(picked.name);
+      applyCaptureMeta(captureResult);
 
       let clearPerRound = true;
       for (let i = 1; i <= 3; i++) {
@@ -845,7 +1010,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
           clearPerRound = false;
         }
         await waitForAnimationFrame();
-        await replay(picked.capture);
+        await replay(captureResult.capture);
         setProgress(i / 3);
       }
 
@@ -859,7 +1024,9 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
 
       const passed = didReset && clearPerRound && uncapturedErrors.length === 0 && !deviceLost;
       const report = [
-        `Capture: ${picked.name}`,
+        `Capture: ${captureResult.name}`,
+        `Capture source: ${captureResult.source}`,
+        `Capture path: ${captureResult.path}`,
         `Reset: ${didReset ? 'OK' : 'FAILED'}`,
         `clearPerRound: ${clearPerRound ? 'YES' : 'NO'}`,
         `Session after reset: ${resetSnapshot.diagnosticsSessionId ?? '?'}`,
@@ -878,7 +1045,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       setRunningTest(null);
       setProgress(0);
     }
-  }, [runningTest, addResult]);
+  }, [runningTest, addResult, applyCaptureMeta]);
 
   const runPhase6BPerfGate = useCallback(async () => {
     if (runningTest) return;
@@ -920,12 +1087,12 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       const didResetCommitMetrics = resetCommitMetrics();
       const resetDiagSnapshot = asGpuDiagnosticsSnapshot(getDiag());
 
-      const picked = await pickStrokeCaptureFromFile();
-      if (!picked) {
-        addResult('Phase6B Perf Gate (30s)', 'failed', 'Capture selection cancelled.');
+      const captureResult = await loadFixedCaptureFromGlobalApi();
+      if (!captureResult) {
+        addResult('Phase6B Perf Gate (30s)', 'failed', FIXED_CAPTURE_MISSING_MESSAGE);
         return;
       }
-      setPhase6GateCaptureName(picked.name);
+      applyCaptureMeta(captureResult);
 
       const sampler = startRafFrameSampler();
       stopFrameSampler = sampler.stop;
@@ -944,7 +1111,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         }
 
         await waitForAnimationFrame();
-        await replay(picked.capture);
+        await replay(captureResult.capture);
 
         elapsedMs = performance.now() - gateStartMs;
         setProgress(Math.min(elapsedMs / PHASE6B_TARGET_DURATION_MS, 1));
@@ -971,7 +1138,9 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         hasFrameSamples;
 
       const report = [
-        `Capture: ${picked.name}`,
+        `Capture: ${captureResult.name}`,
+        `Capture source: ${captureResult.source}`,
+        `Capture path: ${captureResult.path}`,
         `Duration target: ${PHASE6B_TARGET_DURATION_MS}ms`,
         `Duration actual: ${Math.round(elapsedMs)}ms`,
         `Rounds: ${rounds}`,
@@ -1019,7 +1188,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       setRunningTest(null);
       setProgress(0);
     }
-  }, [runningTest, addResult]);
+  }, [runningTest, addResult, applyCaptureMeta]);
 
   const runPhase6B3ReadbackCompare = useCallback(async () => {
     if (runningTest) return;
@@ -1064,12 +1233,12 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         throw new Error('Missing API: window.__gpuBrushCommitReadbackModeSet');
       }
 
-      const captureResult = await loadFixedPhase6B3Capture();
+      const captureResult = await loadFixedCaptureFromGlobalApi();
       if (!captureResult) {
-        addResult('Phase6B-3 Readback A/B Compare', 'failed', 'Capture selection cancelled.');
+        addResult('Phase6B-3 Readback A/B Compare', 'failed', FIXED_CAPTURE_MISSING_MESSAGE);
         return;
       }
-      setPhase6GateCaptureName(captureResult.name);
+      applyCaptureMeta(captureResult);
 
       const currentMode = getReadbackMode();
       if (!isGpuBrushCommitReadbackMode(currentMode)) {
@@ -1219,6 +1388,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       const report = [
         `Capture: ${captureResult.name}`,
         `Capture source: ${captureResult.source}`,
+        `Capture path: ${captureResult.path}`,
         `Target replay-only duration per mode: ${PHASE6B_TARGET_DURATION_MS}ms`,
         `Sequence: ${PHASE6B3_READBACK_SEQUENCE.join(' -> ')}`,
         '',
@@ -1272,7 +1442,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       setRunningTest(null);
       setProgress(0);
     }
-  }, [runningTest, addResult, refreshNoReadbackPilotState]);
+  }, [runningTest, addResult, refreshNoReadbackPilotState, applyCaptureMeta]);
 
   const runNoReadbackPilotGate = useCallback(async () => {
     if (runningTest) return;
@@ -1321,12 +1491,12 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         throw new Error('Missing API: window.__gpuBrushNoReadbackPilotSet');
       }
 
-      const captureResult = await loadFixedPhase6B3Capture();
+      const captureResult = await loadFixedCaptureFromGlobalApi();
       if (!captureResult) {
-        addResult('No-Readback Pilot Gate (30s)', 'failed', 'Capture selection cancelled.');
+        addResult('No-Readback Pilot Gate (30s)', 'failed', FIXED_CAPTURE_MISSING_MESSAGE);
         return;
       }
-      setPhase6GateCaptureName(captureResult.name);
+      applyCaptureMeta(captureResult);
 
       originalPilotEnabled = Boolean(getPilot());
       const didEnablePilot = setPilot(true) && Boolean(getPilot());
@@ -1409,6 +1579,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       const report = [
         `Capture: ${captureResult.name}`,
         `Capture source: ${captureResult.source}`,
+        `Capture path: ${captureResult.path}`,
         `Target replay-only duration: ${PHASE6B_TARGET_DURATION_MS}ms`,
         `Replay duration: ${Math.round(replayElapsedMs)}ms`,
         `Clear duration (excluded): ${Math.round(clearElapsedMs)}ms`,
@@ -1450,7 +1621,7 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       setRunningTest(null);
       setProgress(0);
     }
-  }, [runningTest, addResult, refreshNoReadbackPilotState]);
+  }, [runningTest, addResult, refreshNoReadbackPilotState, applyCaptureMeta]);
 
   const recordPhase6ManualGate = useCallback(() => {
     const getDiag = window.__gpuBrushDiagnostics;
@@ -1656,12 +1827,18 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
     []
   );
 
+  const panelStyle: React.CSSProperties = {
+    width: size.width,
+    height: size.height,
+  };
+  if (position) {
+    panelStyle.left = position.x;
+    panelStyle.top = position.y;
+    panelStyle.right = 'auto';
+  }
+
   return (
-    <div
-      className="debug-panel"
-      ref={panelRef}
-      style={position ? { left: position.x, top: position.y, right: 'auto' } : {}}
-    >
+    <div className="debug-panel" ref={panelRef} style={panelStyle}>
       <div
         className="debug-panel-header"
         onPointerDown={(e) => handleDragStart(e, panelRef.current)}
@@ -1678,153 +1855,203 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         </button>
       </div>
 
-      <div className="debug-panel-content">
-        <div className="debug-section">
-          <h3>Stroke Tests</h3>
-          <ActionGrid onRunTest={handleRunTest} isRunning={!!runningTest} />
-        </div>
+      <div className="debug-tabs" role="tablist" aria-label="Debug tabs">
+        <button
+          type="button"
+          className={`debug-tab ${activeTab === 'gpu-tests' ? 'debug-tab-active' : ''}`}
+          role="tab"
+          aria-selected={activeTab === 'gpu-tests'}
+          onClick={() => setActiveTab('gpu-tests')}
+        >
+          GPU Tests
+        </button>
+        <button
+          type="button"
+          className={`debug-tab ${activeTab === 'general' ? 'debug-tab-active' : ''}`}
+          role="tab"
+          aria-selected={activeTab === 'general'}
+          onClick={() => setActiveTab('general')}
+        >
+          General
+        </button>
+      </div>
 
-        <div className="debug-section">
-          <h3>GPU Brush</h3>
-          <div className="debug-button-row">
-            <button
-              className={`debug-btn secondary ${debugRectsEnabled ? 'active' : ''}`}
-              onClick={toggleDebugRects}
-              title="window.__gpuBrushDebugRects"
-            >
-              <span>Debug Rects</span>
-            </button>
-            <button
-              className={`debug-btn secondary ${batchUnionEnabled ? 'active' : ''}`}
-              onClick={toggleBatchUnion}
-              title="window.__gpuBrushUseBatchUnionRect"
-            >
-              <span>Batch-Union Preview</span>
-            </button>
-          </div>
-          {isDevBuild && (
+      <div className="debug-panel-content">
+        {activeTab === 'gpu-tests' && (
+          <div className="debug-section">
+            <h3>GPU Brush</h3>
+            <div className="debug-button-row">
+              <button
+                className="debug-btn secondary"
+                onClick={startFixedRecording}
+                disabled={recordingActive}
+                title="window.__strokeCaptureStart()"
+              >
+                <span>Start Recording</span>
+              </button>
+              <button
+                className="debug-btn secondary"
+                onClick={() => {
+                  void stopAndSaveFixedRecording();
+                }}
+                disabled={!recordingActive}
+                title="window.__strokeCaptureStop() + window.__strokeCaptureSaveFixed()"
+              >
+                <span>Stop & Save Fixed Case</span>
+              </button>
+            </div>
+            {recordingMessage && <div className="debug-note">{recordingMessage}</div>}
+            {phase6GateCaptureName && (
+              <>
+                <div className="debug-note">Fixed capture: {phase6GateCaptureName}</div>
+                {captureSourceLabel && (
+                  <div className="debug-note">Capture source: {captureSourceLabel}</div>
+                )}
+                {capturePathLabel && (
+                  <div className="debug-note">Capture path: {capturePathLabel}</div>
+                )}
+              </>
+            )}
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className={`debug-btn secondary ${debugRectsEnabled ? 'active' : ''}`}
+                onClick={toggleDebugRects}
+                title="window.__gpuBrushDebugRects"
+              >
+                <span>Debug Rects</span>
+              </button>
+              <button
+                className={`debug-btn secondary ${batchUnionEnabled ? 'active' : ''}`}
+                onClick={toggleBatchUnion}
+                title="window.__gpuBrushUseBatchUnionRect"
+              >
+                <span>Batch-Union Preview</span>
+              </button>
+            </div>
+            {isDevBuild && (
+              <div className="debug-button-row" style={{ marginTop: '8px' }}>
+                <button
+                  className="debug-btn secondary"
+                  onClick={resetGpuDiagnostics}
+                  title="Reset GPU diagnostics counters/session only (no render state changes)"
+                >
+                  <span>Reset GPU Diag</span>
+                </button>
+              </div>
+            )}
             <div className="debug-button-row" style={{ marginTop: '8px' }}>
               <button
                 className="debug-btn secondary"
-                onClick={resetGpuDiagnostics}
-                title="Reset GPU diagnostics counters/session only (no render state changes)"
+                onClick={runPhase6AutoGate}
+                disabled={!!runningTest}
+                title={`Reset diagnostics and replay fixed capture ${DEBUG_CAPTURE_FILE_NAME} 3 times`}
               >
-                <span>Reset GPU Diag</span>
+                <span>Run Phase6A Auto Gate</span>
               </button>
             </div>
-          )}
-          <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button
-              className="debug-btn secondary"
-              onClick={runPhase6AutoGate}
-              disabled={!!runningTest}
-              title="Reset diagnostics, replay selected case 3 times, and auto-check uncaptured errors"
-            >
-              <span>Run Phase6A Auto Gate</span>
-            </button>
-          </div>
-          <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button
-              className="debug-btn secondary"
-              onClick={runPhase6BPerfGate}
-              disabled={!!runningTest}
-              title="Run 30s replay-based perf gate with frame + commit + diagnostics report"
-            >
-              <span>Run Phase6B Perf Gate (30s)</span>
-            </button>
-          </div>
-          <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button
-              className="debug-btn secondary"
-              onClick={runPhase6B3ReadbackCompare}
-              disabled={!!runningTest}
-              title="Run fixed case-5000-04 readback A/B compare (A->B->B->A) with replay-only timing"
-            >
-              <span>Run Phase6B-3 Readback A/B Compare</span>
-            </button>
-          </div>
-          <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button
-              className="debug-btn secondary"
-              onClick={runNoReadbackPilotGate}
-              disabled={!!runningTest}
-              title="Run fixed case-5000-04 with pilot enabled for 30s replay-only acceptance checks"
-            >
-              <span>Run No-Readback Pilot Gate (30s)</span>
-            </button>
-          </div>
-          <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button
-              className={`debug-btn secondary ${noReadbackPilotEnabled ? 'active' : ''}`}
-              onClick={toggleNoReadbackPilot}
-              disabled={!!runningTest}
-              title="No-readback live mode toggle. History/export paths will sync GPU tiles to CPU on demand."
-            >
-              <span>No-Readback Pilot: {noReadbackPilotEnabled ? 'ON' : 'OFF'}</span>
-            </button>
-          </div>
-          <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button
-              className="debug-btn secondary"
-              onClick={recordPhase6ManualGate}
-              disabled={!!runningTest}
-              title="Record final manual 20-stroke pressure gate result"
-            >
-              <span>Record 20-Stroke Manual Gate</span>
-            </button>
-          </div>
-          {noReadbackPilotEnabled && (
-            <div className="debug-note" style={{ marginTop: '6px' }}>
-              No-Readback active: Undo/Redo and export use on-demand GPU-to-CPU sync.
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className="debug-btn secondary"
+                onClick={runPhase6BPerfGate}
+                disabled={!!runningTest}
+                title={`Run 30s replay-based perf gate with fixed capture ${DEBUG_CAPTURE_FILE_NAME}`}
+              >
+                <span>Run Phase6B Perf Gate (30s)</span>
+              </button>
             </div>
-          )}
-          {noReadbackPilotMessage && (
-            <div className="debug-note" style={{ marginTop: '6px' }}>
-              {noReadbackPilotMessage}
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className="debug-btn secondary"
+                onClick={runPhase6B3ReadbackCompare}
+                disabled={!!runningTest}
+                title={`Run fixed capture ${DEBUG_CAPTURE_FILE_NAME} readback A/B compare (A->B->B->A)`}
+              >
+                <span>Run Phase6B-3 Readback A/B Compare</span>
+              </button>
             </div>
-          )}
-          <div className="debug-note" style={{ marginTop: '8px' }}>
-            Manual checklist:
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className="debug-btn secondary"
+                onClick={runNoReadbackPilotGate}
+                disabled={!!runningTest}
+                title={`Run fixed capture ${DEBUG_CAPTURE_FILE_NAME} with pilot enabled for 30s replay-only acceptance checks`}
+              >
+                <span>Run No-Readback Pilot Gate (30s)</span>
+              </button>
+            </div>
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className={`debug-btn secondary ${noReadbackPilotEnabled ? 'active' : ''}`}
+                onClick={toggleNoReadbackPilot}
+                disabled={!!runningTest}
+                title="No-readback live mode toggle. History/export paths will sync GPU tiles to CPU on demand."
+              >
+                <span>No-Readback Pilot: {noReadbackPilotEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+            </div>
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className="debug-btn secondary"
+                onClick={recordPhase6ManualGate}
+                disabled={!!runningTest}
+                title="Record final manual 20-stroke pressure gate result"
+              >
+                <span>Record 20-Stroke Manual Gate</span>
+              </button>
+            </div>
+            {noReadbackPilotEnabled && (
+              <div className="debug-note" style={{ marginTop: '6px' }}>
+                No-Readback active: Undo/Redo and export use on-demand GPU-to-CPU sync.
+              </div>
+            )}
+            {noReadbackPilotMessage && (
+              <div className="debug-note" style={{ marginTop: '6px' }}>
+                {noReadbackPilotMessage}
+              </div>
+            )}
+            <div className="debug-note" style={{ marginTop: '8px' }}>
+              Manual checklist:
+            </div>
+            <label className="debug-note" style={{ display: 'block' }}>
+              <input
+                type="checkbox"
+                checked={manualGateChecklist.noThinStart}
+                onChange={(e) => updateManualGateChecklist('noThinStart', e.currentTarget.checked)}
+                disabled={!!runningTest}
+                style={{ marginRight: '6px' }}
+              />
+              无起笔细头
+            </label>
+            <label className="debug-note" style={{ display: 'block' }}>
+              <input
+                type="checkbox"
+                checked={manualGateChecklist.noMissingOrDisappear}
+                onChange={(e) =>
+                  updateManualGateChecklist('noMissingOrDisappear', e.currentTarget.checked)
+                }
+                disabled={!!runningTest}
+                style={{ marginRight: '6px' }}
+              />
+              无丢笔触/无预览后消失
+            </label>
+            <label className="debug-note" style={{ display: 'block' }}>
+              <input
+                type="checkbox"
+                checked={manualGateChecklist.noTailDab}
+                onChange={(e) => updateManualGateChecklist('noTailDab', e.currentTarget.checked)}
+                disabled={!!runningTest}
+                style={{ marginRight: '6px' }}
+              />
+              无尾部延迟 dab
+            </label>
+            {gpuDiagResetMessage && (
+              <div className="debug-note" style={{ marginTop: '6px' }}>
+                {gpuDiagResetMessage}
+              </div>
+            )}
+            <div className="debug-note">No console commands needed for these toggles.</div>
           </div>
-          <label className="debug-note" style={{ display: 'block' }}>
-            <input
-              type="checkbox"
-              checked={manualGateChecklist.noThinStart}
-              onChange={(e) => updateManualGateChecklist('noThinStart', e.currentTarget.checked)}
-              disabled={!!runningTest}
-              style={{ marginRight: '6px' }}
-            />
-            无起笔细头
-          </label>
-          <label className="debug-note" style={{ display: 'block' }}>
-            <input
-              type="checkbox"
-              checked={manualGateChecklist.noMissingOrDisappear}
-              onChange={(e) =>
-                updateManualGateChecklist('noMissingOrDisappear', e.currentTarget.checked)
-              }
-              disabled={!!runningTest}
-              style={{ marginRight: '6px' }}
-            />
-            无丢笔触/无预览后消失
-          </label>
-          <label className="debug-note" style={{ display: 'block' }}>
-            <input
-              type="checkbox"
-              checked={manualGateChecklist.noTailDab}
-              onChange={(e) => updateManualGateChecklist('noTailDab', e.currentTarget.checked)}
-              disabled={!!runningTest}
-              style={{ marginRight: '6px' }}
-            />
-            无尾部延迟 dab
-          </label>
-          {gpuDiagResetMessage && (
-            <div className="debug-note" style={{ marginTop: '6px' }}>
-              {gpuDiagResetMessage}
-            </div>
-          )}
-          <div className="debug-note">No console commands needed for these toggles.</div>
-        </div>
+        )}
 
         {runningTest && (
           <div className="debug-progress">
@@ -1838,89 +2065,113 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
           </div>
         )}
 
-        <div className="debug-section">
-          <h3>Performance Benchmark</h3>
-          {benchmarkStats ? (
-            <BenchmarkStatsView stats={benchmarkStats} envInfo={envInfo} />
-          ) : (
-            <div className="stat-placeholder">Benchmarks initializing...</div>
-          )}
-        </div>
-
-        <div className="debug-section">
-          <h3>Actions</h3>
-          <div className="debug-button-row">
-            <button
-              className="debug-btn"
-              onClick={runFullBenchmark}
-              disabled={!!runningTest}
-              title="Run automated benchmark"
-            >
-              <Timer size={16} />
-              <span>Run Benchmark</span>
-            </button>
-          </div>
-          <div className="debug-button-row" style={{ marginTop: '8px' }}>
-            <button className="debug-btn secondary" onClick={clearCanvas} disabled={!!runningTest}>
-              <RotateCcw size={16} />
-              <span>Clear</span>
-            </button>
-            <button
-              className="debug-btn secondary"
-              onClick={exportReport}
-              disabled={!lastReport && results.length === 0}
-            >
-              <Download size={16} />
-              <span>Export</span>
-            </button>
-          </div>
-        </div>
-
-        {results.length > 0 && (
-          <div className="debug-section">
-            <h3>Results</h3>
-            <div className="debug-results">
-              {results.map((result, index) => (
-                <div
-                  key={index}
-                  className={`debug-result ${result.status}`}
-                  onClick={() => setExpandedResult(expandedResult === index ? null : index)}
-                >
-                  <div className="debug-result-header">
-                    <StatusIcon status={result.status} />
-                    <span className="debug-result-name">{result.name}</span>
-                    {result.report && (
-                      <button
-                        type="button"
-                        className="debug-result-copy-btn"
-                        aria-label="Copy Report"
-                        title="Copy this report to clipboard"
-                        onClick={(event) => {
-                          void copyResultReport(event, index, result);
-                        }}
-                      >
-                        {copiedResultIndex === index ? 'Copied' : 'Copy'}
-                      </button>
-                    )}
-                    <span className="debug-result-time">
-                      {result.timestamp.toLocaleTimeString()}
-                    </span>
-                    {result.report &&
-                      (expandedResult === index ? (
-                        <ChevronUp size={14} />
-                      ) : (
-                        <ChevronDown size={14} />
-                      ))}
-                  </div>
-                  {expandedResult === index && result.report && (
-                    <pre className="debug-result-report">{result.report}</pre>
-                  )}
-                </div>
-              ))}
+        {activeTab === 'general' && (
+          <>
+            <div className="debug-section">
+              <h3>Stroke Tests</h3>
+              <ActionGrid onRunTest={handleRunTest} isRunning={!!runningTest} />
             </div>
-          </div>
+
+            <div className="debug-section">
+              <h3>Performance Benchmark</h3>
+              {benchmarkStats ? (
+                <BenchmarkStatsView stats={benchmarkStats} envInfo={envInfo} />
+              ) : (
+                <div className="stat-placeholder">Benchmarks initializing...</div>
+              )}
+            </div>
+
+            <div className="debug-section">
+              <h3>Actions</h3>
+              <div className="debug-button-row">
+                <button
+                  className="debug-btn"
+                  onClick={runFullBenchmark}
+                  disabled={!!runningTest}
+                  title="Run automated benchmark"
+                >
+                  <Timer size={16} />
+                  <span>Run Benchmark</span>
+                </button>
+              </div>
+              <div className="debug-button-row" style={{ marginTop: '8px' }}>
+                <button
+                  className="debug-btn secondary"
+                  onClick={clearCanvas}
+                  disabled={!!runningTest}
+                >
+                  <RotateCcw size={16} />
+                  <span>Clear</span>
+                </button>
+                <button
+                  className="debug-btn secondary"
+                  onClick={exportReport}
+                  disabled={!lastReport && results.length === 0}
+                >
+                  <Download size={16} />
+                  <span>Export</span>
+                </button>
+              </div>
+            </div>
+
+            {results.length > 0 && (
+              <div className="debug-section">
+                <h3>Results</h3>
+                <div className="debug-results">
+                  {results.map((result, index) => (
+                    <div
+                      key={index}
+                      className={`debug-result ${result.status}`}
+                      onClick={() => setExpandedResult(expandedResult === index ? null : index)}
+                    >
+                      <div className="debug-result-header">
+                        <StatusIcon status={result.status} />
+                        <span className="debug-result-name">{result.name}</span>
+                        {result.report && (
+                          <button
+                            type="button"
+                            className="debug-result-copy-btn"
+                            aria-label="Copy Report"
+                            title="Copy this report to clipboard"
+                            onClick={(event) => {
+                              void copyResultReport(event, index, result);
+                            }}
+                          >
+                            {copiedResultIndex === index ? 'Copied' : 'Copy'}
+                          </button>
+                        )}
+                        <span className="debug-result-time">
+                          {result.timestamp.toLocaleTimeString()}
+                        </span>
+                        {result.report &&
+                          (expandedResult === index ? (
+                            <ChevronUp size={14} />
+                          ) : (
+                            <ChevronDown size={14} />
+                          ))}
+                      </div>
+                      {expandedResult === index && result.report && (
+                        <pre className="debug-result-report">{result.report}</pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
+
+      <div
+        className="resize-handle"
+        onPointerDown={(e) => handleResizeStart(e, panelRef.current)}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeEnd}
+        onPointerCancel={handleResizeEnd}
+        onMouseDown={(e) => handleResizeStart(e as unknown as React.PointerEvent, panelRef.current)}
+        onMouseMove={(e) => handleResizeMove(e as unknown as React.PointerEvent)}
+        onMouseUp={(e) => handleResizeEnd(e as unknown as React.PointerEvent)}
+      />
 
       <div className="debug-panel-footer">
         <span className="debug-hint">Press Shift+Ctrl+D to toggle</span>

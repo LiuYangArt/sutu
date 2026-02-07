@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { StrokeCaptureData } from '../../test';
 import { DebugPanel } from './index';
 
 type TestWindow = Window & {
@@ -12,12 +13,50 @@ type TestWindow = Window & {
   __gpuBrushCommitReadbackModeSet?: (mode: 'enabled' | 'disabled') => boolean;
   __gpuBrushNoReadbackPilot?: () => boolean;
   __gpuBrushNoReadbackPilotSet?: (enabled: boolean) => boolean;
+  __strokeCaptureStart?: () => boolean;
+  __strokeCaptureStop?: () => unknown;
+  __strokeCaptureSaveFixed?: (
+    capture?: unknown
+  ) => Promise<{ ok: boolean; path: string; name: string; source: 'appconfig' | 'localstorage' }>;
+  __strokeCaptureLoadFixed?: () => Promise<{
+    capture: unknown;
+    path: string;
+    name: string;
+    source: 'appconfig' | 'localstorage';
+  } | null>;
   __strokeCaptureReplay?: (capture?: unknown) => Promise<unknown>;
   __canvasClearLayer?: () => void;
-  showOpenFilePicker?: () => Promise<Array<{ getFile: () => Promise<File> }>>;
 };
 
+function createFixedCapture(): StrokeCaptureData {
+  return {
+    version: 1 as const,
+    createdAt: new Date().toISOString(),
+    metadata: { canvasWidth: 128, canvasHeight: 128, viewportScale: 1, tool: {} },
+    samples: [
+      {
+        type: 'pointerdown',
+        timeMs: 0,
+        x: 10,
+        y: 10,
+        pressure: 0.5,
+        tiltX: 0,
+        tiltY: 0,
+        pointerType: 'pen',
+        pointerId: 1,
+        buttons: 1,
+      },
+    ],
+  };
+}
+
 function getLatestResultNode(resultName: string): HTMLElement {
+  if (document.querySelector('.debug-result') === null) {
+    const generalTab = screen.queryByRole('tab', { name: 'General' });
+    if (generalTab) {
+      fireEvent.click(generalTab);
+    }
+  }
   const labels = screen.getAllByText(resultName);
   const latest = labels[0];
   const resultNode = latest?.closest('.debug-result');
@@ -60,6 +99,20 @@ describe('DebugPanel', () => {
     (window as TestWindow).__gpuBrushCommitReadbackModeSet = vi.fn(() => true);
     (window as TestWindow).__gpuBrushNoReadbackPilot = vi.fn(() => false);
     (window as TestWindow).__gpuBrushNoReadbackPilotSet = vi.fn(() => true);
+    (window as TestWindow).__strokeCaptureStart = vi.fn(() => true);
+    (window as TestWindow).__strokeCaptureStop = vi.fn(() => createFixedCapture());
+    (window as TestWindow).__strokeCaptureSaveFixed = vi.fn(async () => ({
+      ok: true,
+      path: 'AppConfig/debug-data/debug-stroke-capture.json',
+      name: 'debug-stroke-capture.json',
+      source: 'appconfig' as const,
+    }));
+    (window as TestWindow).__strokeCaptureLoadFixed = vi.fn(async () => ({
+      capture: createFixedCapture(),
+      path: 'AppConfig/debug-data/debug-stroke-capture.json',
+      name: 'debug-stroke-capture.json',
+      source: 'appconfig' as const,
+    }));
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       cb(0);
       return 1;
@@ -75,9 +128,12 @@ describe('DebugPanel', () => {
     delete (window as TestWindow).__gpuBrushCommitReadbackModeSet;
     delete (window as TestWindow).__gpuBrushNoReadbackPilot;
     delete (window as TestWindow).__gpuBrushNoReadbackPilotSet;
+    delete (window as TestWindow).__strokeCaptureStart;
+    delete (window as TestWindow).__strokeCaptureStop;
+    delete (window as TestWindow).__strokeCaptureSaveFixed;
+    delete (window as TestWindow).__strokeCaptureLoadFixed;
     delete (window as TestWindow).__strokeCaptureReplay;
     delete (window as TestWindow).__canvasClearLayer;
-    delete (window as TestWindow).showOpenFilePicker;
     vi.restoreAllMocks();
   });
 
@@ -95,6 +151,44 @@ describe('DebugPanel', () => {
     expect(screen.getByText('Diagnostics reset OK (session 7)')).toBeInTheDocument();
   });
 
+  it('默认显示 GPU Tests tab，可切换到 General', async () => {
+    const user = userEvent.setup();
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+
+    expect(screen.getByRole('button', { name: 'Reset GPU Diag' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Stroke Tests' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'General' }));
+    expect(screen.getByRole('heading', { name: 'Stroke Tests' })).toBeInTheDocument();
+  });
+
+  it('可通过 Start/Stop 按钮录制并保存固定文件', async () => {
+    const user = userEvent.setup();
+    const startSpy = vi.fn(() => true);
+    const stopSpy = vi.fn(() => createFixedCapture());
+    const saveSpy = vi.fn(async () => ({
+      ok: true,
+      path: 'AppConfig/debug-data/debug-stroke-capture.json',
+      name: 'debug-stroke-capture.json',
+      source: 'appconfig' as const,
+    }));
+    (window as TestWindow).__strokeCaptureStart = startSpy;
+    (window as TestWindow).__strokeCaptureStop = stopSpy;
+    (window as TestWindow).__strokeCaptureSaveFixed = saveSpy;
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start Recording' }));
+    await user.click(screen.getByRole('button', { name: 'Stop & Save Fixed Case' }));
+
+    await waitFor(() => {
+      expect(startSpy).toHaveBeenCalledTimes(1);
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+      expect(saveSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Saved fixed capture:/)).toBeInTheDocument();
+    });
+  });
+
   it('Phase6A Auto Gate 每轮 replay 前都会清层', async () => {
     const user = userEvent.setup();
     const clearLayerSpy = vi.fn();
@@ -109,22 +203,6 @@ describe('DebugPanel', () => {
       .mockReturnValueOnce({ diagnosticsSessionId: 7, uncapturedErrors: [], deviceLost: false })
       .mockReturnValue({ diagnosticsSessionId: 7, uncapturedErrors: [], deviceLost: false });
 
-    (window as TestWindow).showOpenFilePicker = vi.fn(async () => [
-      {
-        getFile: async () =>
-          ({
-            name: 'case-5000-04.json',
-            text: async () =>
-              JSON.stringify({
-                version: 1,
-                createdAt: new Date().toISOString(),
-                metadata: {},
-                samples: [],
-              }),
-          }) as File,
-      },
-    ]);
-
     render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
 
     await user.click(screen.getByRole('button', { name: 'Run Phase6A Auto Gate' }));
@@ -133,8 +211,29 @@ describe('DebugPanel', () => {
       expect(resetSpy).toHaveBeenCalledTimes(1);
       expect(clearLayerSpy).toHaveBeenCalledTimes(3);
       expect(replaySpy).toHaveBeenCalledTimes(3);
+      expect((window as TestWindow).__strokeCaptureLoadFixed).toHaveBeenCalledTimes(1);
     });
     expectLatestResultStatus('Phase6A Auto Gate', 'passed');
+  });
+
+  it('固定录制文件缺失时 Phase6A Auto Gate 失败并提示', async () => {
+    const user = userEvent.setup();
+    (window as TestWindow).__strokeCaptureLoadFixed = vi.fn(async () => null);
+    (window as TestWindow).__canvasClearLayer = vi.fn();
+    (window as TestWindow).__strokeCaptureReplay = vi.fn(async () => ({
+      events: 100,
+      durationMs: 1,
+    }));
+
+    render(<DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: 'Run Phase6A Auto Gate' }));
+
+    await waitFor(() => {
+      expectLatestResultStatus('Phase6A Auto Gate', 'failed');
+    });
+    const latest = getLatestResultNode('Phase6A Auto Gate');
+    await user.click(latest);
+    expect(screen.getByText(/Fixed capture not found/)).toBeInTheDocument();
   });
 
   it('Phase6A Manual Gate 由 checklist + diagnostics 共同判定', async () => {
@@ -150,6 +249,7 @@ describe('DebugPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Record 20-Stroke Manual Gate' }));
     expectLatestResultStatus('Phase6A Manual 20-Stroke', 'failed');
 
+    await user.click(screen.getByRole('tab', { name: 'GPU Tests' }));
     await user.click(screen.getByLabelText('无起笔细头'));
     await user.click(screen.getByLabelText('无丢笔触/无预览后消失'));
     await user.click(screen.getByLabelText('无尾部延迟 dab'));
@@ -242,22 +342,6 @@ describe('DebugPanel', () => {
       deviceLost: false,
     }));
 
-    (window as TestWindow).showOpenFilePicker = vi.fn(async () => [
-      {
-        getFile: async () =>
-          ({
-            name: 'case-5000-04.json',
-            text: async () =>
-              JSON.stringify({
-                version: 1,
-                createdAt: new Date().toISOString(),
-                metadata: {},
-                samples: [],
-              }),
-          }) as File,
-      },
-    ]);
-
     let now = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => {
       now += 10_000;
@@ -273,6 +357,7 @@ describe('DebugPanel', () => {
       expect(resetMetricsSpy).toHaveBeenCalledTimes(1);
       expect(replaySpy).toHaveBeenCalled();
       expect(getMetricsSpy).toHaveBeenCalled();
+      expect((window as TestWindow).__strokeCaptureLoadFixed).toHaveBeenCalledTimes(1);
     });
     expectLatestResultStatus('Phase6B Perf Gate (30s)', 'passed');
   });
@@ -320,16 +405,6 @@ describe('DebugPanel', () => {
     }));
     (window as TestWindow).__gpuBrushCommitReadbackMode = getModeSpy;
     (window as TestWindow).__gpuBrushCommitReadbackModeSet = setModeSpy;
-
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        version: 1,
-        createdAt: new Date().toISOString(),
-        metadata: {},
-        samples: [{ type: 'pointerdown', timeMs: 0 }],
-      }),
-    } as unknown as Response);
 
     let now = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => {
@@ -397,16 +472,6 @@ describe('DebugPanel', () => {
     (window as TestWindow).__gpuBrushCommitReadbackMode = getModeSpy;
     (window as TestWindow).__gpuBrushCommitReadbackModeSet = setModeSpy;
 
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        version: 1,
-        createdAt: new Date().toISOString(),
-        metadata: {},
-        samples: [{ type: 'pointerdown', timeMs: 0 }],
-      }),
-    } as unknown as Response);
-
     let now = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => {
       now += 40_000;
@@ -421,6 +486,7 @@ describe('DebugPanel', () => {
     });
     const lastModeCall = setModeSpy.mock.calls[setModeSpy.mock.calls.length - 1];
     expect(lastModeCall?.[0]).toBe('disabled');
+    await user.click(screen.getByRole('tab', { name: 'GPU Tests' }));
     expect(screen.getByRole('button', { name: 'No-Readback Pilot: ON' })).toBeInTheDocument();
   });
 
@@ -474,16 +540,6 @@ describe('DebugPanel', () => {
       deviceLost: false,
     }));
 
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        version: 1,
-        createdAt: new Date().toISOString(),
-        metadata: {},
-        samples: [{ type: 'pointerdown', timeMs: 0 }],
-      }),
-    } as unknown as Response);
-
     let now = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => {
       now += 40_000;
@@ -527,5 +583,59 @@ describe('DebugPanel', () => {
       expectLatestResultStatus('Phase6B Perf Gate (30s)', 'failed');
     });
     expect(screen.getAllByText('Phase6B Perf Gate (30s)')).toHaveLength(1);
+  });
+
+  it('支持通过右下角 resize handle 调整面板尺寸', async () => {
+    const { container } = render(
+      <DebugPanel canvas={document.createElement('canvas')} onClose={() => undefined} />
+    );
+    const panel = container.querySelector('.debug-panel') as HTMLDivElement;
+    const handle = container.querySelector('.resize-handle') as HTMLDivElement;
+
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 680,
+      bottom: 820,
+      width: 680,
+      height: 820,
+      toJSON: () => ({}),
+    } as DOMRect);
+    Object.defineProperty(handle, 'setPointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(handle, 'releasePointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    fireEvent.mouseDown(handle, {
+      clientX: 680,
+      clientY: 820,
+      pageX: 680,
+      pageY: 820,
+      screenX: 680,
+      screenY: 820,
+    });
+    fireEvent.mouseMove(window, {
+      clientX: 760,
+      clientY: 900,
+      pageX: 760,
+      pageY: 900,
+      screenX: 760,
+      screenY: 900,
+    });
+    fireEvent.mouseUp(window);
+
+    const expectedWidth = Math.min(760, Math.max(320, window.innerWidth - 16));
+    const expectedHeight = Math.min(900, Math.max(300, window.innerHeight - 16));
+
+    await waitFor(() => {
+      expect(panel.style.width).toBe(`${expectedWidth}px`);
+      expect(panel.style.height).toBe(`${expectedHeight}px`);
+    });
   });
 });

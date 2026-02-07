@@ -35,6 +35,8 @@ function cleanupGlobals(): void {
   delete win.__strokeCaptureLast;
   delete win.__strokeCaptureReplay;
   delete win.__strokeCaptureDownload;
+  delete win.__strokeCaptureSaveFixed;
+  delete win.__strokeCaptureLoadFixed;
 }
 
 describe('useGlobalExports', () => {
@@ -89,6 +91,7 @@ describe('useGlobalExports', () => {
 
   afterEach(() => {
     cleanupGlobals();
+    window.localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -208,6 +211,8 @@ describe('useGlobalExports', () => {
     expect(typeof win.__strokeCaptureLast).toBe('function');
     expect(typeof win.__strokeCaptureReplay).toBe('function');
     expect(typeof win.__strokeCaptureDownload).toBe('function');
+    expect(typeof win.__strokeCaptureSaveFixed).toBe('function');
+    expect(typeof win.__strokeCaptureLoadFixed).toBe('function');
 
     act(() => {
       win.__canvasFillLayer('#ffffff');
@@ -239,6 +244,8 @@ describe('useGlobalExports', () => {
       win.__gpuBrushNoReadbackPilotSet(true);
     });
     await win.__strokeCaptureReplay(capture);
+    const fixedSave = await win.__strokeCaptureSaveFixed(capture);
+    const fixedLoad = await win.__strokeCaptureLoadFixed();
 
     expect(fillActiveLayer).toHaveBeenCalledWith('#ffffff');
     expect(handleClearSelection).toHaveBeenCalledTimes(1);
@@ -250,7 +257,7 @@ describe('useGlobalExports', () => {
     expect(handleResizeCanvas).toHaveBeenCalledTimes(1);
     expect(startStrokeCapture).toHaveBeenCalledTimes(1);
     expect(stopStrokeCapture).toHaveBeenCalledTimes(1);
-    expect(getLastStrokeCapture).toHaveBeenCalledTimes(2);
+    expect(getLastStrokeCapture).toHaveBeenCalledTimes(3);
     expect(replayStrokeCapture).toHaveBeenCalledTimes(1);
     expect(downloadStrokeCapture).toHaveBeenCalledWith('case.json', undefined);
     expect(getGpuDiagnosticsSnapshot).toHaveBeenCalledTimes(1);
@@ -261,6 +268,12 @@ describe('useGlobalExports', () => {
     expect(setGpuBrushCommitReadbackMode).toHaveBeenCalledWith('disabled');
     expect(getGpuBrushNoReadbackPilot).toHaveBeenCalledTimes(1);
     expect(setGpuBrushNoReadbackPilot).toHaveBeenCalledWith(true);
+    expect(fixedSave.ok).toBe(true);
+    expect(fixedSave.name).toBe('debug-stroke-capture.json');
+    expect(fixedSave.source).toBe('localstorage');
+    expect(fixedLoad?.name).toBe('debug-stroke-capture.json');
+    expect(fixedLoad?.source).toBe('localstorage');
+    expect(fixedLoad?.capture).toEqual(capture);
 
     await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
     await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
@@ -297,6 +310,8 @@ describe('useGlobalExports', () => {
     expect(win.__strokeCaptureLast).toBeUndefined();
     expect(win.__strokeCaptureReplay).toBeUndefined();
     expect(win.__strokeCaptureDownload).toBeUndefined();
+    expect(win.__strokeCaptureSaveFixed).toBeUndefined();
+    expect(win.__strokeCaptureLoadFixed).toBeUndefined();
   });
 
   it('updates layer thumbnail after __loadLayerImages draws pixels (legacy base64 path)', async () => {

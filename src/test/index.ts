@@ -32,3 +32,15 @@ export type {
   StrokeCaptureMetadata,
   StrokeReplayOptions,
 } from './StrokeCapture';
+
+export {
+  DEBUG_CAPTURE_DIR,
+  DEBUG_CAPTURE_FILE_NAME,
+  DEBUG_CAPTURE_RELATIVE_PATH,
+  DEBUG_CAPTURE_LOCAL_KEY,
+} from './strokeCaptureFixedFile';
+export type {
+  FixedCaptureSource,
+  FixedStrokeCaptureSaveResult,
+  FixedStrokeCaptureLoadResult,
+} from './strokeCaptureFixedFile';
