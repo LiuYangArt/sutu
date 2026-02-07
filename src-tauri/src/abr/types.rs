@@ -83,6 +83,12 @@ pub struct AbrBrush {
     pub color_dynamics: Option<ColorDynamicsSettings>,
     pub transfer_enabled: Option<bool>,
     pub transfer: Option<TransferSettings>,
+    /// Wet Edges panel enabled state (Photoshop-compatible)
+    pub wet_edge_enabled: Option<bool>,
+    /// Build-up panel enabled state (Photoshop-compatible)
+    pub buildup_enabled: Option<bool>,
+    /// Noise panel enabled state (Photoshop-compatible)
+    pub noise_enabled: Option<bool>,
 
     /// Base opacity (0..1) if specified in ABR
     pub base_opacity: Option<f32>,
@@ -488,6 +494,12 @@ pub struct BrushPreset {
     /// Transfer (Photoshop-compatible)
     pub transfer_enabled: Option<bool>,
     pub transfer: Option<TransferSettings>,
+    /// Wet Edges panel enabled state (Photoshop-compatible)
+    pub wet_edge_enabled: Option<bool>,
+    /// Build-up panel enabled state (Photoshop-compatible)
+    pub buildup_enabled: Option<bool>,
+    /// Noise panel enabled state (Photoshop-compatible)
+    pub noise_enabled: Option<bool>,
 
     /// Base opacity (0..1)
     pub base_opacity: Option<f32>,
@@ -561,6 +573,9 @@ impl From<AbrBrush> for BrushPreset {
             color_dynamics: brush.color_dynamics,
             transfer_enabled: brush.transfer_enabled,
             transfer: brush.transfer,
+            wet_edge_enabled: brush.wet_edge_enabled,
+            buildup_enabled: brush.buildup_enabled,
+            noise_enabled: brush.noise_enabled,
             base_opacity: brush.base_opacity,
             base_flow: brush.base_flow,
         }
@@ -595,6 +610,9 @@ mod tests {
             color_dynamics: None,
             transfer_enabled: None,
             transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
             base_opacity: None,
             base_flow: None,
         };
@@ -629,6 +647,9 @@ mod tests {
             color_dynamics: None,
             transfer_enabled: None,
             transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
             base_opacity: None,
             base_flow: None,
         };
@@ -637,6 +658,43 @@ mod tests {
         assert!(preset.has_texture);
         assert_eq!(preset.texture_width, Some(2));
         assert_eq!(preset.texture_height, Some(2));
+    }
+
+    #[test]
+    fn preset_keeps_wet_noise_buildup_flags() {
+        let brush = AbrBrush {
+            name: "Flags".to_string(),
+            uuid: Some("flags-1".to_string()),
+            tip_image: None,
+            diameter: 20.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: Some(1.0),
+            dynamics: None,
+            is_computed: false,
+            is_tip_only: false,
+            texture_settings: None,
+            dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            wet_edge_enabled: Some(true),
+            buildup_enabled: Some(false),
+            noise_enabled: Some(true),
+            base_opacity: None,
+            base_flow: None,
+        };
+
+        let preset: BrushPreset = brush.into();
+        assert_eq!(preset.wet_edge_enabled, Some(true));
+        assert_eq!(preset.buildup_enabled, Some(false));
+        assert_eq!(preset.noise_enabled, Some(true));
     }
 }
 

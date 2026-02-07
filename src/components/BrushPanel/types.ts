@@ -35,6 +35,12 @@ export interface BrushPreset {
   /** Transfer (Photoshop-compatible) */
   transferEnabled?: boolean | null;
   transfer?: TransferSettings | null;
+  /** Wet Edges panel enabled state */
+  wetEdgeEnabled?: boolean | null;
+  /** Build-up panel enabled state */
+  buildupEnabled?: boolean | null;
+  /** Noise panel enabled state */
+  noiseEnabled?: boolean | null;
 
   /** Base opacity (0..1) */
   baseOpacity?: number | null;

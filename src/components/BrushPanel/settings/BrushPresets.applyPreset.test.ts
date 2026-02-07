@@ -23,6 +23,9 @@ describe('applyPresetToToolStore', () => {
       colorDynamics: { ...DEFAULT_COLOR_DYNAMICS, hueJitter: 55, purity: 10 },
       transferEnabled: true,
       transfer: { ...DEFAULT_TRANSFER_SETTINGS, opacityJitter: 66, minimumOpacity: 22 },
+      wetEdgeEnabled: true,
+      buildupEnabled: true,
+      noiseEnabled: true,
       dualBrushEnabled: true,
       dualBrush: { ...DEFAULT_DUAL_BRUSH, enabled: true, brushId: 'leak', size: 80, sizeRatio: 2 },
     });
@@ -44,6 +47,9 @@ describe('applyPresetToToolStore', () => {
 
     expect(s.transferEnabled).toBe(false);
     expect(s.transfer).toEqual(DEFAULT_TRANSFER_SETTINGS);
+    expect(s.wetEdgeEnabled).toBe(false);
+    expect(s.buildupEnabled).toBe(false);
+    expect(s.noiseEnabled).toBe(false);
 
     expect(s.dualBrushEnabled).toBe(false);
     expect(s.dualBrush).toEqual(DEFAULT_DUAL_BRUSH);
@@ -97,6 +103,9 @@ describe('applyPresetToToolStore', () => {
         flowControl: 'penPressure',
         minimumFlow: 20,
       },
+      wetEdgeEnabled: true,
+      buildupEnabled: false,
+      noiseEnabled: true,
     };
 
     applyPresetToToolStore(preset, []);
@@ -124,6 +133,9 @@ describe('applyPresetToToolStore', () => {
     expect(s.transferEnabled).toBe(true);
     expect(s.transfer.opacityJitter).toBe(50);
     expect(s.transfer.flowJitter).toBe(60);
+    expect(s.wetEdgeEnabled).toBe(true);
+    expect(s.buildupEnabled).toBe(false);
+    expect(s.noiseEnabled).toBe(true);
   });
 
   it('应用 Dual Brush preset 并正确映射 secondary tip', () => {

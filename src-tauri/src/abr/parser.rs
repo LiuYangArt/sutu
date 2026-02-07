@@ -388,6 +388,9 @@ impl AbrParser {
             color_dynamics: None,
             transfer_enabled: None,
             transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
             base_opacity: None,
             base_flow: None,
         })
@@ -467,6 +470,9 @@ impl AbrParser {
                         color_dynamics: None,
                         transfer_enabled: None,
                         transfer: None,
+                        wet_edge_enabled: None,
+                        buildup_enabled: None,
+                        noise_enabled: None,
                         base_opacity: None,
                         base_flow: None,
                     },
@@ -552,6 +558,9 @@ impl AbrParser {
                 color_dynamics: None,
                 transfer_enabled: None,
                 transfer: None,
+                wet_edge_enabled: None,
+                buildup_enabled: None,
+                noise_enabled: None,
                 base_opacity: None,
                 base_flow: None,
             });
@@ -746,6 +755,9 @@ impl AbrParser {
                     color_dynamics: None,
                     transfer_enabled: None,
                     transfer: None,
+                    wet_edge_enabled: None,
+                    buildup_enabled: None,
+                    noise_enabled: None,
                     base_opacity: None,
                     base_flow: None,
                 }
@@ -775,6 +787,9 @@ impl AbrParser {
                     color_dynamics: None,
                     transfer_enabled: None,
                     transfer: None,
+                    wet_edge_enabled: None,
+                    buildup_enabled: None,
+                    noise_enabled: None,
                     base_opacity: None,
                     base_flow: None,
                 }
@@ -830,6 +845,9 @@ impl AbrParser {
                 color_dynamics: None,
                 transfer_enabled: None,
                 transfer: None,
+                wet_edge_enabled: None,
+                buildup_enabled: None,
+                noise_enabled: None,
                 base_opacity: None,
                 base_flow: None,
             }
@@ -1243,6 +1261,28 @@ impl AbrParser {
         }
         if let Some(flow) = Self::get_ratio_0_1(brush_desc, &["Flw ", "flow", "Flow"]) {
             brush.base_flow = Some(flow);
+        }
+        if let Some(enabled) = Self::get_bool(
+            brush_desc,
+            &["Wtdg", "wetEdge", "wetEdges", "useWetEdge", "useWetEdges"],
+        ) {
+            brush.wet_edge_enabled = Some(enabled);
+        }
+        if let Some(enabled) = Self::get_bool(brush_desc, &["Nose", "noise", "useNoise"]) {
+            brush.noise_enabled = Some(enabled);
+        }
+        if let Some(enabled) = Self::get_bool(
+            brush_desc,
+            &[
+                "Rpt ",
+                "repeat",
+                "buildUp",
+                "buildup",
+                "useBuildUp",
+                "useBuildup",
+            ],
+        ) {
+            brush.buildup_enabled = Some(enabled);
         }
 
         // ------------------------------------------------------------------
@@ -1975,6 +2015,9 @@ mod tests {
             "colorDynamics".to_string(),
             DescriptorValue::Descriptor(col),
         );
+        desc.insert("Wtdg".to_string(), DescriptorValue::Boolean(true));
+        desc.insert("Nose".to_string(), DescriptorValue::Boolean(false));
+        desc.insert("Rpt ".to_string(), DescriptorValue::Boolean(true));
 
         let mut brush = AbrBrush {
             name: "Test".to_string(),
@@ -1998,6 +2041,9 @@ mod tests {
             color_dynamics: None,
             transfer_enabled: None,
             transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
             base_opacity: None,
             base_flow: None,
         };
@@ -2006,6 +2052,9 @@ mod tests {
 
         assert_eq!(brush.base_opacity, Some(0.5));
         assert_eq!(brush.base_flow, Some(0.7));
+        assert_eq!(brush.wet_edge_enabled, Some(true));
+        assert_eq!(brush.noise_enabled, Some(false));
+        assert_eq!(brush.buildup_enabled, Some(true));
 
         assert_eq!(brush.shape_dynamics_enabled, Some(true));
         let sh = brush.shape_dynamics.expect("shape dynamics");

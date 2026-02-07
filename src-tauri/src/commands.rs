@@ -1064,6 +1064,9 @@ mod tests {
             color_dynamics: None,
             transfer_enabled: None,
             transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
             base_opacity: None,
             base_flow: None,
         };

@@ -86,6 +86,9 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
     resetTransfer,
     setTransferEnabled,
     setTransfer,
+    setWetEdgeEnabled,
+    setBuildupEnabled,
+    setNoiseEnabled,
     resetDualBrush,
     setDualBrushEnabled,
     setDualBrush,
@@ -114,6 +117,9 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
   setColorDynamicsEnabled(false);
   resetTransfer();
   setTransferEnabled(false);
+  setWetEdgeEnabled(false);
+  setBuildupEnabled(false);
+  setNoiseEnabled(false);
 
   if (preset.shapeDynamicsEnabled === true) {
     if (preset.shapeDynamics) setShapeDynamics(preset.shapeDynamics);
@@ -130,6 +136,15 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
   if (preset.transferEnabled === true) {
     if (preset.transfer) setTransfer(preset.transfer);
     setTransferEnabled(true);
+  }
+  if (preset.wetEdgeEnabled === true) {
+    setWetEdgeEnabled(true);
+  }
+  if (preset.buildupEnabled === true) {
+    setBuildupEnabled(true);
+  }
+  if (preset.noiseEnabled === true) {
+    setNoiseEnabled(true);
   }
 
   // Apply texture reference if preset has one
