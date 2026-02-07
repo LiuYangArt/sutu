@@ -500,19 +500,9 @@ export class GpuCanvasRenderer {
 
     const encoder = this.device.createCommandEncoder();
     const canvasView = this.context.getCurrentTexture().createView();
-    const displayPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: canvasView,
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    });
-    displayPass.setPipeline(this.displayPipeline);
 
     let uniformIndex = 0;
+    let hasDrawnTile = false;
     for (const coord of this.visibleTiles) {
       const rect = this.layerStore.getTileRect(coord);
       if (rect.width <= 0 || rect.height <= 0) continue;
@@ -568,16 +558,41 @@ export class GpuCanvasRenderer {
         });
       }
 
+      const displayPass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: canvasView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: hasDrawnTile ? 'load' : 'clear',
+            storeOp: 'store',
+          },
+        ],
+      });
+      displayPass.setPipeline(this.displayPipeline);
       this.drawDisplayTile({
         pass: displayPass,
         tileView: current.view,
         tileRect: rect,
         uniformIndex,
       });
+      displayPass.end();
+      hasDrawnTile = true;
       uniformIndex += 1;
     }
 
-    displayPass.end();
+    if (!hasDrawnTile) {
+      const clearPass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: canvasView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+      });
+      clearPass.end();
+    }
     this.device.queue.submit([encoder.finish()]);
   }
 
