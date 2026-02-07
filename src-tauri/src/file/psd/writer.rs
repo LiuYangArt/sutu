@@ -347,7 +347,8 @@ fn write_pascal_string<W: Write>(w: &mut W, s: &str) -> Result<(), FileError> {
 
 /// Write composite (merged) image data
 fn write_composite_image<W: Write>(w: &mut W, project: &ProjectData) -> Result<(), FileError> {
-    // Create composite by flattening all visible layers
+    // Prefer frontend flattened export to guarantee WYSIWYG with canvas blend modes.
+    // Fallback to backend layer flattening only when flattened image is missing/invalid.
     let composite = create_composite(project)?;
 
     let width = project.width;
@@ -398,8 +399,27 @@ fn write_composite_image<W: Write>(w: &mut W, project: &ProjectData) -> Result<(
     Ok(())
 }
 
-/// Create composite image by flattening visible layers
+/// Create composite image for PSD merged data
 fn create_composite(project: &ProjectData) -> Result<RgbaImage, FileError> {
+    if let Some(ref flattened_data) = project.flattened_image {
+        let flattened = decode_base64_png(flattened_data)?;
+        if flattened.width() == project.width && flattened.height() == project.height {
+            return Ok(flattened);
+        }
+        tracing::warn!(
+            "PSD flattened image size mismatch: expected {}x{}, got {}x{}, fallback to backend composite",
+            project.width,
+            project.height,
+            flattened.width(),
+            flattened.height()
+        );
+    }
+
+    create_composite_from_layers(project)
+}
+
+/// Create composite image from layer stack as fallback path
+fn create_composite_from_layers(project: &ProjectData) -> Result<RgbaImage, FileError> {
     let mut composite = RgbaImage::new(project.width, project.height);
 
     // Fill with white background

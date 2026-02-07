@@ -80,6 +80,16 @@ async function getThumbnail(): Promise<string | undefined> {
 }
 
 /**
+ * Get flattened composited image for PSD/TIFF exports
+ */
+async function getFlattenedImage(): Promise<string | undefined> {
+  const win = window as Window & {
+    __getFlattenedImage?: () => Promise<string | undefined>;
+  };
+  return win.__getFlattenedImage?.();
+}
+
+/**
  * Convert frontend Layer to backend LayerData format
  */
 function layerToLayerData(layer: Layer, imageData?: string): LayerData {
@@ -174,14 +184,15 @@ export const useFileStore = create<FileState>((set) => ({
 
       const layers = await Promise.all(layerDataPromises);
 
-      // Get thumbnail for ORA
-      const thumbnail = await getThumbnail();
+      // Export preview images from current composited canvas
+      const [thumbnail, flattenedImage] = await Promise.all([getThumbnail(), getFlattenedImage()]);
 
       const projectData: ProjectData = {
         width: docStore.width,
         height: docStore.height,
         dpi: docStore.dpi,
         layers,
+        flattenedImage,
         thumbnail,
       };
 
