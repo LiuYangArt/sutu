@@ -105,6 +105,13 @@ interface TabletState {
     pollingRate?: number;
     pressureCurve?: string;
   }) => Promise<void>;
+  switchBackend: (
+    backend: BackendType,
+    options?: {
+      pollingRate?: number;
+      pressureCurve?: string;
+    }
+  ) => Promise<boolean>;
   start: () => Promise<void>;
   stop: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -147,6 +154,28 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         status: 'Error',
         isInitialized: false,
       });
+    }
+  },
+
+  // Switch active backend without app restart
+  switchBackend: async (backend, options = {}) => {
+    try {
+      const response = await invoke<TabletStatusResponse>('switch_tablet_backend', {
+        backend,
+        pollingRate: options.pollingRate,
+        pressureCurve: options.pressureCurve,
+      });
+
+      set({
+        status: response.status,
+        backend: response.backend,
+        info: response.info,
+        isInitialized: true,
+      });
+      return true;
+    } catch (error) {
+      console.error('[Tablet] Switch backend failed:', error);
+      return false;
     }
   },
 

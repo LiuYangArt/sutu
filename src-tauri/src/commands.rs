@@ -142,7 +142,7 @@ struct TabletState {
 impl TabletState {
     fn new() -> Self {
         Self {
-            backend_type: BackendType::Auto,
+            backend_type: BackendType::PointerEvent,
             wintab: None,
             pointer: None,
             config: TabletConfig::default(),
@@ -176,6 +176,108 @@ fn get_tablet_state() -> Arc<Mutex<TabletState>> {
         .clone()
 }
 
+fn parse_pressure_curve(curve: Option<&str>) -> PressureCurve {
+    match curve {
+        Some("soft") => PressureCurve::Soft,
+        Some("hard") => PressureCurve::Hard,
+        Some("scurve") => PressureCurve::SCurve,
+        _ => PressureCurve::Linear,
+    }
+}
+
+fn pressure_curve_id(curve: PressureCurve) -> u8 {
+    match curve {
+        PressureCurve::Linear => 0u8,
+        PressureCurve::Soft => 1u8,
+        PressureCurve::Hard => 2u8,
+        PressureCurve::SCurve => 3u8,
+    }
+}
+
+fn apply_tablet_runtime_config(
+    state: &mut TabletState,
+    polling_rate: Option<u32>,
+    pressure_curve: Option<&str>,
+) {
+    if let Some(rate) = polling_rate {
+        state.config.polling_rate_hz = rate;
+    }
+    let curve = parse_pressure_curve(pressure_curve);
+    state.config.pressure_curve = curve;
+    state.pressure_curve.store(
+        pressure_curve_id(curve),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+fn current_tablet_status_response(state: &mut TabletState) -> TabletStatusResponse {
+    if let Some(backend) = state.active_backend() {
+        TabletStatusResponse {
+            status: backend.status(),
+            backend: backend.name().to_string(),
+            info: backend.info().cloned(),
+        }
+    } else {
+        TabletStatusResponse {
+            status: TabletStatus::Disconnected,
+            backend: "none".to_string(),
+            info: None,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_main_hwnd(app: &AppHandle) -> Option<isize> {
+    if let Some(window) = app.get_webview_window("main") {
+        match window.window_handle() {
+            Ok(handle) => match handle.as_raw() {
+                RawWindowHandle::Win32(win32_handle) => {
+                    let hwnd = win32_handle.hwnd.get();
+                    tracing::info!("[Tablet] Got main window HWND: {}", hwnd);
+                    Some(hwnd)
+                }
+                _ => {
+                    tracing::warn!("[Tablet] Not a Win32 window handle");
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("[Tablet] Failed to get window handle: {:?}", e);
+                None
+            }
+        }
+    } else {
+        tracing::warn!("[Tablet] Main window not found");
+        None
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_main_hwnd(_app: &AppHandle) -> Option<isize> {
+    None
+}
+
+fn build_wintab_backend(
+    config: &TabletConfig,
+    main_hwnd: Option<isize>,
+) -> Result<crate::input::WinTabBackend, String> {
+    let mut wintab = crate::input::WinTabBackend::new();
+    #[cfg(target_os = "windows")]
+    if let Some(hwnd) = main_hwnd {
+        wintab.set_hwnd(hwnd);
+    }
+    wintab.init(config)?;
+    Ok(wintab)
+}
+
+fn build_pointer_backend(
+    config: &TabletConfig,
+) -> Result<crate::input::PointerEventBackend, String> {
+    let mut pointer = crate::input::PointerEventBackend::new();
+    pointer.init(config)?;
+    Ok(pointer)
+}
+
 /// Tablet status response for frontend
 #[derive(Debug, Clone, Serialize)]
 pub struct TabletStatusResponse {
@@ -201,79 +303,22 @@ pub fn init_tablet(
     // If already initialized with a working backend, return current status (idempotent)
     if state.wintab.is_some() || state.pointer.is_some() {
         tracing::info!("[Tablet] Already initialized, returning current status");
-        let (status, backend_name, info) = if let Some(b) = state.active_backend() {
-            (b.status(), b.name().to_string(), b.info().cloned())
-        } else {
-            (TabletStatus::Disconnected, "none".to_string(), None)
-        };
-        return Ok(TabletStatusResponse {
-            status,
-            backend: backend_name,
-            info,
-        });
+        return Ok(current_tablet_status_response(&mut state));
     }
 
     // Get HWND from main window (Windows only)
-    #[cfg(target_os = "windows")]
-    let main_hwnd: Option<isize> = {
-        if let Some(window) = app.get_webview_window("main") {
-            match window.window_handle() {
-                Ok(handle) => match handle.as_raw() {
-                    RawWindowHandle::Win32(win32_handle) => {
-                        let hwnd = win32_handle.hwnd.get();
-                        tracing::info!("[Tablet] Got main window HWND: {}", hwnd);
-                        Some(hwnd)
-                    }
-                    _ => {
-                        tracing::warn!("[Tablet] Not a Win32 window handle");
-                        None
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("[Tablet] Failed to get window handle: {:?}", e);
-                    None
-                }
-            }
-        } else {
-            tracing::warn!("[Tablet] Main window not found");
-            None
-        }
-    };
+    let main_hwnd = resolve_main_hwnd(&app);
 
     // Configure
     state.config.polling_rate_hz = polling_rate.unwrap_or(200);
-    let curve = match pressure_curve.as_deref() {
-        Some("soft") => PressureCurve::Soft,
-        Some("hard") => PressureCurve::Hard,
-        Some("scurve") => PressureCurve::SCurve,
-        _ => PressureCurve::Linear,
-    };
-    state.config.pressure_curve = curve;
-    // Store curve type as atomic for thread-safe access (0=Linear, 1=Soft, 2=Hard, 3=SCurve)
-    let curve_id = match curve {
-        PressureCurve::Linear => 0u8,
-        PressureCurve::Soft => 1u8,
-        PressureCurve::Hard => 2u8,
-        PressureCurve::SCurve => 3u8,
-    };
-    state
-        .pressure_curve
-        .store(curve_id, std::sync::atomic::Ordering::Relaxed);
+    apply_tablet_runtime_config(&mut state, None, pressure_curve.as_deref());
 
-    let requested_backend = backend.unwrap_or(BackendType::Auto);
+    let requested_backend = backend.unwrap_or(BackendType::PointerEvent);
     state.backend_type = requested_backend;
 
     // Try WinTab first if requested or auto
     if matches!(requested_backend, BackendType::WinTab | BackendType::Auto) {
-        let mut wintab = crate::input::WinTabBackend::new();
-
-        // Set HWND before init (Windows only)
-        #[cfg(target_os = "windows")]
-        if let Some(hwnd) = main_hwnd {
-            wintab.set_hwnd(hwnd);
-        }
-
-        if wintab.init(&state.config).is_ok() {
+        if let Ok(wintab) = build_wintab_backend(&state.config, main_hwnd) {
             state.wintab = Some(wintab);
             state.backend_type = BackendType::WinTab;
             tracing::info!("[Tablet] Initialized WinTab backend");
@@ -282,8 +327,7 @@ pub fn init_tablet(
 
     // Fall back to PointerEvent if WinTab not available or specifically requested
     if state.wintab.is_none() || matches!(requested_backend, BackendType::PointerEvent) {
-        let mut pointer = crate::input::PointerEventBackend::new();
-        if pointer.init(&state.config).is_ok() {
+        if let Ok(pointer) = build_pointer_backend(&state.config) {
             state.pointer = Some(pointer);
             if state.wintab.is_none() {
                 state.backend_type = BackendType::PointerEvent;
@@ -293,21 +337,81 @@ pub fn init_tablet(
     }
 
     // Get status from active backend
-    let (status, backend_name, info) = if let Some(backend) = state.active_backend() {
-        (
-            backend.status(),
-            backend.name().to_string(),
-            backend.info().cloned(),
-        )
-    } else {
+    let response = current_tablet_status_response(&mut state);
+    if response.backend == "none" {
         return Err("No tablet backend available".to_string());
+    }
+
+    Ok(response)
+}
+
+/// Switch active tablet backend at runtime without restarting the app.
+#[tauri::command]
+pub fn switch_tablet_backend(
+    app: AppHandle,
+    backend: BackendType,
+    polling_rate: Option<u32>,
+    pressure_curve: Option<String>,
+) -> Result<TabletStatusResponse, String> {
+    let state = get_tablet_state();
+    let mut state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    // Store app handle for event emission
+    state.app_handle = Some(app.clone());
+
+    // Update runtime config before switching.
+    apply_tablet_runtime_config(&mut state, polling_rate, pressure_curve.as_deref());
+
+    let was_streaming = state.emitter_running;
+    let previous_backend = state.backend_type;
+
+    if let Some(active) = state.active_backend() {
+        active.stop();
+    }
+
+    let main_hwnd = resolve_main_hwnd(&app);
+
+    let switch_result: Result<(), String> = match backend {
+        BackendType::WinTab => {
+            state.wintab = Some(build_wintab_backend(&state.config, main_hwnd)?);
+            state.backend_type = BackendType::WinTab;
+            Ok(())
+        }
+        BackendType::PointerEvent => {
+            state.pointer = Some(build_pointer_backend(&state.config)?);
+            state.backend_type = BackendType::PointerEvent;
+            Ok(())
+        }
+        BackendType::Auto => {
+            if let Ok(wintab) = build_wintab_backend(&state.config, main_hwnd) {
+                state.wintab = Some(wintab);
+                state.backend_type = BackendType::WinTab;
+                Ok(())
+            } else {
+                state.pointer = Some(build_pointer_backend(&state.config)?);
+                state.backend_type = BackendType::PointerEvent;
+                Ok(())
+            }
+        }
     };
 
-    Ok(TabletStatusResponse {
-        status,
-        backend: backend_name,
-        info,
-    })
+    if let Err(err) = switch_result {
+        state.backend_type = previous_backend;
+        if was_streaming {
+            if let Some(active) = state.active_backend() {
+                let _ = active.start();
+            }
+        }
+        return Err(err);
+    }
+
+    if was_streaming {
+        if let Some(active) = state.active_backend() {
+            active.start()?;
+        }
+    }
+
+    Ok(current_tablet_status_response(&mut state))
 }
 
 /// Start tablet input streaming
@@ -436,19 +540,7 @@ pub fn get_tablet_status() -> Result<TabletStatusResponse, String> {
     let state = get_tablet_state();
     let mut state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    if let Some(backend) = state.active_backend() {
-        Ok(TabletStatusResponse {
-            status: backend.status(),
-            backend: backend.name().to_string(),
-            info: backend.info().cloned(),
-        })
-    } else {
-        Ok(TabletStatusResponse {
-            status: TabletStatus::Disconnected,
-            backend: "none".to_string(),
-            info: None,
-        })
-    }
+    Ok(current_tablet_status_response(&mut state))
 }
 
 /// Push pointer event from frontend (for PointerEvent backend)

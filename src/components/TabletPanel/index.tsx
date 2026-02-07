@@ -23,7 +23,7 @@ export function TabletPanel() {
       getVisibilityFn = null;
     };
   }, [isVisible]);
-  const [selectedBackend, setSelectedBackend] = useState<BackendType>('auto');
+  const [selectedBackend, setSelectedBackend] = useState<BackendType>('pointerevent');
   const [pollingRate, setPollingRate] = useState(200);
   const [pressureCurve, setPressureCurve] = useState('linear');
 

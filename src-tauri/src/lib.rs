@@ -209,6 +209,7 @@ pub fn run() {
             commands::run_wintab_spike,
             commands::check_wintab_available,
             commands::init_tablet,
+            commands::switch_tablet_backend,
             commands::start_tablet,
             commands::stop_tablet,
             commands::get_tablet_status,

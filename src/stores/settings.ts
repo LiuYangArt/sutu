@@ -201,7 +201,7 @@ const defaultSettings: PersistedSettings = {
     enableBlur: true,
   },
   tablet: {
-    backend: 'auto',
+    backend: 'pointerevent',
     pollingRate: 200,
     pressureCurve: 'linear',
     autoStart: true,

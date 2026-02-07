@@ -152,10 +152,25 @@ function TabletSettings() {
   const { tablet, setTabletBackend, setPollingRate, setAutoStart, setPressureCurve } =
     useSettingsStore();
 
-  const { status, backend, info, isInitialized, isStreaming, init, start, stop, refresh } =
-    useTabletStore();
+  const {
+    status,
+    backend,
+    info,
+    isInitialized,
+    isStreaming,
+    init,
+    switchBackend,
+    start,
+    stop,
+    refresh,
+  } = useTabletStore();
 
   const statusColor = status === 'Connected' ? '#4f4' : status === 'Error' ? '#f44' : '#888';
+  const backendLower = typeof backend === 'string' ? backend.toLowerCase() : 'none';
+  const isWinTabActive =
+    backendLower === 'wintab' || (backendLower !== 'pointerevent' && tablet.backend === 'wintab');
+  const toggleTargetBackend: BackendType = isWinTabActive ? 'pointerevent' : 'wintab';
+  const toggleBackendLabel = isWinTabActive ? 'Use PointerEvent' : 'Use WinTab';
 
   const handleInit = async () => {
     await init({
@@ -173,6 +188,16 @@ function TabletSettings() {
       await stop();
     } else {
       await start();
+    }
+  };
+
+  const handleToggleBackend = async () => {
+    const switched = await switchBackend(toggleTargetBackend, {
+      pollingRate: tablet.pollingRate,
+      pressureCurve: tablet.pressureCurve,
+    });
+    if (switched) {
+      setTabletBackend(toggleTargetBackend);
     }
   };
 
@@ -224,7 +249,7 @@ function TabletSettings() {
             <option value="linear">Linear</option>
             <option value="soft">Soft</option>
             <option value="hard">Hard</option>
-            <option value="sCurve">S-Curve</option>
+            <option value="scurve">S-Curve</option>
           </select>
         </div>
       </div>
@@ -293,6 +318,9 @@ function TabletSettings() {
               </button>
               <button className="settings-btn" onClick={refresh}>
                 Refresh
+              </button>
+              <button className="settings-btn" onClick={handleToggleBackend}>
+                {toggleBackendLabel}
               </button>
             </>
           )}
