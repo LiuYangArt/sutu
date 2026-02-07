@@ -42,6 +42,9 @@ describe('useSelectionHandler', () => {
   });
 
   afterEach(() => {
+    act(() => {
+      useSelectionStore.getState().deselectAll();
+    });
     vi.restoreAllMocks();
   });
 

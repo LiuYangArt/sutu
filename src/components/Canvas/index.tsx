@@ -394,7 +394,9 @@ export function Canvas() {
 
   // Get selection store actions for keyboard shortcuts
   const { selectAll, deselectAll, cancelSelection } = useSelectionStore();
+  const hasSelection = useSelectionStore((s) => s.hasSelection);
   const selectionMask = useSelectionStore((s) => s.selectionMask);
+  const selectionMaskPending = useSelectionStore((s) => s.selectionMaskPending);
 
   // Initialize brush renderer for Flow/Opacity three-level pipeline
   const {
@@ -1326,7 +1328,11 @@ export function Canvas() {
       noiseEnabled,
       dualBrushEnabled,
       dualBrush,
-      selectionHandledByGpu: gpuDisplayActive && gpuSelectionPipelineV2Enabled,
+      selectionHandledByGpu:
+        gpuDisplayActive &&
+        gpuSelectionPipelineV2Enabled &&
+        !selectionMaskPending &&
+        (!hasSelection || !!selectionMask),
     };
   }, [
     currentSize,
@@ -1362,6 +1368,9 @@ export function Canvas() {
     dualBrush,
     gpuDisplayActive,
     gpuSelectionPipelineV2Enabled,
+    hasSelection,
+    selectionMask,
+    selectionMaskPending,
   ]);
 
   const { drawPoints, finishCurrentStroke, initializeBrushStroke } = useStrokeProcessor({

@@ -31,6 +31,7 @@ describe('SelectionStore commitSelection', () => {
   });
 
   afterEach(() => {
+    useSelectionStore.getState().deselectAll();
     vi.restoreAllMocks();
   });
 
@@ -49,5 +50,43 @@ describe('SelectionStore commitSelection', () => {
     expect(state.selectionPath).toHaveLength(1);
     expect(state.selectionPath[0]).toHaveLength(5);
     expect(state.bounds).toEqual({ x: 10, y: 20, width: 50, height: 60 });
+  });
+
+  it('大画布新建选区时优先返回路径并进入异步 mask 构建', () => {
+    const store = useSelectionStore.getState();
+    store.beginSelection({ x: 120, y: 130, type: 'polygonal' });
+    store.updateCreationRect(
+      { x: 120, y: 130, type: 'polygonal' },
+      { x: 180, y: 210, type: 'polygonal' }
+    );
+
+    store.commitSelection(5000, 5000);
+
+    const state = useSelectionStore.getState();
+    expect(state.hasSelection).toBe(true);
+    expect(state.selectionPath).toHaveLength(1);
+    expect(state.selectionMaskPending).toBe(true);
+    expect(state.bounds).toEqual({ x: 120, y: 130, width: 60, height: 80 });
+  });
+
+  it('mask 未就绪时按 selectionPath 命中测试', () => {
+    useSelectionStore.setState({
+      hasSelection: true,
+      selectionMask: null,
+      selectionPath: [
+        [
+          { x: 10, y: 10, type: 'polygonal' },
+          { x: 40, y: 10, type: 'polygonal' },
+          { x: 40, y: 40, type: 'polygonal' },
+          { x: 10, y: 40, type: 'polygonal' },
+          { x: 10, y: 10, type: 'polygonal' },
+        ],
+      ],
+      bounds: { x: 10, y: 10, width: 30, height: 30 },
+    } as Partial<ReturnType<typeof useSelectionStore.getState>>);
+
+    const state = useSelectionStore.getState();
+    expect(state.isPointInSelection(20, 20)).toBe(true);
+    expect(state.isPointInSelection(60, 60)).toBe(false);
   });
 });
