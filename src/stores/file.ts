@@ -78,6 +78,19 @@ interface SaveTargetOptions {
   includeFlattenedImage?: boolean;
 }
 
+const AUTOSAVE_PRIMARY_TARGET_OPTIONS: SaveTargetOptions = {
+  updateDocumentPath: false,
+  markDocumentClean: true,
+  includeThumbnail: false,
+};
+
+const AUTOSAVE_TEMP_TARGET_OPTIONS: SaveTargetOptions = {
+  updateDocumentPath: false,
+  markDocumentClean: true,
+  includeThumbnail: false,
+  includeFlattenedImage: false,
+};
+
 type CanvasExportWindow = Window & {
   __getThumbnail?: () => Promise<string | undefined>;
   __getFlattenedImage?: () => Promise<string | undefined>;
@@ -263,10 +276,11 @@ async function buildProjectDataSnapshot(options: ProjectSnapshotOptions): Promis
 
   const layers = await Promise.all(layerDataPromises);
 
-  const [thumbnail, flattenedImage] = await Promise.all([
-    options.includeThumbnail ? getThumbnail() : Promise.resolve(undefined),
-    options.includeFlattenedImage ? getFlattenedImage() : Promise.resolve(undefined),
-  ]);
+  const thumbnailPromise = options.includeThumbnail ? getThumbnail() : Promise.resolve(undefined);
+  const flattenedImagePromise = options.includeFlattenedImage
+    ? getFlattenedImage()
+    : Promise.resolve(undefined);
+  const [thumbnail, flattenedImage] = await Promise.all([thumbnailPromise, flattenedImagePromise]);
 
   return {
     width: docStore.width,
@@ -507,11 +521,7 @@ export const useFileStore = create<FileState>((set, get) => ({
       const primarySave = await saveProjectToTarget(
         docStore.filePath,
         targetFormat,
-        {
-          updateDocumentPath: false,
-          markDocumentClean: true,
-          includeThumbnail: false,
-        },
+        AUTOSAVE_PRIMARY_TARGET_OPTIONS,
         set
       );
 
@@ -527,12 +537,7 @@ export const useFileStore = create<FileState>((set, get) => ({
       const fallbackSave = await saveProjectToTarget(
         tempAutosavePath,
         'ora',
-        {
-          updateDocumentPath: false,
-          markDocumentClean: true,
-          includeThumbnail: false,
-          includeFlattenedImage: false,
-        },
+        AUTOSAVE_TEMP_TARGET_OPTIONS,
         set
       );
       if (fallbackSave.success) {
@@ -548,12 +553,7 @@ export const useFileStore = create<FileState>((set, get) => ({
     const tempSave = await saveProjectToTarget(
       tempAutosavePath,
       'ora',
-      {
-        updateDocumentPath: false,
-        markDocumentClean: true,
-        includeThumbnail: false,
-        includeFlattenedImage: false,
-      },
+      AUTOSAVE_TEMP_TARGET_OPTIONS,
       set
     );
     if (tempSave.success) {

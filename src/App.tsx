@@ -41,6 +41,12 @@ const isTauri = () => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 };
 
+type ExitWindowHandle = {
+  hide: () => Promise<void>;
+  show: () => Promise<void>;
+  destroy: () => Promise<void>;
+};
+
 // Wait for Tauri IPC to be ready
 const waitForTauri = async (maxRetries = 50, interval = 100): Promise<boolean> => {
   for (let i = 0; i < maxRetries; i++) {
@@ -352,11 +358,7 @@ function App() {
     }
     appExitInProgressRef.current = true;
 
-    let tauriWindow: {
-      hide: () => Promise<void>;
-      show: () => Promise<void>;
-      destroy: () => Promise<void>;
-    } | null = null;
+    let tauriWindow: ExitWindowHandle | null = null;
     let windowHidden = false;
 
     if (isTauri()) {
