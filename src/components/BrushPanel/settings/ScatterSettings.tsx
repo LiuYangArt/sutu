@@ -11,12 +11,13 @@
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 
-/** Control options for Scatter (subset of Shape Dynamics options) */
+/** Control options for Scatter */
 const SCATTER_CONTROL_OPTIONS: SelectOption[] = [
   { value: 'off', label: 'Off' },
   { value: 'fade', label: 'Fade' },
   { value: 'penPressure', label: 'Pen Pressure' },
   { value: 'penTilt', label: 'Pen Tilt' },
+  { value: 'rotation', label: 'Rotation' },
 ];
 
 export function ScatterSettings(): JSX.Element {

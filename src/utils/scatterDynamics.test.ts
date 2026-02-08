@@ -86,4 +86,68 @@ describe('forEachScatter', () => {
     expect(actualCount).toBe(expected.length);
     expect(got).toEqual(expected);
   });
+
+  it('scatter control 在 countJitter=0 时直接作用 scatter 主属性', () => {
+    const input = {
+      x: 0,
+      y: 0,
+      strokeAngle: 0, // perpendicular is +Y
+      diameter: 100,
+      dynamics: {
+        pressure: 1,
+        tiltX: 0.5,
+        tiltY: 0,
+        rotation: 0,
+        direction: 0,
+        initialDirection: 0,
+        fadeProgress: 0,
+      },
+    };
+
+    const settings = {
+      scatter: 100,
+      scatterControl: 'penTilt' as const,
+      bothAxes: false,
+      count: 1,
+      countControl: 'off' as const,
+      countJitter: 0,
+    };
+
+    const got = applyScatter(input, settings, makeRandom([0.1, 1.0]));
+    expect(got).toHaveLength(1);
+    // scatterAmount = 100/100 * 100 * 0.5 * control(0.5) = 25
+    expect(got[0]!.x).toBeCloseTo(0, 6);
+    expect(got[0]!.y).toBeCloseTo(25, 6);
+  });
+
+  it('count control 在 jitter=0 时直接作用 count 主属性', () => {
+    const input = {
+      x: 1,
+      y: 2,
+      strokeAngle: 0.5,
+      diameter: 40,
+      dynamics: {
+        pressure: 0.3,
+        tiltX: 0,
+        tiltY: 0,
+        rotation: 0,
+        direction: 0,
+        initialDirection: 0,
+        fadeProgress: 0,
+      },
+    };
+
+    const settings = {
+      scatter: 0,
+      scatterControl: 'off' as const,
+      bothAxes: false,
+      count: 10,
+      countControl: 'penPressure' as const,
+      countJitter: 0,
+    };
+
+    const got = applyScatter(input, settings, makeRandom([0.1, 0.5, 0.5, 0.5]));
+    // baseCount = round(10 * 0.3) = 3
+    expect(got).toHaveLength(3);
+  });
 });
