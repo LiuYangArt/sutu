@@ -243,6 +243,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   padding: 3px 0;
   overflow: visible; /* 菜单高度随内容，不强制滚动 */
+  contain: paint;
 }
 
 .blend-mode-option {
@@ -259,6 +260,8 @@
   font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
   text-align: left;
   cursor: pointer;
+  transition: none; /* 覆盖全局 button 过渡，确保 hover 即时跟手 */
+  will-change: background-color;
 }
 
 .blend-mode-option:hover {
