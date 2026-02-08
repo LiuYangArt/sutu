@@ -476,6 +476,7 @@ function App() {
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 320, offsetY: 80 },
       minWidth: 240,
       minHeight: 350,
+      minimizable: false,
     });
 
     // Ensure brush panel is closed by default

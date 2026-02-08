@@ -13,12 +13,16 @@ interface BrushSettingsSidebarProps {
   tabs: TabConfig[];
   activeTabId: string;
   onTabSelect: (id: string) => void;
+  onSave: () => void;
+  onSaveAs: () => void;
 }
 
 export function BrushSettingsSidebar({
   tabs,
   activeTabId,
   onTabSelect,
+  onSave,
+  onSaveAs,
 }: BrushSettingsSidebarProps): JSX.Element {
   // Select all toggle states and actions
   const {
@@ -79,39 +83,50 @@ export function BrushSettingsSidebar({
 
   return (
     <div className="brush-sidebar">
-      {tabs.map((tab) => {
-        const toggle = getToggleState(tab.id);
-        const hasCheckbox = toggle !== null;
+      <div className="brush-sidebar-tabs">
+        {tabs.map((tab) => {
+          const toggle = getToggleState(tab.id);
+          const hasCheckbox = toggle !== null;
 
-        return (
-          <div
-            key={tab.id}
-            className={`sidebar-item ${activeTabId === tab.id ? 'active' : ''} ${
-              tab.disabled ? 'disabled' : ''
-            }`}
-            onClick={() => !tab.disabled && onTabSelect(tab.id)}
-            title={tab.disabled ? 'Coming Soon' : tab.label}
-          >
-            {hasCheckbox ? (
-              <input
-                type="checkbox"
-                checked={toggle.checked}
-                onChange={(e) => {
-                  e.stopPropagation();
-                  toggle.onChange();
-                }}
-                disabled={tab.disabled}
-                className="sidebar-checkbox"
-              />
-            ) : (
-              // Spacer to align tabs without checkbox
-              <div className="sidebar-checkbox-spacer" />
-            )}
-            <span className="sidebar-label">{tab.label}</span>
-            {/* Lock icon could go here */}
-          </div>
-        );
-      })}
+          return (
+            <div
+              key={tab.id}
+              className={`sidebar-item ${activeTabId === tab.id ? 'active' : ''} ${
+                tab.disabled ? 'disabled' : ''
+              }`}
+              onClick={() => !tab.disabled && onTabSelect(tab.id)}
+              title={tab.disabled ? 'Coming Soon' : tab.label}
+            >
+              {hasCheckbox ? (
+                <input
+                  type="checkbox"
+                  checked={toggle.checked}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    toggle.onChange();
+                  }}
+                  disabled={tab.disabled}
+                  className="sidebar-checkbox"
+                />
+              ) : (
+                // Spacer to align tabs without checkbox
+                <div className="sidebar-checkbox-spacer" />
+              )}
+              <span className="sidebar-label">{tab.label}</span>
+              {/* Lock icon could go here */}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="brush-sidebar-actions">
+        <button className="brush-sidebar-action-btn" onClick={onSave}>
+          Save
+        </button>
+        <button className="brush-sidebar-action-btn" onClick={onSaveAs}>
+          Save As
+        </button>
+      </div>
     </div>
   );
 }

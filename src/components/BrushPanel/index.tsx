@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import './BrushPanel.css';
 import { BrushSettingsSidebar, TabConfig } from './BrushSettingsSidebar';
 import { BrushTipShape } from './settings/BrushTipShape';
@@ -16,6 +16,16 @@ import { useBrushLibraryStore } from '@/stores/brushLibrary';
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('tip_shape');
   const loadLibrary = useBrushLibraryStore((state) => state.loadLibrary);
+  const presets = useBrushLibraryStore((state) => state.presets);
+  const selectedPresetId = useBrushLibraryStore((state) => state.selectedPresetId);
+  const saveActivePreset = useBrushLibraryStore((state) => state.saveActivePreset);
+  const saveActivePresetAs = useBrushLibraryStore((state) => state.saveActivePresetAs);
+  const setSelectedPresetId = useBrushLibraryStore((state) => state.setSelectedPresetId);
+
+  const activePreset = useMemo(
+    () => presets.find((preset) => preset.id === selectedPresetId) ?? null,
+    [presets, selectedPresetId]
+  );
 
   useEffect(() => {
     void loadLibrary();
@@ -69,9 +79,48 @@ export function BrushPanel(): JSX.Element {
     }
   };
 
+  const handleSave = async () => {
+    try {
+      const saved = await saveActivePreset();
+      if (!saved) {
+        const fallbackName = activePreset?.name ?? 'New Brush Preset';
+        const newName = window.prompt('Preset name', fallbackName)?.trim();
+        if (!newName) return;
+        const group = window.prompt('Group name (optional)', activePreset?.group ?? '')?.trim();
+        await saveActivePresetAs(newName, group || null);
+        return;
+      }
+
+      setSelectedPresetId(saved.id);
+    } catch (err) {
+      console.error('[BrushPanel] save failed', err);
+    }
+  };
+
+  const handleSaveAs = async () => {
+    try {
+      const defaultName = activePreset?.name ? `${activePreset.name} Copy` : 'New Brush Preset';
+      const newName = window.prompt('Preset name', defaultName)?.trim();
+      if (!newName) {
+        return;
+      }
+
+      const group = window.prompt('Group name (optional)', activePreset?.group ?? '')?.trim();
+      await saveActivePresetAs(newName, group || null);
+    } catch (err) {
+      console.error('[BrushPanel] save as failed', err);
+    }
+  };
+
   return (
     <div className="brush-panel-container">
-      <BrushSettingsSidebar tabs={tabs} activeTabId={activeTab} onTabSelect={setActiveTab} />
+      <BrushSettingsSidebar
+        tabs={tabs}
+        activeTabId={activeTab}
+        onTabSelect={setActiveTab}
+        onSave={() => void handleSave()}
+        onSaveAs={() => void handleSaveAs()}
+      />
       <div className="brush-content brush-panel">{renderContent()}</div>
     </div>
   );

@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import { useToolStore, BrushMaskType } from '@/stores/tool';
 import { useBrushLibraryStore } from '@/stores/brushLibrary';
 import { SliderRow } from '../BrushPanelComponents';
@@ -24,54 +23,9 @@ export function BrushTipShape(): JSX.Element {
   } = useToolStore();
 
   const tips = useBrushLibraryStore((state) => state.tips);
-  const selectedPresetId = useBrushLibraryStore((state) => state.selectedPresetId);
-  const presets = useBrushLibraryStore((state) => state.presets);
   const applyMainTip = useBrushLibraryStore((state) => state.applyMainTip);
-  const saveActivePreset = useBrushLibraryStore((state) => state.saveActivePreset);
-  const saveActivePresetAs = useBrushLibraryStore((state) => state.saveActivePresetAs);
-  const setSelectedPresetId = useBrushLibraryStore((state) => state.setSelectedPresetId);
-
-  const activePreset = useMemo(
-    () => presets.find((preset) => preset.id === selectedPresetId) ?? null,
-    [presets, selectedPresetId]
-  );
 
   const activeTipId = brushTexture?.id ?? null;
-
-  const handleSave = async () => {
-    try {
-      const saved = await saveActivePreset();
-      if (!saved) {
-        const fallbackName = activePreset?.name ?? 'New Brush Preset';
-        const newName = window.prompt('Preset name', fallbackName)?.trim();
-        if (!newName) return;
-        const group = window.prompt('Group name (optional)', activePreset?.group ?? '')?.trim();
-        await saveActivePresetAs(newName, group || null);
-        return;
-      }
-
-      setSelectedPresetId(saved.id);
-    } catch (err) {
-      console.error('[BrushTipShape] save failed', err);
-      return;
-    }
-  };
-
-  const handleSaveAs = async () => {
-    try {
-      const defaultName = activePreset?.name ? `${activePreset.name} Copy` : 'New Brush Preset';
-      const newName = window.prompt('Preset name', defaultName)?.trim();
-      if (!newName) {
-        return;
-      }
-
-      const group = window.prompt('Group name (optional)', activePreset?.group ?? '')?.trim();
-      await saveActivePresetAs(newName, group || null);
-    } catch (err) {
-      console.error('[BrushTipShape] save as failed', err);
-      return;
-    }
-  };
 
   return (
     <div className="brush-panel-section">
@@ -113,15 +67,6 @@ export function BrushTipShape(): JSX.Element {
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="brush-setting-row" style={{ gap: '6px', marginTop: '8px' }}>
-        <button className="abr-import-btn" style={{ flex: 1 }} onClick={() => void handleSave()}>
-          Save
-        </button>
-        <button className="abr-import-btn" style={{ flex: 1 }} onClick={() => void handleSaveAs()}>
-          Save As
-        </button>
       </div>
 
       <SliderRow
