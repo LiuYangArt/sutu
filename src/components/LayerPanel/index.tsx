@@ -14,7 +14,12 @@ import {
 import { useDocumentStore, BlendMode } from '@/stores/document';
 import './LayerPanel.css';
 
-const BLEND_MODE_GROUPS: ReadonlyArray<ReadonlyArray<{ value: BlendMode; label: string }>> = [
+interface BlendModeOption {
+  value: BlendMode;
+  label: string;
+}
+
+const BLEND_MODE_GROUPS: ReadonlyArray<ReadonlyArray<BlendModeOption>> = [
   [
     { value: 'normal', label: 'Normal' },
     { value: 'dissolve', label: 'Dissolve' },
@@ -60,13 +65,41 @@ type BlendModeMenuItem =
   | { kind: 'mode'; value: BlendMode; label: string }
   | { kind: 'separator'; key: string };
 
-const BLEND_MODE_MENU_ITEMS: BlendModeMenuItem[] = BLEND_MODE_GROUPS.flatMap(
-  (group, groupIndex) => {
-    const modeItems: BlendModeMenuItem[] = group.map((mode) => ({ kind: 'mode', ...mode }));
-    if (groupIndex >= BLEND_MODE_GROUPS.length - 1) return modeItems;
-    return [...modeItems, { kind: 'separator', key: `sep-${groupIndex}` }];
+function buildBlendModeMenuItems(
+  groups: ReadonlyArray<ReadonlyArray<BlendModeOption>>
+): BlendModeMenuItem[] {
+  const items: BlendModeMenuItem[] = [];
+  for (let i = 0; i < groups.length; i += 1) {
+    const group = groups[i];
+    if (!group) continue;
+    for (const mode of group) {
+      items.push({ kind: 'mode', ...mode });
+    }
+    if (i < groups.length - 1) {
+      items.push({ kind: 'separator', key: `sep-${i}` });
+    }
   }
-);
+  return items;
+}
+
+function buildBlendModeLabelMap(
+  groups: ReadonlyArray<ReadonlyArray<BlendModeOption>>
+): Map<BlendMode, string> {
+  const map = new Map<BlendMode, string>();
+  for (const group of groups) {
+    for (const mode of group) {
+      map.set(mode.value, mode.label);
+    }
+  }
+  return map;
+}
+
+function getBlendModeLabel(mode: BlendMode): string {
+  return BLEND_MODE_LABEL_MAP.get(mode) ?? 'Normal';
+}
+
+const BLEND_MODE_MENU_ITEMS: BlendModeMenuItem[] = buildBlendModeMenuItems(BLEND_MODE_GROUPS);
+const BLEND_MODE_LABEL_MAP = buildBlendModeLabelMap(BLEND_MODE_GROUPS);
 
 interface ContextMenuState {
   visible: boolean;
@@ -122,10 +155,9 @@ export function LayerPanel(): JSX.Element {
 
   // Close context menu when clicking outside
   useEffect(() => {
+    if (!contextMenu.visible) return;
     function handleClickOutside() {
-      if (contextMenu.visible) {
-        setContextMenu((prev) => ({ ...prev, visible: false }));
-      }
+      setContextMenu((prev) => ({ ...prev, visible: false }));
     }
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
@@ -203,8 +235,7 @@ export function LayerPanel(): JSX.Element {
 
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const activeBlendMode = activeLayer?.blendMode ?? 'normal';
-  const activeBlendModeLabel =
-    BLEND_MODE_GROUPS.flat().find((mode) => mode.value === activeBlendMode)?.label ?? 'Normal';
+  const activeBlendModeLabel = getBlendModeLabel(activeBlendMode);
   const displayLayers = [...layers].reverse();
   const { width: thumbWidth, height: thumbHeight } = calculateThumbnailDimensions(width, height);
 
