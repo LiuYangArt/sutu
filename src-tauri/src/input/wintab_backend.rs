@@ -46,6 +46,45 @@ pub struct WinTabBackend {
 }
 
 impl WinTabBackend {
+    fn enqueue_polled_events(events: &Arc<Mutex<Vec<TabletEvent>>>, new_events: Vec<TabletEvent>) {
+        if new_events.is_empty() {
+            return;
+        }
+
+        // Fast path: try_lock avoids blocking on the common case.
+        if let Ok(mut events_lock) = events.try_lock() {
+            events_lock.extend(new_events);
+            return;
+        }
+
+        // Slow path: NEVER drop events on contention; block until we can enqueue.
+        let delayed_count = new_events.len();
+        tracing::warn!(
+            "[WinTab] Lock contention, delaying enqueue of {} events",
+            delayed_count
+        );
+
+        match events.lock() {
+            Ok(mut events_lock) => {
+                events_lock.extend(new_events);
+                tracing::debug!(
+                    "[WinTab] Delayed enqueue completed for {} events",
+                    delayed_count
+                );
+            }
+            Err(poisoned) => {
+                // Keep forwarding events even if mutex was poisoned by a panic
+                // in another thread. Dropping input is worse than recovering.
+                tracing::error!(
+                    "[WinTab] Event queue lock poisoned, recovering and enqueueing {} delayed events",
+                    delayed_count
+                );
+                let mut events_lock = poisoned.into_inner();
+                events_lock.extend(new_events);
+            }
+        }
+    }
+
     /// Create a new WinTab backend
     pub fn new() -> Self {
         Self {
@@ -383,28 +422,7 @@ impl TabletBackend for WinTabBackend {
                         new_events.push(TabletEvent::Input(point));
                     }
 
-                    // Use try_lock to avoid blocking if the lock is held
-                    // If lock fails, events will be picked up in the next iteration
-                    match events.try_lock() {
-                        Ok(mut events_lock) => {
-                            events_lock.extend(new_events);
-                        }
-                        Err(_) => {
-                            // Lock contention - this is rare but can happen
-                            // Sleep briefly and retry once
-                            thread::sleep(Duration::from_micros(100));
-                            if let Ok(mut events_lock) = events.try_lock() {
-                                events_lock.extend(new_events);
-                            } else {
-                                tracing::warn!(
-                                    "[WinTab] Lock contention, {} events may be delayed",
-                                    new_events.len()
-                                );
-                                // Store for next iteration by extending events directly
-                                // Note: new_events will be dropped here, but this is very rare
-                            }
-                        }
-                    }
+                    WinTabBackend::enqueue_polled_events(&events, new_events);
                 }
 
                 thread::sleep(Duration::from_millis(polling_interval_ms));

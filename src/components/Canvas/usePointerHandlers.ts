@@ -272,13 +272,13 @@ export function usePointerHandlers({
         if (shouldUseWinTab) {
           // Use buffered WinTab points when available; avoid using currentPoint at pointerdown
           // because it can be stale (previous stroke), causing an overly heavy first dab.
-          if (bufferedPoints.length > 0) {
-            pressure = bufferedPoints[bufferedPoints.length - 1]!.pressure;
-          } else {
-            // No fresh WinTab sample yet.
-            if (pe.pointerType === 'pen') {
-              pressure = 0;
-            }
+          const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1];
+          if (lastBufferedPoint) {
+            pressure = lastBufferedPoint.pressure;
+          } else if (pe.pointerType === 'pen') {
+            // No fresh WinTab sample yet at pen-down.
+            window.__strokeDiagnostics?.onStartPressureFallback();
+            pressure = 0;
           }
         }
       }
