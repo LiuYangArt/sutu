@@ -34,13 +34,12 @@ export function DualBrushSettings(): JSX.Element {
   const disabled = !dualBrushEnabled;
   const ratioPercent = Math.round(dualBrush.sizeRatio * 100);
 
-  const handlePresetSelect = (tipId: string, index: number) => {
-    const preset = importedTips[index];
-    if (!preset) return;
+  const handlePresetSelect = (preset: (typeof importedTips)[number], index: number) => {
+    const presetId = preset.id;
 
     // 1. Immediate UI update
     setDualBrush({
-      brushId: tipId,
+      brushId: presetId,
       brushIndex: index,
       brushName: preset.name,
       roundness: preset.roundness,
@@ -56,16 +55,16 @@ export function DualBrushSettings(): JSX.Element {
 
     // 2. Preload texture to prevent "first stroke black" issue
     if (preset.hasTexture) {
-      loadBrushTexture(tipId, preset.textureWidth ?? 0, preset.textureHeight ?? 0)
+      loadBrushTexture(presetId, preset.textureWidth ?? 0, preset.textureHeight ?? 0)
         .then((imageData) => {
           if (!imageData) return;
 
           // Double-check if selection changed during load
           const currentBrushId = useToolStore.getState().dualBrush.brushId;
-          if (currentBrushId === tipId) {
+          if (currentBrushId === presetId) {
             useToolStore.setState((state) => {
               const dual = state.dualBrush;
-              if (dual.brushId !== tipId || !dual.texture) return state;
+              if (dual.brushId !== presetId || !dual.texture) return state;
 
               return {
                 dualBrush: {
@@ -141,9 +140,9 @@ export function DualBrushSettings(): JSX.Element {
           {importedTips.map((preset, index) => {
             return (
               <button
-                key={`dual-${preset.id}-${index}`}
+                key={`dual-${preset.id}`}
                 className={`abr-preset-item ${dualBrush.brushId === preset.id ? 'selected' : ''}`}
-                onClick={() => handlePresetSelect(preset.id, index)}
+                onClick={() => handlePresetSelect(preset, index)}
                 title={preset.name}
                 disabled={disabled}
               >

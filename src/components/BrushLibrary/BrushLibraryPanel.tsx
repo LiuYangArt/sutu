@@ -1,12 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Edit2, FolderPlus, Search, Trash2, Upload, X, ArrowRightLeft } from 'lucide-react';
 import { BrushPresetThumbnail } from '@/components/BrushPanel/BrushPresetThumbnail';
-import {
-  useBrushLibraryStore,
-  useGroupedBrushPresets,
-  type BrushLibraryPreset,
-} from '@/stores/brushLibrary';
+import { useBrushLibraryStore, useGroupedBrushPresets } from '@/stores/brushLibrary';
 import './BrushLibraryPanel.css';
 
 interface BrushLibraryPanelProps {
@@ -30,11 +26,19 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
     movePresetToGroup,
     renameGroup,
     applyPresetById,
-    setSelectedPresetId,
     clearError,
   } = useBrushLibraryStore();
 
   const groupedPresets = useGroupedBrushPresets();
+  const selectedPreset = useMemo(() => {
+    for (const group of groupedPresets) {
+      const found = group.presets.find((preset) => preset.id === selectedPresetId);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }, [groupedPresets, selectedPresetId]);
 
   useEffect(() => {
     if (isOpen && presetCount === 0) {
@@ -62,16 +66,6 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
     }
   };
 
-  const findSelectedPreset = (): BrushLibraryPreset | null => {
-    for (const group of groupedPresets) {
-      const found = group.presets.find((preset) => preset.id === selectedPresetId);
-      if (found) {
-        return found;
-      }
-    }
-    return null;
-  };
-
   const handleDelete = async () => {
     if (!selectedPresetId) {
       return;
@@ -84,54 +78,51 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
   };
 
   const handleRenamePreset = async () => {
-    const selected = findSelectedPreset();
-    if (!selected) {
+    if (!selectedPreset) {
       return;
     }
 
-    const newName = window.prompt('Preset name', selected.name)?.trim();
-    if (!newName || newName === selected.name) {
+    const newName = window.prompt('Preset name', selectedPreset.name)?.trim();
+    if (!newName || newName === selectedPreset.name) {
       return;
     }
 
     try {
-      await renamePreset(selected.id, newName);
+      await renamePreset(selectedPreset.id, newName);
     } catch (err) {
       console.error('[BrushLibrary] rename preset failed', err);
     }
   };
 
   const handleMovePreset = async () => {
-    const selected = findSelectedPreset();
-    if (!selected) {
+    if (!selectedPreset) {
       return;
     }
 
-    const group = window.prompt('Target group', selected.group ?? '')?.trim();
+    const group = window.prompt('Target group', selectedPreset.group ?? '')?.trim();
     if (!group) {
       return;
     }
 
     try {
-      await movePresetToGroup(selected.id, group);
+      await movePresetToGroup(selectedPreset.id, group);
     } catch (err) {
       console.error('[BrushLibrary] move preset failed', err);
     }
   };
 
   const handleRenameGroup = async () => {
-    const selected = findSelectedPreset();
-    if (!selected?.group) {
+    if (!selectedPreset?.group) {
       return;
     }
 
-    const nextName = window.prompt('Rename group', selected.group)?.trim();
-    if (!nextName || nextName === selected.group) {
+    const nextName = window.prompt('Rename group', selectedPreset.group)?.trim();
+    if (!nextName || nextName === selectedPreset.group) {
       return;
     }
 
     try {
-      await renameGroup(selected.group, nextName);
+      await renameGroup(selectedPreset.group, nextName);
     } catch (err) {
       console.error('[BrushLibrary] rename group failed', err);
     }
@@ -194,7 +185,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
             <button
               className="brush-library-btn"
               onClick={handleRenameGroup}
-              disabled={!findSelectedPreset()?.group}
+              disabled={!selectedPreset?.group}
               title="Rename selected group"
             >
               <FolderPlus size={14} />
@@ -236,7 +227,6 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
                       key={preset.id}
                       className={`brush-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
                       onClick={() => {
-                        setSelectedPresetId(preset.id);
                         applyPresetById(preset.id);
                       }}
                       title={preset.name}

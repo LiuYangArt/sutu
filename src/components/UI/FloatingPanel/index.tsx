@@ -202,6 +202,9 @@ export const FloatingPanel = React.memo(function FloatingPanel({
   const isResizable = panel.resizable !== false;
   const isClosable = panel.closable !== false;
   const isMinimizable = panel.minimizable !== false;
+  const stopHeaderPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+  };
 
   return (
     <div className={Style.floatingPanel} style={style} onPointerDown={handleFocus}>
@@ -217,9 +220,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
           {isMinimizable && (
             <button
               className={Style.iconBtn}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-              }}
+              onPointerDown={stopHeaderPointerDown}
               onClick={(e) => {
                 e.stopPropagation();
                 minimizePanel(panelId);
@@ -232,9 +233,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
           {isClosable && (
             <button
               className={Style.iconBtn}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-              }}
+              onPointerDown={stopHeaderPointerDown}
               onClick={(e) => {
                 e.stopPropagation();
                 closePanel(panelId);

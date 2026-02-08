@@ -408,17 +408,8 @@ impl BrushLibrary {
         preset.id = preset_id.clone();
         preset.name = name;
 
-        let tip_id = payload
-            .tip_id
-            .as_deref()
-            .and_then(|candidate| self.resolve_tip_candidate(candidate));
-
-        if let Some(dual) = preset.dual_brush_settings.as_mut() {
-            dual.brush_id = dual
-                .brush_id
-                .as_deref()
-                .and_then(|candidate| self.resolve_tip_candidate(candidate));
-        }
+        let tip_id = self.resolve_payload_tip_id(payload.tip_id.as_deref());
+        self.remap_dual_brush_tip(&mut preset);
 
         let group = payload.group.or(existing.group.clone());
         let content_hash = hash_preset(&preset, tip_id.as_deref());
@@ -472,17 +463,8 @@ impl BrushLibrary {
         preset.id = new_id.clone();
         preset.name = name;
 
-        let tip_id = payload
-            .tip_id
-            .as_deref()
-            .and_then(|candidate| self.resolve_tip_candidate(candidate));
-
-        if let Some(dual) = preset.dual_brush_settings.as_mut() {
-            dual.brush_id = dual
-                .brush_id
-                .as_deref()
-                .and_then(|candidate| self.resolve_tip_candidate(candidate));
-        }
+        let tip_id = self.resolve_payload_tip_id(payload.tip_id.as_deref());
+        self.remap_dual_brush_tip(&mut preset);
 
         let group = target_group.or(payload.group).and_then(|g| {
             let trimmed = g.trim();
@@ -553,6 +535,19 @@ impl BrushLibrary {
         }
 
         self.find_tip_id_by_source_uuid(candidate)
+    }
+
+    fn resolve_payload_tip_id(&self, tip_id: Option<&str>) -> Option<String> {
+        tip_id.and_then(|candidate| self.resolve_tip_candidate(candidate))
+    }
+
+    fn remap_dual_brush_tip(&self, preset: &mut BrushPreset) {
+        if let Some(dual) = preset.dual_brush_settings.as_mut() {
+            dual.brush_id = dual
+                .brush_id
+                .as_deref()
+                .and_then(|candidate| self.resolve_tip_candidate(candidate));
+        }
     }
 
     fn ensure_unique_tip_id(&self, preferred: &str) -> String {
@@ -697,15 +692,11 @@ pub fn init_library() {
 }
 
 pub fn get_library_snapshot() -> BrushLibrarySnapshot {
-    let guard = LIBRARY.read();
-    guard
-        .as_ref()
-        .map(BrushLibrary::snapshot)
-        .unwrap_or(BrushLibrarySnapshot {
-            presets: Vec::new(),
-            tips: Vec::new(),
-            groups: Vec::new(),
-        })
+    with_library_read(BrushLibrary::snapshot).unwrap_or(BrushLibrarySnapshot {
+        presets: Vec::new(),
+        tips: Vec::new(),
+        groups: Vec::new(),
+    })
 }
 
 pub fn import_from_abr(
@@ -713,57 +704,27 @@ pub fn import_from_abr(
     presets: Vec<BrushPreset>,
     tips: Vec<BrushPreset>,
 ) -> Result<BrushLibraryImportResult, String> {
-    let mut guard = LIBRARY.write();
-    let library = guard
-        .as_mut()
-        .ok_or_else(|| "Brush library not initialized".to_string())?;
-
-    library.import_from_abr(source_path, presets, tips)
+    with_library_write(|library| library.import_from_abr(source_path, presets, tips))
 }
 
 pub fn rename_preset(id: &str, new_name: String) -> Result<(), String> {
-    let mut guard = LIBRARY.write();
-    let library = guard
-        .as_mut()
-        .ok_or_else(|| "Brush library not initialized".to_string())?;
-
-    library.rename_preset(id, new_name)
+    with_library_write(|library| library.rename_preset(id, new_name))
 }
 
 pub fn delete_preset(id: &str) -> Result<(), String> {
-    let mut guard = LIBRARY.write();
-    let library = guard
-        .as_mut()
-        .ok_or_else(|| "Brush library not initialized".to_string())?;
-
-    library.delete_preset(id)
+    with_library_write(|library| library.delete_preset(id))
 }
 
 pub fn move_preset_to_group(id: &str, group: String) -> Result<(), String> {
-    let mut guard = LIBRARY.write();
-    let library = guard
-        .as_mut()
-        .ok_or_else(|| "Brush library not initialized".to_string())?;
-
-    library.move_preset_to_group(id, group)
+    with_library_write(|library| library.move_preset_to_group(id, group))
 }
 
 pub fn rename_group(old_name: &str, new_name: String) -> Result<(), String> {
-    let mut guard = LIBRARY.write();
-    let library = guard
-        .as_mut()
-        .ok_or_else(|| "Brush library not initialized".to_string())?;
-
-    library.rename_group(old_name, new_name)
+    with_library_write(|library| library.rename_group(old_name, new_name))
 }
 
 pub fn save_preset(payload: BrushLibraryPresetPayload) -> Result<BrushLibraryPreset, String> {
-    let mut guard = LIBRARY.write();
-    let library = guard
-        .as_mut()
-        .ok_or_else(|| "Brush library not initialized".to_string())?;
-
-    library.save_preset(payload)
+    with_library_write(|library| library.save_preset(payload))
 }
 
 pub fn save_preset_as(
@@ -771,12 +732,22 @@ pub fn save_preset_as(
     new_name: String,
     target_group: Option<String>,
 ) -> Result<BrushLibraryPreset, String> {
+    with_library_write(|library| library.save_preset_as(payload, new_name, target_group))
+}
+
+fn with_library_read<T>(f: impl FnOnce(&BrushLibrary) -> T) -> Option<T> {
+    let guard = LIBRARY.read();
+    guard.as_ref().map(f)
+}
+
+fn with_library_write<T>(
+    f: impl FnOnce(&mut BrushLibrary) -> Result<T, String>,
+) -> Result<T, String> {
     let mut guard = LIBRARY.write();
     let library = guard
         .as_mut()
         .ok_or_else(|| "Brush library not initialized".to_string())?;
-
-    library.save_preset_as(payload, new_name, target_group)
+    f(library)
 }
 
 #[cfg(test)]

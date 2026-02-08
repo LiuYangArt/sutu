@@ -13,6 +13,27 @@ import { BuildupSettings } from './settings/BuildupSettings';
 import { NoiseSettings } from './settings/NoiseSettings';
 import { useBrushLibraryStore } from '@/stores/brushLibrary';
 
+interface PresetDialogResult {
+  name: string;
+  group: string | null;
+}
+
+function promptPresetInfo(
+  defaultName: string,
+  defaultGroup: string | null | undefined
+): PresetDialogResult | null {
+  const name = window.prompt('Preset name', defaultName)?.trim();
+  if (!name) {
+    return null;
+  }
+
+  const group = window.prompt('Group name (optional)', defaultGroup ?? '')?.trim();
+  return {
+    name,
+    group: group || null,
+  };
+}
+
 export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('tip_shape');
   const loadLibrary = useBrushLibraryStore((state) => state.loadLibrary);
@@ -48,46 +69,42 @@ export function BrushPanel(): JSX.Element {
     { id: 'protect_texture', label: 'Protect Texture', disabled: true },
   ];
 
+  const tabContentMap: Record<string, JSX.Element> = {
+    tip_shape: <BrushTipShape />,
+    shape_dynamics: <ShapeDynamicsSettings />,
+    scattering: <ScatterSettings />,
+    texture: <TextureSettings />,
+    dual_brush: <DualBrushSettings />,
+    color_dynamics: <ColorDynamicsSettings />,
+    wet_edges: <WetEdgeSettings />,
+    build_up: <BuildupSettings />,
+    transfer: <TransferSettings />,
+    noise: <NoiseSettings />,
+  };
+
   const renderContent = () => {
-    switch (activeTab) {
-      case 'tip_shape':
-        return <BrushTipShape />;
-      case 'shape_dynamics':
-        return <ShapeDynamicsSettings />;
-      case 'scattering':
-        return <ScatterSettings />;
-      case 'texture':
-        return <TextureSettings />;
-      case 'dual_brush':
-        return <DualBrushSettings />;
-      case 'color_dynamics':
-        return <ColorDynamicsSettings />;
-      case 'wet_edges':
-        return <WetEdgeSettings />;
-      case 'build_up':
-        return <BuildupSettings />;
-      case 'transfer':
-        return <TransferSettings />;
-      case 'noise':
-        return <NoiseSettings />;
-      default:
-        return (
-          <div className="p-4 text-gray-500 text-sm">
-            Section &quot;{tabs.find((t) => t.id === activeTab)?.label}&quot; is coming soon.
-          </div>
-        );
+    const content = tabContentMap[activeTab];
+    if (content) {
+      return content;
     }
+
+    return (
+      <div className="p-4 text-gray-500 text-sm">
+        Section &quot;{tabs.find((t) => t.id === activeTab)?.label}&quot; is coming soon.
+      </div>
+    );
   };
 
   const handleSave = async () => {
     try {
       const saved = await saveActivePreset();
       if (!saved) {
-        const fallbackName = activePreset?.name ?? 'New Brush Preset';
-        const newName = window.prompt('Preset name', fallbackName)?.trim();
-        if (!newName) return;
-        const group = window.prompt('Group name (optional)', activePreset?.group ?? '')?.trim();
-        await saveActivePresetAs(newName, group || null);
+        const presetInfo = promptPresetInfo(
+          activePreset?.name ?? 'New Brush Preset',
+          activePreset?.group
+        );
+        if (!presetInfo) return;
+        await saveActivePresetAs(presetInfo.name, presetInfo.group);
         return;
       }
 
@@ -100,13 +117,12 @@ export function BrushPanel(): JSX.Element {
   const handleSaveAs = async () => {
     try {
       const defaultName = activePreset?.name ? `${activePreset.name} Copy` : 'New Brush Preset';
-      const newName = window.prompt('Preset name', defaultName)?.trim();
-      if (!newName) {
+      const presetInfo = promptPresetInfo(defaultName, activePreset?.group);
+      if (!presetInfo) {
         return;
       }
 
-      const group = window.prompt('Group name (optional)', activePreset?.group ?? '')?.trim();
-      await saveActivePresetAs(newName, group || null);
+      await saveActivePresetAs(presetInfo.name, presetInfo.group);
     } catch (err) {
       console.error('[BrushPanel] save as failed', err);
     }

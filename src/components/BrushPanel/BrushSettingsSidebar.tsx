@@ -79,13 +79,11 @@ export function BrushSettingsSidebar({
     build_up: { checked: buildupEnabled, onChange: toggleBuildup },
   };
 
-  const getToggleState = (id: string) => toggleMap[id] || null;
-
   return (
     <div className="brush-sidebar">
       <div className="brush-sidebar-tabs">
         {tabs.map((tab) => {
-          const toggle = getToggleState(tab.id);
+          const toggle = toggleMap[tab.id] ?? null;
           const hasCheckbox = toggle !== null;
 
           return (

@@ -41,6 +41,13 @@ interface BrushLibraryPresetPayload {
   group: string | null;
 }
 
+function findPresetById<T extends { id: string }>(items: T[], id: string | null): T | undefined {
+  if (!id) {
+    return undefined;
+  }
+  return items.find((item) => item.id === id);
+}
+
 interface BrushLibraryState {
   presets: BrushLibraryPreset[];
   tips: BrushTipResource[];
@@ -79,6 +86,14 @@ function normalizePreset(preset: BrushLibraryPreset): BrushLibraryPreset {
 function normalizeSnapshot(snapshot: BrushLibrarySnapshot): BrushLibrarySnapshot {
   return {
     presets: snapshot.presets.map(normalizePreset),
+    tips: snapshot.tips,
+    groups: snapshot.groups,
+  };
+}
+
+function snapshotState(snapshot: BrushLibrarySnapshot) {
+  return {
+    presets: snapshot.presets,
     tips: snapshot.tips,
     groups: snapshot.groups,
   };
@@ -172,11 +187,9 @@ function buildPresetFromToolState(
   };
 }
 
-async function refreshLibrarySnapshot(
-  setter: (snapshot: BrushLibrarySnapshot) => void
-): Promise<void> {
+async function fetchLibrarySnapshot(): Promise<BrushLibrarySnapshot> {
   const snapshot = await invoke<BrushLibrarySnapshot>('get_brush_library');
-  setter(normalizeSnapshot(snapshot));
+  return normalizeSnapshot(snapshot);
 }
 
 export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
@@ -191,17 +204,14 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   loadLibrary: async () => {
     set({ isLoading: true, error: null });
     try {
-      await refreshLibrarySnapshot((snapshot) =>
-        set((state) => ({
-          presets: snapshot.presets,
-          tips: snapshot.tips,
-          groups: snapshot.groups,
-          selectedPresetId: snapshot.presets.some((preset) => preset.id === state.selectedPresetId)
-            ? state.selectedPresetId
-            : null,
-          isLoading: false,
-        }))
-      );
+      const snapshot = await fetchLibrarySnapshot();
+      set((state) => ({
+        ...snapshotState(snapshot),
+        selectedPresetId: findPresetById(snapshot.presets, state.selectedPresetId)
+          ? state.selectedPresetId
+          : null,
+        isLoading: false,
+      }));
     } catch (err) {
       set({ isLoading: false, error: String(err) });
     }
@@ -219,9 +229,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
       };
 
       set({
-        presets: normalized.snapshot.presets,
-        tips: normalized.snapshot.tips,
-        groups: normalized.snapshot.groups,
+        ...snapshotState(normalized.snapshot),
         isLoading: false,
       });
 
@@ -235,9 +243,8 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   renamePreset: async (id: string, newName: string) => {
     try {
       await invoke('rename_brush_preset', { id, newName });
-      await refreshLibrarySnapshot((snapshot) =>
-        set({ presets: snapshot.presets, tips: snapshot.tips, groups: snapshot.groups })
-      );
+      const snapshot = await fetchLibrarySnapshot();
+      set({ ...snapshotState(snapshot) });
     } catch (err) {
       set({ error: String(err) });
       throw err;
@@ -247,14 +254,11 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   deletePreset: async (id: string) => {
     try {
       await invoke('delete_brush_preset', { id });
-      await refreshLibrarySnapshot((snapshot) =>
-        set((state) => ({
-          presets: snapshot.presets,
-          tips: snapshot.tips,
-          groups: snapshot.groups,
-          selectedPresetId: state.selectedPresetId === id ? null : state.selectedPresetId,
-        }))
-      );
+      const snapshot = await fetchLibrarySnapshot();
+      set((state) => ({
+        ...snapshotState(snapshot),
+        selectedPresetId: state.selectedPresetId === id ? null : state.selectedPresetId,
+      }));
     } catch (err) {
       set({ error: String(err) });
       throw err;
@@ -264,9 +268,8 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   movePresetToGroup: async (id: string, group: string) => {
     try {
       await invoke('move_brush_preset_to_group', { id, group });
-      await refreshLibrarySnapshot((snapshot) =>
-        set({ presets: snapshot.presets, tips: snapshot.tips, groups: snapshot.groups })
-      );
+      const snapshot = await fetchLibrarySnapshot();
+      set({ ...snapshotState(snapshot) });
     } catch (err) {
       set({ error: String(err) });
       throw err;
@@ -276,9 +279,8 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   renameGroup: async (oldName: string, newName: string) => {
     try {
       await invoke('rename_brush_group', { oldName, newName });
-      await refreshLibrarySnapshot((snapshot) =>
-        set({ presets: snapshot.presets, tips: snapshot.tips, groups: snapshot.groups })
-      );
+      const snapshot = await fetchLibrarySnapshot();
+      set({ ...snapshotState(snapshot) });
     } catch (err) {
       set({ error: String(err) });
       throw err;
@@ -287,48 +289,42 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
 
   saveActivePreset: async () => {
     const { selectedPresetId, presets, tips } = get();
-    const currentPreset = selectedPresetId
-      ? presets.find((preset) => preset.id === selectedPresetId)
-      : undefined;
+    const currentPreset = findPresetById(presets, selectedPresetId);
 
     if (!currentPreset) {
       return null;
     }
 
     const payload = buildPresetFromToolState(currentPreset, tips);
-    const updated = await invoke<BrushLibraryPreset>('save_brush_preset', { payload });
-    await refreshLibrarySnapshot((snapshot) =>
-      set({
-        presets: snapshot.presets,
-        tips: snapshot.tips,
-        groups: snapshot.groups,
-        selectedPresetId: updated.id,
-      })
+    const updated = normalizePreset(
+      await invoke<BrushLibraryPreset>('save_brush_preset', { payload })
     );
+    const snapshot = await fetchLibrarySnapshot();
+    set({
+      ...snapshotState(snapshot),
+      selectedPresetId: updated.id,
+    });
     return updated;
   },
 
   saveActivePresetAs: async (newName: string, targetGroup?: string | null) => {
     const { selectedPresetId, presets, tips } = get();
-    const currentPreset = selectedPresetId
-      ? presets.find((preset) => preset.id === selectedPresetId)
-      : undefined;
+    const currentPreset = findPresetById(presets, selectedPresetId);
 
     const payload = buildPresetFromToolState(currentPreset, tips);
-    const created = await invoke<BrushLibraryPreset>('save_brush_preset_as', {
-      payload,
-      newName,
-      targetGroup: targetGroup ?? null,
-    });
-
-    await refreshLibrarySnapshot((snapshot) =>
-      set({
-        presets: snapshot.presets,
-        tips: snapshot.tips,
-        groups: snapshot.groups,
-        selectedPresetId: created.id,
+    const created = normalizePreset(
+      await invoke<BrushLibraryPreset>('save_brush_preset_as', {
+        payload,
+        newName,
+        targetGroup: targetGroup ?? null,
       })
     );
+
+    const snapshot = await fetchLibrarySnapshot();
+    set({
+      ...snapshotState(snapshot),
+      selectedPresetId: created.id,
+    });
 
     get().applyPresetById(created.id);
     return created;
@@ -336,7 +332,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
 
   applyPresetById: (id: string) => {
     const { presets, tips } = get();
-    const preset = presets.find((item) => item.id === id);
+    const preset = findPresetById(presets, id);
     if (!preset) {
       return;
     }
@@ -346,7 +342,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   },
 
   applyMainTip: (tipId: string | null) => {
-    const tip = tipId ? get().tips.find((item) => item.id === tipId) : null;
+    const tip = findPresetById(get().tips, tipId);
     const tool = useToolStore.getState();
 
     if (!tip) {
