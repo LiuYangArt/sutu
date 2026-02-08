@@ -3,6 +3,8 @@ struct Uniforms {
   layer_opacity: f32,
   transparent_backdrop_eps: f32,
   _pad0: u32,
+  tile_origin: vec2<u32>,
+  _pad1: vec2<u32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -49,6 +51,50 @@ fn channel_soft_light(dst: f32, src: f32) -> f32 {
   }
   let g = select(((16.0 * dst - 12.0) * dst + 4.0) * dst, sqrt(dst), dst > 0.25);
   return dst + (2.0 * src - 1.0) * (g - dst);
+}
+
+fn channel_linear_burn(dst: f32, src: f32) -> f32 {
+  return clamp(dst + src - 1.0, 0.0, 1.0);
+}
+
+fn channel_linear_dodge(dst: f32, src: f32) -> f32 {
+  return clamp(dst + src, 0.0, 1.0);
+}
+
+fn channel_vivid_light(dst: f32, src: f32) -> f32 {
+  if (src <= 0.5) {
+    return channel_color_burn(dst, 2.0 * src);
+  }
+  return channel_color_dodge(dst, 2.0 * (src - 0.5));
+}
+
+fn channel_linear_light(dst: f32, src: f32) -> f32 {
+  return clamp(dst + 2.0 * src - 1.0, 0.0, 1.0);
+}
+
+fn channel_pin_light(dst: f32, src: f32) -> f32 {
+  if (src <= 0.5) {
+    return min(dst, 2.0 * src);
+  }
+  return max(dst, 2.0 * src - 1.0);
+}
+
+fn channel_hard_mix(dst: f32, src: f32) -> f32 {
+  return select(0.0, 1.0, channel_vivid_light(dst, src) >= 0.5);
+}
+
+fn channel_divide(dst: f32, src: f32) -> f32 {
+  if (src <= 0.0001) {
+    return 1.0;
+  }
+  return clamp(dst / src, 0.0, 1.0);
+}
+
+fn hash_noise_01(x: u32, y: u32) -> f32 {
+  let n = x * 1973u + y * 9277u + 89173u;
+  let m = (n << 13u) ^ n;
+  let t = m * (m * m * 15731u + 789221u) + 1376312589u;
+  return f32(t & 0x00ffffffu) / 16777215.0;
 }
 
 fn rgb_to_hsl(color: vec3<f32>) -> vec3<f32> {
@@ -142,69 +188,137 @@ fn set_lum(color: vec3<f32>, l: f32) -> vec3<f32> {
 
 fn blend_rgb(mode: u32, dst: vec3<f32>, src: vec3<f32>) -> vec3<f32> {
   switch mode {
-    case 1u: {
-      return dst * src;
-    }
     case 2u: {
-      return 1.0 - (1.0 - dst) * (1.0 - src);
-    }
-    case 3u: {
-      let low = 2.0 * dst * src;
-      let high = 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
-      return select(low, high, dst >= vec3<f32>(0.5));
-    }
-    case 4u: {
       return min(dst, src);
     }
-    case 5u: {
-      return max(dst, src);
+    case 3u: {
+      return dst * src;
     }
-    case 6u: {
-      return vec3<f32>(
-        channel_color_dodge(dst.r, src.r),
-        channel_color_dodge(dst.g, src.g),
-        channel_color_dodge(dst.b, src.b)
-      );
-    }
-    case 7u: {
+    case 4u: {
       return vec3<f32>(
         channel_color_burn(dst.r, src.r),
         channel_color_burn(dst.g, src.g),
         channel_color_burn(dst.b, src.b)
       );
     }
+    case 5u: {
+      return vec3<f32>(
+        channel_linear_burn(dst.r, src.r),
+        channel_linear_burn(dst.g, src.g),
+        channel_linear_burn(dst.b, src.b)
+      );
+    }
+    case 6u: {
+      let dst_sum = dst.r + dst.g + dst.b;
+      let src_sum = src.r + src.g + src.b;
+      if (src_sum < dst_sum) {
+        return src;
+      }
+      return dst;
+    }
+    case 7u: {
+      return max(dst, src);
+    }
     case 8u: {
-      let low = 2.0 * dst * src;
-      let high = 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
-      return select(low, high, src >= vec3<f32>(0.5));
+      return 1.0 - (1.0 - dst) * (1.0 - src);
     }
     case 9u: {
+      return vec3<f32>(
+        channel_color_dodge(dst.r, src.r),
+        channel_color_dodge(dst.g, src.g),
+        channel_color_dodge(dst.b, src.b)
+      );
+    }
+    case 10u: {
+      return vec3<f32>(
+        channel_linear_dodge(dst.r, src.r),
+        channel_linear_dodge(dst.g, src.g),
+        channel_linear_dodge(dst.b, src.b)
+      );
+    }
+    case 11u: {
+      let dst_sum = dst.r + dst.g + dst.b;
+      let src_sum = src.r + src.g + src.b;
+      if (src_sum > dst_sum) {
+        return src;
+      }
+      return dst;
+    }
+    case 12u: {
+      let low = 2.0 * dst * src;
+      let high = 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
+      return select(low, high, dst >= vec3<f32>(0.5));
+    }
+    case 13u: {
       return vec3<f32>(
         channel_soft_light(dst.r, src.r),
         channel_soft_light(dst.g, src.g),
         channel_soft_light(dst.b, src.b)
       );
     }
-    case 10u: {
+    case 14u: {
+      let low = 2.0 * dst * src;
+      let high = 1.0 - 2.0 * (1.0 - dst) * (1.0 - src);
+      return select(low, high, src >= vec3<f32>(0.5));
+    }
+    case 15u: {
+      return vec3<f32>(
+        channel_vivid_light(dst.r, src.r),
+        channel_vivid_light(dst.g, src.g),
+        channel_vivid_light(dst.b, src.b)
+      );
+    }
+    case 16u: {
+      return vec3<f32>(
+        channel_linear_light(dst.r, src.r),
+        channel_linear_light(dst.g, src.g),
+        channel_linear_light(dst.b, src.b)
+      );
+    }
+    case 17u: {
+      return vec3<f32>(
+        channel_pin_light(dst.r, src.r),
+        channel_pin_light(dst.g, src.g),
+        channel_pin_light(dst.b, src.b)
+      );
+    }
+    case 18u: {
+      return vec3<f32>(
+        channel_hard_mix(dst.r, src.r),
+        channel_hard_mix(dst.g, src.g),
+        channel_hard_mix(dst.b, src.b)
+      );
+    }
+    case 19u: {
       return abs(dst - src);
     }
-    case 11u: {
+    case 20u: {
       return dst + src - 2.0 * dst * src;
     }
-    case 12u: {
+    case 21u: {
+      return max(vec3<f32>(0.0), dst - src);
+    }
+    case 22u: {
+      return vec3<f32>(
+        channel_divide(dst.r, src.r),
+        channel_divide(dst.g, src.g),
+        channel_divide(dst.b, src.b)
+      );
+    }
+    case 23u: {
       let dst_hsl = rgb_to_hsl(dst);
       let src_hsl = rgb_to_hsl(src);
       return hsl_to_rgb(vec3<f32>(src_hsl.x, dst_hsl.y, dst_hsl.z));
     }
-    case 13u: {
+    case 24u: {
       let dst_hsl = rgb_to_hsl(dst);
       let src_hsl = rgb_to_hsl(src);
       return hsl_to_rgb(vec3<f32>(dst_hsl.x, src_hsl.y, dst_hsl.z));
     }
-    case 14u: {
+    case 25u: {
       return set_lum(src, lum(dst));
     }
-    case 15u: {
+    case 26u: {
       return set_lum(dst, lum(src));
     }
     default: {
@@ -224,7 +338,12 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   let dst = textureLoad(base_tex, local, 0);
   let src = textureLoad(src_tex, local, 0);
 
-  let src_alpha = clamp(src.a * uniforms.layer_opacity, 0.0, 1.0);
+  var src_alpha = clamp(src.a * uniforms.layer_opacity, 0.0, 1.0);
+  if (uniforms.blend_mode == 1u) {
+    let global_xy = uniforms.tile_origin + vec2<u32>(u32(local.x), u32(local.y));
+    let noise = hash_noise_01(global_xy.x, global_xy.y);
+    src_alpha = select(0.0, 1.0, noise < src_alpha);
+  }
   if (src_alpha <= 0.0001) {
     return dst;
   }
@@ -236,7 +355,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   }
 
   var blended_src = src.rgb;
-  if (uniforms.blend_mode != 0u && dst_alpha > uniforms.transparent_backdrop_eps) {
+  if (uniforms.blend_mode > 1u && dst_alpha > uniforms.transparent_backdrop_eps) {
     blended_src = blend_rgb(uniforms.blend_mode, dst.rgb, src.rgb);
   }
   // Porter-Duff source-over with blend mode:

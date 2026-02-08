@@ -8,17 +8,28 @@ import {
 
 const BLEND_MODES: BlendMode[] = [
   'normal',
-  'multiply',
-  'screen',
-  'overlay',
+  'dissolve',
   'darken',
-  'lighten',
-  'color-dodge',
+  'multiply',
   'color-burn',
-  'hard-light',
+  'linear-burn',
+  'darker-color',
+  'lighten',
+  'screen',
+  'color-dodge',
+  'linear-dodge',
+  'lighter-color',
+  'overlay',
   'soft-light',
+  'hard-light',
+  'vivid-light',
+  'linear-light',
+  'pin-light',
+  'hard-mix',
   'difference',
   'exclusion',
+  'subtract',
+  'divide',
   'hue',
   'saturation',
   'color',
@@ -26,7 +37,7 @@ const BLEND_MODES: BlendMode[] = [
 ];
 
 describe('layerBlendMath', () => {
-  it('blendRgb 支持全部 16 种模式并且结果在合法范围', () => {
+  it('blendRgb 支持全部 27 种模式并且结果在合法范围', () => {
     const dst: readonly [number, number, number] = [0.82, 0.17, 0.36];
     const src: readonly [number, number, number] = [0.24, 0.68, 0.91];
 
@@ -38,6 +49,25 @@ describe('layerBlendMath', () => {
         expect(c).toBeLessThanOrEqual(1);
       }
     }
+  });
+
+  it('dissolve 在同一像素坐标下应保持确定性', () => {
+    const args = {
+      blendMode: 'dissolve' as const,
+      dstRgb: [0.1, 0.2, 0.3] as const,
+      dstAlpha: 0.35,
+      srcRgb: [0.8, 0.4, 0.2] as const,
+      srcAlpha: 0.42,
+      pixelX: 128,
+      pixelY: 64,
+    };
+    const first = compositePixelWithTransparentFallback(args);
+    const second = compositePixelWithTransparentFallback(args);
+
+    expect(first.alpha).toBe(second.alpha);
+    expect(first.rgb[0]).toBe(second.rgb[0]);
+    expect(first.rgb[1]).toBe(second.rgb[1]);
+    expect(first.rgb[2]).toBe(second.rgb[2]);
   });
 
   it('当下方 alpha 为 0 时，非 normal 模式应回退为 normal', () => {

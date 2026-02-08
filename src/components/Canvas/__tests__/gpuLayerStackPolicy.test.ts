@@ -72,7 +72,9 @@ describe('gpuLayerStackPolicy', () => {
 
   it('exposes M3 blend whitelist', () => {
     expect(isGpuLayerBlendModeM3('normal')).toBe(true);
+    expect(isGpuLayerBlendModeM3('dissolve')).toBe(true);
     expect(isGpuLayerBlendModeM3('overlay')).toBe(true);
+    expect(isGpuLayerBlendModeM3('linear-light')).toBe(true);
     expect(isGpuLayerBlendModeM3('difference')).toBe(true);
     expect(isGpuLayerBlendModeM3('luminosity')).toBe(true);
   });

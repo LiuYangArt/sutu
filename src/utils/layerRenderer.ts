@@ -76,6 +76,9 @@ function compositeLayerWithBlend(args: {
   for (let i = 0; i < out.length; i += 4) {
     const srcAlpha = ((srcData[i + 3] ?? 0) / 255) * layerOpacity;
     if (srcAlpha <= 0) continue;
+    const pixelIndex = i >> 2;
+    const pixelX = targetRegion.x + (pixelIndex % targetRegion.width);
+    const pixelY = targetRegion.y + Math.floor(pixelIndex / targetRegion.width);
 
     const result = compositePixelWithTransparentFallback({
       blendMode,
@@ -83,6 +86,8 @@ function compositeLayerWithBlend(args: {
       dstAlpha: (out[i + 3] ?? 0) / 255,
       srcRgb: [(srcData[i] ?? 0) / 255, (srcData[i + 1] ?? 0) / 255, (srcData[i + 2] ?? 0) / 255],
       srcAlpha,
+      pixelX,
+      pixelY,
       transparentBackdropEps: TRANSPARENT_BACKDROP_EPS,
     });
 

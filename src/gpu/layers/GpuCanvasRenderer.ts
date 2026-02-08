@@ -97,7 +97,7 @@ interface TileSourceRef {
 const DEFAULT_DITHER_STRENGTH = 1.0;
 const UNIFORM_STRUCT_BYTES = 48;
 const INITIAL_UNIFORM_SLOTS = 1024;
-const LAYER_BLEND_UNIFORM_BYTES = 16;
+const LAYER_BLEND_UNIFORM_BYTES = 32;
 const INITIAL_LAYER_BLEND_UNIFORM_SLOTS = 1024;
 
 function createSolidMaskTexture1x1(device: GPUDevice, label: string, value: number): GPUTexture {
@@ -1214,6 +1214,10 @@ export class GpuCanvasRenderer {
     blendView.setFloat32(4, layerOpacity, true);
     blendView.setFloat32(8, TRANSPARENT_BACKDROP_EPS, true);
     blendView.setUint32(12, 0, true);
+    blendView.setUint32(16, tileRect.originX >>> 0, true);
+    blendView.setUint32(20, tileRect.originY >>> 0, true);
+    blendView.setUint32(24, 0, true);
+    blendView.setUint32(28, 0, true);
     this.device.queue.writeBuffer(this.layerBlendUniformBuffer, uniformOffset, blendData);
 
     const bindGroup = this.device.createBindGroup({
@@ -1260,36 +1264,58 @@ export class GpuCanvasRenderer {
     switch (blendMode) {
       case 'normal':
         return 0;
-      case 'multiply':
+      case 'dissolve':
         return 1;
-      case 'screen':
-        return 2;
-      case 'overlay':
-        return 3;
       case 'darken':
-        return 4;
-      case 'lighten':
-        return 5;
-      case 'color-dodge':
-        return 6;
+        return 2;
+      case 'multiply':
+        return 3;
       case 'color-burn':
+        return 4;
+      case 'linear-burn':
+        return 5;
+      case 'darker-color':
+        return 6;
+      case 'lighten':
         return 7;
-      case 'hard-light':
+      case 'screen':
         return 8;
-      case 'soft-light':
+      case 'color-dodge':
         return 9;
-      case 'difference':
+      case 'linear-dodge':
         return 10;
-      case 'exclusion':
+      case 'lighter-color':
         return 11;
-      case 'hue':
+      case 'overlay':
         return 12;
-      case 'saturation':
+      case 'soft-light':
         return 13;
-      case 'color':
+      case 'hard-light':
         return 14;
-      case 'luminosity':
+      case 'vivid-light':
         return 15;
+      case 'linear-light':
+        return 16;
+      case 'pin-light':
+        return 17;
+      case 'hard-mix':
+        return 18;
+      case 'difference':
+        return 19;
+      case 'exclusion':
+        return 20;
+      case 'subtract':
+        return 21;
+      case 'divide':
+        return 22;
+      case 'hue':
+        return 23;
+      case 'saturation':
+        return 24;
+      case 'color':
+        return 25;
+      case 'luminosity':
+        return 26;
       default:
         return 0;
     }
