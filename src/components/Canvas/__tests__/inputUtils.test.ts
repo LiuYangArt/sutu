@@ -55,6 +55,18 @@ describe('inputUtils.getEffectiveInputData', () => {
     expect(result.rotation).toBe(0);
   });
 
+  it('coalesced 样本缺少 tilt/twist 时回退主 PointerEvent 姿态', () => {
+    const sampled = createPointerEvent({ pressure: 0.55, tiltX: 0, tiltY: 0, twist: 0 });
+    const fallback = createPointerEvent({ pressure: 0.8, tiltX: 36, tiltY: -18, twist: 123 });
+    const result = getEffectiveInputData(sampled, false, [], null, fallback);
+    expect(result).toEqual({
+      pressure: 0.55,
+      tiltX: 36 / 90,
+      tiltY: -18 / 90,
+      rotation: 123,
+    });
+  });
+
   it('WinTab 优先使用 buffered 点', () => {
     const evt = createPointerEvent({ pressure: 0.8, tiltX: 5, tiltY: 5, twist: 30 });
     const buffered = [createRawPoint({ pressure: 0.33, tilt_x: 21, tilt_y: -12 })];

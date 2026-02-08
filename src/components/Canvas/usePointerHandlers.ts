@@ -263,7 +263,8 @@ export function usePointerHandlers({
           pe,
           shouldUseWinTab,
           bufferedPoints,
-          tabletState.currentPoint
+          tabletState.currentPoint,
+          pe
         );
         tiltX = effectiveInput.tiltX;
         tiltY = effectiveInput.tiltY;
@@ -524,7 +525,8 @@ export function usePointerHandlers({
           evt,
           shouldUseWinTab,
           bufferedPoints,
-          tabletState.currentPoint
+          tabletState.currentPoint,
+          nativeEvent
         );
 
         const idx = pointIndexRef.current++;

@@ -51,6 +51,30 @@ function getRotationFromPointerEvent(evt: PointerEvent): number {
   return ((twist! % 360) + 360) % 360;
 }
 
+function resolvePointerOrientation(
+  evt: PointerEvent,
+  fallbackEvent?: PointerEvent
+): { tiltX: number; tiltY: number; rotation: number } {
+  const primaryTilt = getNormalizedTiltFromPointerEvent(evt);
+  const primaryRotation = getRotationFromPointerEvent(evt);
+  const hasPrimaryTilt = Math.abs(primaryTilt.tiltX) > 1e-5 || Math.abs(primaryTilt.tiltY) > 1e-5;
+  const hasPrimaryRotation = Math.abs(primaryRotation) > 1e-5;
+
+  if (!fallbackEvent || (hasPrimaryTilt && hasPrimaryRotation)) {
+    return { tiltX: primaryTilt.tiltX, tiltY: primaryTilt.tiltY, rotation: primaryRotation };
+  }
+
+  const fallbackTilt = getNormalizedTiltFromPointerEvent(fallbackEvent);
+  const fallbackRotation = getRotationFromPointerEvent(fallbackEvent);
+  const resolvedTilt = hasPrimaryTilt ? primaryTilt : fallbackTilt;
+  const resolvedRotation = hasPrimaryRotation ? primaryRotation : fallbackRotation;
+  return {
+    tiltX: resolvedTilt.tiltX,
+    tiltY: resolvedTilt.tiltY,
+    rotation: resolvedRotation,
+  };
+}
+
 /**
  * Resolves pressure and tilt data, preferring WinTab buffer if active.
  * Respects pressure=0 from backend smoothing.
@@ -59,17 +83,17 @@ export function getEffectiveInputData(
   evt: PointerEvent,
   isWinTabActive: boolean,
   bufferedPoints: RawInputPoint[],
-  currentPoint: RawInputPoint | null
+  currentPoint: RawInputPoint | null,
+  fallbackEvent?: PointerEvent
 ): { pressure: number; tiltX: number; tiltY: number; rotation: number } {
-  const pointerTilt = getNormalizedTiltFromPointerEvent(evt);
-  const pointerRotation = getRotationFromPointerEvent(evt);
+  const pointerOrientation = resolvePointerOrientation(evt, fallbackEvent);
 
   if (!isWinTabActive) {
     return {
       pressure: evt.pressure,
-      tiltX: pointerTilt.tiltX,
-      tiltY: pointerTilt.tiltY,
-      rotation: pointerRotation,
+      tiltX: pointerOrientation.tiltX,
+      tiltY: pointerOrientation.tiltY,
+      rotation: pointerOrientation.rotation,
     };
   }
 
@@ -82,7 +106,7 @@ export function getEffectiveInputData(
       pressure: pt.pressure,
       tiltX: normalizeTiltComponent(pt.tilt_x),
       tiltY: normalizeTiltComponent(pt.tilt_y),
-      rotation: pointerRotation,
+      rotation: pointerOrientation.rotation,
     };
   }
 
@@ -92,7 +116,7 @@ export function getEffectiveInputData(
       pressure: currentPoint.pressure,
       tiltX: normalizeTiltComponent(currentPoint.tilt_x),
       tiltY: normalizeTiltComponent(currentPoint.tilt_y),
-      rotation: pointerRotation,
+      rotation: pointerOrientation.rotation,
     };
   }
 
@@ -101,8 +125,8 @@ export function getEffectiveInputData(
     // Mouse/touch often report pressure=0; use 0.5 as a reasonable default.
     // In WinTab mode, treat pen pressure as unknown (0) when we can't match tablet samples.
     pressure: getWinTabPressureFallback(evt),
-    tiltX: pointerTilt.tiltX,
-    tiltY: pointerTilt.tiltY,
-    rotation: pointerRotation,
+    tiltX: pointerOrientation.tiltX,
+    tiltY: pointerOrientation.tiltY,
+    rotation: pointerOrientation.rotation,
   };
 }

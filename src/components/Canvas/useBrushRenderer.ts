@@ -378,18 +378,24 @@ export function useBrushRenderer({
       const tiltX = dynamics?.tiltX ?? 0;
       const tiltY = dynamics?.tiltY ?? 0;
       const rotation = dynamics?.rotation ?? 0;
+      const hasShapeSizeControl =
+        config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off';
 
       // Store stroke-level opacity (applied at endStroke/compositeToLayer)
       const strokeOpacity = Math.max(0, Math.min(1, config.opacity));
       strokeOpacityRef.current = strokeOpacity;
       const hasStrokeOpacity = strokeOpacity > 1e-6;
 
-      // Calculate base size (pressure toggle)
-      const size = config.pressureSizeEnabled ? config.size * adjustedPressure : config.size;
+      // Legacy pressure-size toggle only applies when Shape Dynamics size control is not active.
+      // This avoids control source being multiplied twice (e.g. penPressure^2).
+      const size =
+        !hasShapeSizeControl && config.pressureSizeEnabled
+          ? config.size * adjustedPressure
+          : config.size;
 
       // Shape Dynamics size control should affect spacing (jitter does not)
       let spacingSize = size;
-      if (config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off') {
+      if (hasShapeSizeControl) {
         const spacingInput: DynamicsInput = {
           pressure: adjustedPressure,
           tiltX,
@@ -520,7 +526,10 @@ export function useBrushRenderer({
         lastDabPosRef.current = { x: dab.x, y: dab.y };
 
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
-        let dabSize = config.pressureSizeEnabled ? config.size * dabPressure : config.size;
+        let dabSize =
+          !hasShapeSizeControl && config.pressureSizeEnabled
+            ? config.size * dabPressure
+            : config.size;
 
         // Shape Dynamics: Calculate direction and apply dynamics
         let dabRoundness = config.roundness / 100;

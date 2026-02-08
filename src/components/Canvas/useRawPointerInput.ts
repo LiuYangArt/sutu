@@ -110,7 +110,8 @@ export function useRawPointerInput({
           evt,
           shouldUseWinTab,
           bufferedPoints,
-          tabletState.currentPoint
+          tabletState.currentPoint,
+          pe
         );
 
         const idx = pointIndexRef.current++;
