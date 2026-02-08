@@ -397,17 +397,25 @@ function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let disposed = false;
 
     const registerCloseGuard = async () => {
-      if (!isTauri()) return;
+      const tauriReady = await waitForTauri();
+      if (!tauriReady || disposed) return;
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        if (disposed) return;
         const appWindow = getCurrentWindow();
-        unlisten = await appWindow.onCloseRequested(async (event) => {
+        const teardown = await appWindow.onCloseRequested(async (event) => {
           if (appExitInProgressRef.current) return;
           event.preventDefault();
           await requestAppExit();
         });
+        if (disposed) {
+          teardown();
+          return;
+        }
+        unlisten = teardown;
       } catch (error) {
         console.warn('[App] Failed to register close guard', error);
       }
@@ -415,6 +423,7 @@ function App() {
 
     void registerCloseGuard();
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
   }, [requestAppExit]);
