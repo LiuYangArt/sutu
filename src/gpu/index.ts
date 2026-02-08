@@ -51,10 +51,6 @@ export { runM0Baseline } from './benchmarks/m0Baseline';
 export { runFormatCompare } from './benchmarks/formatCompare';
 export { runTileSizeCompare } from './benchmarks/tileSizeCompare';
 
-// Pipeline
-export { BrushPipeline } from './pipeline/BrushPipeline';
-export { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
-
 // Layers
 export { GpuCanvasRenderer } from './layers/GpuCanvasRenderer';
 export { GpuLayerStore } from './layers/GpuLayerStore';

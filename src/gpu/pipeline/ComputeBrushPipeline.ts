@@ -93,8 +93,8 @@ export class ComputeBrushPipeline {
   private canvasWidth: number = 0;
   private canvasHeight: number = 0;
 
-  // Cached color blend mode
-  private colorBlendMode: number = 0; // 0 = sRGB, 1 = linear
+  // Cached color blend mode (fixed default: linear)
+  private colorBlendMode: number = 1; // 0 = sRGB, 1 = linear
 
   constructor(device: GPUDevice) {
     this.device = device;

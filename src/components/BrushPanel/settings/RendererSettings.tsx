@@ -1,18 +1,8 @@
-import {
-  useSettingsStore,
-  RenderMode,
-  ColorBlendMode,
-  GPURenderScaleMode,
-} from '@/stores/settings';
+import { useSettingsStore, RenderMode, GPURenderScaleMode } from '@/stores/settings';
 
 const RENDER_MODES: { id: RenderMode; label: string; description: string }[] = [
   { id: 'gpu', label: 'GPU', description: 'WebGPU accelerated' },
   { id: 'cpu', label: 'CPU', description: 'Canvas 2D fallback' },
-];
-
-const COLOR_BLEND_MODES: { id: ColorBlendMode; label: string; description: string }[] = [
-  { id: 'srgb', label: 'sRGB', description: 'Match CPU rendering exactly' },
-  { id: 'linear', label: 'Linear', description: 'Smoother gradients (default)' },
 ];
 
 const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; description: string }[] = [
@@ -25,21 +15,14 @@ const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; descripti
 ];
 
 export function RendererSettings(): JSX.Element {
-  const {
-    renderMode,
-    colorBlendMode,
-    gpuRenderScaleMode,
-    setRenderMode,
-    setColorBlendMode,
-    setGpuRenderScaleMode,
-  } = useSettingsStore((s) => ({
-    renderMode: s.brush.renderMode,
-    colorBlendMode: s.brush.colorBlendMode,
-    gpuRenderScaleMode: s.brush.gpuRenderScaleMode,
-    setRenderMode: s.setRenderMode,
-    setColorBlendMode: s.setColorBlendMode,
-    setGpuRenderScaleMode: s.setGpuRenderScaleMode,
-  }));
+  const { renderMode, gpuRenderScaleMode, setRenderMode, setGpuRenderScaleMode } = useSettingsStore(
+    (s) => ({
+      renderMode: s.brush.renderMode,
+      gpuRenderScaleMode: s.brush.gpuRenderScaleMode,
+      setRenderMode: s.setRenderMode,
+      setGpuRenderScaleMode: s.setGpuRenderScaleMode,
+    })
+  );
 
   return (
     <div className="brush-panel-section">
@@ -59,24 +42,6 @@ export function RendererSettings(): JSX.Element {
           ))}
         </select>
       </div>
-
-      {renderMode === 'gpu' && (
-        <div className="brush-setting-row">
-          <span className="brush-setting-label">Blending</span>
-          <select
-            value={colorBlendMode}
-            onChange={(e) => setColorBlendMode(e.target.value as ColorBlendMode)}
-            className="brush-select"
-            title={COLOR_BLEND_MODES.find((m) => m.id === colorBlendMode)?.description}
-          >
-            {COLOR_BLEND_MODES.map((mode) => (
-              <option key={mode.id} value={mode.id} title={mode.description}>
-                {mode.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {renderMode === 'gpu' && (
         <div className="brush-setting-row">

@@ -9,7 +9,6 @@ import {
   PanelBgColorId,
   CanvasBgColorId,
   RenderMode,
-  ColorBlendMode,
   GPURenderScaleMode,
 } from '@/stores/settings';
 import { useTabletStore, BackendType } from '@/stores/tablet';
@@ -609,11 +608,6 @@ const RENDER_MODES: { id: RenderMode; label: string; description: string }[] = [
   { id: 'cpu', label: 'CPU', description: 'Canvas 2D fallback' },
 ];
 
-const COLOR_BLEND_MODES: { id: ColorBlendMode; label: string; description: string }[] = [
-  { id: 'srgb', label: 'sRGB', description: 'Match CPU rendering exactly' },
-  { id: 'linear', label: 'Linear', description: 'Smoother gradients (default)' },
-];
-
 const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; description: string }[] = [
   { id: 'off', label: 'Off', description: 'Always render at full resolution' },
   {
@@ -626,7 +620,6 @@ const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; descripti
 function BrushSettings() {
   const brush = useSettingsStore((s) => s.brush);
   const setRenderMode = useSettingsStore((s) => s.setRenderMode);
-  const setColorBlendMode = useSettingsStore((s) => s.setColorBlendMode);
   const setGpuRenderScaleMode = useSettingsStore((s) => s.setGpuRenderScaleMode);
 
   return (
@@ -655,22 +648,6 @@ function BrushSettings() {
 
         {brush.renderMode === 'gpu' && (
           <>
-            <div className="settings-row">
-              <span>Blending:</span>
-              <select
-                className="settings-select"
-                value={brush.colorBlendMode}
-                onChange={(e) => setColorBlendMode(e.target.value as ColorBlendMode)}
-                title={COLOR_BLEND_MODES.find((m) => m.id === brush.colorBlendMode)?.description}
-              >
-                {COLOR_BLEND_MODES.map((mode) => (
-                  <option key={mode.id} value={mode.id}>
-                    {mode.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             <div className="settings-row">
               <span>Downsample:</span>
               <select

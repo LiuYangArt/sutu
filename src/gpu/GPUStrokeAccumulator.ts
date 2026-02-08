@@ -13,13 +13,11 @@
 
 import type { Rect } from '@/utils/strokeBuffer';
 import type { GPUDabParams, DabInstanceData, TextureDabInstanceData } from './types';
-import { DAB_INSTANCE_SIZE, TEXTURE_DAB_INSTANCE_SIZE, calculateEffectiveRadius } from './types';
+import { calculateEffectiveRadius } from './types';
 import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
 import { TextureInstanceBuffer } from './resources/TextureInstanceBuffer';
-import { BrushPipeline } from './pipeline/BrushPipeline';
 import { useSelectionStore } from '@/stores/selection';
-import { TextureBrushPipeline } from './pipeline/TextureBrushPipeline';
 import { ComputeBrushPipeline } from './pipeline/ComputeBrushPipeline';
 import { ComputeTextureBrushPipeline } from './pipeline/ComputeTextureBrushPipeline';
 import { ComputeWetEdgePipeline } from './pipeline/ComputeWetEdgePipeline';
@@ -91,18 +89,14 @@ export class GPUStrokeAccumulator {
   private device: GPUDevice;
   private pingPongBuffer: PingPongBuffer;
   private instanceBuffer: InstanceBuffer;
-  private brushPipeline: BrushPipeline;
   private computeBrushPipeline: ComputeBrushPipeline;
-  private useComputeShader: boolean = true; // Re-enabled with full copy fix
   private profiler: GPUProfiler;
 
   // Texture brush resources (separate from parametric brush)
   private textureInstanceBuffer: TextureInstanceBuffer;
-  private textureBrushPipeline: TextureBrushPipeline;
   private computeTextureBrushPipeline: ComputeTextureBrushPipeline;
   private textureAtlas: TextureAtlas;
   private patternCache: GPUPatternCache;
-  private useTextureComputeShader: boolean = true; // Enable compute shader for texture brush
 
   // Dual brush resources (secondary mask + stroke-level blend)
   private secondaryInstanceBuffer: InstanceBuffer;
@@ -220,16 +214,12 @@ export class GPUStrokeAccumulator {
     // Initialize GPU resources
     this.pingPongBuffer = new PingPongBuffer(device, width, height);
     this.instanceBuffer = new InstanceBuffer(device);
-    this.brushPipeline = new BrushPipeline(device);
-    this.brushPipeline.updateCanvasSize(width, height);
     this.computeBrushPipeline = new ComputeBrushPipeline(device);
     this.computeBrushPipeline.updateCanvasSize(width, height);
     this.profiler = new GPUProfiler();
 
     // Initialize texture brush resources
     this.textureInstanceBuffer = new TextureInstanceBuffer(device);
-    this.textureBrushPipeline = new TextureBrushPipeline(device);
-    this.textureBrushPipeline.updateCanvasSize(width, height);
     this.computeTextureBrushPipeline = new ComputeTextureBrushPipeline(device);
     this.computeTextureBrushPipeline.updateCanvasSize(width, height);
     this.textureAtlas = new TextureAtlas(device);
@@ -706,15 +696,7 @@ export class GPUStrokeAccumulator {
 
     // Resize with current render scale
     this.pingPongBuffer.resize(width, height, this.currentRenderScale);
-    this.brushPipeline.updateCanvasSize(
-      this.pingPongBuffer.textureWidth,
-      this.pingPongBuffer.textureHeight
-    );
     this.computeBrushPipeline.updateCanvasSize(
-      this.pingPongBuffer.textureWidth,
-      this.pingPongBuffer.textureHeight
-    );
-    this.textureBrushPipeline.updateCanvasSize(
       this.pingPongBuffer.textureWidth,
       this.pingPongBuffer.textureHeight
     );
@@ -815,9 +797,7 @@ export class GPUStrokeAccumulator {
   private syncColorBlendMode(): void {
     const mode = useSettingsStore.getState().brush.colorBlendMode;
     if (mode !== this.cachedColorBlendMode) {
-      this.brushPipeline.updateColorBlendMode(mode);
       this.computeBrushPipeline.updateColorBlendMode(mode);
-      this.textureBrushPipeline.updateColorBlendMode(mode);
       this.computeTextureBrushPipeline.updateColorBlendMode(mode);
       this.cachedColorBlendMode = mode;
     }
@@ -839,15 +819,7 @@ export class GPUStrokeAccumulator {
       this.currentRenderScale = targetScale;
 
       this.pingPongBuffer.setRenderScale(targetScale);
-      this.brushPipeline.updateCanvasSize(
-        this.pingPongBuffer.textureWidth,
-        this.pingPongBuffer.textureHeight
-      );
       this.computeBrushPipeline.updateCanvasSize(
-        this.pingPongBuffer.textureWidth,
-        this.pingPongBuffer.textureHeight
-      );
-      this.textureBrushPipeline.updateCanvasSize(
         this.pingPongBuffer.textureWidth,
         this.pingPongBuffer.textureHeight
       );
@@ -1722,7 +1694,7 @@ export class GPUStrokeAccumulator {
 
   /**
    * Flush pending dabs to GPU using Compute Shader (optimized path)
-   * or per-dab Render Pipeline (fallback path).
+   * Compute 失败时直接请求 CPU fallback。
    */
   private flushBatch(deferPost: boolean = false): boolean {
     if (this.instanceBuffer.count === 0) {
@@ -1738,175 +1710,69 @@ export class GPUStrokeAccumulator {
     this.lastPrimaryBatchLabel = 'primary-batch';
 
     // Flush uploads to GPU and resets the pending/bbox counters
-    const { buffer: gpuBatchBuffer } = this.instanceBuffer.flush();
+    this.instanceBuffer.flush();
 
     const encoder = this.device.createCommandEncoder({
       label: 'Brush Batch Encoder',
     });
 
-    // Try compute shader path first
-    if (this.useComputeShader) {
-      // Compute shader: batch all dabs in single dispatch
-      // IMPORTANT: Copy source → dest for the accumulated dirty region before dispatch.
-      // This preserves results from previous flushes without paying full-canvas bandwidth.
-      const dr = this.dirtyRect;
-      const pad = 4;
-      const copyLeft = Math.floor(Math.max(0, dr.left - pad));
-      const copyTop = Math.floor(Math.max(0, dr.top - pad));
-      const copyRight = Math.ceil(Math.min(this.width, dr.right + pad));
-      const copyBottom = Math.ceil(Math.min(this.height, dr.bottom + pad));
-      const copyW = copyRight - copyLeft;
-      const copyH = copyBottom - copyTop;
-      if (copyW > 0 && copyH > 0) {
-        this.pingPongBuffer.copyRect(encoder, copyLeft, copyTop, copyW, copyH);
-      }
-
-      // Single dispatch for all dabs
-      const success = this.computeBrushPipeline.dispatch(
-        encoder,
-        this.pingPongBuffer.source,
-        this.pingPongBuffer.dest,
-        dabs,
-        this.patternCache.getTexture(),
-        this.currentPatternSettings,
-        this.noiseTexture,
-        this.currentNoiseEnabled,
-        1.0
-      );
-
-      if (success) {
-        // Swap so next flushBatch reads from the updated texture
-        this.pingPongBuffer.swap();
-
-        if (!deferPost) {
-          // Apply wet edge post-processing if enabled
-          // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
-          // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
-          if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
-            const wetDebug = this.beginWetEdgeDebug('primary');
-            this.wetEdgePipeline.dispatch(
-              encoder,
-              this.pingPongBuffer.source, // Raw buffer (input, read-only)
-              this.pingPongBuffer.display, // Display buffer (output)
-              this.dirtyRect,
-              this.wetEdgeHardness,
-              this.wetEdgeStrength,
-              this.currentRenderScale
-            );
-            this.endWetEdgeDebug('primary', wetDebug.start, wetDebug.label);
-            // Note: No swap here - display buffer is separate from ping-pong
-          }
-        } else {
-          this.dualPostPending = true;
-        }
-
-        void this.profiler.resolveTimestamps(encoder);
-        this.submitEncoder(encoder, 'Brush Batch Encoder');
-
-        const cpuTime = this.cpuTimer.stop();
-        this.profiler.recordFrame({
-          dabCount: dabs.length,
-          cpuTimeMs: cpuTime,
-        });
-
-        if (!deferPost) {
-          this.requestPreviewUpdate(this.lastPrimaryBatchRect);
-        } else {
-          this.addPendingPreviewRect(this.lastPrimaryBatchRect);
-        }
-        return true;
-      }
-
-      // Compute shader failed, fall through to render pipeline
-      console.warn('[GPUStrokeAccumulator] Compute shader failed, falling back to render pipeline');
-      if (this.dualBrushEnabled || this.dualMaskActive) {
-        this.requestCpuFallback('GPU compute unavailable for dual brush (primary)');
-        return false;
-      }
+    // Compute shader: batch all dabs in single dispatch
+    // IMPORTANT: Copy source -> dest for the accumulated dirty region before dispatch.
+    // This preserves results from previous flushes without paying full-canvas bandwidth.
+    const dr = this.dirtyRect;
+    const pad = 4;
+    const copyLeft = Math.floor(Math.max(0, dr.left - pad));
+    const copyTop = Math.floor(Math.max(0, dr.top - pad));
+    const copyRight = Math.ceil(Math.min(this.width, dr.right + pad));
+    const copyBottom = Math.ceil(Math.min(this.height, dr.bottom + pad));
+    const copyW = copyRight - copyLeft;
+    const copyH = copyBottom - copyTop;
+    if (copyW > 0 && copyH > 0) {
+      this.pingPongBuffer.copyRect(encoder, copyLeft, copyTop, copyW, copyH);
     }
 
-    if (!this.useComputeShader && (this.dualBrushEnabled || this.dualMaskActive)) {
-      this.requestCpuFallback('GPU compute disabled for dual brush (primary)');
+    // Single dispatch for all dabs
+    const success = this.computeBrushPipeline.dispatch(
+      encoder,
+      this.pingPongBuffer.source,
+      this.pingPongBuffer.dest,
+      dabs,
+      this.patternCache.getTexture(),
+      this.currentPatternSettings,
+      this.noiseTexture,
+      this.currentNoiseEnabled,
+      1.0
+    );
+
+    if (!success) {
+      console.warn('[GPUStrokeAccumulator] Compute shader failed, requesting CPU fallback');
+      this.requestCpuFallback('GPU compute unavailable (primary)');
       return false;
     }
 
-    // Fallback: per-dab render pipeline
-    this.flushBatchLegacy(dabs, gpuBatchBuffer, bbox, encoder);
-    return true;
-  }
+    // Swap so next flushBatch reads from the updated texture
+    this.pingPongBuffer.swap();
 
-  /**
-   * Legacy per-dab render pipeline (fallback when compute shader unavailable)
-   */
-  private flushBatchLegacy(
-    dabs: DabInstanceData[],
-    gpuBatchBuffer: GPUBuffer,
-    bbox: { x: number; y: number; width: number; height: number },
-    encoder: GPUCommandEncoder
-  ): void {
-    // Setup scissor
-    const scissor = this.computeScissorRect(bbox);
-
-    // Render loop
-    let prevDabRect: { x: number; y: number; w: number; h: number } | null = null;
-
-    for (let i = 0; i < dabs.length; i++) {
-      const dab = dabs[i]!;
-      const dabRect = this.computeDabBounds(dab);
-
-      // Partial Copy Logic: Sync Dest with Source
-      if (i === 0) {
-        // First dab: copy accumulated dirty rect
-        // IMPORTANT: dirtyRect is in logical coordinates, need to scale to texture space
-        const dr = this.dirtyRect;
-        const scale = this.currentRenderScale;
-        const copyX = Math.floor(dr.left * scale);
-        const copyY = Math.floor(dr.top * scale);
-        const copyW = Math.ceil((dr.right - dr.left) * scale);
-        const copyH = Math.ceil((dr.bottom - dr.top) * scale);
-        if (copyW > 0 && copyH > 0) {
-          this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
-        }
-      } else if (prevDabRect) {
-        // Subsequent dabs: copy previous dab's bounds
-        this.pingPongBuffer.copyRect(
+    if (!deferPost) {
+      // Apply wet edge post-processing if enabled
+      // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
+      // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
+      if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+        const wetDebug = this.beginWetEdgeDebug('primary');
+        this.wetEdgePipeline.dispatch(
           encoder,
-          prevDabRect.x,
-          prevDabRect.y,
-          prevDabRect.w,
-          prevDabRect.h
+          this.pingPongBuffer.source, // Raw buffer (input, read-only)
+          this.pingPongBuffer.display, // Display buffer (output)
+          this.dirtyRect,
+          this.wetEdgeHardness,
+          this.wetEdgeStrength,
+          this.currentRenderScale
         );
+        this.endWetEdgeDebug('primary', wetDebug.start, wetDebug.label);
+        // Note: No swap here - display buffer is separate from ping-pong
       }
-
-      // Render Pass
-      const pass = encoder.beginRenderPass({
-        label: `Dab Pass ${i}`,
-        colorAttachments: [
-          {
-            view: this.pingPongBuffer.dest.createView(),
-            loadOp: 'load',
-            storeOp: 'store',
-          },
-        ],
-        // Only timestamp first pass
-        timestampWrites: i === 0 ? this.profiler.getTimestampWrites() : undefined,
-      });
-
-      if (scissor) {
-        pass.setScissorRect(scissor.x, scissor.y, scissor.w, scissor.h);
-      }
-
-      pass.setPipeline(this.brushPipeline.renderPipeline);
-      pass.setBindGroup(0, this.brushPipeline.createBindGroup(this.pingPongBuffer.source));
-
-      // Use offset into the single large batch buffer
-      const offset = i * DAB_INSTANCE_SIZE;
-      pass.setVertexBuffer(0, gpuBatchBuffer, offset, DAB_INSTANCE_SIZE);
-      pass.draw(6, 1);
-      pass.end();
-
-      this.pingPongBuffer.swap();
-      prevDabRect = dabRect;
+    } else {
+      this.dualPostPending = true;
     }
 
     void this.profiler.resolveTimestamps(encoder);
@@ -1918,12 +1784,17 @@ export class GPUStrokeAccumulator {
       cpuTimeMs: cpuTime,
     });
 
-    this.requestPreviewUpdate(this.lastPrimaryBatchRect);
+    if (!deferPost) {
+      this.requestPreviewUpdate(this.lastPrimaryBatchRect);
+    } else {
+      this.addPendingPreviewRect(this.lastPrimaryBatchRect);
+    }
+    return true;
   }
 
   /**
    * Flush pending texture dabs to GPU using Compute Shader (optimized path)
-   * or per-dab Render Pipeline (fallback path).
+   * Compute 失败时直接请求 CPU fallback。
    */
   private flushTextureBatch(deferPost: boolean = false): boolean {
     if (this.textureInstanceBuffer.count === 0) return false;
@@ -1939,7 +1810,6 @@ export class GPUStrokeAccumulator {
 
     // 1. Get data and upload to GPU
     const dabs = this.textureInstanceBuffer.getDabsData();
-    const bbox = this.textureInstanceBuffer.getBoundingBox();
     const textureBbox = this.computeTextureDabsBoundingBox(
       dabs,
       this.pingPongBuffer.textureWidth,
@@ -1947,172 +1817,65 @@ export class GPUStrokeAccumulator {
     );
     this.lastPrimaryBatchRect = this.rectFromBbox(textureBbox, this.currentRenderScale);
     this.lastPrimaryBatchLabel = 'primary-texture-batch';
-    const { buffer: gpuBatchBuffer } = this.textureInstanceBuffer.flush();
+    this.textureInstanceBuffer.flush();
 
     const encoder = this.device.createCommandEncoder({
       label: 'Texture Brush Batch Encoder',
     });
 
-    // Try compute shader path first
-    if (this.useTextureComputeShader) {
-      const dr = this.dirtyRect;
+    const dr = this.dirtyRect;
 
-      // Copy source to dest to preserve previous strokes
-      // NOTE: dirtyRect is in logical coordinates, copyRect will scale them
-      const copyW = dr.right - dr.left;
-      const copyH = dr.bottom - dr.top;
-      if (copyW > 0 && copyH > 0) {
-        this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
-      }
-
-      // Single dispatch for all dabs
-      const success = this.computeTextureBrushPipeline.dispatch(
-        encoder,
-        this.pingPongBuffer.source,
-        this.pingPongBuffer.dest,
-        currentTexture,
-        dabs,
-        this.patternCache.getTexture(),
-        this.currentPatternSettings,
-        this.noiseTexture,
-        this.currentNoiseEnabled,
-        1.0
-      );
-
-      if (success) {
-        // Swap so next flushBatch reads from the updated texture
-        this.pingPongBuffer.swap();
-
-        if (!deferPost) {
-          // Apply wet edge post-processing if enabled
-          // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
-          // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
-          if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
-            const wetDebug = this.beginWetEdgeDebug('primary-texture');
-            this.wetEdgePipeline.dispatch(
-              encoder,
-              this.pingPongBuffer.source, // Raw buffer (input, read-only)
-              this.pingPongBuffer.display, // Display buffer (output)
-              this.dirtyRect,
-              0.0, // Texture brushes: always treat as soft to enable full wet edge effect
-              this.wetEdgeStrength,
-              this.currentRenderScale
-            );
-            this.endWetEdgeDebug('primary-texture', wetDebug.start, wetDebug.label);
-            // Note: No swap here - display buffer is separate from ping-pong
-          }
-        } else {
-          this.dualPostPending = true;
-        }
-
-        void this.profiler.resolveTimestamps(encoder);
-        this.submitEncoder(encoder, 'Texture Brush Batch Encoder');
-
-        const cpuTime = this.cpuTimer.stop();
-        this.profiler.recordFrame({
-          dabCount: dabs.length,
-          cpuTimeMs: cpuTime,
-        });
-
-        if (!deferPost) {
-          this.requestPreviewUpdate(this.lastPrimaryBatchRect);
-        } else {
-          this.addPendingPreviewRect(this.lastPrimaryBatchRect);
-        }
-        return true;
-      }
-
-      // Compute shader failed, fall through to render pipeline
-      console.warn(
-        '[GPUStrokeAccumulator] Texture compute shader failed, falling back to render pipeline'
-      );
-      if (this.dualBrushEnabled || this.dualMaskActive) {
-        this.requestCpuFallback('GPU compute unavailable for dual brush (texture)');
-        return false;
-      }
+    // Copy source to dest to preserve previous strokes
+    // NOTE: dirtyRect is in logical coordinates, copyRect will scale them
+    const copyW = dr.right - dr.left;
+    const copyH = dr.bottom - dr.top;
+    if (copyW > 0 && copyH > 0) {
+      this.pingPongBuffer.copyRect(encoder, dr.left, dr.top, copyW, copyH);
     }
 
-    if (!this.useTextureComputeShader && (this.dualBrushEnabled || this.dualMaskActive)) {
-      this.requestCpuFallback('GPU compute disabled for dual brush (texture)');
+    // Single dispatch for all dabs
+    const success = this.computeTextureBrushPipeline.dispatch(
+      encoder,
+      this.pingPongBuffer.source,
+      this.pingPongBuffer.dest,
+      currentTexture,
+      dabs,
+      this.patternCache.getTexture(),
+      this.currentPatternSettings,
+      this.noiseTexture,
+      this.currentNoiseEnabled,
+      1.0
+    );
+
+    if (!success) {
+      console.warn('[GPUStrokeAccumulator] Texture compute shader failed, requesting CPU fallback');
+      this.requestCpuFallback('GPU compute unavailable (texture)');
       return false;
     }
 
-    // Fallback: per-dab render pipeline
-    this.flushTextureBatchLegacy(dabs, gpuBatchBuffer, bbox, encoder, currentTexture);
-    return true;
-  }
+    // Swap so next flushBatch reads from the updated texture
+    this.pingPongBuffer.swap();
 
-  /**
-   * Legacy per-dab render pipeline for texture brush (fallback when compute shader unavailable)
-   */
-  private flushTextureBatchLegacy(
-    dabs: TextureDabInstanceData[],
-    gpuBatchBuffer: GPUBuffer,
-    bbox: { x: number; y: number; width: number; height: number },
-    encoder: GPUCommandEncoder,
-    currentTexture: import('./resources/TextureAtlas').GPUBrushTexture
-  ): void {
-    // Setup scissor
-    const scissor = this.computeScissorRect(bbox);
-
-    // Render loop
-    let prevDabRect: { x: number; y: number; w: number; h: number } | null = null;
-
-    for (let i = 0; i < dabs.length; i++) {
-      const dab = dabs[i]!;
-      const dabRect = this.computeTextureDabBounds(dab);
-
-      // Partial Copy Logic: Sync Dest with Source
-      if (i === 0) {
-        const dr = this.dirtyRect;
-        const scale = this.currentRenderScale;
-        const copyX = Math.floor(dr.left * scale);
-        const copyY = Math.floor(dr.top * scale);
-        const copyW = Math.ceil((dr.right - dr.left) * scale);
-        const copyH = Math.ceil((dr.bottom - dr.top) * scale);
-        if (copyW > 0 && copyH > 0) {
-          this.pingPongBuffer.copyRect(encoder, copyX, copyY, copyW, copyH);
-        }
-      } else if (prevDabRect) {
-        this.pingPongBuffer.copyRect(
+    if (!deferPost) {
+      // Apply wet edge post-processing if enabled
+      // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
+      // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
+      if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+        const wetDebug = this.beginWetEdgeDebug('primary-texture');
+        this.wetEdgePipeline.dispatch(
           encoder,
-          prevDabRect.x,
-          prevDabRect.y,
-          prevDabRect.w,
-          prevDabRect.h
+          this.pingPongBuffer.source, // Raw buffer (input, read-only)
+          this.pingPongBuffer.display, // Display buffer (output)
+          this.dirtyRect,
+          0.0, // Texture brushes: always treat as soft to enable full wet edge effect
+          this.wetEdgeStrength,
+          this.currentRenderScale
         );
+        this.endWetEdgeDebug('primary-texture', wetDebug.start, wetDebug.label);
+        // Note: No swap here - display buffer is separate from ping-pong
       }
-
-      // Render Pass
-      const pass = encoder.beginRenderPass({
-        label: `Texture Dab Pass ${i}`,
-        colorAttachments: [
-          {
-            view: this.pingPongBuffer.dest.createView(),
-            loadOp: 'load',
-            storeOp: 'store',
-          },
-        ],
-        timestampWrites: i === 0 ? this.profiler.getTimestampWrites() : undefined,
-      });
-
-      if (scissor) {
-        pass.setScissorRect(scissor.x, scissor.y, scissor.w, scissor.h);
-      }
-
-      pass.setPipeline(this.textureBrushPipeline.renderPipeline);
-      pass.setBindGroup(
-        0,
-        this.textureBrushPipeline.createBindGroup(this.pingPongBuffer.source, currentTexture)
-      );
-
-      const offset = i * TEXTURE_DAB_INSTANCE_SIZE;
-      pass.setVertexBuffer(0, gpuBatchBuffer, offset, TEXTURE_DAB_INSTANCE_SIZE);
-      pass.draw(6, 1);
-      pass.end();
-
-      this.pingPongBuffer.swap();
-      prevDabRect = dabRect;
+    } else {
+      this.dualPostPending = true;
     }
 
     void this.profiler.resolveTimestamps(encoder);
@@ -2124,7 +1887,12 @@ export class GPUStrokeAccumulator {
       cpuTimeMs: cpuTime,
     });
 
-    this.requestPreviewUpdate(this.lastPrimaryBatchRect);
+    if (!deferPost) {
+      this.requestPreviewUpdate(this.lastPrimaryBatchRect);
+    } else {
+      this.addPendingPreviewRect(this.lastPrimaryBatchRect);
+    }
+    return true;
   }
 
   private flushSecondaryBatches(): boolean {
@@ -2132,12 +1900,6 @@ export class GPUStrokeAccumulator {
     const maxDabsPerDispatch = 128;
 
     if (this.secondaryInstanceBuffer.count > 0) {
-      if (!this.useComputeShader) {
-        this.requestCpuFallback('GPU compute disabled for dual brush (secondary)');
-        this.secondaryInstanceBuffer.clear();
-        return false;
-      }
-
       const allDabs = this.secondaryInstanceBuffer.getDabsData();
       const dualBbox = this.computeDabsBoundingBox(
         allDabs,
@@ -2206,12 +1968,6 @@ export class GPUStrokeAccumulator {
     }
 
     if (this.secondaryTextureInstanceBuffer.count > 0) {
-      if (!this.useTextureComputeShader) {
-        this.requestCpuFallback('GPU compute disabled for dual brush (secondary texture)');
-        this.secondaryTextureInstanceBuffer.clear();
-        return false;
-      }
-
       const currentTexture = this.dualTextureAtlas.getCurrentTexture();
       if (!currentTexture) {
         console.warn('[GPUStrokeAccumulator] No texture available for dual brush');
@@ -2366,62 +2122,6 @@ export class GPUStrokeAccumulator {
   private requestCpuFallback(reason: string): void {
     if (this.fallbackRequest) return;
     this.fallbackRequest = reason;
-  }
-
-  /**
-   * Calculate bounding box for a texture dab
-   */
-  private computeTextureDabBounds(dab: TextureDabInstanceData): {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } {
-    const margin = 2;
-    const halfSize = dab.size / 2 + margin;
-    return {
-      x: Math.floor(dab.x - halfSize),
-      y: Math.floor(dab.y - halfSize),
-      w: Math.ceil(halfSize * 2),
-      h: Math.ceil(halfSize * 2),
-    };
-  }
-
-  /**
-   * Calculate scissor rect for the batch (in texture coordinates)
-   */
-  private computeScissorRect(bbox: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  }): { x: number; y: number; w: number; h: number } | null {
-    if (bbox.width <= 0 || bbox.height <= 0) return null;
-
-    // bbox is already in texture coordinates (scaled by renderScale in stampDab)
-    const texW = this.pingPongBuffer.textureWidth;
-    const texH = this.pingPongBuffer.textureHeight;
-
-    const x = Math.max(0, Math.floor(bbox.x));
-    const y = Math.max(0, Math.floor(bbox.y));
-    const w = Math.min(texW - x, Math.ceil(bbox.width));
-    const h = Math.min(texH - y, Math.ceil(bbox.height));
-
-    return w > 0 && h > 0 ? { x, y, w, h } : null;
-  }
-
-  /**
-   * Calculate bounding box for a single dab (including AA margin)
-   */
-  private computeDabBounds(dab: DabInstanceData): { x: number; y: number; w: number; h: number } {
-    const margin = 2;
-    const dabRadius = calculateEffectiveRadius(dab.size, dab.hardness) + margin;
-    return {
-      x: Math.floor(dab.x - dabRadius),
-      y: Math.floor(dab.y - dabRadius),
-      w: Math.ceil(dabRadius * 2),
-      h: Math.ceil(dabRadius * 2),
-    };
   }
 
   /**
@@ -3061,10 +2761,8 @@ export class GPUStrokeAccumulator {
     }
     this.pingPongBuffer.destroy();
     this.instanceBuffer.destroy();
-    this.brushPipeline.destroy();
     this.computeBrushPipeline.destroy();
     this.textureInstanceBuffer.destroy();
-    this.textureBrushPipeline.destroy();
     this.computeTextureBrushPipeline.destroy();
     this.textureAtlas.destroy();
     this.secondaryInstanceBuffer.destroy();

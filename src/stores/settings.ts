@@ -388,9 +388,10 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
-    setColorBlendMode: (mode) => {
+    setColorBlendMode: (_mode) => {
       set((state) => {
-        state.brush.colorBlendMode = mode;
+        // Deprecated: GPU blending mode is now fixed to linear.
+        state.brush.colorBlendMode = 'linear';
       });
       debouncedSave(() => get()._saveSettings());
     },
@@ -465,7 +466,12 @@ export const useSettingsStore = create<SettingsState>()(
               state.tablet = { ...defaultSettings.tablet, ...loaded.tablet };
             }
             if (loaded.brush) {
-              state.brush = { ...defaultSettings.brush, ...loaded.brush };
+              state.brush = {
+                ...defaultSettings.brush,
+                ...loaded.brush,
+                // Deprecated: ignore persisted value, force linear blending.
+                colorBlendMode: 'linear',
+              };
             }
             state.newFile = mergeLoadedNewFileSettings(loaded.newFile);
             if (loaded.general) {

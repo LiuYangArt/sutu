@@ -85,6 +85,7 @@ describe('settings store newFile persistence', () => {
     expect(state.isLoaded).toBe(true);
     expect(state.newFile.customSizePresets).toEqual([]);
     expect(state.newFile.lastUsed).toEqual(DEFAULT_NEW_FILE_SETTINGS.lastUsed);
+    expect(state.brush.colorBlendMode).toBe('linear');
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
   });
