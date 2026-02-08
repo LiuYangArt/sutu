@@ -6,7 +6,7 @@ interface DragOptions {
   onDragEnd?: () => void;
 }
 
-export function usePanelDrag(options: DragOptions) {
+export function usePanelDrag({ onDragStart, onDrag, onDragEnd }: DragOptions) {
   const isDragging = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
 
@@ -16,9 +16,9 @@ export function usePanelDrag(options: DragOptions) {
 
       isDragging.current = false;
       e.currentTarget.releasePointerCapture(e.pointerId);
-      options.onDragEnd?.();
+      onDragEnd?.();
     },
-    [options]
+    [onDragEnd]
   );
 
   const handlePointerDown = useCallback(
@@ -33,9 +33,9 @@ export function usePanelDrag(options: DragOptions) {
       lastPos.current = { x: e.clientX, y: e.clientY };
       e.currentTarget.setPointerCapture(e.pointerId);
 
-      options.onDragStart?.();
+      onDragStart?.();
     },
-    [options]
+    [onDragStart]
   );
 
   const handlePointerMove = useCallback(
@@ -49,9 +49,9 @@ export function usePanelDrag(options: DragOptions) {
       // Update last pos
       lastPos.current = { x: e.clientX, y: e.clientY };
 
-      options.onDrag(deltaX, deltaY);
+      onDrag(deltaX, deltaY);
     },
-    [options]
+    [onDrag]
   );
 
   return {

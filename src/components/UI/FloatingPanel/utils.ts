@@ -1,4 +1,9 @@
-import { PanelAlignment, PanelGeometry } from '../../../stores/panel';
+import type { PanelAlignment, PanelGeometry } from '../../../stores/panel';
+
+interface ViewportSize {
+  width: number;
+  height: number;
+}
 
 /**
  * Calculates the absolute position from an alignment configuration.
@@ -7,23 +12,11 @@ import { PanelAlignment, PanelGeometry } from '../../../stores/panel';
 export function getAbsolutePositionFromAlignment(
   alignment: PanelAlignment,
   panel: PanelGeometry,
-  windowSize: { width: number; height: number }
+  windowSize: ViewportSize
 ): { x: number; y: number } {
   const { horizontal, vertical, offsetX, offsetY } = alignment;
-  let x = panel.x;
-  let y = panel.y;
-
-  if (horizontal === 'left') {
-    x = offsetX;
-  } else {
-    x = windowSize.width - offsetX - panel.width;
-  }
-
-  if (vertical === 'top') {
-    y = offsetY;
-  } else {
-    y = windowSize.height - offsetY - panel.height;
-  }
+  const x = horizontal === 'left' ? offsetX : windowSize.width - offsetX - panel.width;
+  const y = vertical === 'top' ? offsetY : windowSize.height - offsetY - panel.height;
 
   return { x, y };
 }
@@ -37,41 +30,23 @@ export function calculateNewAlignment(
   currentAlignment: PanelAlignment,
   newGeometry: PanelGeometry,
   delta: Partial<PanelGeometry>,
-  windowSize: { width: number; height: number }
+  windowSize: ViewportSize
 ): PanelAlignment | null {
   const { horizontal, vertical, offsetX, offsetY } = currentAlignment;
-  let newOffsetX = offsetX;
-  let newOffsetY = offsetY;
-  let changed = false;
+  const hasHorizontalDelta = delta.width !== undefined || delta.x !== undefined;
+  const hasVerticalDelta = delta.height !== undefined || delta.y !== undefined;
+  if (!hasHorizontalDelta && !hasVerticalDelta) return null;
 
-  // X-axis adjustments
-  if (delta.width !== undefined || delta.x !== undefined) {
-    if (horizontal === 'right') {
-      // If anchored RIGHT, resizing from the LEFT changes x and width.
-      // We prioritize keeping the visual right edge stable relative to window right.
-      const newRight = newGeometry.x + newGeometry.width;
-      newOffsetX = windowSize.width - newRight;
-      changed = true;
-    } else if (horizontal === 'left') {
-      // If anchored LEFT, offset is just x
-      newOffsetX = newGeometry.x;
-      changed = true;
-    }
-  }
-
-  // Y-axis adjustments
-  if (delta.height !== undefined || delta.y !== undefined) {
-    if (vertical === 'bottom') {
-      const newBottom = newGeometry.y + newGeometry.height;
-      newOffsetY = windowSize.height - newBottom;
-      changed = true;
-    } else if (vertical === 'top') {
-      newOffsetY = newGeometry.y;
-      changed = true;
-    }
-  }
-
-  if (!changed) return null;
+  const newOffsetX = hasHorizontalDelta
+    ? horizontal === 'left'
+      ? newGeometry.x
+      : windowSize.width - (newGeometry.x + newGeometry.width)
+    : offsetX;
+  const newOffsetY = hasVerticalDelta
+    ? vertical === 'top'
+      ? newGeometry.y
+      : windowSize.height - (newGeometry.y + newGeometry.height)
+    : offsetY;
 
   return {
     horizontal,
@@ -86,15 +61,14 @@ export function calculateNewAlignment(
  */
 export function calculateSnapAlignment(
   panel: PanelGeometry,
-  windowSize: { width: number; height: number }
+  windowSize: ViewportSize
 ): PanelAlignment {
   const centerX = panel.x + panel.width / 2;
   const centerY = panel.y + panel.height / 2;
+  const horizontal = centerX < windowSize.width / 2 ? 'left' : 'right';
+  const vertical = centerY < windowSize.height / 2 ? 'top' : 'bottom';
 
-  const horizontal: 'left' | 'right' = centerX < windowSize.width / 2 ? 'left' : 'right';
   const offsetX = horizontal === 'left' ? panel.x : windowSize.width - (panel.x + panel.width);
-
-  const vertical: 'top' | 'bottom' = centerY < windowSize.height / 2 ? 'top' : 'bottom';
   const offsetY = vertical === 'top' ? panel.y : windowSize.height - (panel.y + panel.height);
 
   return {

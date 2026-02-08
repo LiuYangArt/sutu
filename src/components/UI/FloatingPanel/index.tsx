@@ -19,6 +19,13 @@ interface FloatingPanelProps {
   minHeight?: number;
 }
 
+function getViewportSize(): { width: number; height: number } {
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
+}
+
 // Separate component to prevent re-creation on parent render
 const ResizeHandle = React.memo(
   ({
@@ -48,7 +55,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
 }: FloatingPanelProps) {
   const panel = usePanelStore((s) => s.panels[panelId]);
   const updateGeometry = usePanelStore((s) => s.updateGeometry);
-  const updateAlignment = usePanelStore((s) => s.updateAlignment); // New action
+  const updateAlignment = usePanelStore((s) => s.updateAlignment);
   const closePanel = usePanelStore((s) => s.closePanel);
   const minimizePanel = usePanelStore((s) => s.minimizePanel);
   const bringToFront = usePanelStore((s) => s.bringToFront);
@@ -61,42 +68,39 @@ export const FloatingPanel = React.memo(function FloatingPanel({
   // Handle Drag Move - updates visual position (x, y) immediately for smoothness
   const handleMove = useCallback(
     (dx: number, dy: number) => {
-      if (!dragPositionRef.current) return;
+      const currentPosition = dragPositionRef.current;
+      if (!currentPosition) return;
 
-      dragPositionRef.current = {
-        x: dragPositionRef.current.x + dx,
-        y: dragPositionRef.current.y + dy,
+      const nextPosition = {
+        x: currentPosition.x + dx,
+        y: currentPosition.y + dy,
       };
-
-      updateGeometry(panelId, dragPositionRef.current);
+      dragPositionRef.current = nextPosition;
+      updateGeometry(panelId, nextPosition);
     },
     [panelId, updateGeometry]
   );
 
-  // Handle Drag End - Snap to anchor
-  // We calculate which quadrant the panel is in and set the alignment accordingly
-  // Handle Drag End - Snap to anchor
+  // Handle Drag End - Snap to anchor.
   const handleDragEnd = useCallback(() => {
+    const finalPosition = dragPositionRef.current;
     dragPositionRef.current = null;
     if (!panel) return;
 
-    const newAlignment = calculateSnapAlignment(panel, {
-      width: window.innerWidth,
-      height: window.innerHeight,
-    });
+    const panelForSnap = finalPosition ? { ...panel, ...finalPosition } : panel;
+    const newAlignment = calculateSnapAlignment(panelForSnap, getViewportSize());
 
     updateAlignment(panelId, newAlignment);
   }, [panel, panelId, updateAlignment]);
 
   // Handle Drag Start - Convert alignment to absolute position if needed
   const handleDragStart = useCallback(() => {
+    if (!panel) return;
+
     bringToFront(panelId);
 
-    if (panel && panel.alignment) {
-      const { x, y } = getAbsolutePositionFromAlignment(panel.alignment, panel, {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      });
+    if (panel.alignment) {
+      const { x, y } = getAbsolutePositionFromAlignment(panel.alignment, panel, getViewportSize());
 
       // Update geometry to match visual position and clear alignment
       // passing undefined to alignment switches to absolute positioning mode
@@ -106,9 +110,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
       return;
     }
 
-    if (panel) {
-      dragPositionRef.current = { x: panel.x, y: panel.y };
-    }
+    dragPositionRef.current = { x: panel.x, y: panel.y };
   }, [panelId, panel, updateGeometry, updateAlignment, bringToFront]);
 
   const {
@@ -121,28 +123,6 @@ export const FloatingPanel = React.memo(function FloatingPanel({
     onDragStart: handleDragStart,
     onDragEnd: handleDragEnd,
   });
-
-  // Calculate style based on alignment if available
-  // If alignment exists, it overrides x/y for rendering to ensure anchoring
-  const style: React.CSSProperties = {
-    position: 'fixed',
-    width: panel?.width,
-    height: panel?.isCollapsed ? 'auto' : panel?.height,
-    zIndex: panel?.zIndex,
-  };
-
-  if (panel?.alignment) {
-    const { horizontal, vertical, offsetX, offsetY } = panel.alignment;
-    if (horizontal === 'left') style.left = offsetX;
-    else style.right = offsetX;
-
-    if (vertical === 'top') style.top = offsetY;
-    else style.bottom = offsetY;
-  } else {
-    // Fallback to absolute x, y
-    style.left = panel?.x;
-    style.top = panel?.y;
-  }
 
   // Handle Resize - Update geometry (width/height)
   // Note: Resize might also affect position (e.g. resizing from left changes x)
@@ -175,8 +155,6 @@ export const FloatingPanel = React.memo(function FloatingPanel({
         height: newGeo.height,
       });
 
-      // Update alignment offsets if resizing changes relevant dimensions
-      // Update alignment offsets if resizing changes relevant dimensions
       if (panel.alignment) {
         const newAlignment = calculateNewAlignment(
           panel.alignment,
@@ -187,7 +165,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
             height: newGeo.height,
           },
           delta,
-          { width: window.innerWidth, height: window.innerHeight }
+          getViewportSize()
         );
 
         if (newAlignment) {
@@ -201,6 +179,25 @@ export const FloatingPanel = React.memo(function FloatingPanel({
   // 1. Hooks must run before return
   // 2. We can render null if panel is invalid/closed after hooks
   if (!panel || !panel.isOpen) return null;
+
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    width: panel.width,
+    height: panel.isCollapsed ? 'auto' : panel.height,
+    zIndex: panel.zIndex,
+  };
+
+  if (panel.alignment) {
+    const { horizontal, vertical, offsetX, offsetY } = panel.alignment;
+    if (horizontal === 'left') style.left = offsetX;
+    else style.right = offsetX;
+
+    if (vertical === 'top') style.top = offsetY;
+    else style.bottom = offsetY;
+  } else {
+    style.left = panel.x;
+    style.top = panel.y;
+  }
 
   const isResizable = panel.resizable !== false;
   const isClosable = panel.closable !== false;
