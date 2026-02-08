@@ -14,35 +14,59 @@ import {
 import { useDocumentStore, BlendMode } from '@/stores/document';
 import './LayerPanel.css';
 
-const BLEND_MODES: { value: BlendMode; label: string }[] = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'dissolve', label: 'Dissolve' },
-  { value: 'darken', label: 'Darken' },
-  { value: 'multiply', label: 'Multiply' },
-  { value: 'color-burn', label: 'Color Burn' },
-  { value: 'linear-burn', label: 'Linear Burn' },
-  { value: 'darker-color', label: 'Darker Color' },
-  { value: 'lighten', label: 'Lighten' },
-  { value: 'screen', label: 'Screen' },
-  { value: 'color-dodge', label: 'Color Dodge' },
-  { value: 'linear-dodge', label: 'Linear Dodge (Add)' },
-  { value: 'lighter-color', label: 'Lighter Color' },
-  { value: 'overlay', label: 'Overlay' },
-  { value: 'soft-light', label: 'Soft Light' },
-  { value: 'hard-light', label: 'Hard Light' },
-  { value: 'vivid-light', label: 'Vivid Light' },
-  { value: 'linear-light', label: 'Linear Light' },
-  { value: 'pin-light', label: 'Pin Light' },
-  { value: 'hard-mix', label: 'Hard Mix' },
-  { value: 'difference', label: 'Difference' },
-  { value: 'exclusion', label: 'Exclusion' },
-  { value: 'subtract', label: 'Subtract' },
-  { value: 'divide', label: 'Divide' },
-  { value: 'hue', label: 'Hue' },
-  { value: 'saturation', label: 'Saturation' },
-  { value: 'color', label: 'Color' },
-  { value: 'luminosity', label: 'Luminosity' },
+const BLEND_MODE_GROUPS: ReadonlyArray<ReadonlyArray<{ value: BlendMode; label: string }>> = [
+  [
+    { value: 'normal', label: 'Normal' },
+    { value: 'dissolve', label: 'Dissolve' },
+  ],
+  [
+    { value: 'darken', label: 'Darken' },
+    { value: 'multiply', label: 'Multiply' },
+    { value: 'color-burn', label: 'Color Burn' },
+    { value: 'linear-burn', label: 'Linear Burn' },
+    { value: 'darker-color', label: 'Darker Color' },
+  ],
+  [
+    { value: 'lighten', label: 'Lighten' },
+    { value: 'screen', label: 'Screen' },
+    { value: 'color-dodge', label: 'Color Dodge' },
+    { value: 'linear-dodge', label: 'Linear Dodge (Add)' },
+    { value: 'lighter-color', label: 'Lighter Color' },
+  ],
+  [
+    { value: 'overlay', label: 'Overlay' },
+    { value: 'soft-light', label: 'Soft Light' },
+    { value: 'hard-light', label: 'Hard Light' },
+    { value: 'vivid-light', label: 'Vivid Light' },
+    { value: 'linear-light', label: 'Linear Light' },
+    { value: 'pin-light', label: 'Pin Light' },
+    { value: 'hard-mix', label: 'Hard Mix' },
+  ],
+  [
+    { value: 'difference', label: 'Difference' },
+    { value: 'exclusion', label: 'Exclusion' },
+    { value: 'subtract', label: 'Subtract' },
+    { value: 'divide', label: 'Divide' },
+  ],
+  [
+    { value: 'hue', label: 'Hue' },
+    { value: 'saturation', label: 'Saturation' },
+    { value: 'color', label: 'Color' },
+    { value: 'luminosity', label: 'Luminosity' },
+  ],
 ];
+
+type BlendModeMenuItem =
+  | { kind: 'mode'; value: BlendMode; label: string }
+  | { kind: 'separator'; key: string };
+
+const BLEND_MODE_MENU_ITEMS: BlendModeMenuItem[] = BLEND_MODE_GROUPS.flatMap(
+  (group, groupIndex) => {
+    const modeItems: BlendModeMenuItem[] = group.map((mode) => ({ kind: 'mode', ...mode }));
+    if (groupIndex >= BLEND_MODE_GROUPS.length - 1) return modeItems;
+    return [...modeItems, { kind: 'separator', key: `sep-${groupIndex}` }];
+  }
+);
 
 interface ContextMenuState {
   visible: boolean;
@@ -55,12 +79,14 @@ export function LayerPanel(): JSX.Element {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
+  const [blendMenuOpen, setBlendMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     visible: false,
     x: 0,
     y: 0,
     layerId: null,
   });
+  const blendMenuRef = useRef<HTMLDivElement | null>(null);
 
   const {
     layers,
@@ -104,6 +130,27 @@ export function LayerPanel(): JSX.Element {
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, [contextMenu.visible]);
+
+  // Close blend mode dropdown when clicking outside
+  useEffect(() => {
+    if (!blendMenuOpen) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (blendMenuRef.current && !blendMenuRef.current.contains(e.target as Node)) {
+        setBlendMenuOpen(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setBlendMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [blendMenuOpen]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, layerId: string) => {
     e.preventDefault();
@@ -155,6 +202,9 @@ export function LayerPanel(): JSX.Element {
   }, [contextMenu.layerId, safeRemoveLayer, closeContextMenu]);
 
   const activeLayer = layers.find((l) => l.id === activeLayerId);
+  const activeBlendMode = activeLayer?.blendMode ?? 'normal';
+  const activeBlendModeLabel =
+    BLEND_MODE_GROUPS.flat().find((mode) => mode.value === activeBlendMode)?.label ?? 'Normal';
   const displayLayers = [...layers].reverse();
   const { width: thumbWidth, height: thumbHeight } = calculateThumbnailDimensions(width, height);
 
@@ -287,22 +337,50 @@ export function LayerPanel(): JSX.Element {
       </div>
 
       <footer className="layer-panel-footer">
-        <select
-          className="blend-mode-select"
-          value={activeLayer?.blendMode ?? 'normal'}
-          onChange={(e) => {
-            if (activeLayerId) {
-              setLayerBlendMode(activeLayerId, e.target.value as BlendMode);
-            }
-          }}
-          disabled={!activeLayer}
-        >
-          {BLEND_MODES.map((mode) => (
-            <option key={mode.value} value={mode.value}>
-              {mode.label}
-            </option>
-          ))}
-        </select>
+        <div className={`blend-mode-select ${!activeLayer ? 'disabled' : ''}`} ref={blendMenuRef}>
+          <button
+            type="button"
+            className="blend-mode-trigger"
+            disabled={!activeLayer}
+            onClick={() => setBlendMenuOpen((open) => !open)}
+            aria-haspopup="listbox"
+            aria-expanded={blendMenuOpen}
+            title={activeBlendModeLabel}
+          >
+            <span className="blend-mode-trigger-label">{activeBlendModeLabel}</span>
+            <span className="blend-mode-trigger-chevron" aria-hidden>
+              ▾
+            </span>
+          </button>
+
+          {blendMenuOpen && activeLayer && (
+            <div className="blend-mode-dropdown" role="listbox" aria-label="Blend Mode">
+              {BLEND_MODE_MENU_ITEMS.map((item) => {
+                if (item.kind === 'separator') {
+                  return <div key={item.key} className="blend-mode-divider" aria-hidden />;
+                }
+                const isActive = item.value === activeBlendMode;
+                return (
+                  <button
+                    key={item.value}
+                    type="button"
+                    role="option"
+                    aria-selected={isActive}
+                    className={`blend-mode-option ${isActive ? 'active' : ''}`}
+                    onClick={() => {
+                      if (activeLayerId) {
+                        setLayerBlendMode(activeLayerId, item.value);
+                      }
+                      setBlendMenuOpen(false);
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         <label className="opacity-control">
           <span>Opacity:</span>

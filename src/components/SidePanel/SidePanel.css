@@ -97,7 +97,7 @@
 .layer-section {
   flex: 1;
   min-height: 200px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .section-header {
@@ -158,9 +158,13 @@
 
 .layer-content {
   flex: 1;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
+}
+
+.layer-section > .section-content {
+  overflow: visible;
 }
 
 /* Layer panel fills available space */
