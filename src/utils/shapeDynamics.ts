@@ -211,9 +211,10 @@ export function computeDabShape(
     // Initial direction control
     angle = input.initialDirection;
   } else if (settings.angleControl !== 'off') {
-    // Other controls: modulate base angle by control value
+    // Other controls: control source directly drives angle (0-360),
+    // base angle works as a user-defined offset.
     const angleControl = getControlValue(settings.angleControl, input);
-    angle = baseAngle * angleControl;
+    angle = (((baseAngle + angleControl * 360) % 360) + 360) % 360;
   }
   angle = applyAngleJitter(angle, settings.angleJitter, random);
 
