@@ -4,6 +4,16 @@ import { useHistoryStore } from '@/stores/history';
 import { ToolType } from '@/stores/tool';
 import { stepBrushSizeBySliderProgress } from '@/utils/sliderScales';
 
+const TEXT_EDITING_COMMAND_CODES = new Set([
+  'KeyA',
+  'KeyZ',
+  'KeyY',
+  'KeyX',
+  'KeyC',
+  'KeyV',
+  'KeyJ',
+]);
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!target) return false;
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
@@ -11,18 +21,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 function isTextEditingCommand(code: string): boolean {
-  switch (code) {
-    case 'KeyA':
-    case 'KeyZ':
-    case 'KeyY':
-    case 'KeyX':
-    case 'KeyC':
-    case 'KeyV':
-    case 'KeyJ':
-      return true;
-    default:
-      return false;
-  }
+  return TEXT_EDITING_COMMAND_CODES.has(code);
 }
 
 interface UseKeyboardShortcutsParams {
@@ -239,7 +238,6 @@ export function useKeyboardShortcuts({
     cancelSelection,
     width,
     height,
-    pushSelection,
     panStartRef,
     recordSelectionChange,
     onBeforeSelectionMutation,

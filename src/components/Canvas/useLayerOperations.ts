@@ -50,6 +50,18 @@ interface SaveStrokeHistoryOptions {
   selectionAfter?: SelectionSnapshot;
 }
 
+function createCanvasContext2D(
+  width: number,
+  height: number
+): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  return { canvas, ctx };
+}
+
 function toPushStrokeParams(pending: PendingStrokeHistory): PushStrokeParams {
   if (pending.snapshotMode === 'gpu') {
     return {
@@ -76,41 +88,35 @@ function fillWithMask(
   width: number,
   height: number
 ): void {
-  // Create temp canvas for the mask
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = width;
-  maskCanvas.height = height;
-  const maskCtx = maskCanvas.getContext('2d');
-  if (!maskCtx) return;
+  const maskLayer = createCanvasContext2D(width, height);
+  if (!maskLayer) return;
 
   // Put the mask data
-  maskCtx.putImageData(mask, 0, 0);
+  maskLayer.ctx.putImageData(mask, 0, 0);
 
   // Composite fill color IN the mask
   // Source (color) IN Destination (mask) -> Result keeps color where mask is opaque
-  maskCtx.globalCompositeOperation = 'source-in';
-  maskCtx.fillStyle = color;
-  maskCtx.fillRect(0, 0, width, height);
+  maskLayer.ctx.globalCompositeOperation = 'source-in';
+  maskLayer.ctx.fillStyle = color;
+  maskLayer.ctx.fillRect(0, 0, width, height);
 
   // Draw the result onto the active layer
-  ctx.drawImage(maskCanvas, 0, 0);
+  ctx.drawImage(maskLayer.canvas, 0, 0);
 }
 
 function pathToMask(paths: SelectionPoint[][], width: number, height: number): ImageData | null {
   if (paths.length === 0) return null;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
+  const maskLayer = createCanvasContext2D(width, height);
+  if (!maskLayer) return null;
+  const { ctx } = maskLayer;
 
   ctx.fillStyle = 'white';
   ctx.beginPath();
 
   let hasContour = false;
   for (const contour of paths) {
-    if (!contour || contour.length < 3) continue;
+    if (contour.length < 3) continue;
     const first = contour[0];
     if (!first) continue;
 
@@ -130,6 +136,18 @@ function pathToMask(paths: SelectionPoint[][], width: number, height: number): I
   return ctx.getImageData(0, 0, width, height);
 }
 
+function getDuplicateSelectionMask(
+  selectionOnly: boolean | undefined,
+  width: number,
+  height: number
+): ImageData | null {
+  if (!selectionOnly) return null;
+
+  const selectionState = useSelectionStore.getState();
+  if (!selectionState.hasSelection) return null;
+  return selectionState.selectionMask ?? pathToMask(selectionState.selectionPath, width, height);
+}
+
 function applyLayerDuplicateContent(
   sourceCanvas: HTMLCanvasElement,
   targetCtx: CanvasRenderingContext2D,
@@ -144,27 +162,21 @@ function applyLayerDuplicateContent(
     return;
   }
 
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = width;
-  tempCanvas.height = height;
-  const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return;
+  const tempLayer = createCanvasContext2D(width, height);
+  if (!tempLayer) return;
 
-  tempCtx.drawImage(sourceCanvas, 0, 0);
+  tempLayer.ctx.drawImage(sourceCanvas, 0, 0);
 
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = width;
-  maskCanvas.height = height;
-  const maskCtx = maskCanvas.getContext('2d');
-  if (!maskCtx) return;
-  maskCtx.putImageData(selectionMask, 0, 0);
+  const maskLayer = createCanvasContext2D(width, height);
+  if (!maskLayer) return;
+  maskLayer.ctx.putImageData(selectionMask, 0, 0);
 
-  tempCtx.save();
-  tempCtx.globalCompositeOperation = 'destination-in';
-  tempCtx.drawImage(maskCanvas, 0, 0);
-  tempCtx.restore();
+  tempLayer.ctx.save();
+  tempLayer.ctx.globalCompositeOperation = 'destination-in';
+  tempLayer.ctx.drawImage(maskLayer.canvas, 0, 0);
+  tempLayer.ctx.restore();
 
-  targetCtx.drawImage(tempCanvas, 0, 0);
+  targetCtx.drawImage(tempLayer.canvas, 0, 0);
 }
 
 function snapshotLayers(
@@ -745,16 +757,7 @@ export function useLayerOperations({
         const targetLayer = renderer.getLayer(toId);
         if (!sourceLayer || !targetLayer) return false;
 
-        let selectionMask: ImageData | null = null;
-        if (options?.selectionOnly) {
-          const selectionState = useSelectionStore.getState();
-          if (selectionState.hasSelection) {
-            selectionMask =
-              selectionState.selectionMask ??
-              pathToMask(selectionState.selectionPath, width, height) ??
-              null;
-          }
-        }
+        const selectionMask = getDuplicateSelectionMask(options?.selectionOnly, width, height);
 
         applyLayerDuplicateContent(
           sourceLayer.canvas,
