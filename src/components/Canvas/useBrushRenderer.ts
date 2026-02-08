@@ -50,6 +50,7 @@ import {
 import { applyScatter, isScatterActive } from '@/utils/scatterDynamics';
 import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
 import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
+import { computeTextureDepth } from '@/utils/textureDynamics';
 import { useSelectionStore } from '@/stores/selection';
 import { useToastStore } from '@/stores/toast';
 
@@ -635,6 +636,21 @@ export function useBrushRenderer({
 
         // Stamp dab at each scattered position
         for (const pos of scatteredPositions) {
+          const effectiveTextureSettings =
+            config.textureEnabled && config.textureSettings
+              ? (() => {
+                  const settings = config.textureSettings!;
+                  const dynamicDepth = computeTextureDepth(settings.depth, settings, dynamicsInput);
+                  if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
+                    return settings;
+                  }
+                  return {
+                    ...settings,
+                    depth: dynamicDepth,
+                  };
+                })()
+              : undefined;
+
           const dabParams: DabParams = {
             x: pos.x,
             y: pos.y,
@@ -650,7 +666,7 @@ export function useBrushRenderer({
             flipX: dabFlipX,
             flipY: dabFlipY,
             wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
-            textureSettings: config.textureEnabled ? config.textureSettings : undefined,
+            textureSettings: effectiveTextureSettings,
             noiseEnabled: config.noiseEnabled,
             dualBrush:
               config.dualBrushEnabled && config.dualBrush

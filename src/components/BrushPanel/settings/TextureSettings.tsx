@@ -3,6 +3,7 @@ import { LZ4Image } from '@/components/common/LZ4Image';
 import { getPatternThumbnailUrl } from '@/stores/pattern';
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { TEXTURE_SCALE_SLIDER_CONFIG } from '@/utils/sliderScales';
+import { depthControlToSource, sourceToDepthControl } from '@/utils/textureDynamics';
 import { TextureBlendMode } from '../types';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { PatternPicker } from './PatternPicker';
@@ -29,19 +30,6 @@ const BLEND_MODE_OPTIONS: { value: TextureBlendMode; label: string }[] = [
   { value: 'linearHeight', label: 'Linear Height' },
   { value: 'height', label: 'Height' },
 ];
-
-const DEPTH_SOURCE_MAP = ['off', 'fade', 'penPressure', 'penTilt', 'rotation'] as const;
-
-/** Map depthControl number to ControlSource */
-function depthControlToSource(value: number): ControlSource {
-  return (DEPTH_SOURCE_MAP[value] as ControlSource) || 'off';
-}
-
-/** Map ControlSource to depthControl number */
-function sourceToDepthControl(source: ControlSource): number {
-  const index = (DEPTH_SOURCE_MAP as readonly string[]).indexOf(source);
-  return index >= 0 ? index : 0;
-}
 
 export function TextureSettings(): JSX.Element {
   const { textureEnabled, textureSettings, setTextureSettings } = useToolStore();
