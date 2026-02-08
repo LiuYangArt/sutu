@@ -33,6 +33,16 @@ interface PanelSize {
   height: number;
 }
 
+interface PanelPosition {
+  left: number;
+  top: number;
+}
+
+interface ViewportSize {
+  width: number;
+  height: number;
+}
+
 interface PanelDragState {
   pointerId: number;
   startX: number;
@@ -46,9 +56,13 @@ const DEFAULT_PANEL_SIZE: PanelSize = {
   height: 434,
 };
 
+const PANEL_MARGIN = 12;
 const MIN_PANEL_WIDTH = 420;
 const MIN_PANEL_HEIGHT = 360;
+const PANEL_RESIZE_HANDLE_SIZE = 20;
 const PANEL_SIZE_STORAGE_KEY = 'paintboard-brush-quick-panel-size-v1';
+const PANEL_INTERACTIVE_SELECTOR =
+  'button, input, textarea, select, .saturation-square, .vertical-hue-slider, .brush-quick-search, .brush-quick-library';
 
 function groupPresets(
   presets: BrushLibraryPreset[],
@@ -133,20 +147,28 @@ function clampPanelPosition(
   viewportWidth: number,
   viewportHeight: number
 ): { left: number; top: number } {
-  const margin = 12;
-  const maxLeft = Math.max(margin, viewportWidth - size.width - margin);
-  const maxTop = Math.max(margin, viewportHeight - size.height - margin);
+  const maxLeft = Math.max(PANEL_MARGIN, viewportWidth - size.width - PANEL_MARGIN);
+  const maxTop = Math.max(PANEL_MARGIN, viewportHeight - size.height - PANEL_MARGIN);
   return {
-    left: Math.min(maxLeft, Math.max(margin, left)),
-    top: Math.min(maxTop, Math.max(margin, top)),
+    left: Math.min(maxLeft, Math.max(PANEL_MARGIN, left)),
+    top: Math.min(maxTop, Math.max(PANEL_MARGIN, top)),
   };
+}
+
+function getViewportSize(): ViewportSize {
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
+}
+
+function isSamePanelSize(a: PanelSize, b: PanelSize): boolean {
+  return a.width === b.width && a.height === b.height;
 }
 
 function isPanelInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  return !!target.closest(
-    'button, input, textarea, select, .saturation-square, .vertical-hue-slider, .brush-quick-search, .brush-quick-library'
-  );
+  return !!target.closest(PANEL_INTERACTIVE_SELECTOR);
 }
 
 export function BrushQuickPanel({
@@ -158,7 +180,10 @@ export function BrushQuickPanel({
 }: BrushQuickPanelProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [position, setPosition] = useState<{ left: number; top: number }>({ left: 12, top: 12 });
+  const [position, setPosition] = useState<PanelPosition>({
+    left: PANEL_MARGIN,
+    top: PANEL_MARGIN,
+  });
   const [panelSize, setPanelSize] = useState<PanelSize>(() => readPanelSizeFromStorage());
   const panelSizeRef = useRef(panelSize);
   const lastAnchorRef = useRef<{ x: number; y: number } | null>(null);
@@ -185,23 +210,26 @@ export function BrushQuickPanel({
   const [hsva, setHsva] = useState(() => hexToHsva(brushColor));
   const lastInitiatedHex = useRef<string | null>(null);
 
+  const updatePanelLayout = useCallback((nextSize: PanelSize, viewport: ViewportSize): void => {
+    setPanelSize((prev) => (isSamePanelSize(prev, nextSize) ? prev : nextSize));
+    setPosition((prev) =>
+      clampPanelPosition(prev.left, prev.top, nextSize, viewport.width, viewport.height)
+    );
+  }, []);
+
   const syncPanelSizeFromDom = useCallback((): PanelSize | null => {
     const panel = panelRef.current;
     if (!panel) return null;
+    const viewport = getViewportSize();
     const rect = panel.getBoundingClientRect();
     const measured = clampPanelSize(
       { width: rect.width, height: rect.height },
-      window.innerWidth,
-      window.innerHeight
+      viewport.width,
+      viewport.height
     );
-    setPanelSize((prev) =>
-      prev.width === measured.width && prev.height === measured.height ? prev : measured
-    );
-    setPosition((prev) =>
-      clampPanelPosition(prev.left, prev.top, measured, window.innerWidth, window.innerHeight)
-    );
+    updatePanelLayout(measured, viewport);
     return measured;
-  }, []);
+  }, [updatePanelLayout]);
 
   useEffect(() => {
     const currentHex = brushColor.toLowerCase();
@@ -242,14 +270,15 @@ export function BrushQuickPanel({
     if (!anchorChanged) return;
     lastAnchorRef.current = { x: anchorX, y: anchorY };
 
+    const viewport = getViewportSize();
     const latestSize = syncPanelSizeFromDom() ?? panelSizeRef.current;
     const next = calculateBrushQuickPanelPosition({
       anchorX,
       anchorY,
       panelWidth: latestSize.width,
       panelHeight: latestSize.height,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
     });
     setPosition(next);
   }, [isOpen, anchorX, anchorY, panelSize.width, panelSize.height, syncPanelSizeFromDom]);
@@ -296,61 +325,43 @@ export function BrushQuickPanel({
     if (!isOpen) return;
 
     const handleResize = () => {
-      const clampedSize = clampPanelSize(
-        panelSizeRef.current,
-        window.innerWidth,
-        window.innerHeight
-      );
-      setPanelSize((prev) =>
-        prev.width === clampedSize.width && prev.height === clampedSize.height ? prev : clampedSize
-      );
-      setPosition((prev) =>
-        clampPanelPosition(prev.left, prev.top, clampedSize, window.innerWidth, window.innerHeight)
-      );
+      const viewport = getViewportSize();
+      const clampedSize = clampPanelSize(panelSizeRef.current, viewport.width, viewport.height);
+      updatePanelLayout(clampedSize, viewport);
     };
 
     window.addEventListener('resize', handleResize);
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [isOpen]);
+  }, [isOpen, updatePanelLayout]);
 
   useEffect(() => {
     if (!isOpen) return;
     if (!panelRef.current) return;
     if (typeof ResizeObserver === 'undefined') return;
 
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
+    const observer = new ResizeObserver(() => {
       const panel = panelRef.current;
       if (!panel) return;
+      const viewport = getViewportSize();
 
       // Use border-box size to avoid content-box drift under global border-box sizing.
       // contentRect excludes border and would cause a feedback loop that continuously shrinks.
       const rect = panel.getBoundingClientRect();
       const measured = clampPanelSize(
         { width: rect.width, height: rect.height },
-        window.innerWidth,
-        window.innerHeight
+        viewport.width,
+        viewport.height
       );
-
-      setPanelSize((prev) => {
-        if (prev.width === measured.width && prev.height === measured.height) {
-          return prev;
-        }
-        return measured;
-      });
-      setPosition((prev) =>
-        clampPanelPosition(prev.left, prev.top, measured, window.innerWidth, window.innerHeight)
-      );
+      updatePanelLayout(measured, viewport);
     });
 
     observer.observe(panelRef.current);
     return () => {
       observer.disconnect();
     };
-  }, [isOpen]);
+  }, [isOpen, updatePanelLayout]);
 
   const handleSaturationChange = useCallback(
     (nextHsva: { h: number; s: number; v: number; a: number }) => {
@@ -378,10 +389,9 @@ export function BrushQuickPanel({
     if (event.button !== 0) return;
     if (isPanelInteractiveTarget(event.target)) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const resizeHandleSize = 20;
     const isOnResizeHandle =
-      event.clientX >= rect.right - resizeHandleSize &&
-      event.clientY >= rect.bottom - resizeHandleSize;
+      event.clientX >= rect.right - PANEL_RESIZE_HANDLE_SIZE &&
+      event.clientY >= rect.bottom - PANEL_RESIZE_HANDLE_SIZE;
     if (isOnResizeHandle) return;
 
     event.preventDefault();
@@ -399,6 +409,7 @@ export function BrushQuickPanel({
   const handlePanelPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    const viewport = getViewportSize();
 
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
@@ -406,8 +417,8 @@ export function BrushQuickPanel({
       drag.startLeft + deltaX,
       drag.startTop + deltaY,
       panelSizeRef.current,
-      window.innerWidth,
-      window.innerHeight
+      viewport.width,
+      viewport.height
     );
     setPosition(next);
   };
