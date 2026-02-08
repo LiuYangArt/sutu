@@ -4,6 +4,8 @@ export interface ProceduralThumbnailParams {
   angle: number; // degrees
 }
 
+const HARD_EDGE_AA_THRESHOLD = 0.99;
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -45,7 +47,10 @@ export function renderProceduralThumbnail(
       const dist = Math.sqrt(rotX * rotX + (rotY / roundness) * (rotY / roundness));
 
       let alpha = 0;
-      if (dist < radius) {
+      if (hardness >= HARD_EDGE_AA_THRESHOLD) {
+        // Hard-edge brushes still need a 1px anti-aliasing band to avoid jagged circles.
+        alpha = clamp(radius - dist, 0, 1);
+      } else if (dist < radius) {
         if (dist < falloffStart) {
           alpha = 1;
         } else {
