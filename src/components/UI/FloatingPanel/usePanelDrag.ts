@@ -10,6 +10,17 @@ export function usePanelDrag(options: DragOptions) {
   const isDragging = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
 
+  const finishDrag = useCallback(
+    (e: React.PointerEvent) => {
+      if (!isDragging.current) return;
+
+      isDragging.current = false;
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      options.onDragEnd?.();
+    },
+    [options]
+  );
+
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
       e.stopPropagation(); // Prevent triggering other drags
@@ -20,9 +31,7 @@ export function usePanelDrag(options: DragOptions) {
 
       isDragging.current = true;
       lastPos.current = { x: e.clientX, y: e.clientY };
-
-      const target = e.target as HTMLElement;
-      target.setPointerCapture(e.pointerId);
+      e.currentTarget.setPointerCapture(e.pointerId);
 
       options.onDragStart?.();
     },
@@ -45,23 +54,10 @@ export function usePanelDrag(options: DragOptions) {
     [options]
   );
 
-  const handlePointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      if (!isDragging.current) return;
-
-      isDragging.current = false;
-      const target = e.target as HTMLElement;
-      target.releasePointerCapture(e.pointerId);
-
-      options.onDragEnd?.();
-    },
-    [options]
-  );
-
   return {
     onPointerDown: handlePointerDown,
     onPointerMove: handlePointerMove,
-    onPointerUp: handlePointerUp,
-    onPointerLeave: handlePointerUp, // Handle leaving element
+    onPointerUp: finishDrag,
+    onPointerCancel: finishDrag,
   };
 }

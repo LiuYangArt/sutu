@@ -4,7 +4,7 @@ import { usePanelStore } from '../../../stores/panel';
 import type { PanelGeometry } from '../../../stores/panel';
 import { usePanelDrag } from './usePanelDrag';
 import { usePanelResize, ResizeDirection } from './usePanelResize';
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import {
   calculateNewAlignment,
   calculateSnapAlignment,
@@ -56,24 +56,28 @@ export const FloatingPanel = React.memo(function FloatingPanel({
   const handleFocus = useCallback(() => {
     bringToFront(panelId);
   }, [bringToFront, panelId]);
+  const dragPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   // Handle Drag Move - updates visual position (x, y) immediately for smoothness
   const handleMove = useCallback(
     (dx: number, dy: number) => {
-      if (panel) {
-        updateGeometry(panelId, {
-          x: panel.x + dx,
-          y: panel.y + dy,
-        });
-      }
+      if (!dragPositionRef.current) return;
+
+      dragPositionRef.current = {
+        x: dragPositionRef.current.x + dx,
+        y: dragPositionRef.current.y + dy,
+      };
+
+      updateGeometry(panelId, dragPositionRef.current);
     },
-    [panelId, panel, updateGeometry]
+    [panelId, updateGeometry]
   );
 
   // Handle Drag End - Snap to anchor
   // We calculate which quadrant the panel is in and set the alignment accordingly
   // Handle Drag End - Snap to anchor
   const handleDragEnd = useCallback(() => {
+    dragPositionRef.current = null;
     if (!panel) return;
 
     const newAlignment = calculateSnapAlignment(panel, {
@@ -98,6 +102,12 @@ export const FloatingPanel = React.memo(function FloatingPanel({
       // passing undefined to alignment switches to absolute positioning mode
       updateGeometry(panelId, { x, y });
       updateAlignment(panelId, undefined);
+      dragPositionRef.current = { x, y };
+      return;
+    }
+
+    if (panel) {
+      dragPositionRef.current = { x: panel.x, y: panel.y };
     }
   }, [panelId, panel, updateGeometry, updateAlignment, bringToFront]);
 
@@ -105,7 +115,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
     onPointerDown: onTitleDown,
     onPointerMove: onTitleMove,
     onPointerUp: onTitleUp,
-    onPointerLeave: onTitleLeave,
+    onPointerCancel: onTitleCancel,
   } = usePanelDrag({
     onDrag: handleMove,
     onDragStart: handleDragStart,
@@ -203,7 +213,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
         onPointerDown={onTitleDown}
         onPointerMove={onTitleMove}
         onPointerUp={onTitleUp}
-        onPointerLeave={onTitleLeave}
+        onPointerCancel={onTitleCancel}
       >
         <span className={Style.panelTitle}>{title || panelId}</span>
         <div className={Style.windowControls}>

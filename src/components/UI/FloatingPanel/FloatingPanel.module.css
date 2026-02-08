@@ -23,6 +23,7 @@
   justify-content: space-between;
   padding: 0 12px;
   cursor: grab;
+  touch-action: none;
   flex-shrink: 0;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
