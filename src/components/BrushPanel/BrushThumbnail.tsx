@@ -54,9 +54,20 @@ export function BrushThumbnail({
         const offCtx = offscreen.getContext('2d');
         if (!offCtx) return;
 
-        offCtx.putImageData(imageData, 0, 0);
+        // Convert grayscale texture to white-on-transparent mask for thumbnail preview.
+        // This aligns sampled tips with procedural tip appearance in the preset grid.
+        const src = imageData.data;
+        const maskRgba = new Uint8ClampedArray(src.length);
+        for (let i = 0; i < src.length; i += 4) {
+          const gray = src[i] ?? 0;
+          maskRgba[i] = 255;
+          maskRgba[i + 1] = 255;
+          maskRgba[i + 2] = 255;
+          maskRgba[i + 3] = gray;
+        }
+        offCtx.putImageData(new ImageData(maskRgba, imageData.width, imageData.height), 0, 0);
 
-        // Scale to display size
+        // Scale to display size with aspect-ratio preserving contain fit.
         canvas.width = size;
         canvas.height = size;
         const ctx = canvas.getContext('2d');
@@ -64,7 +75,16 @@ export function BrushThumbnail({
 
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(offscreen, 0, 0, size, size);
+        ctx.clearRect(0, 0, size, size);
+
+        const srcW = imageData.width;
+        const srcH = imageData.height;
+        const scale = Math.min(size / srcW, size / srcH);
+        const drawW = srcW * scale;
+        const drawH = srcH * scale;
+        const drawX = (size - drawW) / 2;
+        const drawY = (size - drawH) / 2;
+        ctx.drawImage(offscreen, drawX, drawY, drawW, drawH);
 
         setIsLoading(false);
       } catch (err) {
