@@ -728,36 +728,34 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             }
         };
 
-        {
-            if pattern.id.is_empty() {
-                // Generate a UUID if missing - though parser usually handles this
-                continue;
-            }
-
-            // CACHE THE PATTERN WITH ACTUAL DIMENSIONS!
-            // Use actual_width/height from VMA, not pattern metadata
-            cache_pattern_rgba(
-                pattern.id.clone(),
-                rgba_data, // Use the converted RGBA data
-                actual_width,
-                actual_height,
-                pattern.name.clone(),
-                pattern.mode_name().to_string(),
-            );
-
-            pattern_infos.push(PatternInfo {
-                id: pattern.id.clone(),
-                name: pattern.name.clone(),
-                width: actual_width,
-                height: actual_height,
-                mode: pattern.mode_name().to_string(),
-            });
-
-            // Add to name map for fallback lookup
-            pattern_name_map.insert(pattern.name.clone(), pattern.id.clone());
-
-            raw_bytes += pattern.data.len();
+        if pattern.id.is_empty() {
+            // Generate a UUID if missing - though parser usually handles this
+            continue;
         }
+
+        // CACHE THE PATTERN WITH ACTUAL DIMENSIONS!
+        // Use actual_width/height from VMA, not pattern metadata
+        cache_pattern_rgba(
+            pattern.id.clone(),
+            rgba_data, // Use the converted RGBA data
+            actual_width,
+            actual_height,
+            pattern.name.clone(),
+            pattern.mode_name().to_string(),
+        );
+
+        pattern_infos.push(PatternInfo {
+            id: pattern.id.clone(),
+            name: pattern.name.clone(),
+            width: actual_width,
+            height: actual_height,
+            mode: pattern.mode_name().to_string(),
+        });
+
+        // Add to name map for fallback lookup
+        pattern_name_map.insert(pattern.name.clone(), pattern.id.clone());
+
+        raw_bytes += pattern.data.len();
     }
 
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
@@ -851,18 +849,22 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         0.0
     };
 
-    tracing::info!(
-        "[ABR Benchmark] Loaded {} brushes in {:.2}ms (read: {:.2}ms, parse: {:.2}ms, cache: {:.2}ms) | parse_version={:?}, decode_failures={}, texture_name_fallbacks={}, unresolved_texture_links={}, duplicate_ids={}",
-        brush_count,
-        total_ms,
-        read_ms,
-        parse_ms,
-        cache_ms,
+    let import_diagnostics = format!(
+        "parse_version={:?}, decode_failures={}, texture_name_fallbacks={}, unresolved_texture_links={}, duplicate_ids={}",
         abr_file.version,
         pattern_decode_failures,
         texture_pattern_resolved_by_name,
         unresolved_texture_links,
         duplicate_id_count
+    );
+    tracing::info!(
+        "[ABR Benchmark] Loaded {} brushes in {:.2}ms (read: {:.2}ms, parse: {:.2}ms, cache: {:.2}ms) | {}",
+        brush_count,
+        total_ms,
+        read_ms,
+        parse_ms,
+        cache_ms,
+        import_diagnostics
     );
     tracing::info!(
         "[ABR Benchmark] Texture data: {} KB raw -> {} KB compressed ({:.1}%)",
