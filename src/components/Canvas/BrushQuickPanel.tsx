@@ -323,9 +323,14 @@ export function BrushQuickPanel({
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
+      const panel = panelRef.current;
+      if (!panel) return;
 
+      // Use border-box size to avoid content-box drift under global border-box sizing.
+      // contentRect excludes border and would cause a feedback loop that continuously shrinks.
+      const rect = panel.getBoundingClientRect();
       const measured = clampPanelSize(
-        { width: entry.contentRect.width, height: entry.contentRect.height },
+        { width: rect.width, height: rect.height },
         window.innerWidth,
         window.innerHeight
       );
