@@ -74,6 +74,8 @@ interface OpenPathOptions {
 interface SaveTargetOptions {
   updateDocumentPath?: boolean;
   markDocumentClean?: boolean;
+  includeThumbnail?: boolean;
+  includeFlattenedImage?: boolean;
 }
 
 type CanvasExportWindow = Window & {
@@ -247,7 +249,12 @@ function layerDataToLayer(data: LayerData): Layer {
   };
 }
 
-async function buildProjectDataSnapshot(): Promise<ProjectData> {
+interface ProjectSnapshotOptions {
+  includeThumbnail: boolean;
+  includeFlattenedImage: boolean;
+}
+
+async function buildProjectDataSnapshot(options: ProjectSnapshotOptions): Promise<ProjectData> {
   const docStore = useDocumentStore.getState();
   const layerDataPromises = docStore.layers.map(async (layer) => {
     const imageData = await getLayerImageData(layer.id);
@@ -256,7 +263,10 @@ async function buildProjectDataSnapshot(): Promise<ProjectData> {
 
   const layers = await Promise.all(layerDataPromises);
 
-  const [thumbnail, flattenedImage] = await Promise.all([getThumbnail(), getFlattenedImage()]);
+  const [thumbnail, flattenedImage] = await Promise.all([
+    options.includeThumbnail ? getThumbnail() : Promise.resolve(undefined),
+    options.includeFlattenedImage ? getFlattenedImage() : Promise.resolve(undefined),
+  ]);
 
   return {
     width: docStore.width,
@@ -352,7 +362,10 @@ async function saveProjectToTarget(
   set({ isSaving: true, error: null });
 
   try {
-    const projectData = await buildProjectDataSnapshot();
+    const projectData = await buildProjectDataSnapshot({
+      includeThumbnail: options.includeThumbnail ?? targetFormat === 'ora',
+      includeFlattenedImage: options.includeFlattenedImage ?? targetFormat === 'psd',
+    });
     const result = await invoke<FileOperationResult>('save_project', {
       path: targetPath,
       format: targetFormat,
@@ -494,7 +507,11 @@ export const useFileStore = create<FileState>((set, get) => ({
       const primarySave = await saveProjectToTarget(
         docStore.filePath,
         targetFormat,
-        { updateDocumentPath: false, markDocumentClean: true },
+        {
+          updateDocumentPath: false,
+          markDocumentClean: true,
+          includeThumbnail: false,
+        },
         set
       );
 
@@ -510,7 +527,12 @@ export const useFileStore = create<FileState>((set, get) => ({
       const fallbackSave = await saveProjectToTarget(
         tempAutosavePath,
         'ora',
-        { updateDocumentPath: false, markDocumentClean: true },
+        {
+          updateDocumentPath: false,
+          markDocumentClean: true,
+          includeThumbnail: false,
+          includeFlattenedImage: false,
+        },
         set
       );
       if (fallbackSave.success) {
@@ -526,7 +548,12 @@ export const useFileStore = create<FileState>((set, get) => ({
     const tempSave = await saveProjectToTarget(
       tempAutosavePath,
       'ora',
-      { updateDocumentPath: false, markDocumentClean: true },
+      {
+        updateDocumentPath: false,
+        markDocumentClean: true,
+        includeThumbnail: false,
+        includeFlattenedImage: false,
+      },
       set
     );
     if (tempSave.success) {

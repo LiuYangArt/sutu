@@ -352,24 +352,47 @@ function App() {
     }
     appExitInProgressRef.current = true;
 
+    let tauriWindow: {
+      hide: () => Promise<void>;
+      show: () => Promise<void>;
+      destroy: () => Promise<void>;
+    } | null = null;
+    let windowHidden = false;
+
+    if (isTauri()) {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        tauriWindow = getCurrentWindow();
+        await tauriWindow.hide();
+        windowHidden = true;
+      } catch (error) {
+        console.warn('[App] Failed to hide window before autosave', error);
+      }
+    }
+
     try {
       await runAutoSaveTick();
     } catch (error) {
       console.warn('[App] Autosave on close failed', error);
     }
 
-    if (!isTauri()) {
+    if (!tauriWindow) {
       appExitInProgressRef.current = false;
       return false;
     }
 
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      const appWindow = getCurrentWindow();
-      await appWindow.destroy();
+      await tauriWindow.destroy();
       return true;
     } catch (error) {
       appExitInProgressRef.current = false;
+      if (windowHidden) {
+        try {
+          await tauriWindow.show();
+        } catch (showError) {
+          console.warn('[App] Failed to restore window after exit failure', showError);
+        }
+      }
       console.warn('[App] Failed to destroy window after autosave', error);
       return false;
     }

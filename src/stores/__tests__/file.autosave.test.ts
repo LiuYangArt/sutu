@@ -47,6 +47,11 @@ import { useDocumentStore } from '../document';
 import { useFileStore } from '../file';
 import { useSettingsStore } from '../settings';
 
+type ExportWindow = Window & {
+  __getThumbnail?: () => Promise<string | undefined>;
+  __getFlattenedImage?: () => Promise<string | undefined>;
+};
+
 function createLoadedProject() {
   return {
     width: 800,
@@ -69,6 +74,9 @@ function createLoadedProject() {
 }
 
 describe('file store autosave and startup restore', () => {
+  let getThumbnailMock: ReturnType<typeof vi.fn>;
+  let getFlattenedImageMock: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     coreMocks.invoke.mockReset();
     dialogMocks.save.mockReset();
@@ -112,6 +120,14 @@ describe('file store autosave and startup restore', () => {
       }) as typeof window.requestAnimationFrame;
     }
 
+    getThumbnailMock = vi.fn().mockResolvedValue('data:image/png;base64,thumb');
+    getFlattenedImageMock = vi.fn().mockResolvedValue('data:image/png;base64,flat');
+    const exportWindow = window as ExportWindow;
+    exportWindow.__getThumbnail = getThumbnailMock as unknown as () => Promise<string | undefined>;
+    exportWindow.__getFlattenedImage = getFlattenedImageMock as unknown as () => Promise<
+      string | undefined
+    >;
+
     useFileStore.setState({ isSaving: false, isLoading: false, error: null });
     useDocumentStore.getState().reset();
     useDocumentStore.setState({
@@ -143,6 +159,8 @@ describe('file store autosave and startup restore', () => {
       path: 'C:/temp/paintboard-autosave.ora',
       format: 'ora',
     });
+    expect(getThumbnailMock).not.toHaveBeenCalled();
+    expect(getFlattenedImageMock).not.toHaveBeenCalled();
 
     const sessionWrite =
       fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
@@ -170,6 +188,8 @@ describe('file store autosave and startup restore', () => {
       path: 'C:/work/project.psd',
       format: 'psd',
     });
+    expect(getThumbnailMock).not.toHaveBeenCalled();
+    expect(getFlattenedImageMock).toHaveBeenCalledTimes(1);
 
     const persisted = JSON.parse(
       String(
