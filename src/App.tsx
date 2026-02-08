@@ -396,9 +396,7 @@ function App() {
   }, [runAutoSaveTick]);
 
   useEffect(() => {
-    let disposed = false;
     let unlisten: (() => void) | null = null;
-    let closeRequestedHandled = false;
 
     const registerCloseGuard = async () => {
       if (!isTauri()) return;
@@ -406,14 +404,9 @@ function App() {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
         const appWindow = getCurrentWindow();
         unlisten = await appWindow.onCloseRequested(async (event) => {
-          if (closeRequestedHandled) return;
-
+          if (appExitInProgressRef.current) return;
           event.preventDefault();
-          closeRequestedHandled = true;
-          const ok = await requestAppExit();
-          if (!ok && !disposed) {
-            closeRequestedHandled = false;
-          }
+          await requestAppExit();
         });
       } catch (error) {
         console.warn('[App] Failed to register close guard', error);
@@ -422,7 +415,6 @@ function App() {
 
     void registerCloseGuard();
     return () => {
-      disposed = true;
       if (unlisten) unlisten();
     };
   }, [requestAppExit]);
