@@ -1237,9 +1237,9 @@ impl AbrParser {
             brush.roundness = (*value as f32) / 100.0;
         }
 
-        // Hardness (Hrdn) - Percent, stored as 0-100, we need 0.0-1.0
+        // Hardness (Hrdn) - Percent, stored as 0-100
         if let Some(DescriptorValue::UnitFloat { value, .. }) = brsh.get("Hrdn") {
-            brush.hardness = Some((*value as f32) / 100.0);
+            brush.hardness = Some(*value as f32);
         }
     }
 
@@ -2136,6 +2136,50 @@ mod tests {
             co.foreground_background_control,
             crate::abr::ControlSource::PenPressure
         );
+    }
+
+    #[test]
+    fn test_apply_brush_tip_params_hardness_keeps_percent_scale() {
+        let mut brush = AbrBrush {
+            name: "Hardness".to_string(),
+            uuid: None,
+            tip_image: None,
+            diameter: 10.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: None,
+            dynamics: None,
+            is_computed: false,
+            is_tip_only: false,
+            texture_settings: None,
+            dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
+            base_opacity: None,
+            base_flow: None,
+        };
+
+        let mut brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        brsh.insert(
+            "Hrdn".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 100.0,
+            },
+        );
+
+        AbrParser::apply_brush_tip_params(&brsh, &mut brush);
+        assert_eq!(brush.hardness, Some(100.0));
     }
 
     #[test]

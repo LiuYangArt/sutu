@@ -60,7 +60,7 @@ pub struct AbrBrush {
     pub angle: f32,
     /// Roundness (1.0 = circular, 0.0 = flat line)
     pub roundness: f32,
-    /// Hardness (1.0 = hard edge, 0.0 = soft)
+    /// Hardness in percent (0-100)
     pub hardness: Option<f32>,
     /// Dynamic parameters
     pub dynamics: Option<AbrDynamics>,
