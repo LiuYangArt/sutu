@@ -29,6 +29,19 @@ const TABS: TabConfig[] = [
   { id: 'tablet', label: 'Tablet', icon: <Tablet size={16} /> },
 ];
 
+const WINDOWS_INK_SETTINGS_PATH = 'Settings > Bluetooth & devices > Pen & Windows Ink';
+const WINDOWS_INK_DISABLE_OPTIONS = [
+  'Show visual effects',
+  'Display additional keys pressed when using my pen',
+  'Enable press and hold to perform a right-click equivalent',
+];
+
+function getTabletStatusColor(status: string): string {
+  if (status === 'Connected') return '#4f4';
+  if (status === 'Error') return '#f44';
+  return '#888';
+}
+
 // Sidebar component
 function SettingsSidebar({
   tabs,
@@ -231,7 +244,7 @@ function TabletSettings() {
     refresh,
   } = useTabletStore();
 
-  const statusColor = status === 'Connected' ? '#4f4' : status === 'Error' ? '#f44' : '#888';
+  const statusColor = getTabletStatusColor(status);
   const backendLower = typeof backend === 'string' ? backend.toLowerCase() : 'none';
   const isWinTabActive =
     backendLower === 'wintab' || (backendLower !== 'pointerevent' && tablet.backend === 'wintab');
@@ -317,6 +330,26 @@ function TabletSettings() {
             <option value="hard">Hard</option>
             <option value="scurve">S-Curve</option>
           </select>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <label className="settings-label">WINDOWS INK TIPS</label>
+        <div className="tablet-hint-card">
+          <p className="tablet-hint-title">For PointerEvent pressure stability on Windows</p>
+          <p className="tablet-hint-text">
+            Open <code>{WINDOWS_INK_SETTINGS_PATH}</code>, then under Additional pen settings turn
+            these off:
+          </p>
+          <ul className="tablet-hint-list">
+            {WINDOWS_INK_DISABLE_OPTIONS.map((option) => (
+              <li key={option}>{option}</li>
+            ))}
+          </ul>
+          <p className="tablet-hint-text">
+            In Wacom Tablet Properties, keep <code>Use Windows Ink</code> enabled when using the
+            PointerEvent backend.
+          </p>
         </div>
       </div>
 
