@@ -19,6 +19,10 @@ function isSelectionTool(tool: ToolType): boolean {
   return tool === 'select' || tool === 'lasso';
 }
 
+function isAltKey(code: string): boolean {
+  return code === 'AltLeft' || code === 'AltRight';
+}
+
 interface SelectionHandlerResult {
   /** Handle pointer down for selection tools. Returns true if handled. */
   handleSelectionPointerDown: (
@@ -168,6 +172,14 @@ export function useSelectionHandler({
     [commitSelection, finalizeHistoryIfChanged, resetGestureRefs, setLassoMode]
   );
 
+  const resetModifierState = useCallback(function resetModifierState(): void {
+    prevAltRef.current = false;
+    altPressedRef.current = false;
+    setAltPressed(false);
+    shiftPressedRef.current = false;
+    ctrlPressedRef.current = false;
+  }, []);
+
   // Listen for Alt key changes globally
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -176,8 +188,12 @@ export function useSelectionHandler({
         return;
       }
 
-      if (e.code === 'AltLeft' || e.code === 'AltRight') {
+      if (isAltKey(e.code)) {
         const tool = currentToolRef.current;
+        // 选区工具下阻止 Alt 默认行为，避免 Windows 抢占菜单焦点。
+        if (isSelectionTool(tool)) {
+          e.preventDefault();
+        }
         // When Alt is pressed during lasso selection, anchor current position
         if (
           tool === 'lasso' &&
@@ -203,8 +219,11 @@ export function useSelectionHandler({
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'AltLeft' || e.code === 'AltRight') {
+      if (isAltKey(e.code)) {
         const tool = currentToolRef.current;
+        if (isSelectionTool(tool)) {
+          e.preventDefault();
+        }
         // When releasing Alt during lasso selection:
         if (tool === 'lasso' && isSelectingRef.current && prevAltRef.current) {
           commitCreationIfNeeded();
@@ -224,14 +243,21 @@ export function useSelectionHandler({
       }
     };
 
+    const handleBlur = () => {
+      // Windows 下 Alt 可能触发原生菜单焦点并丢失 keyup，这里兜底重置。
+      resetModifierState();
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
-  }, [addCreationPoint, commitCreationIfNeeded, resetGestureRefs]);
+  }, [addCreationPoint, commitCreationIfNeeded, resetGestureRefs, resetModifierState]);
 
   const isSelectionToolActive = isSelectionTool(currentTool);
 

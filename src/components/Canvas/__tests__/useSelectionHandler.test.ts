@@ -6,6 +6,15 @@ import { useHistoryStore } from '@/stores/history';
 import { useSelectionStore } from '@/stores/selection';
 import type { ToolType } from '@/stores/tool';
 
+function createAltEvent(type: 'keydown' | 'keyup'): KeyboardEvent {
+  return new KeyboardEvent(type, {
+    code: 'AltLeft',
+    key: 'Alt',
+    bubbles: true,
+    cancelable: true,
+  });
+}
+
 function resetSelectionState(): void {
   useSelectionStore.getState().deselectAll();
   useSelectionStore.getState().setSelectionMode('new');
@@ -75,5 +84,49 @@ describe('useSelectionHandler', () => {
     expect(state.isCreating).toBe(false);
     expect(state.hasSelection).toBe(true);
     expect(state.selectionPath.length).toBeGreaterThan(0);
+  });
+
+  it('选区工具下 Alt 按键会阻止默认行为，避免系统菜单抢焦点', () => {
+    const { rerender } = renderHook(
+      ({ tool }) => useSelectionHandler({ currentTool: tool, scale: 1 }),
+      { initialProps: { tool: 'select' as ToolType } }
+    );
+
+    const altDown = createAltEvent('keydown');
+    const altUp = createAltEvent('keyup');
+
+    act(() => {
+      window.dispatchEvent(altDown);
+      window.dispatchEvent(altUp);
+    });
+
+    expect(altDown.defaultPrevented).toBe(true);
+    expect(altUp.defaultPrevented).toBe(true);
+
+    rerender({ tool: 'brush' as ToolType });
+
+    const brushAltDown = createAltEvent('keydown');
+
+    act(() => {
+      window.dispatchEvent(brushAltDown);
+    });
+
+    expect(brushAltDown.defaultPrevented).toBe(false);
+  });
+
+  it('窗口失焦时会重置 Alt 状态，避免 lasso 卡在 polygonal 模式', () => {
+    const { result } = renderHook(() => useSelectionHandler({ currentTool: 'lasso', scale: 1 }));
+
+    const altDown = createAltEvent('keydown');
+
+    act(() => {
+      window.dispatchEvent(altDown);
+    });
+    expect(result.current.effectiveLassoMode).toBe('polygonal');
+
+    act(() => {
+      window.dispatchEvent(new Event('blur'));
+    });
+    expect(result.current.effectiveLassoMode).toBe('freehand');
   });
 });
