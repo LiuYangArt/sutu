@@ -42,6 +42,42 @@ function getTabletStatusColor(status: string): string {
   return '#888';
 }
 
+interface PointerEventDiagnosticsSnapshot {
+  eventType: string;
+  pointerId: number;
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  normalizedTiltX: number;
+  normalizedTiltY: number;
+  twist: number;
+  altitudeAngleRad: number | null;
+  azimuthAngleRad: number | null;
+  buttons: number;
+  isPrimary: boolean;
+  timeStamp: number;
+}
+
+function clampSignedUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(-1, Math.min(1, value));
+}
+
+function normalizeTiltDegrees(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return clampSignedUnit(value / 90);
+}
+
+function toFixed(value: number, digits: number = 3): string {
+  if (!Number.isFinite(value)) return '-';
+  return value.toFixed(digits);
+}
+
+function toDegreesString(rad: number | null): string {
+  if (rad === null || !Number.isFinite(rad)) return '-';
+  return ((rad * 180) / Math.PI).toFixed(1);
+}
+
 // Sidebar component
 function SettingsSidebar({
   tabs,
@@ -245,6 +281,7 @@ function TabletSettings() {
   } = useTabletStore();
 
   const statusColor = getTabletStatusColor(status);
+  const [pointerDiag, setPointerDiag] = useState<PointerEventDiagnosticsSnapshot | null>(null);
   const backendLower = typeof backend === 'string' ? backend.toLowerCase() : 'none';
   const isWinTabActive =
     backendLower === 'wintab' || (backendLower !== 'pointerevent' && tablet.backend === 'wintab');
@@ -280,6 +317,77 @@ function TabletSettings() {
     }
   };
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let rafId: number | null = null;
+    let pending: PointerEventDiagnosticsSnapshot | null = null;
+
+    const flush = () => {
+      rafId = null;
+      if (pending) {
+        setPointerDiag(pending);
+        pending = null;
+      }
+    };
+
+    const scheduleFlush = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(flush);
+    };
+
+    const onPointer = (event: Event) => {
+      const pe = event as PointerEvent & {
+        twist?: number;
+        altitudeAngle?: number;
+        azimuthAngle?: number;
+      };
+      if (pe.pointerType !== 'pen') return;
+
+      const rawTiltX = Number.isFinite(pe.tiltX) ? pe.tiltX : 0;
+      const rawTiltY = Number.isFinite(pe.tiltY) ? pe.tiltY : 0;
+      const rawTwist = Number.isFinite(pe.twist) ? pe.twist! : 0;
+      const normalizedTwist = ((rawTwist % 360) + 360) % 360;
+
+      pending = {
+        eventType: pe.type,
+        pointerId: Number.isFinite(pe.pointerId) ? pe.pointerId : 0,
+        pressure: Number.isFinite(pe.pressure) ? pe.pressure : 0,
+        tiltX: rawTiltX,
+        tiltY: rawTiltY,
+        normalizedTiltX: normalizeTiltDegrees(rawTiltX),
+        normalizedTiltY: normalizeTiltDegrees(rawTiltY),
+        twist: normalizedTwist,
+        altitudeAngleRad: Number.isFinite(pe.altitudeAngle) ? pe.altitudeAngle! : null,
+        azimuthAngleRad: Number.isFinite(pe.azimuthAngle) ? pe.azimuthAngle! : null,
+        buttons: Number.isFinite(pe.buttons) ? pe.buttons : 0,
+        isPrimary: Boolean(pe.isPrimary),
+        timeStamp: Number.isFinite(pe.timeStamp) ? pe.timeStamp : 0,
+      };
+      scheduleFlush();
+    };
+
+    const options: AddEventListenerOptions = { capture: true, passive: true };
+    window.addEventListener('pointerdown', onPointer, options);
+    window.addEventListener('pointermove', onPointer, options);
+    window.addEventListener('pointerup', onPointer, options);
+    window.addEventListener('pointercancel', onPointer, options);
+    window.addEventListener('pointerrawupdate', onPointer, options);
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointer, options);
+      window.removeEventListener('pointermove', onPointer, options);
+      window.removeEventListener('pointerup', onPointer, options);
+      window.removeEventListener('pointercancel', onPointer, options);
+      window.removeEventListener('pointerrawupdate', onPointer, options);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+    };
+  }, []);
+
+  const pointerRawUpdateSupported = typeof window !== 'undefined' && 'onpointerrawupdate' in window;
+
   return (
     <div className="settings-content">
       <h3 className="settings-section-title">Tablet</h3>
@@ -310,6 +418,72 @@ function TabletSettings() {
               </div>
             </>
           )}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <label className="settings-label">POINTEREVENT LIVE</label>
+        <div className="tablet-live-card">
+          {pointerDiag ? (
+            <>
+              <div className="status-row">
+                <span>Last Event:</span>
+                <span>{pointerDiag.eventType}</span>
+              </div>
+              <div className="status-row">
+                <span>Pointer ID:</span>
+                <span>{pointerDiag.pointerId}</span>
+              </div>
+              <div className="status-row">
+                <span>Pressure:</span>
+                <span>{toFixed(pointerDiag.pressure, 4)}</span>
+              </div>
+              <div className="status-row">
+                <span>Tilt X / Y (raw deg):</span>
+                <span>
+                  {toFixed(pointerDiag.tiltX, 1)} / {toFixed(pointerDiag.tiltY, 1)}
+                </span>
+              </div>
+              <div className="status-row">
+                <span>Tilt X / Y (normalized):</span>
+                <span>
+                  {toFixed(pointerDiag.normalizedTiltX, 4)} /{' '}
+                  {toFixed(pointerDiag.normalizedTiltY, 4)}
+                </span>
+              </div>
+              <div className="status-row">
+                <span>Twist / Rotation:</span>
+                <span>{toFixed(pointerDiag.twist, 1)}°</span>
+              </div>
+              <div className="status-row">
+                <span>Altitude / Azimuth:</span>
+                <span>
+                  {toFixed(pointerDiag.altitudeAngleRad ?? Number.NaN, 4)} rad (
+                  {toDegreesString(pointerDiag.altitudeAngleRad)}°) /{' '}
+                  {toFixed(pointerDiag.azimuthAngleRad ?? Number.NaN, 4)} rad (
+                  {toDegreesString(pointerDiag.azimuthAngleRad)}°)
+                </span>
+              </div>
+              <div className="status-row">
+                <span>Buttons / Primary:</span>
+                <span>
+                  {pointerDiag.buttons} / {pointerDiag.isPrimary ? 'true' : 'false'}
+                </span>
+              </div>
+              <div className="status-row">
+                <span>Event Timestamp:</span>
+                <span>{toFixed(pointerDiag.timeStamp, 1)} ms</span>
+              </div>
+            </>
+          ) : (
+            <div className="tablet-live-empty">
+              未收到 pen PointerEvent。把笔移到应用窗口内并悬停/落笔后，这里会实时刷新。
+            </div>
+          )}
+          <div className="tablet-live-hint">
+            监听源：window PointerEvent（仅 pointerType=pen） | pointerrawupdate 支持：
+            {pointerRawUpdateSupported ? 'Yes' : 'No'}
+          </div>
         </div>
       </div>
 

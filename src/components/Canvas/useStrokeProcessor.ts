@@ -21,6 +21,9 @@ interface QueuedPoint {
   x: number;
   y: number;
   pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
   pointIndex: number;
 }
 
@@ -78,7 +81,8 @@ interface UseStrokeProcessorParams {
     y: number,
     pressure: number,
     config: BrushRenderConfig,
-    pointIndex?: number
+    pointIndex?: number,
+    dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
   ) => void;
   endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -186,6 +190,11 @@ export function useStrokeProcessor({
   }, [activeLayerId, layerRendererRef]);
 
   const lastPressureRef = useRef(0);
+  const lastDynamicsRef = useRef<{ tiltX: number; tiltY: number; rotation: number }>({
+    tiltX: 0,
+    tiltY: 0,
+    rotation: 0,
+  });
   const buildupAccMsRef = useRef(0);
   const rafPrevTimeRef = useRef<number | null>(null);
 
@@ -296,17 +305,29 @@ export function useStrokeProcessor({
   // Process a single point through the brush renderer WITHOUT triggering composite
   // Used by batch processing loop in RAF
   const processSinglePoint = useCallback(
-    (x: number, y: number, pressure: number, pointIndex?: number) => {
+    (
+      x: number,
+      y: number,
+      pressure: number,
+      pointIndex?: number,
+      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
+    ) => {
       const constrained = constrainShiftLinePoint(x, y);
       const config = getBrushConfig();
       lagometerRef.current.setBrushRadius(config.size / 2);
 
-      processBrushPoint(constrained.x, constrained.y, pressure, config, pointIndex);
+      const pointDynamics = {
+        tiltX: dynamics?.tiltX ?? 0,
+        tiltY: dynamics?.tiltY ?? 0,
+        rotation: dynamics?.rotation ?? 0,
+      };
+      processBrushPoint(constrained.x, constrained.y, pressure, config, pointIndex, pointDynamics);
 
       // Track last rendered position for Visual Lag measurement
       lastRenderedPosRef.current = { x: constrained.x, y: constrained.y };
       lastInputPosRef.current = { x: constrained.x, y: constrained.y };
       lastPressureRef.current = pressure;
+      lastDynamicsRef.current = pointDynamics;
     },
     [
       getBrushConfig,
@@ -320,8 +341,14 @@ export function useStrokeProcessor({
 
   // Process a single point AND trigger composite (legacy behavior, used during state machine replay)
   const processBrushPointWithConfig = useCallback(
-    (x: number, y: number, pressure: number, pointIndex?: number) => {
-      processSinglePoint(x, y, pressure, pointIndex);
+    (
+      x: number,
+      y: number,
+      pressure: number,
+      pointIndex?: number,
+      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
+    ) => {
+      processSinglePoint(x, y, pressure, pointIndex, dynamics);
       // Mark that we need to render after processing
       needsRenderRef.current = true;
     },
@@ -369,7 +396,11 @@ export function useStrokeProcessor({
           // Drain and process points
           for (let i = 0; i < count; i++) {
             const p = queue[i]!;
-            processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
+            processSinglePoint(p.x, p.y, p.pressure, p.pointIndex, {
+              tiltX: p.tiltX,
+              tiltY: p.tiltY,
+              rotation: p.rotation,
+            });
           }
 
           // Clear processed points from queue
@@ -416,7 +447,7 @@ export function useStrokeProcessor({
               }
             }
 
-            processBrushPointWithConfig(pos.x, pos.y, pressure);
+            processBrushPointWithConfig(pos.x, pos.y, pressure, undefined, lastDynamicsRef.current);
             steps++;
           }
 
@@ -546,7 +577,11 @@ export function useStrokeProcessor({
       let processedTailQueue = false;
       if (remainingQueue.length > 0) {
         for (const p of remainingQueue) {
-          processSinglePoint(p.x, p.y, p.pressure, p.pointIndex);
+          processSinglePoint(p.x, p.y, p.pressure, p.pointIndex, {
+            tiltX: p.tiltX,
+            tiltY: p.tiltY,
+            rotation: p.rotation,
+          });
         }
         inputQueueRef.current = [];
         processedTailQueue = true;
@@ -605,6 +640,7 @@ export function useStrokeProcessor({
     inputQueueRef.current = [];
     pendingEndRef.current = false;
     lastRenderedPosRef.current = null;
+    lastDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
     window.__strokeDiagnostics?.onStrokeEnd();
   }, [
     currentTool,
@@ -629,6 +665,7 @@ export function useStrokeProcessor({
     onShiftLineStrokeEnd,
     lastRenderedPosRef,
     lastInputPosRef,
+    lastDynamicsRef,
     isDrawingRef,
     strokeStateRef,
   ]);
@@ -712,7 +749,11 @@ export function useStrokeProcessor({
       }
 
       for (const p of replayPoints) {
-        processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex);
+        processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex, {
+          tiltX: p.tiltX,
+          tiltY: p.tiltY,
+          rotation: p.rotation,
+        });
         window.__strokeDiagnostics?.onPointBuffered();
       }
       pendingPointsRef.current = [];
@@ -730,6 +771,7 @@ export function useStrokeProcessor({
       inputQueueRef.current = [];
       pendingEndRef.current = false;
       isDrawingRef.current = false;
+      lastDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
     }
   }, [
     beginBrushStroke,
@@ -744,6 +786,7 @@ export function useStrokeProcessor({
     inputQueueRef,
     pendingEndRef,
     isDrawingRef,
+    lastDynamicsRef,
   ]);
 
   return { drawPoints, finishCurrentStroke, initializeBrushStroke };

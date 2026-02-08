@@ -21,6 +21,9 @@ interface QueuedPoint {
   x: number;
   y: number;
   pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
   pointIndex: number;
 }
 
@@ -238,6 +241,9 @@ export function usePointerHandlers({
       // otherwise the first dab can become noticeably too heavy (especially with Build-up enabled).
       const pe = e.nativeEvent as PointerEvent;
       let pressure = 0.5;
+      let tiltX = 0;
+      let tiltY = 0;
+      let rotation = 0;
       if (pe.pointerType === 'pen') {
         pressure = pe.pressure > 0 ? pe.pressure : 0;
       } else if (pe.pressure > 0) {
@@ -252,10 +258,19 @@ export function usePointerHandlers({
         // Synthetic replay events are not trusted; keep captured pressure instead of
         // overriding with live WinTab stream.
         const shouldUseWinTab = isWinTabActive && pe.isTrusted;
+        const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
+        const effectiveInput = getEffectiveInputData(
+          pe,
+          shouldUseWinTab,
+          bufferedPoints,
+          tabletState.currentPoint
+        );
+        tiltX = effectiveInput.tiltX;
+        tiltY = effectiveInput.tiltY;
+        rotation = effectiveInput.rotation;
         if (shouldUseWinTab) {
           // Use buffered WinTab points when available; avoid using currentPoint at pointerdown
           // because it can be stale (previous stroke), causing an overly heavy first dab.
-          const bufferedPoints = drainPointBuffer();
           if (bufferedPoints.length > 0) {
             pressure = bufferedPoints[bufferedPoints.length - 1]!.pressure;
           } else {
@@ -326,7 +341,9 @@ export function usePointerHandlers({
         latencyProfilerRef.current.markInputReceived(idx, e.nativeEvent as PointerEvent);
 
         strokeStateRef.current = 'starting';
-        pendingPointsRef.current = [{ x: canvasX, y: canvasY, pressure, pointIndex: idx }];
+        pendingPointsRef.current = [
+          { x: canvasX, y: canvasY, pressure, tiltX, tiltY, rotation, pointIndex: idx },
+        ];
         pendingEndRef.current = false;
 
         // 先抓撤销基线，再初始化 GPU 笔触。
@@ -347,8 +364,8 @@ export function usePointerHandlers({
         x: constrainedDown.x,
         y: constrainedDown.y,
         pressure,
-        tiltX: e.tiltX ?? 0,
-        tiltY: e.tiltY ?? 0,
+        tiltX,
+        tiltY,
       };
 
       const interpolatedPoints = strokeBufferRef.current?.addPoint(point) ?? [];
@@ -503,7 +520,7 @@ export function usePointerHandlers({
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
 
         // Resolve input pressure/tilt (handling WinTab buffering if active)
-        const { pressure, tiltX, tiltY } = getEffectiveInputData(
+        const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
           evt,
           shouldUseWinTab,
           bufferedPoints,
@@ -519,10 +536,26 @@ export function usePointerHandlers({
           const state = strokeStateRef.current;
           if (state === 'starting') {
             // Buffer points during 'starting' phase, replay after beginStroke completes
-            pendingPointsRef.current.push({ x: canvasX, y: canvasY, pressure, pointIndex: idx });
+            pendingPointsRef.current.push({
+              x: canvasX,
+              y: canvasY,
+              pressure,
+              tiltX,
+              tiltY,
+              rotation,
+              pointIndex: idx,
+            });
             window.__strokeDiagnostics?.onPointBuffered(); // Telemetry: Buffered point
           } else if (state === 'active') {
-            inputQueueRef.current.push({ x: canvasX, y: canvasY, pressure, pointIndex: idx });
+            inputQueueRef.current.push({
+              x: canvasX,
+              y: canvasY,
+              pressure,
+              tiltX,
+              tiltY,
+              rotation,
+              pointIndex: idx,
+            });
             window.__strokeDiagnostics?.onPointBuffered();
           }
           // Ignore in 'idle' or 'finishing' state

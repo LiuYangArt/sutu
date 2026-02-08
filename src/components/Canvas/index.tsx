@@ -115,7 +115,15 @@ declare global {
   }
 }
 
-type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number };
+type QueuedPoint = {
+  x: number;
+  y: number;
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+  pointIndex: number;
+};
 
 const GPU_TILE_SIZE = 512;
 const GPU_LAYER_FORMAT: GPUTextureFormat = 'rgba8unorm';

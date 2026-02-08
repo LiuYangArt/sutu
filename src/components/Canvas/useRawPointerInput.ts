@@ -16,7 +16,15 @@ import { clientToCanvasPoint } from './canvasGeometry';
 export const supportsPointerRawUpdate =
   typeof window !== 'undefined' && 'onpointerrawupdate' in window;
 
-type QueuedPoint = { x: number; y: number; pressure: number; pointIndex: number };
+type QueuedPoint = {
+  x: number;
+  y: number;
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+  pointIndex: number;
+};
 
 interface RawPointerInputConfig {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -98,7 +106,7 @@ export function useRawPointerInput({
         );
 
         // Resolve pressure/tilt from WinTab or PointerEvent
-        const { pressure } = getEffectiveInputData(
+        const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
           evt,
           shouldUseWinTab,
           bufferedPoints,
@@ -108,7 +116,7 @@ export function useRawPointerInput({
         const idx = pointIndexRef.current++;
         latencyProfiler.markInputReceived(idx, evt);
 
-        const point = { x: canvasX, y: canvasY, pressure, pointIndex: idx };
+        const point = { x: canvasX, y: canvasY, pressure, tiltX, tiltY, rotation, pointIndex: idx };
 
         if (state === 'starting') {
           pendingPointsRef.current.push(point);

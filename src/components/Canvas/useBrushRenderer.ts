@@ -162,7 +162,8 @@ export interface UseBrushRendererResult {
     y: number,
     pressure: number,
     config: BrushRenderConfig,
-    pointIndex?: number
+    pointIndex?: number,
+    dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
   ) => void;
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -358,7 +359,8 @@ export function useBrushRenderer({
       y: number,
       pressure: number,
       config: BrushRenderConfig,
-      pointIndex?: number
+      pointIndex?: number,
+      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
     ): void => {
       if (strokeCancelledRef.current) {
         return;
@@ -373,6 +375,9 @@ export function useBrushRenderer({
 
       // Apply pressure curve
       const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
+      const tiltX = dynamics?.tiltX ?? 0;
+      const tiltY = dynamics?.tiltY ?? 0;
+      const rotation = dynamics?.rotation ?? 0;
 
       // Store stroke-level opacity (applied at endStroke/compositeToLayer)
       const strokeOpacity = Math.max(0, Math.min(1, config.opacity));
@@ -387,9 +392,9 @@ export function useBrushRenderer({
       if (config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off') {
         const spacingInput: DynamicsInput = {
           pressure: adjustedPressure,
-          tiltX: 0,
-          tiltY: 0,
-          rotation: 0,
+          tiltX,
+          tiltY,
+          rotation,
           direction: 0,
           initialDirection: 0,
           fadeProgress: 0,
@@ -541,9 +546,9 @@ export function useBrushRenderer({
         // Prepare dynamics input (shared by Shape Dynamics, Scatter, Color Dynamics, and Transfer)
         const dynamicsInput: DynamicsInput = {
           pressure: dabPressure,
-          tiltX: 0, // TODO: Get from dab if available
-          tiltY: 0, // TODO: Get from dab if available
-          rotation: 0, // TODO: Get from dab if available (pen barrel rotation)
+          tiltX,
+          tiltY,
+          rotation,
           direction,
           initialDirection: initialDirectionRef.current,
           fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
