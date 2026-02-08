@@ -26,6 +26,16 @@ function channelSoftLight(dst: number, src: number): number {
   return dst + (2 * src - 1) * (g - dst);
 }
 
+function channelOverlay(dst: number, src: number): number {
+  if (dst < 0.5) return 2 * dst * src;
+  return 1 - 2 * (1 - dst) * (1 - src);
+}
+
+function channelHardLight(dst: number, src: number): number {
+  if (src < 0.5) return 2 * dst * src;
+  return 1 - 2 * (1 - dst) * (1 - src);
+}
+
 function rgbToHsl(color: Rgb): [number, number, number] {
   const [r, g, b] = color;
   const cmax = Math.max(r, g, b);
@@ -119,9 +129,9 @@ export function blendRgb(mode: BlendMode, dst: Rgb, src: Rgb): [number, number, 
       ];
     case 'overlay':
       return [
-        dst[0] < 0.5 ? 2 * dst[0] * src[0] : 1 - 2 * (1 - dst[0]) * (1 - src[0]),
-        dst[1] < 0.5 ? 2 * dst[1] * src[1] : 1 - 2 * (1 - dst[1]) * (1 - src[1]),
-        dst[2] < 0.5 ? 2 * dst[2] * src[2] : 1 - 2 * (1 - dst[2]) * (1 - src[2]),
+        channelOverlay(dst[0], src[0]),
+        channelOverlay(dst[1], src[1]),
+        channelOverlay(dst[2], src[2]),
       ];
     case 'darken':
       return [Math.min(dst[0], src[0]), Math.min(dst[1], src[1]), Math.min(dst[2], src[2])];
@@ -141,9 +151,9 @@ export function blendRgb(mode: BlendMode, dst: Rgb, src: Rgb): [number, number, 
       ];
     case 'hard-light':
       return [
-        src[0] < 0.5 ? 2 * dst[0] * src[0] : 1 - 2 * (1 - dst[0]) * (1 - src[0]),
-        src[1] < 0.5 ? 2 * dst[1] * src[1] : 1 - 2 * (1 - dst[1]) * (1 - src[1]),
-        src[2] < 0.5 ? 2 * dst[2] * src[2] : 1 - 2 * (1 - dst[2]) * (1 - src[2]),
+        channelHardLight(dst[0], src[0]),
+        channelHardLight(dst[1], src[1]),
+        channelHardLight(dst[2], src[2]),
       ];
     case 'soft-light':
       return [
@@ -186,12 +196,26 @@ export function compositePixelWithTransparentFallback(args: {
   srcAlpha: number;
   transparentBackdropEps?: number;
 }): { rgb: [number, number, number]; alpha: number } {
-  const dstAlpha = clampUnit(args.dstAlpha);
-  const srcAlpha = clampUnit(args.srcAlpha);
+  const {
+    blendMode,
+    dstRgb,
+    dstAlpha: rawDstAlpha,
+    srcRgb,
+    srcAlpha: rawSrcAlpha,
+    transparentBackdropEps,
+  } = args;
+  const dstAlpha = clampUnit(rawDstAlpha);
+  const srcAlpha = clampUnit(rawSrcAlpha);
+  const dstR = dstRgb[0];
+  const dstG = dstRgb[1];
+  const dstB = dstRgb[2];
+  const srcR = srcRgb[0];
+  const srcG = srcRgb[1];
+  const srcB = srcRgb[2];
 
   if (srcAlpha <= 0.0001) {
     return {
-      rgb: [clampUnit(args.dstRgb[0]), clampUnit(args.dstRgb[1]), clampUnit(args.dstRgb[2])],
+      rgb: [clampUnit(dstR), clampUnit(dstG), clampUnit(dstB)],
       alpha: dstAlpha,
     };
   }
@@ -201,25 +225,19 @@ export function compositePixelWithTransparentFallback(args: {
     return { rgb: [0, 0, 0], alpha: 0 };
   }
 
-  const eps = args.transparentBackdropEps ?? TRANSPARENT_BACKDROP_EPS;
-  const useNormal = args.blendMode === 'normal' || dstAlpha <= eps;
-  const blendedSrc = useNormal ? args.srcRgb : blendRgb(args.blendMode, args.dstRgb, args.srcRgb);
+  const eps = transparentBackdropEps ?? TRANSPARENT_BACKDROP_EPS;
+  const useNormal = blendMode === 'normal' || dstAlpha <= eps;
+  const blendedSrc = useNormal ? srcRgb : blendRgb(blendMode, dstRgb, srcRgb);
+  const srcOnlyWeight = srcAlpha * (1 - dstAlpha);
+  const dstOnlyWeight = dstAlpha * (1 - srcAlpha);
+  const overlapWeight = dstAlpha * srcAlpha;
 
   const outR =
-    (args.srcRgb[0] * srcAlpha * (1 - dstAlpha) +
-      args.dstRgb[0] * dstAlpha * (1 - srcAlpha) +
-      blendedSrc[0] * dstAlpha * srcAlpha) /
-    outAlpha;
+    (srcR * srcOnlyWeight + dstR * dstOnlyWeight + blendedSrc[0] * overlapWeight) / outAlpha;
   const outG =
-    (args.srcRgb[1] * srcAlpha * (1 - dstAlpha) +
-      args.dstRgb[1] * dstAlpha * (1 - srcAlpha) +
-      blendedSrc[1] * dstAlpha * srcAlpha) /
-    outAlpha;
+    (srcG * srcOnlyWeight + dstG * dstOnlyWeight + blendedSrc[1] * overlapWeight) / outAlpha;
   const outB =
-    (args.srcRgb[2] * srcAlpha * (1 - dstAlpha) +
-      args.dstRgb[2] * dstAlpha * (1 - srcAlpha) +
-      blendedSrc[2] * dstAlpha * srcAlpha) /
-    outAlpha;
+    (srcB * srcOnlyWeight + dstB * dstOnlyWeight + blendedSrc[2] * overlapWeight) / outAlpha;
 
   return {
     rgb: [clampUnit(outR), clampUnit(outG), clampUnit(outB)],
