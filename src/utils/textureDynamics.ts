@@ -8,15 +8,34 @@ import {
   type RandomFn,
 } from './shapeDynamics';
 
-const DEPTH_CONTROL_MAP = ['off', 'fade', 'penPressure', 'penTilt', 'rotation'] as const;
-
 export function depthControlToSource(value: number): ControlSource {
-  return (DEPTH_CONTROL_MAP[value] as ControlSource) || 'off';
+  switch (value) {
+    case 1:
+      return 'fade';
+    case 2:
+      return 'penPressure';
+    case 3:
+      return 'penTilt';
+    case 4:
+      return 'rotation';
+    default:
+      return 'off';
+  }
 }
 
 export function sourceToDepthControl(source: ControlSource): number {
-  const index = (DEPTH_CONTROL_MAP as readonly string[]).indexOf(source);
-  return index >= 0 ? index : 0;
+  switch (source) {
+    case 'fade':
+      return 1;
+    case 'penPressure':
+      return 2;
+    case 'penTilt':
+      return 3;
+    case 'rotation':
+      return 4;
+    default:
+      return 0;
+  }
 }
 
 export function computeTextureDepth(
