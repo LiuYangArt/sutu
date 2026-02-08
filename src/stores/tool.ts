@@ -715,7 +715,7 @@ export const useToolStore = create<ToolState>()(
     }),
     {
       name: 'paintboard-brush-settings',
-      version: 2,
+      version: 3,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
         if (!persistedState || typeof persistedState !== 'object')

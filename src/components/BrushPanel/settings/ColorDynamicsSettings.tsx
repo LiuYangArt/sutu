@@ -23,6 +23,7 @@ export function ColorDynamicsSettings(): JSX.Element {
   const { colorDynamics, setColorDynamics, colorDynamicsEnabled } = useToolStore();
 
   const disabled = !colorDynamicsEnabled;
+  const applyPerTip = colorDynamics.applyPerTip !== false;
 
   return (
     <div className="brush-panel-section">
@@ -37,7 +38,7 @@ export function ColorDynamicsSettings(): JSX.Element {
           <label className={`flip-checkbox ${disabled ? 'disabled' : ''}`}>
             <input
               type="checkbox"
-              checked={colorDynamics.applyPerTip}
+              checked={applyPerTip}
               onChange={(e) => setColorDynamics({ applyPerTip: e.target.checked })}
               disabled={disabled}
             />

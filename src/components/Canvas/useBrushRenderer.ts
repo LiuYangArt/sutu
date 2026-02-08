@@ -511,8 +511,9 @@ export function useBrushRenderer({
         config.colorDynamicsEnabled &&
         config.colorDynamics &&
         isColorDynamicsActive(config.colorDynamics);
+      const colorDynamicsApplyPerTip = config.colorDynamics?.applyPerTip !== false;
       let strokeColorJitterSample: ColorJitterSample | undefined;
-      if (useColorDynamics && config.colorDynamics && config.colorDynamics.applyPerTip === false) {
+      if (useColorDynamics && !colorDynamicsApplyPerTip) {
         if (!strokeColorJitterSampleRef.current) {
           strokeColorJitterSampleRef.current = createColorJitterSample();
         }
