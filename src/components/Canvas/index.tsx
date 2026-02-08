@@ -19,6 +19,7 @@ import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { usePointerHandlers } from './usePointerHandlers';
 import { useStrokeProcessor } from './useStrokeProcessor';
 import { SelectionOverlay } from './SelectionOverlay';
+import { BrushQuickPanel } from './BrushQuickPanel';
 import { getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
@@ -222,6 +223,8 @@ export function Canvas() {
   const [devicePixelRatio, setDevicePixelRatio] = useState(() =>
     getSafeDevicePixelRatio(typeof window === 'undefined' ? undefined : window)
   );
+  const [brushQuickPanelOpen, setBrushQuickPanelOpen] = useState(false);
+  const [brushQuickPanelAnchor, setBrushQuickPanelAnchor] = useState({ x: 0, y: 0 });
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -274,6 +277,7 @@ export function Canvas() {
   const { eraserSize } = useToolStore();
   const brushSize = useToolStore((s) => s.brushSize);
   const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
+  const isBrushQuickPanelTool = currentTool === 'brush' || currentTool === 'eraser';
 
   const {
     brush: { renderMode },
@@ -1676,6 +1680,51 @@ export function Canvas() {
     onBeforeCanvasMutation,
   });
 
+  const closeBrushQuickPanel = useCallback(() => {
+    setBrushQuickPanelOpen(false);
+  }, []);
+
+  const openBrushQuickPanel = useCallback((x: number, y: number) => {
+    setBrushQuickPanelAnchor({ x, y });
+    setBrushQuickPanelOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (isBrushQuickPanelTool) return;
+    setBrushQuickPanelOpen(false);
+  }, [isBrushQuickPanelTool]);
+
+  const handleCanvasPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (isBrushQuickPanelTool && e.button === 2) {
+        e.preventDefault();
+        openBrushQuickPanel(e.clientX, e.clientY);
+        return;
+      }
+
+      if (brushQuickPanelOpen && e.button === 0) {
+        closeBrushQuickPanel();
+      }
+
+      handlePointerDown(e);
+    },
+    [
+      isBrushQuickPanelTool,
+      brushQuickPanelOpen,
+      openBrushQuickPanel,
+      closeBrushQuickPanel,
+      handlePointerDown,
+    ]
+  );
+
+  const handleCanvasContextMenu = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!isBrushQuickPanelTool) return;
+      e.preventDefault();
+    },
+    [isBrushQuickPanelTool]
+  );
+
   // 计算 viewport 变换样式
   const viewportStyle: React.CSSProperties = {
     transform: `translate(${offsetX}px, ${offsetY}px) scale(${displayScale})`,
@@ -1694,10 +1743,11 @@ export function Canvas() {
       ref={containerRef}
       className="canvas-container"
       tabIndex={-1}
-      onPointerDown={handlePointerDown}
+      onPointerDown={handleCanvasPointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
+      onContextMenu={handleCanvasContextMenu}
       // Note: onPointerEnter cursor handling is done by native event listener
       style={{ cursor: cursorStyle }}
     >
@@ -1846,6 +1896,12 @@ export function Canvas() {
           </svg>
         </div>
       )}
+      <BrushQuickPanel
+        isOpen={brushQuickPanelOpen}
+        anchorX={brushQuickPanelAnchor.x}
+        anchorY={brushQuickPanelAnchor.y}
+        onRequestClose={closeBrushQuickPanel}
+      />
     </div>
   );
 }
