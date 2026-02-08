@@ -290,6 +290,10 @@
   flex-shrink: 0;
 }
 
+.procedural-brush-thumbnail {
+  filter: none !important;
+}
+
 .abr-preset-name {
   font-size: 9px;
   color: var(--text-secondary);

@@ -9,6 +9,7 @@ export interface BrushPreset {
   angle: number;
   roundness: number;
   hasTexture: boolean;
+  isComputed?: boolean;
   // Note: textureData removed - textures served via project://brush/{id}
   textureWidth: number | null;
   textureHeight: number | null;

@@ -9,7 +9,9 @@ import {
   ImportAbrResult,
 } from '../types';
 import { BrushThumbnail } from '../BrushThumbnail';
+import { ProceduralBrushThumbnail } from '../ProceduralBrushThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
+import { resolveBrushThumbnailKind } from './thumbnailKind';
 
 interface BrushPresetsProps {
   importedPresets: BrushPreset[];
@@ -291,26 +293,38 @@ export function BrushPresets({
         </button>
 
         {/* Imported presets - using BrushThumbnail for texture display */}
-        {importedPresets.map((preset, index) => (
-          <button
-            key={`${preset.id}-${index}`}
-            className={`abr-preset-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
-            onClick={() => applyPreset(preset)}
-            title={`${preset.name}\n${preset.diameter}px, ${preset.hardness}% hardness`}
-          >
-            {preset.hasTexture ? (
-              <BrushThumbnail
-                brushId={preset.id}
-                size={48}
-                alt={preset.name}
-                className="abr-preset-texture"
-              />
-            ) : (
-              <div className="abr-preset-placeholder">{Math.round(preset.diameter)}</div>
-            )}
-            <span className="abr-preset-name">{preset.name}</span>
-          </button>
-        ))}
+        {importedPresets.map((preset, index) => {
+          const thumbKind = resolveBrushThumbnailKind(preset);
+          return (
+            <button
+              key={`${preset.id}-${index}`}
+              className={`abr-preset-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
+              onClick={() => applyPreset(preset)}
+              title={`${preset.name}\n${preset.diameter}px, ${preset.hardness}% hardness`}
+            >
+              {thumbKind === 'texture' ? (
+                <BrushThumbnail
+                  brushId={preset.id}
+                  size={48}
+                  alt={preset.name}
+                  className="abr-preset-texture"
+                />
+              ) : thumbKind === 'procedural' ? (
+                <ProceduralBrushThumbnail
+                  hardness={preset.hardness}
+                  roundness={preset.roundness}
+                  angle={preset.angle}
+                  size={48}
+                  alt={preset.name}
+                  className="abr-preset-texture"
+                />
+              ) : (
+                <div className="abr-preset-placeholder">{Math.round(preset.diameter)}</div>
+              )}
+              <span className="abr-preset-name">{preset.name}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

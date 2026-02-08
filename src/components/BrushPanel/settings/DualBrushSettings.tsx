@@ -12,8 +12,10 @@ import { useToolStore, DualBlendMode } from '@/stores/tool';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { BrushPreset } from '../types';
 import { BrushThumbnail } from '../BrushThumbnail';
+import { ProceduralBrushThumbnail } from '../ProceduralBrushThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
+import { resolveBrushThumbnailKind } from './thumbnailKind';
 
 interface DualBrushSettingsProps {
   importedTips: BrushPreset[];
@@ -140,28 +142,40 @@ export function DualBrushSettings({ importedTips }: DualBrushSettingsProps): JSX
           </button>
 
           {/* Imported presets */}
-          {importedTips.map((preset, index) => (
-            <button
-              key={`dual-${preset.id}-${index}`}
-              className={`abr-preset-item ${dualBrush.brushIndex === index ? 'selected' : ''}`}
-              onClick={() => handlePresetSelect(preset, index)}
-              title={preset.name}
-              disabled={disabled}
-            >
-              {preset.hasTexture ? (
-                <BrushThumbnail
-                  brushId={preset.id}
-                  size={32}
-                  alt={preset.name}
-                  className="abr-preset-texture"
-                />
-              ) : (
-                <div className="abr-preset-placeholder" style={{ fontSize: '10px' }}>
-                  {Math.round(preset.diameter)}
-                </div>
-              )}
-            </button>
-          ))}
+          {importedTips.map((preset, index) => {
+            const thumbKind = resolveBrushThumbnailKind(preset);
+            return (
+              <button
+                key={`dual-${preset.id}-${index}`}
+                className={`abr-preset-item ${dualBrush.brushIndex === index ? 'selected' : ''}`}
+                onClick={() => handlePresetSelect(preset, index)}
+                title={preset.name}
+                disabled={disabled}
+              >
+                {thumbKind === 'texture' ? (
+                  <BrushThumbnail
+                    brushId={preset.id}
+                    size={32}
+                    alt={preset.name}
+                    className="abr-preset-texture"
+                  />
+                ) : thumbKind === 'procedural' ? (
+                  <ProceduralBrushThumbnail
+                    hardness={preset.hardness}
+                    roundness={preset.roundness}
+                    angle={preset.angle}
+                    size={32}
+                    alt={preset.name}
+                    className="abr-preset-texture"
+                  />
+                ) : (
+                  <div className="abr-preset-placeholder" style={{ fontSize: '10px' }}>
+                    {Math.round(preset.diameter)}
+                  </div>
+                )}
+              </button>
+            );
+          })}
         </div>
         {dualBrush.brushName && (
           <div

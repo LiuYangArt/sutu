@@ -682,28 +682,23 @@ impl AbrParser {
         })
     }
 
-    /// Helper to find UUID from sampledData field recursively
-    fn find_sampled_data_uuid(val: &DescriptorValue) -> Option<String> {
-        match val {
-            DescriptorValue::Descriptor(d) => {
-                if let Some(DescriptorValue::String(s)) = d.get("sampledData") {
-                    return Some(s.clone());
-                }
-                for v in d.values() {
-                    if let Some(res) = Self::find_sampled_data_uuid(v) {
-                        return Some(res);
-                    }
-                }
+    /// Extract primary sampled tip UUID from descriptor.
+    ///
+    /// Important: we intentionally avoid recursive scanning because nested descriptors
+    /// like `dualBrush.Brsh.sampledData` must not be treated as the primary brush tip.
+    fn find_primary_sampled_data_uuid(
+        brush_desc: &indexmap::IndexMap<String, DescriptorValue>,
+    ) -> Option<String> {
+        if let Some(DescriptorValue::Descriptor(brsh)) = brush_desc.get("Brsh") {
+            if let Some(DescriptorValue::String(s)) = brsh.get("sampledData") {
+                return Some(s.clone());
             }
-            DescriptorValue::List(l) => {
-                for v in l {
-                    if let Some(res) = Self::find_sampled_data_uuid(v) {
-                        return Some(res);
-                    }
-                }
-            }
-            _ => {}
         }
+
+        if let Some(DescriptorValue::String(s)) = brush_desc.get("sampledData") {
+            return Some(s.clone());
+        }
+
         None
     }
 
@@ -726,8 +721,7 @@ impl AbrParser {
             .unwrap_or_else(|| format!("Brush {}", index + 1));
 
         // Try to find sampled data UUID
-        let target_uuid =
-            Self::find_sampled_data_uuid(&DescriptorValue::Descriptor(brush_desc.clone()));
+        let target_uuid = Self::find_primary_sampled_data_uuid(brush_desc);
 
         // Check if it's a computed brush or sampled brush
         let mut brush = if let Some(uuid) = target_uuid.as_ref() {
@@ -2419,5 +2413,81 @@ mod tests {
             dual.brush_id.as_deref(),
             Some("0fd938d3-665f-11d8-8a89-d1468c4d447d")
         );
+    }
+
+    #[test]
+    fn test_create_brush_from_descriptor_entry_computed_dual_not_primary() {
+        let mut brush_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+
+        let mut main_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        main_brsh.insert(
+            "Dmtr".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Pxl".to_string(),
+                value: 100.0,
+            },
+        );
+        main_brsh.insert(
+            "Hrdn".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 80.0,
+            },
+        );
+        main_brsh.insert(
+            "Rndn".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 70.0,
+            },
+        );
+        main_brsh.insert(
+            "Angl".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Ang".to_string(),
+                value: 25.0,
+            },
+        );
+        main_brsh.insert(
+            "Spcn".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 20.0,
+            },
+        );
+        brush_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(main_brsh));
+        brush_desc.insert(
+            "Nm  ".to_string(),
+            DescriptorValue::String("Computed With Dual".to_string()),
+        );
+
+        let mut dual_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_desc.insert("useDualBrush".to_string(), DescriptorValue::Boolean(true));
+
+        let mut dual_brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        dual_brsh.insert(
+            "sampledData".to_string(),
+            DescriptorValue::String("secondary-tip-uuid".to_string()),
+        );
+        dual_desc.insert("Brsh".to_string(), DescriptorValue::Descriptor(dual_brsh));
+        brush_desc.insert(
+            "dualBrush".to_string(),
+            DescriptorValue::Descriptor(dual_desc),
+        );
+
+        let samp_map: std::collections::HashMap<String, SampBrushData> =
+            std::collections::HashMap::new();
+        let brush = AbrParser::create_brush_from_descriptor_entry(&brush_desc, 0, &samp_map);
+
+        assert!(brush.is_computed, "primary brush should stay computed");
+        assert!(
+            brush.uuid.is_none(),
+            "computed brush should not be promoted to sampled UUID"
+        );
+
+        let dual = brush
+            .dual_brush_settings
+            .expect("dual settings should be present");
+        assert_eq!(dual.brush_id.as_deref(), Some("secondary-tip-uuid"));
     }
 }

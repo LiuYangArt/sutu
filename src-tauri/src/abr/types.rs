@@ -468,6 +468,8 @@ pub struct BrushPreset {
     pub roundness: f32,
     /// Whether brush has custom tip texture
     pub has_texture: bool,
+    /// Whether brush is a computed (procedural) tip
+    pub is_computed: bool,
     /// Texture dimensions (for pre-allocation, texture data via protocol)
     pub texture_width: Option<u32>,
     pub texture_height: Option<u32>,
@@ -550,6 +552,7 @@ impl From<AbrBrush> for BrushPreset {
             angle: brush.angle,
             roundness: brush.roundness * 100.0,
             has_texture,
+            is_computed: brush.is_computed,
             // Note: texture_data removed - textures served via project://brush/{id}
             texture_width: if has_texture {
                 brush.tip_image.as_ref().map(|img| img.width)
@@ -621,6 +624,7 @@ mod tests {
 
         let preset: BrushPreset = brush.into();
         assert!(!preset.has_texture);
+        assert!(preset.is_computed);
         assert!(preset.texture_width.is_none());
         assert!(preset.texture_height.is_none());
     }
@@ -658,6 +662,7 @@ mod tests {
 
         let preset: BrushPreset = brush.into();
         assert!(preset.has_texture);
+        assert!(!preset.is_computed);
         assert_eq!(preset.texture_width, Some(2));
         assert_eq!(preset.texture_height, Some(2));
     }
