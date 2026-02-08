@@ -71,18 +71,12 @@ export interface TabletSettings {
 export type RenderMode = 'gpu' | 'cpu';
 
 /**
- * Color blend mode - controls how colors are mixed during GPU rendering
- */
-export type ColorBlendMode = 'srgb' | 'linear';
-
-/**
  * GPU render scale mode - controls dynamic downsampling
  */
 export type GPURenderScaleMode = 'auto' | 'off';
 
 export interface BrushSettings {
   renderMode: RenderMode;
-  colorBlendMode: ColorBlendMode;
   gpuRenderScaleMode: GPURenderScaleMode;
 }
 
@@ -149,7 +143,6 @@ interface SettingsState extends PersistedSettings {
 
   // Brush/Renderer actions
   setRenderMode: (mode: RenderMode) => void;
-  setColorBlendMode: (mode: ColorBlendMode) => void;
   setGpuRenderScaleMode: (mode: GPURenderScaleMode) => void;
 
   // New file preset actions
@@ -223,7 +216,6 @@ const defaultSettings: PersistedSettings = {
   },
   brush: {
     renderMode: 'gpu',
-    colorBlendMode: 'linear',
     gpuRenderScaleMode: 'off',
   },
   newFile: cloneDefaultNewFileSettings(),
@@ -388,14 +380,6 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
-    setColorBlendMode: (_mode) => {
-      set((state) => {
-        // Deprecated: GPU blending mode is now fixed to linear.
-        state.brush.colorBlendMode = 'linear';
-      });
-      debouncedSave(() => get()._saveSettings());
-    },
-
     setGpuRenderScaleMode: (mode) => {
       set((state) => {
         state.brush.gpuRenderScaleMode = mode;
@@ -467,10 +451,9 @@ export const useSettingsStore = create<SettingsState>()(
             }
             if (loaded.brush) {
               state.brush = {
-                ...defaultSettings.brush,
-                ...loaded.brush,
-                // Deprecated: ignore persisted value, force linear blending.
-                colorBlendMode: 'linear',
+                renderMode: loaded.brush.renderMode ?? defaultSettings.brush.renderMode,
+                gpuRenderScaleMode:
+                  loaded.brush.gpuRenderScaleMode ?? defaultSettings.brush.gpuRenderScaleMode,
               };
             }
             state.newFile = mergeLoadedNewFileSettings(loaded.newFile);

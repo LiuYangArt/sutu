@@ -78,7 +78,7 @@ var<workgroup> shared_dabs: array<TextureDabData, MAX_SHARED_DABS>;
 var<workgroup> shared_dab_count: u32;
 
 // ============================================================================
-// Quantize to 8-bit (matches brush.wgsl)
+// Quantize to 8-bit (kept consistent with parametric compute path)
 // ============================================================================
 fn quantize_to_8bit(val: f32) -> f32 {
   return floor(val * 255.0 + 0.5) / 255.0;
@@ -109,7 +109,7 @@ fn pattern_luma(color: vec4<f32>) -> f32 {
 }
 
 // ============================================================================
-// Alpha Darken Blend (matches brush.wgsl exactly)
+// Alpha Darken Blend (kept consistent with parametric compute path)
 // ============================================================================
 fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceiling: f32) -> vec4<f32> {
   // Early stop: already at ceiling

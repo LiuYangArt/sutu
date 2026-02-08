@@ -6,7 +6,7 @@
 // - Single dispatch for all dabs in a batch (vs per-dab render passes)
 // - Shared memory optimization for dab data
 // - Only processes pixels within the bounding box
-// - Alpha Darken blending (matches brush.wgsl exactly)
+// - Alpha Darken blending (kept consistent with legacy render-path behavior)
 // - Pattern Texture Modulation (Matches computeTextureBrush.wgsl)
 //
 // Performance target: 64 dabs in ~8-12ms (vs ~68ms with per-dab render passes)

@@ -41,7 +41,6 @@ describe('settings store newFile persistence', () => {
       },
       brush: {
         renderMode: 'gpu',
-        colorBlendMode: 'linear',
         gpuRenderScaleMode: 'off',
       },
       general: {
@@ -85,7 +84,9 @@ describe('settings store newFile persistence', () => {
     expect(state.isLoaded).toBe(true);
     expect(state.newFile.customSizePresets).toEqual([]);
     expect(state.newFile.lastUsed).toEqual(DEFAULT_NEW_FILE_SETTINGS.lastUsed);
-    expect(state.brush.colorBlendMode).toBe('linear');
+    expect(state.brush.renderMode).toBe('cpu');
+    expect(state.brush.gpuRenderScaleMode).toBe('auto');
+    expect('colorBlendMode' in (state.brush as unknown as Record<string, unknown>)).toBe(false);
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
   });

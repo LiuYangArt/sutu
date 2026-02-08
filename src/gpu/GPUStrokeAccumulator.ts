@@ -2,12 +2,12 @@
  * GPUStrokeAccumulator - GPU-accelerated stroke buffer
  *
  * Mirrors the CPU StrokeAccumulator API for seamless backend switching.
- * Uses WebGPU Render Pipeline with Instancing for batched dab rendering.
+ * Uses WebGPU Compute Pipeline for batched dab rendering.
  *
  * Key features:
  * - Ping-Pong double buffering to avoid read/write conflicts
- * - GPU Instancing for efficient batched dab submission
- * - Alpha Darken blending implemented in fragment shader
+ * - Compute-shader batched dab submission
+ * - Alpha Darken blending implemented in compute shader
  * - Automatic batch flushing based on count/time thresholds
  */
 
@@ -29,7 +29,7 @@ import { TextureAtlas } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore } from '@/stores/tool';
 import type { BrushTexture, DualBlendMode, DualBrushSettings } from '@/stores/tool';
-import { useSettingsStore, type ColorBlendMode, type GPURenderScaleMode } from '@/stores/settings';
+import { useSettingsStore, type GPURenderScaleMode } from '@/stores/settings';
 import { patternManager } from '@/utils/patternManager';
 import { forEachScatter } from '@/utils/scatterDynamics';
 import { getNoisePattern } from '@/utils/noiseTexture';
@@ -170,9 +170,6 @@ export class GPUStrokeAccumulator {
   // Device lost state tracking (optimization 3)
   private deviceLost: boolean = false;
   private uncapturedErrorHandler: ((event: Event) => void) | null = null;
-
-  // Cached color blend mode to avoid redundant updates
-  private cachedColorBlendMode: ColorBlendMode = 'linear';
 
   // Cached render scale mode to avoid redundant updates
   private cachedRenderScaleMode: GPURenderScaleMode = 'off';
@@ -739,9 +736,6 @@ export class GPUStrokeAccumulator {
     this.active = true;
     this.dabsSinceLastFlush = 0;
 
-    // Sync color blend mode from store
-    this.syncColorBlendMode();
-
     // Sync render scale from store
     this.syncRenderScale();
 
@@ -789,18 +783,6 @@ export class GPUStrokeAccumulator {
     void context;
     void start;
     void label;
-  }
-
-  /**
-   * Sync color blend mode from store to shader uniform
-   */
-  private syncColorBlendMode(): void {
-    const mode = useSettingsStore.getState().brush.colorBlendMode;
-    if (mode !== this.cachedColorBlendMode) {
-      this.computeBrushPipeline.updateColorBlendMode(mode);
-      this.computeTextureBrushPipeline.updateColorBlendMode(mode);
-      this.cachedColorBlendMode = mode;
-    }
   }
 
   /**

@@ -12,7 +12,6 @@
 import type { DabInstanceData, BoundingBox, GPUPatternSettings } from '../types';
 import { calculateEffectiveRadius } from '../types';
 import { erfLUT } from '@/utils/maskCache';
-import type { ColorBlendMode } from '@/stores/settings';
 import { safeWriteBuffer } from '../utils/safeGpuUpload';
 
 // Import shader source
@@ -92,9 +91,6 @@ export class ComputeBrushPipeline {
 
   private canvasWidth: number = 0;
   private canvasHeight: number = 0;
-
-  // Cached color blend mode (fixed default: linear)
-  private colorBlendMode: number = 1; // 0 = sRGB, 1 = linear
 
   constructor(device: GPUDevice) {
     this.device = device;
@@ -221,13 +217,6 @@ export class ComputeBrushPipeline {
     this.cachedBindGroups.clear();
   }
 
-  /**
-   * Update color blend mode
-   */
-  updateColorBlendMode(mode: ColorBlendMode): void {
-    this.colorBlendMode = mode === 'linear' ? 1 : 0;
-  }
-
   private buildTiles(bbox: BoundingBox): BoundingBox[] {
     const bboxPixels = bbox.width * bbox.height;
     if (bboxPixels <= MAX_PIXELS_PER_BATCH) {
@@ -273,7 +262,7 @@ export class ComputeBrushPipeline {
     view.setUint32(byteOffset + 16, this.canvasWidth, true);
     view.setUint32(byteOffset + 20, this.canvasHeight, true);
     view.setUint32(byteOffset + 24, dabCount, true);
-    view.setUint32(byteOffset + 28, this.colorBlendMode, true);
+    view.setUint32(byteOffset + 28, 1, true); // Fixed linear mode
 
     // Block 2: Pattern Settings
     view.setUint32(byteOffset + 32, hasPattern ? 1 : 0, true); // pattern_enabled
