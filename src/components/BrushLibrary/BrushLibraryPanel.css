@@ -151,12 +151,27 @@
 .brush-group-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 10px;
   font-size: 12px;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.brush-group-header-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.brush-group-name {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brush-group-count {
@@ -165,6 +180,38 @@
   border-radius: 12px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.brush-group-icon-btn,
+.brush-group-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.brush-group-icon-btn:hover:not(:disabled),
+.brush-group-toggle-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.brush-group-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.brush-group-icon-btn.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .brush-grid {

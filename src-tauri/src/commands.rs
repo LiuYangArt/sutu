@@ -1047,6 +1047,11 @@ pub fn rename_brush_group(old_name: String, new_name: String) -> Result<(), Stri
 }
 
 #[tauri::command]
+pub fn delete_brush_group(group_name: String) -> Result<(), String> {
+    brush_library::delete_group(&group_name)
+}
+
+#[tauri::command]
 pub fn save_brush_preset(payload: BrushLibraryPresetPayload) -> Result<BrushLibraryPreset, String> {
     brush_library::save_preset(payload)
 }

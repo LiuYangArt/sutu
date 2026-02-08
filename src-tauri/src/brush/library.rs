@@ -387,6 +387,45 @@ impl BrushLibrary {
         self.save().map_err(|e| e.to_string())
     }
 
+    pub fn delete_group(&mut self, group_name: &str) -> Result<(), String> {
+        let normalized = group_name.trim();
+        if normalized.is_empty() {
+            return Err("Group name cannot be empty".to_string());
+        }
+
+        let preset_ids = self
+            .index
+            .groups
+            .remove(normalized)
+            .ok_or_else(|| format!("Group not found: {}", normalized))?;
+
+        let mut candidate_tip_ids: HashSet<String> = HashSet::new();
+        for preset_id in preset_ids {
+            if let Some(removed) = self.index.presets.remove(&preset_id) {
+                if let Some(tip_id) = removed.tip_id {
+                    candidate_tip_ids.insert(tip_id);
+                }
+
+                if let Some(dual) = removed.preset.dual_brush_settings {
+                    if let Some(dual_tip_id) = dual.brush_id {
+                        candidate_tip_ids.insert(dual_tip_id);
+                    }
+                }
+            }
+        }
+
+        for tip_id in candidate_tip_ids {
+            if !self.is_tip_referenced(&tip_id) {
+                self.index.tips.remove(&tip_id);
+                delete_cached_brush(&tip_id);
+            }
+        }
+
+        self.cleanup_groups();
+        self.dirty = true;
+        self.save().map_err(|e| e.to_string())
+    }
+
     pub fn save_preset(
         &mut self,
         payload: BrushLibraryPresetPayload,
@@ -723,6 +762,10 @@ pub fn rename_group(old_name: &str, new_name: String) -> Result<(), String> {
     with_library_write(|library| library.rename_group(old_name, new_name))
 }
 
+pub fn delete_group(group_name: &str) -> Result<(), String> {
+    with_library_write(|library| library.delete_group(group_name))
+}
+
 pub fn save_preset(payload: BrushLibraryPresetPayload) -> Result<BrushLibraryPreset, String> {
     with_library_write(|library| library.save_preset(payload))
 }
@@ -883,5 +926,37 @@ mod tests {
         let snapshot = library.snapshot();
         assert!(snapshot.presets.is_empty());
         assert!(snapshot.tips.is_empty());
+    }
+
+    #[test]
+    fn delete_group_removes_group_presets() {
+        let mut library = make_library();
+
+        let tip_a = make_preset("tip-a", "Tip A", Some("tip-a-src"), true);
+        let mut preset_a = make_preset("preset-a", "Preset A", Some("preset-a-src"), true);
+        preset_a.id = "tip-a".to_string();
+        let tip_b = make_preset("tip-b", "Tip B", Some("tip-b-src"), true);
+        let mut preset_b = make_preset("preset-b", "Preset B", Some("preset-b-src"), true);
+        preset_b.id = "tip-b".to_string();
+
+        let _ = library
+            .import_from_abr("C:/brushes/GroupA.abr", vec![preset_a], vec![tip_a])
+            .unwrap();
+        let _ = library
+            .import_from_abr("C:/brushes/GroupB.abr", vec![preset_b], vec![tip_b])
+            .unwrap();
+
+        library.delete_group("GroupA").unwrap();
+        let snapshot = library.snapshot();
+
+        assert!(snapshot.groups.iter().all(|group| group.name != "GroupA"));
+        assert!(snapshot
+            .presets
+            .iter()
+            .all(|preset| preset.group.as_deref() != Some("GroupA")));
+        assert!(snapshot
+            .presets
+            .iter()
+            .any(|preset| preset.group.as_deref() == Some("GroupB")));
     }
 }
