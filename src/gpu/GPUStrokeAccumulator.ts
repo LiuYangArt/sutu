@@ -168,6 +168,7 @@ export class GPUStrokeAccumulator {
   private previewUpdatePending: boolean = false;
   private previewNeedsUpdate: boolean = false; // Flag to ensure final update
   private previewReadbackEnabled: boolean = true;
+  private previewReadbackRecreatePending: boolean = false;
 
   // Promise-based preview update tracking (optimization 1)
   private currentPreviewPromise: Promise<void> | null = null;
@@ -652,6 +653,13 @@ export class GPUStrokeAccumulator {
     });
   }
 
+  private recreateReadbackBuffersNow(): void {
+    this.previewReadbackBuffer?.destroy();
+    this.previewReadbackBuffer = null;
+    this.previewReadbackBufferSizeBytes = 0;
+    this.createReadbackBuffer();
+  }
+
   private ensurePreviewReadbackBufferCapacity(minBytes: number): void {
     const required = Math.max(256, alignTo(minBytes, 256));
     if (this.previewReadbackBuffer && required <= this.previewReadbackBufferSizeBytes) {
@@ -669,10 +677,20 @@ export class GPUStrokeAccumulator {
 
   /** Destroy and recreate readback buffers (after texture resize) */
   private recreateReadbackBuffers(): void {
-    this.previewReadbackBuffer?.destroy();
-    this.previewReadbackBuffer = null;
-    this.previewReadbackBufferSizeBytes = 0;
-    this.createReadbackBuffer();
+    if (this.currentPreviewPromise) {
+      this.previewReadbackRecreatePending = true;
+      return;
+    }
+    this.previewReadbackRecreatePending = false;
+    this.recreateReadbackBuffersNow();
+  }
+
+  private flushPendingReadbackBufferRecreate(): void {
+    if (!this.previewReadbackRecreatePending || this.currentPreviewPromise) {
+      return;
+    }
+    this.previewReadbackRecreatePending = false;
+    this.recreateReadbackBuffersNow();
   }
 
   /**
@@ -995,6 +1013,9 @@ export class GPUStrokeAccumulator {
       this.stampSecondaryDab(1, 1, Math.max(1, prewarmBrush.size), prewarmBrush, 0);
       this.flush();
       await this.device.queue.onSubmittedWorkDone();
+      if (this.currentPreviewPromise) {
+        await this.currentPreviewPromise;
+      }
       this.clear();
 
       this.dualStrokePrewarmKey = key;
@@ -2420,6 +2441,8 @@ export class GPUStrokeAccumulator {
       return this.currentPreviewPromise;
     }
 
+    this.flushPendingReadbackBufferRecreate();
+
     if (!this.previewReadbackBuffer) {
       return;
     }
@@ -2512,6 +2535,10 @@ export class GPUStrokeAccumulator {
             this.pushDiagnosticEvent('preview-copy-large', previewDiagContext);
           }
           this.ensurePreviewReadbackBufferCapacity(copyBytes);
+          const readbackBuffer = this.previewReadbackBuffer;
+          if (!readbackBuffer) {
+            return;
+          }
 
           // Copy just the region we need from the presentable texture (raw / wet-edge / dual blend).
           const encoder = this.device.createCommandEncoder();
@@ -2520,7 +2547,7 @@ export class GPUStrokeAccumulator {
               texture: this.getPresentableTexture(),
               origin: { x: copyRect.originX, y: copyRect.originY },
             },
-            { buffer: this.previewReadbackBuffer!, bytesPerRow },
+            { buffer: readbackBuffer, bytesPerRow },
             [copyRect.width, copyRect.height]
           );
           this.submitEncoder(encoder, 'Preview Readback Encoder');
@@ -2528,11 +2555,9 @@ export class GPUStrokeAccumulator {
           let mapped = false;
           const mapStart = this.nowMs();
           try {
-            await this.previewReadbackBuffer!.mapAsync(GPUMapMode.READ, 0, copyBytes);
+            await readbackBuffer.mapAsync(GPUMapMode.READ, 0, copyBytes);
             mapped = true;
-            const gpuData = new Uint16Array(
-              this.previewReadbackBuffer!.getMappedRange(0, copyBytes)
-            );
+            const gpuData = new Uint16Array(readbackBuffer.getMappedRange(0, copyBytes));
             const componentsPerRow = bytesPerRow / 2;
 
             // Create ImageData for the dirty region (full resolution preview)
@@ -2611,7 +2636,7 @@ export class GPUStrokeAccumulator {
           } finally {
             if (mapped) {
               try {
-                this.previewReadbackBuffer!.unmap();
+                readbackBuffer.unmap();
               } catch {
                 // Ignore unmap errors
               }
@@ -2637,6 +2662,7 @@ export class GPUStrokeAccumulator {
         this.previewUpdatePending = false;
         this.previewPendingSinceMs = null;
         this.lastPreviewPendingWarnMs = 0;
+        this.flushPendingReadbackBufferRecreate();
         // If more updates were requested while we were updating, do another round
         if (this.previewNeedsUpdate) {
           void this.updatePreview();

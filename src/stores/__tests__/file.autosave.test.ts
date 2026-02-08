@@ -242,6 +242,61 @@ describe('file store autosave and startup restore', () => {
     expect(useDocumentStore.getState().fileFormat).toBeNull();
   });
 
+  it('falls back to last saved file when temp autosave is corrupted', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        hasUnsavedTemp: true,
+        lastSavedPath: 'C:/work/last.ora',
+      })
+    );
+
+    coreMocks.invoke.mockImplementation(async (cmd: string, payload?: Record<string, unknown>) => {
+      if (cmd === 'load_project') {
+        const path = String(payload?.path ?? '');
+        if (path === 'C:/temp/paintboard-autosave.ora') {
+          throw new Error('ZIP error: invalid Zip archive');
+        }
+        return createLoadedProject();
+      }
+      if (cmd === 'delete_file_if_exists') {
+        return null;
+      }
+      if (cmd === 'report_benchmark') {
+        return null;
+      }
+      if (cmd === 'save_project') {
+        return { success: true, path: payload?.path };
+      }
+      return null;
+    });
+
+    const restored = await useFileStore.getState().restoreOnStartup();
+    expect(restored).toBe(true);
+
+    const loadCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
+    expect(loadCalls.length).toBe(2);
+    expect(loadCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/paintboard-autosave.ora' });
+    expect(loadCalls[1]?.[1]).toMatchObject({ path: 'C:/work/last.ora' });
+
+    const deleteCalls = coreMocks.invoke.mock.calls.filter(
+      ([cmd]) => cmd === 'delete_file_if_exists'
+    );
+    expect(deleteCalls.length).toBe(1);
+    expect(deleteCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/paintboard-autosave.ora' });
+
+    const lastPersisted = JSON.parse(
+      String(
+        fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1]?.[1] ?? '{}'
+      )
+    ) as {
+      hasUnsavedTemp?: boolean;
+      lastSavedPath?: string | null;
+    };
+    expect(lastPersisted.hasUnsavedTemp).toBe(false);
+    expect(lastPersisted.lastSavedPath).toBe('C:/work/last.ora');
+  });
+
   it('does not restore when startup toggle is disabled', async () => {
     useSettingsStore.setState((state) => ({
       ...state,

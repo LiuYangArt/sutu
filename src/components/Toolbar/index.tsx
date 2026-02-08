@@ -102,6 +102,12 @@ function AppMenu() {
     await fileSave(true);
   };
 
+  function handleExit(): void {
+    setIsOpen(false);
+    const win = window as Window & { __requestAppExit?: () => void };
+    win.__requestAppExit?.();
+  }
+
   return (
     <div className="app-menu" ref={menuRef}>
       <button className="menu-btn" onClick={() => setIsOpen(!isOpen)} title="Menu">
@@ -175,7 +181,7 @@ function AppMenu() {
 
           <div className="menu-divider" />
 
-          <button className="menu-item" onClick={() => setIsOpen(false)}>
+          <button className="menu-item" onClick={handleExit}>
             <LogOut size={16} />
             <span>Exit</span>
           </button>

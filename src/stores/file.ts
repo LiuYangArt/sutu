@@ -68,6 +68,7 @@ interface OpenPathOptions {
   asUntitled?: boolean;
   rememberAsLastSaved?: boolean;
   clearUnsavedTemp?: boolean;
+  suppressErrorLog?: boolean;
 }
 
 interface SaveTargetOptions {
@@ -153,6 +154,7 @@ function normalizeOpenPathOptions(options?: OpenPathOptions): OpenPathOptions {
     asUntitled: false,
     rememberAsLastSaved: false,
     clearUnsavedTemp: false,
+    suppressErrorLog: false,
     ...options,
   };
 }
@@ -334,7 +336,9 @@ async function loadProjectIntoDocument(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     set({ isLoading: false, error: errorMessage });
-    console.error('Open failed:', error);
+    if (!options.suppressErrorLog) {
+      console.error('Open failed:', error);
+    }
     return false;
   }
 }
@@ -547,8 +551,15 @@ export const useFileStore = create<FileState>((set, get) => ({
         asUntitled: true,
         rememberAsLastSaved: false,
         clearUnsavedTemp: false,
+        suppressErrorLog: true,
       });
       if (restoredTemp) return true;
+      await updateSessionData((prev) => ({ ...prev, hasUnsavedTemp: false }));
+      try {
+        await invoke('delete_file_if_exists', { path: tempAutosavePath });
+      } catch {
+        // Temp file cleanup is best-effort.
+      }
     }
 
     if (session.lastSavedPath) {
@@ -556,6 +567,7 @@ export const useFileStore = create<FileState>((set, get) => ({
         asUntitled: false,
         rememberAsLastSaved: true,
         clearUnsavedTemp: true,
+        suppressErrorLog: true,
       });
       if (restoredLast) return true;
     }

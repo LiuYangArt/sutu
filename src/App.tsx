@@ -28,6 +28,7 @@ declare global {
     __openPatternLibrary?: () => void;
     __openCanvasSizePanel?: () => void;
     __requestNewFile?: () => void;
+    __requestAppExit?: () => void;
     __canvasFillLayer?: (color: string) => void;
     __canvasClearSelection?: () => void;
     __canvasRemoveLayer?: (id: string) => void;
@@ -84,6 +85,7 @@ function App() {
   }));
   const tabletInitializedRef = useRef(false);
   const startupRestoreTriggeredRef = useRef(false);
+  const appExitInProgressRef = useRef(false);
 
   // Get tablet store actions (stable references)
   const initTablet = useTabletStore((s) => s.init);
@@ -344,8 +346,47 @@ function App() {
     };
   }, [isReady, settingsLoaded, autosaveIntervalMinutes, runAutoSaveTick]);
 
+  const requestAppExit = useCallback(async (): Promise<boolean> => {
+    if (appExitInProgressRef.current) {
+      return false;
+    }
+    appExitInProgressRef.current = true;
+
+    try {
+      await runAutoSaveTick();
+    } catch (error) {
+      console.warn('[App] Autosave on close failed', error);
+    }
+
+    if (!isTauri()) {
+      appExitInProgressRef.current = false;
+      return false;
+    }
+
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const appWindow = getCurrentWindow();
+      await appWindow.destroy();
+      return true;
+    } catch (error) {
+      appExitInProgressRef.current = false;
+      console.warn('[App] Failed to destroy window after autosave', error);
+      return false;
+    }
+  }, [runAutoSaveTick]);
+
+  useEffect(() => {
+    window.__requestAppExit = () => {
+      void requestAppExit();
+    };
+    return () => {
+      delete window.__requestAppExit;
+    };
+  }, [requestAppExit]);
+
   useEffect(() => {
     const handleBeforeUnload = () => {
+      if (appExitInProgressRef.current) return;
       void runAutoSaveTick();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -369,15 +410,10 @@ function App() {
 
           event.preventDefault();
           closeRequestedHandled = true;
-
-          try {
-            await runAutoSaveTick();
-          } catch (error) {
-            console.warn('[App] Autosave on close failed', error);
+          const ok = await requestAppExit();
+          if (!ok && !disposed) {
+            closeRequestedHandled = false;
           }
-
-          if (disposed) return;
-          await appWindow.close();
         });
       } catch (error) {
         console.warn('[App] Failed to register close guard', error);
@@ -389,7 +425,7 @@ function App() {
       disposed = true;
       if (unlisten) unlisten();
     };
-  }, [runAutoSaveTick]);
+  }, [requestAppExit]);
 
   // Register floating panels (only Brush panel now uses FloatingPanel)
   const registerPanel = usePanelStore((s) => s.registerPanel);
