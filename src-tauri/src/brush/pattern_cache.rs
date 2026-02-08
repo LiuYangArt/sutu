@@ -75,7 +75,7 @@ impl PatternCache {
     ) {
         // LZ4 compress
         let compressed = compress_prepend_size(&data);
-        tracing::debug!(
+        tracing::trace!(
             "Pattern {} ({}): {} -> {} bytes ({:.1}% of original)",
             pattern_id,
             mode,
@@ -263,7 +263,7 @@ fn save_pattern_to_disk_in_dir(dir: &Path, pattern_id: &str, pattern: &CachedPat
     })();
 
     match result {
-        Ok(()) => tracing::debug!("Pattern {} saved to disk: {:?}", pattern_id, file_path),
+        Ok(()) => tracing::trace!("Pattern {} saved to disk: {:?}", pattern_id, file_path),
         Err(e) => tracing::warn!("Failed to save pattern {} to disk: {}", pattern_id, e),
     }
 }
@@ -319,7 +319,7 @@ fn load_pattern_from_disk_in_dir(dir: &Path, pattern_id: &str) -> Option<CachedP
 
     match result {
         Ok(pattern) => {
-            tracing::debug!("Pattern {} loaded from disk: {:?}", pattern_id, file_path);
+            tracing::trace!("Pattern {} loaded from disk: {:?}", pattern_id, file_path);
             Some(pattern)
         }
         Err(e) => {
@@ -385,7 +385,7 @@ pub fn cache_pattern_rgba(
 ) {
     // LZ4 compress
     let compressed = compress_prepend_size(&data);
-    tracing::debug!(
+    tracing::trace!(
         "Pattern {} ({}): {} -> {} bytes ({:.1}% of original)",
         pattern_id,
         mode,
@@ -442,7 +442,7 @@ pub fn get_cached_pattern(pattern_id: &str) -> Option<CachedPattern> {
     }
 
     // Memory miss - try disk
-    tracing::debug!("Pattern {} not in memory, trying disk...", pattern_id);
+    tracing::trace!("Pattern {} not in memory, trying disk...", pattern_id);
     if let Some(pattern) = load_pattern_from_disk(pattern_id) {
         // Store back to memory for faster future access
         let mut guard = PATTERN_CACHE.write();

@@ -61,7 +61,7 @@ impl BrushCache {
     ) {
         // LZ4 compress with prepended size for easy decompression
         let compressed = compress_prepend_size(&data);
-        tracing::debug!(
+        tracing::trace!(
             "Brush {} Gray8: {} -> {} bytes ({:.1}% of original)",
             brush_id,
             data.len(),
@@ -155,7 +155,7 @@ fn save_brush_to_disk(brush_id: &str, brush: &CachedBrush) {
     })();
 
     match result {
-        Ok(()) => tracing::debug!("Brush {} saved to disk: {:?}", brush_id, file_path),
+        Ok(()) => tracing::trace!("Brush {} saved to disk: {:?}", brush_id, file_path),
         Err(e) => tracing::warn!("Failed to save brush {} to disk: {}", brush_id, e),
     }
 }
@@ -203,7 +203,7 @@ fn load_brush_from_disk(brush_id: &str) -> Option<CachedBrush> {
 
     match result {
         Ok(brush) => {
-            tracing::debug!("Brush {} loaded from disk: {:?}", brush_id, file_path);
+            tracing::trace!("Brush {} loaded from disk: {:?}", brush_id, file_path);
             Some(brush)
         }
         Err(e) => {
@@ -242,7 +242,7 @@ pub fn clear_brush_cache() {
 pub fn cache_brush_gray(brush_id: String, data: Vec<u8>, width: u32, height: u32, name: String) {
     // LZ4 compress
     let compressed = compress_prepend_size(&data);
-    tracing::debug!(
+    tracing::trace!(
         "Brush {} Gray8: {} -> {} bytes ({:.1}% of original)",
         brush_id,
         data.len(),
@@ -283,7 +283,7 @@ pub fn get_cached_brush(brush_id: &str) -> Option<CachedBrush> {
     }
 
     // Memory miss - try disk
-    tracing::debug!("Brush {} not in memory, trying disk...", brush_id);
+    tracing::trace!("Brush {} not in memory, trying disk...", brush_id);
     if let Some(brush) = load_brush_from_disk(brush_id) {
         // Store back to memory for faster future access
         let mut guard = BRUSH_CACHE.write();

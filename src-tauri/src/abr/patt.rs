@@ -399,14 +399,12 @@ fn parse_pattern(data: &[u8]) -> Result<(PatternResource, usize), AbrError> {
 pub fn parse_patt_section(data: &[u8]) -> Result<Vec<PatternResource>, AbrError> {
     let mut patterns = Vec::new();
     let mut offset: usize = 0;
+    let mut scan_failures: usize = 0;
+    let mut parse_failures: usize = 0;
 
-    tracing::debug!("Parsing patt section: {} bytes", data.len());
+    tracing::trace!("Parsing patt section: {} bytes", data.len());
 
     while offset + 30 <= data.len() {
-        // Quick check: read size field
-        if offset + 4 > data.len() {
-            break;
-        }
         let size = u32::from_be_bytes([
             data[offset],
             data[offset + 1],
@@ -418,15 +416,7 @@ pub fn parse_patt_section(data: &[u8]) -> Result<Vec<PatternResource>, AbrError>
         let exceeds_data = offset + size > data.len();
 
         if !is_valid_size || exceeds_data {
-            if offset % 1_000_000 == 0 {
-                tracing::debug!(
-                    "Skipping invalid pattern at offset {} (Size: {}, ValidSize: {}, Fits: {})",
-                    offset,
-                    size,
-                    is_valid_size,
-                    !exceeds_data
-                );
-            }
+            scan_failures += 1;
             offset += 1;
             continue;
         }
@@ -434,18 +424,11 @@ pub fn parse_patt_section(data: &[u8]) -> Result<Vec<PatternResource>, AbrError>
         // Try to parse
         match parse_pattern(&data[offset..]) {
             Ok((pattern, consumed)) => {
-                tracing::debug!(
-                    "Parsed pattern: '{}' ({}x{}, {})",
-                    pattern.name,
-                    pattern.width,
-                    pattern.height,
-                    pattern.mode_name()
-                );
                 patterns.push(pattern);
                 offset += consumed;
             }
-            Err(e) => {
-                tracing::debug!("Failed to parse pattern at offset {}: {}", offset, e);
+            Err(_) => {
+                parse_failures += 1;
                 offset += 1;
             }
         }
@@ -457,7 +440,12 @@ pub fn parse_patt_section(data: &[u8]) -> Result<Vec<PatternResource>, AbrError>
         }
     }
 
-    tracing::info!("Parsed {} patterns from patt section", patterns.len());
+    tracing::info!(
+        "Parsed {} patterns from patt section (scan_failures={}, parse_failures={})",
+        patterns.len(),
+        scan_failures,
+        parse_failures
+    );
     Ok(patterns)
 }
 

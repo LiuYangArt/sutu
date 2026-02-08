@@ -119,13 +119,13 @@ pub fn run() {
         //        <img src="project://thumbnail" />
         .register_uri_scheme_protocol("project", |_ctx, request| {
             let path = request.uri().path();
-            tracing::info!("project:// request: {}", path);
+            tracing::trace!("project:// request: {}", path);
 
             // Parse path: /layer/{id} or /thumbnail or /brush/{id}
             if let Some(layer_id) = path.strip_prefix("/layer/") {
-                tracing::info!("Looking up layer in cache: {}", layer_id);
+                tracing::trace!("Looking up layer in cache: {}", layer_id);
                 if let Some(cached) = file::get_cached_layer(layer_id) {
-                    tracing::info!(
+                    tracing::trace!(
                         "Cache HIT: {} ({} bytes, type: {})",
                         layer_id,
                         cached.data.len(),
@@ -148,9 +148,9 @@ pub fn run() {
                 }
             } else if let Some(brush_id) = path.strip_prefix("/brush/") {
                 // Brush texture endpoint: /brush/{id}
-                tracing::debug!("Looking up brush in cache: {}", brush_id);
+                tracing::trace!("Looking up brush in cache: {}", brush_id);
                 if let Some(cached) = brush::get_cached_brush(brush_id) {
-                    tracing::debug!(
+                    tracing::trace!(
                         "Brush cache HIT: {} ({} bytes, {}x{})",
                         brush_id,
                         cached.data.len(),
@@ -163,7 +163,7 @@ pub fn run() {
                 }
             } else if let Some(pattern_id) = path.strip_prefix("/pattern/") {
                 // Pattern texture endpoint: /pattern/{id}
-                tracing::debug!("Looking up pattern in cache: {}", pattern_id);
+                tracing::trace!("Looking up pattern in cache: {}", pattern_id);
                 let thumb = request.uri().query().and_then(|q| {
                     q.split('&').find_map(|part| {
                         let v = part.strip_prefix("thumb=")?;
@@ -173,7 +173,7 @@ pub fn run() {
 
                 if let Some(size) = thumb {
                     if let Some(cached) = brush::get_cached_pattern_thumb(pattern_id, size) {
-                        tracing::debug!(
+                        tracing::trace!(
                             "Pattern thumb cache HIT: {} ({} bytes, {}x{})",
                             pattern_id,
                             cached.data.len(),
@@ -183,7 +183,7 @@ pub fn run() {
                         return build_rgba_lz4_response(cached.data, cached.width, cached.height);
                     }
                 } else if let Some(cached) = brush::get_cached_pattern(pattern_id) {
-                    tracing::debug!(
+                    tracing::trace!(
                         "Pattern cache HIT: {} ({} bytes, {}x{})",
                         pattern_id,
                         cached.data.len(),
