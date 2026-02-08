@@ -1,6 +1,6 @@
 import { useCallback, useRef, type RefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
-import type { SelectionSnapshot } from '@/stores/selection';
+import type { SelectionPoint, SelectionSnapshot } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
 import {
   createHistoryEntryId,
@@ -94,6 +94,77 @@ function fillWithMask(
 
   // Draw the result onto the active layer
   ctx.drawImage(maskCanvas, 0, 0);
+}
+
+function pathToMask(paths: SelectionPoint[][], width: number, height: number): ImageData | null {
+  if (paths.length === 0) return null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.fillStyle = 'white';
+  ctx.beginPath();
+
+  let hasContour = false;
+  for (const contour of paths) {
+    if (!contour || contour.length < 3) continue;
+    const first = contour[0];
+    if (!first) continue;
+
+    ctx.moveTo(first.x, first.y);
+    for (let i = 1; i < contour.length; i += 1) {
+      const point = contour[i];
+      if (!point) continue;
+      ctx.lineTo(point.x, point.y);
+    }
+    ctx.closePath();
+    hasContour = true;
+  }
+
+  if (!hasContour) return null;
+
+  ctx.fill('evenodd');
+  return ctx.getImageData(0, 0, width, height);
+}
+
+function applyLayerDuplicateContent(
+  sourceCanvas: HTMLCanvasElement,
+  targetCtx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  selectionMask: ImageData | null
+): void {
+  targetCtx.clearRect(0, 0, width, height);
+
+  if (!selectionMask) {
+    targetCtx.drawImage(sourceCanvas, 0, 0);
+    return;
+  }
+
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = width;
+  tempCanvas.height = height;
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return;
+
+  tempCtx.drawImage(sourceCanvas, 0, 0);
+
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = width;
+  maskCanvas.height = height;
+  const maskCtx = maskCanvas.getContext('2d');
+  if (!maskCtx) return;
+  maskCtx.putImageData(selectionMask, 0, 0);
+
+  tempCtx.save();
+  tempCtx.globalCompositeOperation = 'destination-in';
+  tempCtx.drawImage(maskCanvas, 0, 0);
+  tempCtx.restore();
+
+  targetCtx.drawImage(tempCanvas, 0, 0);
 }
 
 function snapshotLayers(
@@ -663,33 +734,70 @@ export function useLayerOperations({
 
   // Duplicate layer content from source to target
   const handleDuplicateLayer = useCallback(
-    (fromId: string, toId: string) => {
-      const renderer = layerRendererRef.current;
-      if (!renderer) return;
-
-      const sourceLayer = renderer.getLayer(fromId);
-      const targetLayer = renderer.getLayer(toId);
-
-      if (!sourceLayer || !targetLayer) return;
-
+    (fromId: string, toId: string, options?: { selectionOnly?: boolean }) => {
       onBeforeCanvasMutation?.();
 
-      // Copy the source layer content to target layer
-      targetLayer.ctx.drawImage(sourceLayer.canvas, 0, 0);
-      setDocumentDirty(true);
-      compositeAndRender();
-      markLayerDirty(toId);
-      updateThumbnail(toId);
+      const tryCopy = (): boolean => {
+        const renderer = layerRendererRef.current;
+        if (!renderer) return false;
+
+        const sourceLayer = renderer.getLayer(fromId);
+        const targetLayer = renderer.getLayer(toId);
+        if (!sourceLayer || !targetLayer) return false;
+
+        let selectionMask: ImageData | null = null;
+        if (options?.selectionOnly) {
+          const selectionState = useSelectionStore.getState();
+          if (selectionState.hasSelection) {
+            selectionMask =
+              selectionState.selectionMask ??
+              pathToMask(selectionState.selectionPath, width, height) ??
+              null;
+          }
+        }
+
+        applyLayerDuplicateContent(
+          sourceLayer.canvas,
+          targetLayer.ctx,
+          width,
+          height,
+          selectionMask
+        );
+        setDocumentDirty(true);
+        compositeAndRender();
+        markLayerDirty(toId);
+        updateThumbnail(toId);
+        return true;
+      };
+
+      if (tryCopy()) return;
+
+      // New layer may be created on next render pass; retry once.
+      window.requestAnimationFrame(() => {
+        void tryCopy();
+      });
     },
     [
       compositeAndRender,
+      height,
       markLayerDirty,
       updateThumbnail,
+      width,
       layerRendererRef,
       onBeforeCanvasMutation,
       setDocumentDirty,
     ]
   );
+
+  const handleDuplicateActiveLayer = useCallback(() => {
+    if (!activeLayerId) return;
+    const { duplicateLayer } = useDocumentStore.getState();
+    const newLayerId = duplicateLayer(activeLayerId);
+    if (!newLayerId) return;
+
+    const { hasSelection } = useSelectionStore.getState();
+    handleDuplicateLayer(activeLayerId, newLayerId, { selectionOnly: hasSelection });
+  }, [activeLayerId, handleDuplicateLayer]);
 
   // Remove layer with history support
   const handleRemoveLayer = useCallback(
@@ -737,6 +845,7 @@ export function useLayerOperations({
     handleRedo,
     handleClearLayer,
     handleDuplicateLayer,
+    handleDuplicateActiveLayer,
     handleRemoveLayer,
     handleResizeCanvas,
   };

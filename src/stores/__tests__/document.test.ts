@@ -238,6 +238,34 @@ describe('DocumentStore', () => {
     });
   });
 
+  describe('duplicateLayer', () => {
+    beforeEach(() => {
+      const store = useDocumentStore.getState();
+      store.initDocument({ width: 800, height: 600, dpi: 72 });
+      const sourceId = useDocumentStore.getState().layers[0]?.id;
+      expect(sourceId).toBeDefined();
+      if (sourceId) {
+        store.renameLayer(sourceId, '主图层');
+        store.setLayerBlendMode(sourceId, 'multiply');
+      }
+    });
+
+    it('should duplicate layer with lowercase copy suffix and same blend mode', () => {
+      const store = useDocumentStore.getState();
+      const source = store.layers[0];
+      expect(source).toBeDefined();
+
+      const duplicatedId = store.duplicateLayer(source!.id);
+      expect(duplicatedId).toBeTruthy();
+
+      const state = useDocumentStore.getState();
+      const duplicated = state.layers.find((layer) => layer.id === duplicatedId);
+      expect(duplicated).toBeDefined();
+      expect(duplicated!.name).toBe('主图层 copy');
+      expect(duplicated!.blendMode).toBe(source!.blendMode);
+    });
+  });
+
   describe('moveLayer', () => {
     beforeEach(() => {
       const store = useDocumentStore.getState();

@@ -81,6 +81,43 @@ describe('useKeyboardShortcuts', () => {
     expect(handleRedo).toHaveBeenCalledTimes(2);
   });
 
+  it('handles Ctrl+J: duplicate active layer', () => {
+    const handleDuplicateActiveLayer = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleDuplicateActiveLayer,
+      })
+    );
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyJ',
+      ctrlKey: true,
+    });
+
+    act(() => {
+      window.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(handleDuplicateActiveLayer).toHaveBeenCalledTimes(1);
+  });
+
   it('handles tool switching keys and ignores repeats (except brackets)', () => {
     const setTool = vi.fn<[ToolType], void>();
     const setCurrentSize = vi.fn<[number], void>();
@@ -141,11 +178,12 @@ describe('useKeyboardShortcuts', () => {
     expect(calls[1]?.[0]).toBeGreaterThan(50); // BracketRight increased
   });
 
-  it('does not intercept Ctrl+A/Z/Y/X/C/V in input/textarea', () => {
+  it('does not intercept Ctrl+A/Z/Y/X/C/V/J in input/textarea', () => {
     const setTool = vi.fn<[ToolType], void>();
     const handleUndo = vi.fn();
     const handleRedo = vi.fn();
     const selectAll = vi.fn();
+    const handleDuplicateActiveLayer = vi.fn();
 
     renderHook(() =>
       useKeyboardShortcuts({
@@ -162,6 +200,7 @@ describe('useKeyboardShortcuts', () => {
         height: 100,
         setIsPanning: vi.fn(),
         panStartRef: { current: null },
+        handleDuplicateActiveLayer,
       })
     );
 
@@ -178,6 +217,7 @@ describe('useKeyboardShortcuts', () => {
         dispatchInputKeyDown(input, { code: 'KeyC', ctrlKey: true }),
         dispatchInputKeyDown(input, { code: 'KeyV', ctrlKey: true }),
         dispatchInputKeyDown(input, { code: 'KeyX', ctrlKey: true }),
+        dispatchInputKeyDown(input, { code: 'KeyJ', ctrlKey: true }),
       ];
     });
 
@@ -188,6 +228,7 @@ describe('useKeyboardShortcuts', () => {
     expect(handleUndo).not.toHaveBeenCalled();
     expect(handleRedo).not.toHaveBeenCalled();
     expect(selectAll).not.toHaveBeenCalled();
+    expect(handleDuplicateActiveLayer).not.toHaveBeenCalled();
 
     input.remove();
   });

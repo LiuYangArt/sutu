@@ -18,6 +18,7 @@ function isTextEditingCommand(code: string): boolean {
     case 'KeyX':
     case 'KeyC':
     case 'KeyV':
+    case 'KeyJ':
       return true;
     default:
       return false;
@@ -39,6 +40,7 @@ interface UseKeyboardShortcutsParams {
   setIsPanning: (isPanning: boolean) => void;
   panStartRef: MutableRefObject<{ x: number; y: number } | null>;
   onBeforeSelectionMutation?: () => void;
+  handleDuplicateActiveLayer?: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -56,6 +58,7 @@ export function useKeyboardShortcuts({
   setIsPanning,
   panStartRef,
   onBeforeSelectionMutation,
+  handleDuplicateActiveLayer,
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
   const pushSelection = useHistoryStore((s) => s.pushSelection);
@@ -110,6 +113,11 @@ export function useKeyboardShortcuts({
             // Ctrl+D: Deselect
             e.preventDefault();
             recordSelectionChange(() => deselectAll());
+            return;
+          }
+          case 'KeyJ': {
+            e.preventDefault();
+            handleDuplicateActiveLayer?.();
             return;
           }
           default:
@@ -235,6 +243,7 @@ export function useKeyboardShortcuts({
     panStartRef,
     recordSelectionChange,
     onBeforeSelectionMutation,
+    handleDuplicateActiveLayer,
   ]);
 
   return { spacePressed };

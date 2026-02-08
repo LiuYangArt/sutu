@@ -1045,6 +1045,7 @@ export function Canvas() {
     handleRedo,
     handleClearLayer,
     handleDuplicateLayer,
+    handleDuplicateActiveLayer,
     handleRemoveLayer,
     handleResizeCanvas,
   } = useLayerOperations({
@@ -1603,6 +1604,7 @@ export function Canvas() {
     setIsPanning,
     panStartRef,
     onBeforeSelectionMutation,
+    handleDuplicateActiveLayer,
   });
 
   const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({

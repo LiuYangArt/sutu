@@ -255,7 +255,7 @@ export const useDocumentStore = create<DocumentState>()(
         const duplicated: Layer = {
           ...original,
           id: newLayerId,
-          name: `${original.name} Copy`,
+          name: `${original.name} copy`,
           isBackground: false, // Duplicated layer is never a background layer
           thumbnail: original.thumbnail,
         };
