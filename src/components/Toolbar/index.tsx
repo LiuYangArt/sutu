@@ -175,6 +175,17 @@ function AppMenu() {
                   <span>Pattern Library</span>
                   <span className="shortcut">F6</span>
                 </button>
+                <button
+                  className="menu-item"
+                  onClick={() => {
+                    const win = window as Window & { __openBrushLibrary?: () => void };
+                    win.__openBrushLibrary?.();
+                    setIsOpen(false);
+                  }}
+                >
+                  <Paintbrush size={14} />
+                  <span>Brush Library</span>
+                </button>
               </div>
             )}
           </div>

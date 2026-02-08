@@ -299,6 +299,45 @@ pub fn get_cached_brush(brush_id: &str) -> Option<CachedBrush> {
     None
 }
 
+/// Delete cached brush data from memory and disk.
+pub fn delete_cached_brush(brush_id: &str) {
+    {
+        let mut guard = BRUSH_CACHE.write();
+        if let Some(cache) = guard.as_mut() {
+            cache.brushes.remove(brush_id);
+        }
+    }
+
+    let file_path = get_brush_cache_dir().join(format!("{}.bin", brush_id));
+    if let Err(err) = std::fs::remove_file(&file_path) {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("Failed to delete brush cache {}: {}", brush_id, err);
+        }
+    }
+}
+
+/// Clone a cached brush entry to a new ID (memory + disk).
+pub fn clone_cached_brush(source_id: &str, target_id: &str) -> bool {
+    if source_id == target_id {
+        return true;
+    }
+
+    let Some(brush) = get_cached_brush(source_id) else {
+        return false;
+    };
+
+    save_brush_to_disk(target_id, &brush);
+
+    let mut guard = BRUSH_CACHE.write();
+    if guard.is_none() {
+        *guard = Some(BrushCache::new());
+    }
+    if let Some(cache) = guard.as_mut() {
+        cache.insert(target_id.to_string(), brush);
+    }
+    true
+}
+
 /// Get cache statistics
 pub fn get_brush_cache_stats() -> (usize, usize) {
     let guard = BRUSH_CACHE.read();

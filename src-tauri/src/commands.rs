@@ -573,6 +573,10 @@ use crate::brush::soft_dab::{render_soft_dab, GaussParams};
 // ============================================================================
 
 use crate::abr::{AbrBrush, AbrParser, BrushPreset};
+use crate::brush::library as brush_library;
+use crate::brush::library::{
+    BrushLibraryImportResult, BrushLibraryPreset, BrushLibraryPresetPayload, BrushLibrarySnapshot,
+};
 use crate::brush::{cache_brush_gray, cache_pattern_rgba};
 
 /// Pattern metadata for frontend
@@ -690,11 +694,21 @@ pub fn stamp_soft_dab(
 /// and returns lightweight metadata. Textures are served via `project://brush/{id}`.
 #[tauri::command]
 pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
+    import_abr_file_internal(&path)
+}
+
+#[tauri::command]
+pub async fn import_abr_to_brush_library(path: String) -> Result<BrushLibraryImportResult, String> {
+    let import_result = import_abr_file_internal(&path)?;
+    brush_library::import_from_abr(&path, import_result.presets, import_result.tips)
+}
+
+fn import_abr_file_internal(path: &str) -> Result<ImportAbrResult, String> {
     let total_start = std::time::Instant::now();
 
     // Step 1: Read file
     let read_start = std::time::Instant::now();
-    let data = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let data = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
     let read_ms = read_start.elapsed().as_secs_f64() * 1000.0;
 
     // Step 2: Parse ABR
@@ -1001,6 +1015,49 @@ pub fn delete_file_if_exists(path: String) -> Result<(), String> {
         return Ok(());
     }
     std::fs::remove_file(path_ref).map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// Brush Library Commands
+// ============================================================================
+
+#[tauri::command]
+pub fn get_brush_library() -> BrushLibrarySnapshot {
+    brush_library::get_library_snapshot()
+}
+
+#[tauri::command]
+pub fn rename_brush_preset(id: String, new_name: String) -> Result<(), String> {
+    brush_library::rename_preset(&id, new_name)
+}
+
+#[tauri::command]
+pub fn delete_brush_preset(id: String) -> Result<(), String> {
+    brush_library::delete_preset(&id)
+}
+
+#[tauri::command]
+pub fn move_brush_preset_to_group(id: String, group: String) -> Result<(), String> {
+    brush_library::move_preset_to_group(&id, group)
+}
+
+#[tauri::command]
+pub fn rename_brush_group(old_name: String, new_name: String) -> Result<(), String> {
+    brush_library::rename_group(&old_name, new_name)
+}
+
+#[tauri::command]
+pub fn save_brush_preset(payload: BrushLibraryPresetPayload) -> Result<BrushLibraryPreset, String> {
+    brush_library::save_preset(payload)
+}
+
+#[tauri::command]
+pub fn save_brush_preset_as(
+    payload: BrushLibraryPresetPayload,
+    new_name: String,
+    target_group: Option<String>,
+) -> Result<BrushLibraryPreset, String> {
+    brush_library::save_preset_as(payload, new_name, target_group)
 }
 
 // ============================================================================

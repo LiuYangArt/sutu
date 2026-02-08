@@ -1,8 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import './BrushPanel.css';
-import { BrushPreset } from './types';
 import { BrushSettingsSidebar, TabConfig } from './BrushSettingsSidebar';
-import { BrushPresets } from './settings/BrushPresets';
 import { BrushTipShape } from './settings/BrushTipShape';
 import { TransferSettings } from './settings/TransferSettings';
 import { ShapeDynamicsSettings } from './settings/ShapeDynamicsSettings';
@@ -13,15 +11,18 @@ import { TextureSettings } from './settings/TextureSettings';
 import { DualBrushSettings } from './settings/DualBrushSettings';
 import { BuildupSettings } from './settings/BuildupSettings';
 import { NoiseSettings } from './settings/NoiseSettings';
+import { useBrushLibraryStore } from '@/stores/brushLibrary';
 
 export function BrushPanel(): JSX.Element {
-  const [activeTab, setActiveTab] = useState('brushes');
-  const [importedPresets, setImportedPresets] = useState<BrushPreset[]>([]);
-  const [importedTips, setImportedTips] = useState<BrushPreset[]>([]);
+  const [activeTab, setActiveTab] = useState('tip_shape');
+  const loadLibrary = useBrushLibraryStore((state) => state.loadLibrary);
+
+  useEffect(() => {
+    void loadLibrary();
+  }, [loadLibrary]);
 
   // Tab Configuration - Renderer moved to Settings panel
   const tabs: TabConfig[] = [
-    { id: 'brushes', label: 'Brushes' },
     { id: 'tip_shape', label: 'Brush Tip Shape' },
     { id: 'shape_dynamics', label: 'Shape Dynamics' },
     { id: 'scattering', label: 'Scattering' },
@@ -39,15 +40,6 @@ export function BrushPanel(): JSX.Element {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'brushes':
-        return (
-          <BrushPresets
-            importedPresets={importedPresets}
-            setImportedPresets={setImportedPresets}
-            importedTips={importedTips}
-            setImportedTips={setImportedTips}
-          />
-        );
       case 'tip_shape':
         return <BrushTipShape />;
       case 'shape_dynamics':
@@ -57,7 +49,7 @@ export function BrushPanel(): JSX.Element {
       case 'texture':
         return <TextureSettings />;
       case 'dual_brush':
-        return <DualBrushSettings importedTips={importedTips} />;
+        return <DualBrushSettings />;
       case 'color_dynamics':
         return <ColorDynamicsSettings />;
       case 'wet_edges':

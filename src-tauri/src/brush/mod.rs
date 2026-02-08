@@ -16,6 +16,7 @@ mod blend;
 pub mod cache;
 mod engine;
 mod interpolation;
+pub mod library;
 pub mod pattern_cache;
 pub mod soft_dab;
 mod stamper;
@@ -23,8 +24,8 @@ mod stroke_buffer;
 
 pub use blend::{blend_normal_premul, BlendFunc};
 pub use cache::{
-    cache_brush_gray, clear_brush_cache, get_brush_cache_stats, get_cached_brush, init_brush_cache,
-    CachedBrush,
+    cache_brush_gray, clear_brush_cache, clone_cached_brush, delete_cached_brush,
+    get_brush_cache_stats, get_cached_brush, init_brush_cache, CachedBrush,
 };
 pub use engine::{BrushEngine, BrushSettings};
 pub use interpolation::{interpolate_catmull_rom, InterpolationMode};

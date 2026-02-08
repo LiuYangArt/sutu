@@ -1,5 +1,7 @@
 export interface BrushPreset {
   id: string;
+  /** Primary tip texture ID. Falls back to `id` when missing for backward compatibility. */
+  tipId?: string | null;
   /** Original ABR sampled UUID (if any). Used for linking Dual Brush secondary tips. */
   sourceUuid?: string | null;
   name: string;

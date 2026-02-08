@@ -5,7 +5,10 @@ import { ProceduralBrushThumbnail } from './ProceduralBrushThumbnail';
 import { resolveBrushThumbnailKind } from './settings/thumbnailKind';
 
 interface BrushPresetThumbnailProps {
-  preset: Pick<BrushPreset, 'id' | 'name' | 'diameter' | 'hardness' | 'roundness' | 'angle'> & {
+  preset: Pick<
+    BrushPreset,
+    'id' | 'tipId' | 'name' | 'diameter' | 'hardness' | 'roundness' | 'angle'
+  > & {
     hasTexture: boolean;
     isComputed?: boolean;
   };
@@ -23,11 +26,17 @@ export function BrushPresetThumbnail({
   placeholderStyle,
 }: BrushPresetThumbnailProps): JSX.Element {
   const resolvedAlt = alt ?? preset.name;
+  const resolvedTextureId = preset.tipId ?? preset.id;
 
   switch (resolveBrushThumbnailKind(preset)) {
     case 'texture':
       return (
-        <BrushThumbnail brushId={preset.id} size={size} alt={resolvedAlt} className={className} />
+        <BrushThumbnail
+          brushId={resolvedTextureId}
+          size={size}
+          alt={resolvedAlt}
+          className={className}
+        />
       );
     case 'procedural':
       return (

@@ -32,6 +32,8 @@ pub fn init() {
 
     // Initialize pattern library
     pattern::library::init_library();
+    // Initialize brush library
+    brush::library::init_library();
 
     tracing::info!("PaintBoard initializing...");
 }
@@ -216,6 +218,15 @@ pub fn run() {
             commands::push_pointer_event,
             commands::stamp_soft_dab,
             commands::import_abr_file,
+            commands::import_abr_to_brush_library,
+            // Brush Library
+            commands::get_brush_library,
+            commands::rename_brush_preset,
+            commands::delete_brush_preset,
+            commands::move_brush_preset_to_group,
+            commands::rename_brush_group,
+            commands::save_brush_preset,
+            commands::save_brush_preset_as,
             // File operations
             commands::save_project,
             commands::load_project,

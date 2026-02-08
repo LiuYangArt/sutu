@@ -3,6 +3,7 @@ import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { PatternLibraryPanel } from './components/PatternLibrary';
+import { BrushLibraryPanel } from './components/BrushLibrary';
 import { CanvasSizePanel } from './components/CanvasSizePanel';
 import { NewFilePanel, type BackgroundPreset } from './components/NewFilePanel';
 import { ConfirmUnsavedChangesDialog } from './components/ConfirmUnsavedChangesDialog';
@@ -26,6 +27,7 @@ const DebugPanel = lazy(() => import('./components/DebugPanel'));
 declare global {
   interface Window {
     __openPatternLibrary?: () => void;
+    __openBrushLibrary?: () => void;
     __openCanvasSizePanel?: () => void;
     __requestNewFile?: () => void;
     __requestAppExit?: () => void;
@@ -78,6 +80,7 @@ function App() {
   const [isReady, setIsReady] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showPatternLibrary, setShowPatternLibrary] = useState(false);
+  const [showBrushLibrary, setShowBrushLibrary] = useState(false);
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState(false);
   const [showNewFilePanel, setShowNewFilePanel] = useState(false);
   const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] = useState(false);
@@ -237,6 +240,13 @@ function App() {
       delete window.__openPatternLibrary;
     };
   }, [setShowPatternLibrary]);
+
+  useEffect(() => {
+    window.__openBrushLibrary = () => setShowBrushLibrary(true);
+    return () => {
+      delete window.__openBrushLibrary;
+    };
+  }, [setShowBrushLibrary]);
 
   useEffect(() => {
     window.__openCanvasSizePanel = () => setShowCanvasSizePanel(true);
@@ -533,6 +543,7 @@ function App() {
         isOpen={showPatternLibrary}
         onClose={() => setShowPatternLibrary(false)}
       />
+      <BrushLibraryPanel isOpen={showBrushLibrary} onClose={() => setShowBrushLibrary(false)} />
       {/* Canvas Size Panel */}
       <CanvasSizePanel
         isOpen={showCanvasSizePanel}

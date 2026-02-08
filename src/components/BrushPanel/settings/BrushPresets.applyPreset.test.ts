@@ -140,6 +140,25 @@ describe('applyPresetToToolStore', () => {
     expect(s.noiseEnabled).toBe(true);
   });
 
+  it('主笔刷纹理优先使用 tipId 而不是 preset.id', () => {
+    const preset: BrushPreset = {
+      ...DEFAULT_ROUND_BRUSH,
+      id: 'preset-entry-id',
+      tipId: 'shared-tip-id',
+      name: 'Shared Tip Preset',
+      hasTexture: true,
+      textureWidth: 64,
+      textureHeight: 64,
+    };
+
+    applyPresetToToolStore(preset, []);
+
+    const s = useToolStore.getState();
+    expect(s.brushTexture?.id).toBe('shared-tip-id');
+    expect(s.brushTexture?.width).toBe(64);
+    expect(s.brushTexture?.height).toBe(64);
+  });
+
   it('应用 Dual Brush preset 并正确映射 secondary tip', () => {
     const secondaryPreset: BrushPreset = {
       ...DEFAULT_ROUND_BRUSH,

@@ -22,9 +22,10 @@ function createBrushTextureFromPreset(preset: BrushPreset): BrushTexture | undef
   if (!preset.hasTexture || !preset.textureWidth || !preset.textureHeight) {
     return undefined;
   }
+  const textureId = preset.tipId ?? preset.id;
 
   return {
-    id: preset.id,
+    id: textureId,
     data: '',
     width: preset.textureWidth,
     height: preset.textureHeight,
@@ -141,8 +142,9 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
   // Apply texture reference if preset has one
   // Note: Texture data is fetched via protocol when needed for rendering
   if (preset.hasTexture && preset.textureWidth && preset.textureHeight) {
+    const textureId = preset.tipId ?? preset.id;
     const texture: BrushTexture = {
-      id: preset.id,
+      id: textureId,
       // Data will be fetched via project://brush/{id} when rendering
       data: '', // Empty - not used for rendering anymore
       width: preset.textureWidth,

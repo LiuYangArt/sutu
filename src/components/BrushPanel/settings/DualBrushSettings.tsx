@@ -9,15 +9,11 @@
  */
 
 import { useToolStore, DualBlendMode } from '@/stores/tool';
+import { useBrushLibraryStore } from '@/stores/brushLibrary';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
-import { BrushPreset } from '../types';
 import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
-
-interface DualBrushSettingsProps {
-  importedTips: BrushPreset[];
-}
 
 // PS Dual Brush only supports these 8 blend modes
 const BLEND_MODE_OPTIONS: SelectOption[] = [
@@ -31,18 +27,20 @@ const BLEND_MODE_OPTIONS: SelectOption[] = [
   { value: 'linearHeight', label: 'Linear Height' },
 ];
 
-// Helper removed - using shared brushLoader
-
-export function DualBrushSettings({ importedTips }: DualBrushSettingsProps): JSX.Element {
+export function DualBrushSettings(): JSX.Element {
   const { dualBrush, setDualBrush, dualBrushEnabled } = useToolStore();
+  const importedTips = useBrushLibraryStore((state) => state.tips);
 
   const disabled = !dualBrushEnabled;
   const ratioPercent = Math.round(dualBrush.sizeRatio * 100);
 
-  const handlePresetSelect = (preset: BrushPreset, index: number) => {
+  const handlePresetSelect = (tipId: string, index: number) => {
+    const preset = importedTips[index];
+    if (!preset) return;
+
     // 1. Immediate UI update
     setDualBrush({
-      brushId: preset.id,
+      brushId: tipId,
       brushIndex: index,
       brushName: preset.name,
       roundness: preset.roundness,
@@ -58,16 +56,16 @@ export function DualBrushSettings({ importedTips }: DualBrushSettingsProps): JSX
 
     // 2. Preload texture to prevent "first stroke black" issue
     if (preset.hasTexture) {
-      loadBrushTexture(preset.id, preset.textureWidth ?? 0, preset.textureHeight ?? 0)
+      loadBrushTexture(tipId, preset.textureWidth ?? 0, preset.textureHeight ?? 0)
         .then((imageData) => {
           if (!imageData) return;
 
           // Double-check if selection changed during load
           const currentBrushId = useToolStore.getState().dualBrush.brushId;
-          if (currentBrushId === preset.id) {
+          if (currentBrushId === tipId) {
             useToolStore.setState((state) => {
               const dual = state.dualBrush;
-              if (dual.brushId !== preset.id || !dual.texture) return state;
+              if (dual.brushId !== tipId || !dual.texture) return state;
 
               return {
                 dualBrush: {
@@ -144,8 +142,8 @@ export function DualBrushSettings({ importedTips }: DualBrushSettingsProps): JSX
             return (
               <button
                 key={`dual-${preset.id}-${index}`}
-                className={`abr-preset-item ${dualBrush.brushIndex === index ? 'selected' : ''}`}
-                onClick={() => handlePresetSelect(preset, index)}
+                className={`abr-preset-item ${dualBrush.brushId === preset.id ? 'selected' : ''}`}
+                onClick={() => handlePresetSelect(preset.id, index)}
                 title={preset.name}
                 disabled={disabled}
               >
