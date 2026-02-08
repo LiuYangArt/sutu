@@ -115,6 +115,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   padding: 20px;
+  margin-right: 8px;
 }
 
 .settings-content {

@@ -391,6 +391,17 @@ function TabletSettings() {
     <div className="settings-content">
       <h3 className="settings-section-title">Tablet</h3>
 
+      {isInitialized && (
+        <div className="settings-section">
+          <label className="settings-label">BACKEND SWITCH</label>
+          <div className="settings-actions">
+            <button className="settings-btn" onClick={handleToggleBackend}>
+              {toggleBackendLabel}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Status */}
       <div className="settings-section">
         <label className="settings-label">STATUS</label>
@@ -590,9 +601,6 @@ function TabletSettings() {
               </button>
               <button className="settings-btn" onClick={refresh}>
                 Refresh
-              </button>
-              <button className="settings-btn" onClick={handleToggleBackend}>
-                {toggleBackendLabel}
               </button>
             </>
           )}
