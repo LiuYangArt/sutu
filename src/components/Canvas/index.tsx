@@ -225,6 +225,7 @@ export function Canvas() {
   );
   const [brushQuickPanelOpen, setBrushQuickPanelOpen] = useState(false);
   const [brushQuickPanelAnchor, setBrushQuickPanelAnchor] = useState({ x: 0, y: 0 });
+  const [brushQuickPanelHovering, setBrushQuickPanelHovering] = useState(false);
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -1682,6 +1683,7 @@ export function Canvas() {
 
   const closeBrushQuickPanel = useCallback(() => {
     setBrushQuickPanelOpen(false);
+    setBrushQuickPanelHovering(false);
   }, []);
 
   const openBrushQuickPanel = useCallback((x: number, y: number) => {
@@ -1777,7 +1779,7 @@ export function Canvas() {
           data-testid="move-preview-canvas"
         />
       </div>
-      {showDomCursor && (
+      {showDomCursor && !brushQuickPanelHovering && (
         <div
           ref={brushCursorRef}
           className={`brush-cursor ${brushTexture?.cursorPath ? 'brush-cursor--texture' : ''}`}
@@ -1835,7 +1837,7 @@ export function Canvas() {
           )}
         </div>
       )}
-      {showEyedropperDomCursor && (
+      {showEyedropperDomCursor && !brushQuickPanelHovering && (
         <div
           ref={eyedropperCursorRef}
           className="eyedropper-cursor"
@@ -1901,6 +1903,7 @@ export function Canvas() {
         anchorX={brushQuickPanelAnchor.x}
         anchorY={brushQuickPanelAnchor.y}
         onRequestClose={closeBrushQuickPanel}
+        onHoveringChange={setBrushQuickPanelHovering}
       />
     </div>
   );

@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { ArrowLeftRight, RotateCcw, Search, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Search, X } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import {
   useBrushLibraryStore,
@@ -11,7 +11,7 @@ import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
 import { SaturationSquare } from '@/components/ColorPanel/SaturationSquare';
 import { VerticalHueSlider } from '@/components/ColorPanel/VerticalHueSlider';
-import { hexToHsva, hsvaToHex, normalizeHex } from '@/utils/colorUtils';
+import { hexToHsva, hsvaToHex } from '@/utils/colorUtils';
 import { calculateBrushQuickPanelPosition } from './brushQuickPanelPosition';
 import './BrushQuickPanel.css';
 
@@ -20,6 +20,7 @@ interface BrushQuickPanelProps {
   anchorX: number;
   anchorY: number;
   onRequestClose: () => void;
+  onHoveringChange?: (hovering: boolean) => void;
 }
 
 interface GroupedBrushPresets {
@@ -27,8 +28,19 @@ interface GroupedBrushPresets {
   presets: BrushLibraryPreset[];
 }
 
-const DEFAULT_PANEL_WIDTH = 680;
-const DEFAULT_PANEL_HEIGHT = 620;
+interface PanelSize {
+  width: number;
+  height: number;
+}
+
+const DEFAULT_PANEL_SIZE: PanelSize = {
+  width: 560,
+  height: 470,
+};
+
+const MIN_PANEL_WIDTH = 420;
+const MIN_PANEL_HEIGHT = 360;
+const PANEL_SIZE_STORAGE_KEY = 'paintboard-brush-quick-panel-size-v1';
 
 function groupPresets(
   presets: BrushLibraryPreset[],
@@ -73,27 +85,79 @@ function groupPresets(
   return grouped;
 }
 
+function clampPanelSize(size: PanelSize, viewportWidth: number, viewportHeight: number): PanelSize {
+  const maxWidth = Math.max(MIN_PANEL_WIDTH, viewportWidth - 24);
+  const maxHeight = Math.max(MIN_PANEL_HEIGHT, viewportHeight - 24);
+  return {
+    width: Math.min(maxWidth, Math.max(MIN_PANEL_WIDTH, Math.round(size.width))),
+    height: Math.min(maxHeight, Math.max(MIN_PANEL_HEIGHT, Math.round(size.height))),
+  };
+}
+
+function readPanelSizeFromStorage(): PanelSize {
+  if (typeof window === 'undefined') return DEFAULT_PANEL_SIZE;
+  try {
+    const raw = window.localStorage.getItem(PANEL_SIZE_STORAGE_KEY);
+    if (!raw) return DEFAULT_PANEL_SIZE;
+    const parsed = JSON.parse(raw) as Partial<PanelSize>;
+    if (typeof parsed.width !== 'number' || typeof parsed.height !== 'number') {
+      return DEFAULT_PANEL_SIZE;
+    }
+    return clampPanelSize(parsed as PanelSize, window.innerWidth, window.innerHeight);
+  } catch {
+    return DEFAULT_PANEL_SIZE;
+  }
+}
+
+function writePanelSizeToStorage(size: PanelSize): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PANEL_SIZE_STORAGE_KEY, JSON.stringify(size));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function clampPanelPosition(
+  left: number,
+  top: number,
+  size: PanelSize,
+  viewportWidth: number,
+  viewportHeight: number
+): { left: number; top: number } {
+  const margin = 12;
+  const maxLeft = Math.max(margin, viewportWidth - size.width - margin);
+  const maxTop = Math.max(margin, viewportHeight - size.height - margin);
+  return {
+    left: Math.min(maxLeft, Math.max(margin, left)),
+    top: Math.min(maxTop, Math.max(margin, top)),
+  };
+}
+
 export function BrushQuickPanel({
   isOpen,
   anchorX,
   anchorY,
   onRequestClose,
+  onHoveringChange,
 }: BrushQuickPanelProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [position, setPosition] = useState({ left: 12, top: 12 });
+  const [position, setPosition] = useState<{ left: number; top: number }>({ left: 12, top: 12 });
+  const [panelSize, setPanelSize] = useState<PanelSize>(() => readPanelSizeFromStorage());
+  const panelSizeRef = useRef(panelSize);
+  const lastAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+  } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const {
-    currentTool,
-    brushSize,
-    eraserSize,
-    setCurrentSize,
-    brushColor,
-    backgroundColor,
-    setBrushColor,
-    swapColors,
-    resetColors,
-  } = useToolStore();
+  const { currentTool, brushSize, eraserSize, setCurrentSize, brushColor, setBrushColor } =
+    useToolStore();
   const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
 
   const presets = useBrushLibraryStore((state) => state.presets);
@@ -118,11 +182,9 @@ export function BrushQuickPanel({
   });
 
   const [hsva, setHsva] = useState(() => hexToHsva(brushColor));
-  const [hexInput, setHexInput] = useState(brushColor.replace('#', ''));
   const lastInitiatedHex = useRef<string | null>(null);
 
   useEffect(() => {
-    setHexInput(brushColor.replace('#', ''));
     const currentHex = brushColor.toLowerCase();
     const initiatedHex = lastInitiatedHex.current?.toLowerCase();
     if (initiatedHex && initiatedHex === currentHex) {
@@ -139,41 +201,47 @@ export function BrushQuickPanel({
   }, [isOpen]);
 
   useEffect(() => {
+    panelSizeRef.current = panelSize;
+    writePanelSizeToStorage(panelSize);
+  }, [panelSize]);
+
+  useEffect(() => {
     if (!isOpen) return;
     if (presets.length > 0 || isLoading) return;
     void loadLibrary();
   }, [isOpen, presets.length, isLoading, loadLibrary]);
 
-  useLayoutEffect(() => {
-    if (!isOpen) return;
+  useEffect(() => {
+    if (!isOpen) {
+      lastAnchorRef.current = null;
+      return;
+    }
+    const anchorChanged =
+      !lastAnchorRef.current ||
+      lastAnchorRef.current.x !== anchorX ||
+      lastAnchorRef.current.y !== anchorY;
+    if (!anchorChanged) return;
+    lastAnchorRef.current = { x: anchorX, y: anchorY };
 
-    const updatePosition = () => {
-      const panelWidth = panelRef.current?.offsetWidth ?? DEFAULT_PANEL_WIDTH;
-      const panelHeight = panelRef.current?.offsetHeight ?? DEFAULT_PANEL_HEIGHT;
-      const next = calculateBrushQuickPanelPosition({
-        anchorX,
-        anchorY,
-        panelWidth,
-        panelHeight,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-      });
-      setPosition(next);
-    };
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-    };
-  }, [isOpen, anchorX, anchorY, groupedPresets.length, isLoading, error]);
+    const next = calculateBrushQuickPanelPosition({
+      anchorX,
+      anchorY,
+      panelWidth: panelSize.width,
+      panelHeight: panelSize.height,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    setPosition(next);
+  }, [isOpen, anchorX, anchorY, panelSize.width, panelSize.height]);
 
   useEffect(() => {
     if (!isOpen) return;
 
     const handleWindowPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && panelRef.current?.contains(target)) return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      if (path.includes(panel)) return;
       onRequestClose();
     };
 
@@ -190,6 +258,66 @@ export function BrushQuickPanel({
       window.removeEventListener('keydown', handleWindowKeyDown);
     };
   }, [isOpen, onRequestClose]);
+
+  useEffect(() => {
+    if (isOpen) return;
+    onHoveringChange?.(false);
+  }, [isOpen, onHoveringChange]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleResize = () => {
+      const clampedSize = clampPanelSize(
+        panelSizeRef.current,
+        window.innerWidth,
+        window.innerHeight
+      );
+      setPanelSize((prev) =>
+        prev.width === clampedSize.width && prev.height === clampedSize.height ? prev : clampedSize
+      );
+      setPosition((prev) =>
+        clampPanelPosition(prev.left, prev.top, clampedSize, window.innerWidth, window.innerHeight)
+      );
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!panelRef.current) return;
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+
+      const measured = clampPanelSize(
+        { width: entry.contentRect.width, height: entry.contentRect.height },
+        window.innerWidth,
+        window.innerHeight
+      );
+
+      setPanelSize((prev) => {
+        if (prev.width === measured.width && prev.height === measured.height) {
+          return prev;
+        }
+        return measured;
+      });
+      setPosition((prev) =>
+        clampPanelPosition(prev.left, prev.top, measured, window.innerWidth, window.innerHeight)
+      );
+    });
+
+    observer.observe(panelRef.current);
+    return () => {
+      observer.disconnect();
+    };
+  }, [isOpen]);
 
   const handleSaturationChange = useCallback(
     (nextHsva: { h: number; s: number; v: number; a: number }) => {
@@ -212,17 +340,49 @@ export function BrushQuickPanel({
     [hsva, setBrushColor]
   );
 
-  const handleHexChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = event.target.value;
-    setHexInput(value);
-    const clean = value.replace(/[^0-9a-fA-F]/g, '');
-    if (clean.length === 3 || clean.length === 6) {
-      setBrushColor(`#${normalizeHex(clean)}`);
-    }
+  const handleHeaderPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: position.left,
+      startTop: position.top,
+    };
+    setIsDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const handleHexBlur = () => {
-    setHexInput(brushColor.replace('#', ''));
+  const handleHeaderPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    const next = clampPanelPosition(
+      drag.startLeft + deltaX,
+      drag.startTop + deltaY,
+      panelSizeRef.current,
+      window.innerWidth,
+      window.innerHeight
+    );
+    setPosition(next);
+  };
+
+  const finishDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    dragRef.current = null;
+    setIsDragging(false);
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Ignore release errors.
+    }
   };
 
   if (!isOpen) return null;
@@ -231,13 +391,31 @@ export function BrushQuickPanel({
     <div
       ref={panelRef}
       className="brush-quick-panel"
-      style={{ left: position.left, top: position.top }}
+      style={{
+        left: position.left,
+        top: position.top,
+        width: panelSize.width,
+        height: panelSize.height,
+      }}
       onPointerDown={(event) => event.stopPropagation()}
+      onPointerEnter={() => onHoveringChange?.(true)}
+      onPointerLeave={() => onHoveringChange?.(false)}
       onContextMenu={(event) => event.preventDefault()}
     >
-      <div className="brush-quick-panel-header">
+      <div
+        className={`brush-quick-panel-header ${isDragging ? 'dragging' : ''}`}
+        onPointerDown={handleHeaderPointerDown}
+        onPointerMove={handleHeaderPointerMove}
+        onPointerUp={finishDrag}
+        onPointerCancel={finishDrag}
+      >
         <h3>Brush Quick Panel</h3>
-        <button className="brush-quick-close-btn" onClick={onRequestClose} title="Close">
+        <button
+          className="brush-quick-close-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onRequestClose}
+          title="Close"
+        >
           <X size={16} />
         </button>
       </div>
@@ -252,38 +430,6 @@ export function BrushQuickPanel({
               </div>
               <div className="brush-quick-hue-wrapper">
                 <VerticalHueSlider hue={hsva.h} onChange={handleHueChange} />
-              </div>
-            </div>
-            <div className="brush-quick-color-inputs">
-              <div className="brush-quick-color-swatches">
-                <div
-                  className="brush-quick-color-swatch foreground"
-                  style={{ backgroundColor: brushColor }}
-                  title="Foreground"
-                />
-                <div
-                  className="brush-quick-color-swatch background"
-                  style={{ backgroundColor: backgroundColor }}
-                  title="Background"
-                />
-              </div>
-              <div className="brush-quick-color-actions">
-                <button onClick={swapColors} title="Swap Colors (X)">
-                  <ArrowLeftRight size={12} />
-                </button>
-                <button onClick={resetColors} title="Reset Colors (D)">
-                  <RotateCcw size={12} />
-                </button>
-              </div>
-              <div className="brush-quick-hex-input-wrapper">
-                <span>#</span>
-                <input
-                  type="text"
-                  value={hexInput}
-                  onChange={handleHexChange}
-                  onBlur={handleHexBlur}
-                  maxLength={6}
-                />
               </div>
             </div>
           </section>
@@ -350,16 +496,16 @@ export function BrushQuickPanel({
                   {group.presets.map((preset) => (
                     <button
                       key={preset.id}
+                      aria-label={preset.name}
                       className={`brush-quick-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
                       onClick={() => applyPresetById(preset.id)}
                       title={preset.name}
                     >
                       <BrushPresetThumbnail
                         preset={preset}
-                        size={44}
+                        size={30}
                         className="brush-quick-thumb"
                       />
-                      <span>{preset.name}</span>
                     </button>
                   ))}
                 </div>
