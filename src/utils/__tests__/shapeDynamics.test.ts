@@ -49,4 +49,26 @@ describe('shapeDynamics control semantics', () => {
     // 25 + (100-25) * 0.5 = 62.5%
     expect(shape.roundness).toBeCloseTo(0.625, 6);
   });
+
+  it('direction control 直接驱动 angle，本体不依赖 jitter', () => {
+    const settings = {
+      ...DEFAULT_SHAPE_DYNAMICS,
+      angleControl: 'direction' as const,
+      angleJitter: 0,
+    };
+    const input = createInput({ direction: 140 });
+    const shape = computeDabShape(20, 0, 100, settings, input, () => 0.5);
+    expect(shape.angle).toBeCloseTo(140, 6);
+  });
+
+  it('initial direction control 使用首方向并叠加 baseAngle 偏移', () => {
+    const settings = {
+      ...DEFAULT_SHAPE_DYNAMICS,
+      angleControl: 'initial' as const,
+      angleJitter: 0,
+    };
+    const input = createInput({ initialDirection: 90 });
+    const shape = computeDabShape(20, 30, 100, settings, input, () => 0.5);
+    expect(shape.angle).toBeCloseTo(120, 6);
+  });
 });

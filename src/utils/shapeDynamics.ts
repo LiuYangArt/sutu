@@ -205,11 +205,11 @@ export function computeDabShape(
   // --- Angle ---
   let angle = baseAngle;
   if (settings.angleControl === 'direction') {
-    // Direction control: angle follows stroke direction
-    angle = input.direction;
+    // Direction control: stroke direction drives angle, baseAngle is an offset.
+    angle = (((baseAngle + input.direction) % 360) + 360) % 360;
   } else if (settings.angleControl === 'initial') {
-    // Initial direction control
-    angle = input.initialDirection;
+    // Initial direction control with baseAngle as offset.
+    angle = (((baseAngle + input.initialDirection) % 360) + 360) % 360;
   } else if (settings.angleControl !== 'off') {
     // Other controls: control source directly drives angle (0-360),
     // base angle works as a user-defined offset.

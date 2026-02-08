@@ -231,7 +231,7 @@ export function useBrushRenderer({
   const prevDabPosRef = useRef<{ x: number; y: number } | null>(null);
   const prevSecondaryDabPosRef = useRef<{ x: number; y: number } | null>(null);
   // Shape Dynamics: Capture initial direction at stroke start
-  const initialDirectionRef = useRef<number>(0);
+  const initialDirectionRef = useRef<number | null>(null);
   const lastDabPosRef = useRef<{ x: number; y: number } | null>(null);
 
   // Stroke Opacity (Photoshop-like): applied when compositing stroke buffer to layer.
@@ -336,7 +336,7 @@ export function useBrushRenderer({
       // Shape Dynamics: Reset direction tracking for new stroke
       prevDabPosRef.current = null;
       prevSecondaryDabPosRef.current = null;
-      initialDirectionRef.current = 0;
+      initialDirectionRef.current = null;
       lastDabPosRef.current = null;
       strokeOpacityRef.current = 1.0;
 
@@ -546,8 +546,8 @@ export function useBrushRenderer({
             dab.x,
             dab.y
           );
-          // Capture initial direction on first movement
-          if (initialDirectionRef.current === 0 && direction !== 0) {
+          // Capture initial direction from the first directional sample.
+          if (initialDirectionRef.current === null) {
             initialDirectionRef.current = direction;
           }
         }
@@ -559,7 +559,7 @@ export function useBrushRenderer({
           tiltY,
           rotation,
           direction,
-          initialDirection: initialDirectionRef.current,
+          initialDirection: initialDirectionRef.current ?? direction,
           fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
         };
 
