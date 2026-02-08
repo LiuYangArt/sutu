@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Search, X } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import {
   useBrushLibraryStore,
@@ -8,7 +8,7 @@ import {
 } from '@/stores/brushLibrary';
 import { BrushPresetThumbnail } from '@/components/BrushPanel/BrushPresetThumbnail';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
-import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
+import { SliderRow } from '@/components/BrushPanel/BrushPanelComponents';
 import { SaturationSquare } from '@/components/ColorPanel/SaturationSquare';
 import { VerticalHueSlider } from '@/components/ColorPanel/VerticalHueSlider';
 import { hexToHsva, hsvaToHex } from '@/utils/colorUtils';
@@ -33,9 +33,17 @@ interface PanelSize {
   height: number;
 }
 
+interface PanelDragState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+}
+
 const DEFAULT_PANEL_SIZE: PanelSize = {
   width: 560,
-  height: 470,
+  height: 434,
 };
 
 const MIN_PANEL_WIDTH = 420;
@@ -134,6 +142,13 @@ function clampPanelPosition(
   };
 }
 
+function isPanelInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return !!target.closest(
+    'button, input, textarea, select, .saturation-square, .vertical-hue-slider, .brush-quick-search, .brush-quick-library'
+  );
+}
+
 export function BrushQuickPanel({
   isOpen,
   anchorX,
@@ -147,15 +162,8 @@ export function BrushQuickPanel({
   const [panelSize, setPanelSize] = useState<PanelSize>(() => readPanelSizeFromStorage());
   const panelSizeRef = useRef(panelSize);
   const lastAnchorRef = useRef<{ x: number; y: number } | null>(null);
-  const dragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    startLeft: number;
-    startTop: number;
-  } | null>(null);
+  const dragRef = useRef<PanelDragState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-
   const { currentTool, brushSize, eraserSize, setCurrentSize, brushColor, setBrushColor } =
     useToolStore();
   const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
@@ -174,15 +182,26 @@ export function BrushQuickPanel({
     [presets, groups, searchQuery]
   );
 
-  const { sliderPosition, internalMax, calculateValue } = useNonLinearSlider({
-    value: currentSize,
-    min: 1,
-    max: 1000,
-    nonLinearConfig: BRUSH_SIZE_SLIDER_CONFIG,
-  });
-
   const [hsva, setHsva] = useState(() => hexToHsva(brushColor));
   const lastInitiatedHex = useRef<string | null>(null);
+
+  const syncPanelSizeFromDom = useCallback((): PanelSize | null => {
+    const panel = panelRef.current;
+    if (!panel) return null;
+    const rect = panel.getBoundingClientRect();
+    const measured = clampPanelSize(
+      { width: rect.width, height: rect.height },
+      window.innerWidth,
+      window.innerHeight
+    );
+    setPanelSize((prev) =>
+      prev.width === measured.width && prev.height === measured.height ? prev : measured
+    );
+    setPosition((prev) =>
+      clampPanelPosition(prev.left, prev.top, measured, window.innerWidth, window.innerHeight)
+    );
+    return measured;
+  }, []);
 
   useEffect(() => {
     const currentHex = brushColor.toLowerCase();
@@ -223,16 +242,17 @@ export function BrushQuickPanel({
     if (!anchorChanged) return;
     lastAnchorRef.current = { x: anchorX, y: anchorY };
 
+    const latestSize = syncPanelSizeFromDom() ?? panelSizeRef.current;
     const next = calculateBrushQuickPanelPosition({
       anchorX,
       anchorY,
-      panelWidth: panelSize.width,
-      panelHeight: panelSize.height,
+      panelWidth: latestSize.width,
+      panelHeight: latestSize.height,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
     });
     setPosition(next);
-  }, [isOpen, anchorX, anchorY, panelSize.width, panelSize.height]);
+  }, [isOpen, anchorX, anchorY, panelSize.width, panelSize.height, syncPanelSizeFromDom]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -242,22 +262,30 @@ export function BrushQuickPanel({
       if (!panel) return;
       const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
       if (path.includes(panel)) return;
+      syncPanelSizeFromDom();
       onRequestClose();
     };
 
     const handleWindowKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        syncPanelSizeFromDom();
         onRequestClose();
       }
     };
 
+    const handleWindowPointerUp = () => {
+      syncPanelSizeFromDom();
+    };
+
     window.addEventListener('pointerdown', handleWindowPointerDown, { capture: true });
     window.addEventListener('keydown', handleWindowKeyDown);
+    window.addEventListener('pointerup', handleWindowPointerUp, { capture: true });
     return () => {
       window.removeEventListener('pointerdown', handleWindowPointerDown, { capture: true });
       window.removeEventListener('keydown', handleWindowKeyDown);
+      window.removeEventListener('pointerup', handleWindowPointerUp, { capture: true });
     };
-  }, [isOpen, onRequestClose]);
+  }, [isOpen, onRequestClose, syncPanelSizeFromDom]);
 
   useEffect(() => {
     if (isOpen) return;
@@ -340,11 +368,18 @@ export function BrushQuickPanel({
     [hsva, setBrushColor]
   );
 
-  const handleHeaderPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
+  const handlePanelPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
+    if (event.button !== 0) return;
+    if (isPanelInteractiveTarget(event.target)) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const resizeHandleSize = 20;
+    const isOnResizeHandle =
+      event.clientX >= rect.right - resizeHandleSize &&
+      event.clientY >= rect.bottom - resizeHandleSize;
+    if (isOnResizeHandle) return;
 
+    event.preventDefault();
     dragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -356,7 +391,7 @@ export function BrushQuickPanel({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const handleHeaderPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handlePanelPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
 
@@ -390,36 +425,21 @@ export function BrushQuickPanel({
   return (
     <div
       ref={panelRef}
-      className="brush-quick-panel"
+      className={`brush-quick-panel ${isDragging ? 'dragging' : ''}`}
       style={{
         left: position.left,
         top: position.top,
         width: panelSize.width,
         height: panelSize.height,
       }}
-      onPointerDown={(event) => event.stopPropagation()}
+      onPointerDown={handlePanelPointerDown}
+      onPointerMove={handlePanelPointerMove}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
       onPointerEnter={() => onHoveringChange?.(true)}
       onPointerLeave={() => onHoveringChange?.(false)}
       onContextMenu={(event) => event.preventDefault()}
     >
-      <div
-        className={`brush-quick-panel-header ${isDragging ? 'dragging' : ''}`}
-        onPointerDown={handleHeaderPointerDown}
-        onPointerMove={handleHeaderPointerMove}
-        onPointerUp={finishDrag}
-        onPointerCancel={finishDrag}
-      >
-        <h3>Brush Quick Panel</h3>
-        <button
-          className="brush-quick-close-btn"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={onRequestClose}
-          title="Close"
-        >
-          <X size={16} />
-        </button>
-      </div>
-
       <div className="brush-quick-panel-body">
         <div className="brush-quick-top">
           <section className="brush-quick-color-card">
@@ -435,30 +455,14 @@ export function BrushQuickPanel({
           </section>
 
           <section className="brush-quick-size-card">
-            <div className="brush-quick-size-title-row">
-              <span>Size</span>
-              <span>{currentSize}px</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={internalMax}
-              step={1}
-              value={sliderPosition}
-              onChange={(event) => setCurrentSize(calculateValue(Number(event.target.value)))}
-            />
-            <input
-              className="brush-quick-size-input"
-              type="number"
+            <SliderRow
+              label="Size"
+              value={currentSize}
               min={1}
               max={1000}
-              value={currentSize}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                if (Number.isFinite(next)) {
-                  setCurrentSize(next);
-                }
-              }}
+              displayValue={`${Math.round(currentSize)}px`}
+              onChange={(nextSize) => setCurrentSize(Math.round(nextSize))}
+              nonLinearConfig={BRUSH_SIZE_SLIDER_CONFIG}
             />
           </section>
         </div>
