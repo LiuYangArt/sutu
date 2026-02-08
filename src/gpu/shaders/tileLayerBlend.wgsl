@@ -1,7 +1,8 @@
 struct Uniforms {
   blend_mode: u32,
   layer_opacity: f32,
-  _pad0: vec2<u32>,
+  transparent_backdrop_eps: f32,
+  _pad0: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -234,7 +235,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0);
   }
 
-  let blended_src = blend_rgb(uniforms.blend_mode, dst.rgb, src.rgb);
+  var blended_src = src.rgb;
+  if (uniforms.blend_mode != 0u && dst_alpha > uniforms.transparent_backdrop_eps) {
+    blended_src = blend_rgb(uniforms.blend_mode, dst.rgb, src.rgb);
+  }
   // Porter-Duff source-over with blend mode:
   // out_premul = src*(1-dst_a) + dst*(1-src_a) + blend(dst,src)*dst_a*src_a
   let out_rgb =

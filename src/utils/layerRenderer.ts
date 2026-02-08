@@ -1,4 +1,5 @@
 import { BlendMode, type ResizeCanvasOptions } from '@/stores/document';
+import { compositePixelWithTransparentFallback, TRANSPARENT_BACKDROP_EPS } from './layerBlendMath';
 
 /**
  * Layer canvas data for rendering
@@ -20,36 +21,6 @@ interface CompositeRegion {
   height: number;
 }
 
-/**
- * Map CSS blend mode names to canvas globalCompositeOperation
- */
-const BLEND_MODE_MAPPING: Record<BlendMode, GlobalCompositeOperation> = {
-  normal: 'source-over',
-  multiply: 'multiply',
-  screen: 'screen',
-  overlay: 'overlay',
-  darken: 'darken',
-  lighten: 'lighten',
-  'color-dodge': 'color-dodge',
-  'color-burn': 'color-burn',
-  'hard-light': 'hard-light',
-  'soft-light': 'soft-light',
-  difference: 'difference',
-  exclusion: 'exclusion',
-  hue: 'hue',
-  saturation: 'saturation',
-  color: 'color',
-  luminosity: 'luminosity',
-};
-
-function getCompositeOperation(blendMode: BlendMode): GlobalCompositeOperation {
-  return BLEND_MODE_MAPPING[blendMode] ?? 'source-over';
-}
-
-function clampUnit(value: number): number {
-  return Math.max(0, Math.min(1, value));
-}
-
 function normalizeCompositeRegion(
   region: CompositeRegion | undefined,
   width: number,
@@ -66,15 +37,16 @@ function normalizeCompositeRegion(
   return { x, y, width: w, height: h };
 }
 
-function compositeDifferenceLayer(args: {
+function compositeLayerWithBlend(args: {
   dstCtx: CanvasRenderingContext2D;
   sourceCanvas: HTMLCanvasElement;
   width: number;
   height: number;
   layerOpacity: number;
+  blendMode: BlendMode;
   region?: CompositeRegion | null;
 }): void {
-  const { dstCtx, sourceCanvas, width, height, layerOpacity, region } = args;
+  const { dstCtx, sourceCanvas, width, height, layerOpacity, blendMode, region } = args;
   const srcCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
   if (!srcCtx) return;
 
@@ -105,47 +77,19 @@ function compositeDifferenceLayer(args: {
     const srcAlpha = ((srcData[i + 3] ?? 0) / 255) * layerOpacity;
     if (srcAlpha <= 0) continue;
 
-    const dstAlpha = (out[i + 3] ?? 0) / 255;
-    const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
-    if (outAlpha <= 0) {
-      out[i] = 0;
-      out[i + 1] = 0;
-      out[i + 2] = 0;
-      out[i + 3] = 0;
-      continue;
-    }
+    const result = compositePixelWithTransparentFallback({
+      blendMode,
+      dstRgb: [(out[i] ?? 0) / 255, (out[i + 1] ?? 0) / 255, (out[i + 2] ?? 0) / 255],
+      dstAlpha: (out[i + 3] ?? 0) / 255,
+      srcRgb: [(srcData[i] ?? 0) / 255, (srcData[i + 1] ?? 0) / 255, (srcData[i + 2] ?? 0) / 255],
+      srcAlpha,
+      transparentBackdropEps: TRANSPARENT_BACKDROP_EPS,
+    });
 
-    const srcR = (srcData[i] ?? 0) / 255;
-    const srcG = (srcData[i + 1] ?? 0) / 255;
-    const srcB = (srcData[i + 2] ?? 0) / 255;
-    const dstR = (out[i] ?? 0) / 255;
-    const dstG = (out[i + 1] ?? 0) / 255;
-    const dstB = (out[i + 2] ?? 0) / 255;
-
-    const diffR = Math.abs(dstR - srcR);
-    const diffG = Math.abs(dstG - srcG);
-    const diffB = Math.abs(dstB - srcB);
-
-    const outR =
-      (srcR * srcAlpha * (1 - dstAlpha) +
-        dstR * dstAlpha * (1 - srcAlpha) +
-        diffR * dstAlpha * srcAlpha) /
-      outAlpha;
-    const outG =
-      (srcG * srcAlpha * (1 - dstAlpha) +
-        dstG * dstAlpha * (1 - srcAlpha) +
-        diffG * dstAlpha * srcAlpha) /
-      outAlpha;
-    const outB =
-      (srcB * srcAlpha * (1 - dstAlpha) +
-        dstB * dstAlpha * (1 - srcAlpha) +
-        diffB * dstAlpha * srcAlpha) /
-      outAlpha;
-
-    out[i] = Math.round(clampUnit(outR) * 255);
-    out[i + 1] = Math.round(clampUnit(outG) * 255);
-    out[i + 2] = Math.round(clampUnit(outB) * 255);
-    out[i + 3] = Math.round(clampUnit(outAlpha) * 255);
+    out[i] = Math.round(result.rgb[0] * 255);
+    out[i + 1] = Math.round(result.rgb[1] * 255);
+    out[i + 2] = Math.round(result.rgb[2] * 255);
+    out[i + 3] = Math.round(result.alpha * 255);
   }
 
   dstCtx.putImageData(dst, targetRegion.x, targetRegion.y);
@@ -434,22 +378,23 @@ export class LayerRenderer {
       }
       const layerOpacity = layer.opacity / 100;
 
-      if (layer.blendMode === 'difference') {
-        compositeDifferenceLayer({
+      if (layer.blendMode !== 'normal') {
+        compositeLayerWithBlend({
           dstCtx: this.compositeCtx,
           sourceCanvas,
           width: this.width,
           height: this.height,
           layerOpacity,
+          blendMode: layer.blendMode,
           region: normalizedRegion,
         });
         continue;
       }
 
-      // Draw the layer
+      // normal 快路径：保持 Canvas2D 直接合成性能
       this.compositeCtx.save();
       this.compositeCtx.globalAlpha = layerOpacity;
-      this.compositeCtx.globalCompositeOperation = getCompositeOperation(layer.blendMode);
+      this.compositeCtx.globalCompositeOperation = 'source-over';
       if (normalizedRegion) {
         this.compositeCtx.drawImage(
           sourceCanvas,

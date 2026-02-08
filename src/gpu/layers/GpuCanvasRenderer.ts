@@ -14,6 +14,7 @@ import {
 } from './exportReadback';
 import { alignTo } from '../utils/textureCopyRect';
 import type { Rect } from '@/utils/strokeBuffer';
+import { TRANSPARENT_BACKDROP_EPS } from '@/utils/layerBlendMath';
 import type { GpuRenderableLayer } from '../types';
 
 interface GpuCanvasRendererOptions {
@@ -1211,6 +1212,8 @@ export class GpuCanvasRenderer {
     const blendView = new DataView(blendData);
     blendView.setUint32(0, this.encodeBlendMode(blendMode), true);
     blendView.setFloat32(4, layerOpacity, true);
+    blendView.setFloat32(8, TRANSPARENT_BACKDROP_EPS, true);
+    blendView.setUint32(12, 0, true);
     this.device.queue.writeBuffer(this.layerBlendUniformBuffer, uniformOffset, blendData);
 
     const bindGroup = this.device.createBindGroup({
