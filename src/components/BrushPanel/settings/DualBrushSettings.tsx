@@ -11,11 +11,9 @@
 import { useToolStore, DualBlendMode } from '@/stores/tool';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { BrushPreset } from '../types';
-import { BrushThumbnail } from '../BrushThumbnail';
-import { ProceduralBrushThumbnail } from '../ProceduralBrushThumbnail';
+import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
-import { resolveBrushThumbnailKind } from './thumbnailKind';
 
 interface DualBrushSettingsProps {
   importedTips: BrushPreset[];
@@ -143,7 +141,6 @@ export function DualBrushSettings({ importedTips }: DualBrushSettingsProps): JSX
 
           {/* Imported presets */}
           {importedTips.map((preset, index) => {
-            const thumbKind = resolveBrushThumbnailKind(preset);
             return (
               <button
                 key={`dual-${preset.id}-${index}`}
@@ -152,27 +149,12 @@ export function DualBrushSettings({ importedTips }: DualBrushSettingsProps): JSX
                 title={preset.name}
                 disabled={disabled}
               >
-                {thumbKind === 'texture' ? (
-                  <BrushThumbnail
-                    brushId={preset.id}
-                    size={32}
-                    alt={preset.name}
-                    className="abr-preset-texture"
-                  />
-                ) : thumbKind === 'procedural' ? (
-                  <ProceduralBrushThumbnail
-                    hardness={preset.hardness}
-                    roundness={preset.roundness}
-                    angle={preset.angle}
-                    size={32}
-                    alt={preset.name}
-                    className="abr-preset-texture"
-                  />
-                ) : (
-                  <div className="abr-preset-placeholder" style={{ fontSize: '10px' }}>
-                    {Math.round(preset.diameter)}
-                  </div>
-                )}
+                <BrushPresetThumbnail
+                  preset={preset}
+                  size={32}
+                  className="abr-preset-texture"
+                  placeholderStyle={{ fontSize: '10px' }}
+                />
               </button>
             );
           })}

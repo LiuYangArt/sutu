@@ -8,10 +8,8 @@ import {
   DEFAULT_TEXTURE_SETTINGS,
   ImportAbrResult,
 } from '../types';
-import { BrushThumbnail } from '../BrushThumbnail';
-import { ProceduralBrushThumbnail } from '../ProceduralBrushThumbnail';
+import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
-import { resolveBrushThumbnailKind } from './thumbnailKind';
 
 interface BrushPresetsProps {
   importedPresets: BrushPreset[];
@@ -294,7 +292,6 @@ export function BrushPresets({
 
         {/* Imported presets - using BrushThumbnail for texture display */}
         {importedPresets.map((preset, index) => {
-          const thumbKind = resolveBrushThumbnailKind(preset);
           return (
             <button
               key={`${preset.id}-${index}`}
@@ -302,25 +299,7 @@ export function BrushPresets({
               onClick={() => applyPreset(preset)}
               title={`${preset.name}\n${preset.diameter}px, ${preset.hardness}% hardness`}
             >
-              {thumbKind === 'texture' ? (
-                <BrushThumbnail
-                  brushId={preset.id}
-                  size={48}
-                  alt={preset.name}
-                  className="abr-preset-texture"
-                />
-              ) : thumbKind === 'procedural' ? (
-                <ProceduralBrushThumbnail
-                  hardness={preset.hardness}
-                  roundness={preset.roundness}
-                  angle={preset.angle}
-                  size={48}
-                  alt={preset.name}
-                  className="abr-preset-texture"
-                />
-              ) : (
-                <div className="abr-preset-placeholder">{Math.round(preset.diameter)}</div>
-              )}
+              <BrushPresetThumbnail preset={preset} size={48} className="abr-preset-texture" />
               <span className="abr-preset-name">{preset.name}</span>
             </button>
           );
