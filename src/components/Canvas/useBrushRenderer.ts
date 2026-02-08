@@ -502,6 +502,8 @@ export function useBrushRenderer({
         config.shapeDynamicsEnabled &&
         config.shapeDynamics &&
         isShapeDynamicsActive(config.shapeDynamics);
+      const delayFirstDabForInitialDirection =
+        useShapeDynamics && config.shapeDynamics?.angleControl === 'initial';
 
       // Scatter: Check if we need to apply scatter
       const useScatter = config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
@@ -566,6 +568,17 @@ export function useBrushRenderer({
           if (initialDirectionRef.current === null) {
             initialDirectionRef.current = direction;
           }
+        }
+
+        // Initial Direction needs at least one movement vector.
+        // Delay the very first dab until we can derive that vector from the next dab.
+        if (
+          delayFirstDabForInitialDirection &&
+          initialDirectionRef.current === null &&
+          prevDabPosRef.current === null
+        ) {
+          prevDabPosRef.current = { x: dab.x, y: dab.y };
+          continue;
         }
 
         // Prepare dynamics input (shared by Shape Dynamics, Scatter, Color Dynamics, and Transfer)
