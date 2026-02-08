@@ -1487,10 +1487,10 @@ impl AbrParser {
         if let Some(cd) = Self::get_descriptor(brush_desc, &["colorDynamics", "ClrD", "ClDy"]) {
             has_color_info = true;
 
-            if let Some(v) = Self::get_number(cd, &["HueJ"]) {
+            if let Some(v) = Self::get_number(cd, &["HueJ", "H   "]) {
                 color.hue_jitter = (v as f32).clamp(0.0, 100.0);
             }
-            if let Some(v) = Self::get_number(cd, &["Satr"]) {
+            if let Some(v) = Self::get_number(cd, &["Satr", "Strt"]) {
                 color.saturation_jitter = (v as f32).clamp(0.0, 100.0);
             }
             if let Some(v) = Self::get_number(cd, &["Brgh"]) {
@@ -1499,9 +1499,14 @@ impl AbrParser {
             if let Some(v) = Self::get_number(cd, &["purity"]) {
                 color.purity = (v as f32).clamp(-100.0, 100.0);
             }
+            if let Some(v) =
+                Self::get_bool(cd, &["colorDynamicsPerTip", "applyPerTip", "colorPerTip"])
+            {
+                color.apply_per_tip = v;
+            }
 
             // Foreground/Background (fgbg)
-            if let Some(fb) = Self::get_descriptor(cd, &["fgbg"]) {
+            if let Some(fb) = Self::get_descriptor(cd, &["fgbg", "clVr"]) {
                 if let Some(v) = fb.get("bVTy") {
                     color.foreground_background_control = Self::parse_control_source(v);
                 }
@@ -1512,6 +1517,44 @@ impl AbrParser {
                 // Fallback for weird encodings
                 color.foreground_background_jitter = (v as f32).clamp(0.0, 100.0);
             }
+        }
+
+        // Legacy/root-level color dynamics fields (commonly seen in ABR v6/v7)
+        if let Some(fb) = Self::get_descriptor(brush_desc, &["clVr", "fgbg"]) {
+            has_color_info = true;
+            if let Some(v) = fb.get("bVTy") {
+                color.foreground_background_control = Self::parse_control_source(v);
+            }
+            if let Some(v) = Self::get_number(fb, &["jitter"]) {
+                color.foreground_background_jitter = (v as f32).clamp(0.0, 100.0);
+            }
+        } else if let Some(v) = Self::get_number(brush_desc, &["F/B", "FgBg", "BgFg"]) {
+            has_color_info = true;
+            color.foreground_background_jitter = (v as f32).clamp(0.0, 100.0);
+        }
+
+        if let Some(v) = Self::get_number(brush_desc, &["H   ", "HueJ"]) {
+            has_color_info = true;
+            color.hue_jitter = (v as f32).clamp(0.0, 100.0);
+        }
+        if let Some(v) = Self::get_number(brush_desc, &["Strt", "Satr"]) {
+            has_color_info = true;
+            color.saturation_jitter = (v as f32).clamp(0.0, 100.0);
+        }
+        if let Some(v) = Self::get_number(brush_desc, &["Brgh"]) {
+            has_color_info = true;
+            color.brightness_jitter = (v as f32).clamp(0.0, 100.0);
+        }
+        if let Some(v) = Self::get_number(brush_desc, &["purity"]) {
+            has_color_info = true;
+            color.purity = (v as f32).clamp(-100.0, 100.0);
+        }
+        if let Some(v) = Self::get_bool(
+            brush_desc,
+            &["colorDynamicsPerTip", "applyPerTip", "colorPerTip"],
+        ) {
+            has_color_info = true;
+            color.apply_per_tip = v;
         }
 
         if has_color_info {
@@ -2015,6 +2058,10 @@ mod tests {
             "colorDynamics".to_string(),
             DescriptorValue::Descriptor(col),
         );
+        desc.insert(
+            "colorDynamicsPerTip".to_string(),
+            DescriptorValue::Boolean(false),
+        );
         desc.insert("Wtdg".to_string(), DescriptorValue::Boolean(true));
         desc.insert("Nose".to_string(), DescriptorValue::Boolean(false));
         desc.insert("Rpt ".to_string(), DescriptorValue::Boolean(true));
@@ -2090,6 +2137,7 @@ mod tests {
         assert_eq!(co.brightness_jitter, 30.0);
         assert_eq!(co.purity, -15.0);
         assert_eq!(co.foreground_background_jitter, 40.0);
+        assert!(!co.apply_per_tip);
         assert_eq!(
             co.foreground_background_control,
             crate::abr::ControlSource::PenPressure

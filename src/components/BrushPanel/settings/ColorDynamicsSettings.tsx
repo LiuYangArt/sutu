@@ -33,6 +33,18 @@ export function ColorDynamicsSettings(): JSX.Element {
 
       {/* Foreground/Background Jitter Group */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
+        <div className="setting-checkbox-row">
+          <label className={`flip-checkbox ${disabled ? 'disabled' : ''}`}>
+            <input
+              type="checkbox"
+              checked={colorDynamics.applyPerTip}
+              onChange={(e) => setColorDynamics({ applyPerTip: e.target.checked })}
+              disabled={disabled}
+            />
+            <span>Apply Per Tip</span>
+          </label>
+        </div>
+
         <SliderRow
           label="Foreground/Background Jitter"
           value={colorDynamics.foregroundBackgroundJitter}

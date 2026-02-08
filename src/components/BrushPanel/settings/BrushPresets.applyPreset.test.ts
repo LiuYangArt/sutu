@@ -86,6 +86,7 @@ describe('applyPresetToToolStore', () => {
       colorDynamicsEnabled: true,
       colorDynamics: {
         ...DEFAULT_COLOR_DYNAMICS,
+        applyPerTip: false,
         hueJitter: 10,
         saturationJitter: 20,
         brightnessJitter: 30,
@@ -129,6 +130,7 @@ describe('applyPresetToToolStore', () => {
     expect(s.colorDynamics.hueJitter).toBe(10);
     expect(s.colorDynamics.purity).toBe(-15);
     expect(s.colorDynamics.foregroundBackgroundControl).toBe('penPressure');
+    expect(s.colorDynamics.applyPerTip).toBe(false);
 
     expect(s.transferEnabled).toBe(true);
     expect(s.transfer.opacityJitter).toBe(50);

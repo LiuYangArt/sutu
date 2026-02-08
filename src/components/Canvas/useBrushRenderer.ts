@@ -48,7 +48,12 @@ import {
   type DynamicsInput,
 } from '@/utils/shapeDynamics';
 import { applyScatter, isScatterActive } from '@/utils/scatterDynamics';
-import { computeDabColor, isColorDynamicsActive } from '@/utils/colorDynamics';
+import {
+  computeDabColor,
+  createColorJitterSample,
+  isColorDynamicsActive,
+  type ColorJitterSample,
+} from '@/utils/colorDynamics';
 import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { computeTextureDepth } from '@/utils/textureDynamics';
 import { useSelectionStore } from '@/stores/selection';
@@ -238,6 +243,7 @@ export function useBrushRenderer({
   // Stroke Opacity (Photoshop-like): applied when compositing stroke buffer to layer.
   // We store it in a ref because endStroke() does not receive config.
   const strokeOpacityRef = useRef<number>(1.0);
+  const strokeColorJitterSampleRef = useRef<ColorJitterSample | null>(null);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -340,6 +346,7 @@ export function useBrushRenderer({
       initialDirectionRef.current = null;
       lastDabPosRef.current = null;
       strokeOpacityRef.current = 1.0;
+      strokeColorJitterSampleRef.current = null;
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         gpuBufferRef.current.beginStroke();
@@ -504,6 +511,13 @@ export function useBrushRenderer({
         config.colorDynamicsEnabled &&
         config.colorDynamics &&
         isColorDynamicsActive(config.colorDynamics);
+      let strokeColorJitterSample: ColorJitterSample | undefined;
+      if (useColorDynamics && config.colorDynamics && config.colorDynamics.applyPerTip === false) {
+        if (!strokeColorJitterSampleRef.current) {
+          strokeColorJitterSampleRef.current = createColorJitterSample();
+        }
+        strokeColorJitterSample = strokeColorJitterSampleRef.current;
+      }
 
       // Transfer: Check if we need to apply transfer dynamics
       const useTransfer =
@@ -611,7 +625,9 @@ export function useBrushRenderer({
             config.color,
             config.backgroundColor,
             config.colorDynamics,
-            dynamicsInput
+            dynamicsInput,
+            Math.random,
+            strokeColorJitterSample
           );
           dabColor = colorResult.color;
         }

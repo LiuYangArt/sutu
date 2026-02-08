@@ -247,6 +247,7 @@ impl Default for ScatterSettings {
 pub struct ColorDynamicsSettings {
     pub foreground_background_jitter: f32, // 0-100 (%)
     pub foreground_background_control: ControlSource,
+    pub apply_per_tip: bool,
     pub hue_jitter: f32,        // 0-100 (%)
     pub saturation_jitter: f32, // 0-100 (%)
     pub brightness_jitter: f32, // 0-100 (%)
@@ -258,6 +259,7 @@ impl Default for ColorDynamicsSettings {
         Self {
             foreground_background_jitter: 0.0,
             foreground_background_control: ControlSource::Off,
+            apply_per_tip: true,
             hue_jitter: 0.0,
             saturation_jitter: 0.0,
             brightness_jitter: 0.0,

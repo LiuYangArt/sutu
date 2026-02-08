@@ -193,6 +193,7 @@ export interface ScatterSettings {
 export interface ColorDynamicsSettings {
   foregroundBackgroundJitter: number; // 0-100 (%)
   foregroundBackgroundControl: ControlSource;
+  applyPerTip: boolean;
   hueJitter: number; // 0-100 (%)
   saturationJitter: number; // 0-100 (%)
   brightnessJitter: number; // 0-100 (%)

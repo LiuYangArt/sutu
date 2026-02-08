@@ -103,6 +103,9 @@ export interface ColorDynamicsSettings {
   foregroundBackgroundJitter: number; // 0-100 (percentage)
   foregroundBackgroundControl: ControlSource; // What controls F/B mixing
 
+  // Apply jitter per dab tip (true) or once per stroke (false)
+  applyPerTip: boolean;
+
   // Hue Jitter
   hueJitter: number; // 0-100 (percentage, maps to ±180° at 100%)
 
@@ -121,6 +124,7 @@ export interface ColorDynamicsSettings {
 export const DEFAULT_COLOR_DYNAMICS: ColorDynamicsSettings = {
   foregroundBackgroundJitter: 0,
   foregroundBackgroundControl: 'off',
+  applyPerTip: true,
   hueJitter: 0,
   saturationJitter: 0,
   brightnessJitter: 0,
@@ -728,6 +732,13 @@ export const useToolStore = create<ToolState>()(
             dual.sizeRatio = computeDualSizeRatioFromSize(brushSize, size);
           } else {
             dual.sizeRatio = clampDualSizeRatio(dual.sizeRatio);
+          }
+        }
+
+        if (state.colorDynamics && typeof state.colorDynamics === 'object') {
+          const colorDynamics = state.colorDynamics as Record<string, unknown>;
+          if (typeof colorDynamics.applyPerTip !== 'boolean') {
+            colorDynamics.applyPerTip = true;
           }
         }
 

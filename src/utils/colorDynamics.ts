@@ -21,6 +21,23 @@ export interface ComputedDabColor {
   color: string;
 }
 
+/** Random jitter samples for one color-dynamics evaluation window (per tip/per stroke) */
+export interface ColorJitterSample {
+  foregroundBackground: number;
+  hue: number;
+  saturation: number;
+  brightness: number;
+}
+
+export function createColorJitterSample(random: RandomFn = Math.random): ColorJitterSample {
+  return {
+    foregroundBackground: random(),
+    hue: random(),
+    saturation: random(),
+    brightness: random(),
+  };
+}
+
 /**
  * Lerp between two HSVA colors (operates directly on HSVA to avoid conversions)
  *
@@ -131,7 +148,8 @@ export function computeDabColor(
   backgroundColor: string,
   settings: ColorDynamicsSettings,
   input: DynamicsInput,
-  random: RandomFn = Math.random
+  random: RandomFn = Math.random,
+  jitterSample?: ColorJitterSample
 ): ComputedDabColor {
   // Convert to HSV once at entry
   let hsv = hexToHsva(foregroundColor);
@@ -148,7 +166,8 @@ export function computeDabColor(
 
     // Add jitter on top
     if (settings.foregroundBackgroundJitter > 0) {
-      const jitterAmount = (settings.foregroundBackgroundJitter / 100) * random();
+      const jitterBase = jitterSample?.foregroundBackground ?? random();
+      const jitterAmount = (settings.foregroundBackgroundJitter / 100) * jitterBase;
       mixFactor = Math.max(0, Math.min(1, mixFactor + jitterAmount));
     }
 
@@ -160,13 +179,21 @@ export function computeDabColor(
   }
 
   // Apply Hue Jitter
-  hsv.h = applyHueJitter(hsv.h, settings.hueJitter, random);
+  hsv.h = applyHueJitter(hsv.h, settings.hueJitter, () => jitterSample?.hue ?? random());
 
   // Apply Saturation Jitter
-  hsv.s = applySVJitter(hsv.s, settings.saturationJitter, random);
+  hsv.s = applySVJitter(
+    hsv.s,
+    settings.saturationJitter,
+    () => jitterSample?.saturation ?? random()
+  );
 
   // Apply Brightness Jitter
-  hsv.v = applySVJitter(hsv.v, settings.brightnessJitter, random);
+  hsv.v = applySVJitter(
+    hsv.v,
+    settings.brightnessJitter,
+    () => jitterSample?.brightness ?? random()
+  );
 
   // Apply Purity (after jitter, as global adjustment)
   hsv.s = applyPurity(hsv.s, settings.purity);
