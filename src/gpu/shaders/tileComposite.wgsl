@@ -51,8 +51,7 @@ fn apply_dither(color: vec3<f32>, x: u32, y: u32, strength: f32) -> vec3<f32> {
   return clamp(color + vec3<f32>(dither, dither, dither), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-@fragment
-fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+fn composite_pixel(pos: vec4<f32>) -> vec4<f32> {
   let pos_u = vec2<u32>(u32(pos.x), u32(pos.y));
   let global = pos_u + uniforms.position_origin;
 
@@ -103,4 +102,17 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   }
 
   return vec4<f32>(out_rgb, out_alpha);
+}
+
+@fragment
+fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  // Storage layers keep straight alpha for CPU/GPU blending parity.
+  return composite_pixel(pos);
+}
+
+@fragment
+fn fs_display(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  // Canvas context uses alphaMode='premultiplied'; display path must output premultiplied RGB.
+  let out = composite_pixel(pos);
+  return vec4<f32>(out.rgb * out.a, out.a);
 }

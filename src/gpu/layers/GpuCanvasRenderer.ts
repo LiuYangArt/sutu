@@ -288,7 +288,7 @@ export class GpuCanvasRenderer {
       vertex: { module: shaderModule, entryPoint: 'vs_main' },
       fragment: {
         module: shaderModule,
-        entryPoint: 'fs_main',
+        entryPoint: 'fs_display',
         targets: [{ format: this.canvasFormat }],
       },
       primitive: { topology: 'triangle-list' },
