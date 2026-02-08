@@ -692,49 +692,24 @@ pub fn stamp_soft_dab(
 pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
     let total_start = std::time::Instant::now();
 
-    tracing::info!("[ABR Import] Starting import: {}", path);
-
     // Step 1: Read file
     let read_start = std::time::Instant::now();
     let data = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
     let read_ms = read_start.elapsed().as_secs_f64() * 1000.0;
-    tracing::debug!(
-        "[ABR Import] File read: {} bytes in {:.2}ms",
-        data.len(),
-        read_ms
-    );
 
     // Step 2: Parse ABR
     let parse_start = std::time::Instant::now();
     let abr_file =
         AbrParser::parse(&data).map_err(|e| format!("Failed to parse ABR file: {}", e))?;
     let parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
-    tracing::debug!(
-        "[ABR Import] Parsed: version={:?}, {} brushes in {:.2}ms",
-        abr_file.version,
-        abr_file.brushes.len(),
-        parse_ms
-    );
-
-    // Log pattern count for debugging
-    if !abr_file.patterns.is_empty() {
-        tracing::info!(
-            "[ABR Import] Found {} patterns (textures)",
-            abr_file.patterns.len()
-        );
-        for (i, p) in abr_file.patterns.iter().enumerate() {
-            tracing::info!(
-                "[ABR Pattern #{}] Name='{}' ID='{}' FoundInPatt=true",
-                i,
-                p.name,
-                p.id
-            );
-        }
-    }
 
     // Step 3: Cache textures and build presets
     let cache_start = std::time::Instant::now();
     let mut raw_bytes: usize = 0;
+    let mut pattern_decode_failures: usize = 0;
+    let mut texture_pattern_resolved_by_name: usize = 0;
+    let mut unresolved_texture_links: usize = 0;
+    let mut duplicate_id_count: usize = 0;
 
     // Cache patterns first
     let mut pattern_infos = Vec::new();
@@ -748,13 +723,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         {
             Some(result) => result,
             None => {
-                tracing::warn!(
-                    "[ABR Import] Failed to decode pattern '{}' ({}x{}, {})",
-                    pattern.name,
-                    pattern.width,
-                    pattern.height,
-                    pattern.mode_name()
-                );
+                pattern_decode_failures += 1;
                 continue;
             }
         };
@@ -764,17 +733,6 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
                 // Generate a UUID if missing - though parser usually handles this
                 continue;
             }
-
-            tracing::info!(
-                "[BrushPresets] Imported pattern: '{}' ({}x{} -> actual {}x{}, {}) ID: {}",
-                pattern.name,
-                pattern.width,
-                pattern.height,
-                actual_width,
-                actual_height,
-                pattern.mode_name(),
-                pattern.id
-            );
 
             // CACHE THE PATTERN WITH ACTUAL DIMENSIONS!
             // Use actual_width/height from VMA, not pattern metadata
@@ -811,15 +769,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
     for mut brush in abr_file.brushes {
         let is_tip_only = brush.is_tip_only;
 
-        // Debug connection between brush and pattern
         if let Some(ref mut tex) = brush.texture_settings {
-            tracing::info!(
-                "[ABR Brush Link] Brush '{}' requests Pattern ID '{:?}' Name '{:?}'",
-                brush.name,
-                tex.pattern_id,
-                tex.pattern_name
-            );
-
             // Resolution Logic:
             let mut resolved = false;
             // 1. Check if pattern_id exists in our loaded patterns
@@ -833,21 +783,15 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
             if !resolved {
                 if let Some(ref pname) = tex.pattern_name {
                     if let Some(mapped_id) = pattern_name_map.get(pname) {
-                        tracing::warn!(
-                            "[ABR Fix] Resolved pattern mismatch for brush '{}': UUID '{:?}' -> Name '{}' -> ID '{}'",
-                            brush.name,
-                            tex.pattern_id,
-                            pname,
-                            mapped_id
-                        );
                         tex.pattern_id = Some(mapped_id.clone());
+                        texture_pattern_resolved_by_name += 1;
                         resolved = true;
                     }
                 }
             }
 
             if !resolved && tex.enabled {
-                tracing::warn!("[ABR Warning] Brush '{}' has texture enabled but pattern could not be resolved.", brush.name);
+                unresolved_texture_links += 1;
             }
         }
         // Generate base ID (from UUID or random)
@@ -864,12 +808,7 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
         *count += 1;
 
         if id != base_id {
-            tracing::info!(
-                "[ABR Import] resolved duplicate ID for brush '{}': {} -> {}",
-                brush.name,
-                base_id,
-                id
-            );
+            duplicate_id_count += 1;
         }
 
         // Cache texture if present (skip computed brushes - render procedurally)
@@ -913,12 +852,17 @@ pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
     };
 
     tracing::info!(
-        "[ABR Benchmark] Loaded {} brushes in {:.2}ms (read: {:.2}ms, parse: {:.2}ms, cache: {:.2}ms)",
+        "[ABR Benchmark] Loaded {} brushes in {:.2}ms (read: {:.2}ms, parse: {:.2}ms, cache: {:.2}ms) | parse_version={:?}, decode_failures={}, texture_name_fallbacks={}, unresolved_texture_links={}, duplicate_ids={}",
         brush_count,
         total_ms,
         read_ms,
         parse_ms,
-        cache_ms
+        cache_ms,
+        abr_file.version,
+        pattern_decode_failures,
+        texture_pattern_resolved_by_name,
+        unresolved_texture_links,
+        duplicate_id_count
     );
     tracing::info!(
         "[ABR Benchmark] Texture data: {} KB raw -> {} KB compressed ({:.1}%)",
