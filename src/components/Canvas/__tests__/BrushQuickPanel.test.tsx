@@ -117,4 +117,56 @@ describe('BrushQuickPanel', () => {
       expect(loadLibrary).toHaveBeenCalledTimes(1);
     });
   });
+
+  it('supports collapsing a brush group from group context menu', () => {
+    useBrushLibraryStore.setState((state) => ({
+      ...state,
+      presets: [createPreset('soft-round', 'Soft Round', 'Basics')],
+      groups: [{ name: 'Basics', presetIds: ['soft-round'] }],
+      selectedPresetId: null,
+      searchQuery: '',
+      isLoading: false,
+      error: null,
+      loadLibrary: vi.fn(),
+      applyPresetById: vi.fn(),
+      clearError: vi.fn(),
+    }));
+
+    render(<BrushQuickPanel isOpen anchorX={100} anchorY={100} onRequestClose={vi.fn()} />);
+
+    const groupTitle = screen.getByText('Basics');
+    expect(screen.getByRole('button', { name: /Soft Round/ })).toBeInTheDocument();
+
+    fireEvent.contextMenu(groupTitle);
+    fireEvent.click(screen.getByRole('button', { name: /Collapse Group/ }));
+    expect(screen.queryByRole('button', { name: /Soft Round/ })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(groupTitle);
+    expect(screen.getByRole('button', { name: /Expand Group/ })).toBeInTheDocument();
+  });
+
+  it('shows a visible group toggle button and collapses from title row', () => {
+    useBrushLibraryStore.setState((state) => ({
+      ...state,
+      presets: [createPreset('soft-round', 'Soft Round', 'Basics')],
+      groups: [{ name: 'Basics', presetIds: ['soft-round'] }],
+      selectedPresetId: null,
+      searchQuery: '',
+      isLoading: false,
+      error: null,
+      loadLibrary: vi.fn(),
+      applyPresetById: vi.fn(),
+      clearError: vi.fn(),
+    }));
+
+    render(<BrushQuickPanel isOpen anchorX={100} anchorY={100} onRequestClose={vi.fn()} />);
+
+    const collapseBtn = screen.getByRole('button', { name: /Collapse group Basics/i });
+    expect(collapseBtn).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Soft Round/ })).toBeInTheDocument();
+
+    fireEvent.click(collapseBtn);
+    expect(screen.queryByRole('button', { name: /Soft Round/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Expand group Basics/i })).toBeInTheDocument();
+  });
 });

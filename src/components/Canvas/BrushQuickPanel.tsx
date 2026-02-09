@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import {
   useBrushLibraryStore,
@@ -49,6 +49,13 @@ interface PanelDragState {
   startY: number;
   startLeft: number;
   startTop: number;
+}
+
+interface GroupContextMenuState {
+  visible: boolean;
+  x: number;
+  y: number;
+  groupName: string | null;
 }
 
 const DEFAULT_PANEL_SIZE: PanelSize = {
@@ -179,7 +186,15 @@ export function BrushQuickPanel({
   onHoveringChange,
 }: BrushQuickPanelProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
+  const groupContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [groupContextMenu, setGroupContextMenu] = useState<GroupContextMenuState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    groupName: null,
+  });
   const [position, setPosition] = useState<PanelPosition>({
     left: PANEL_MARGIN,
     top: PANEL_MARGIN,
@@ -245,6 +260,8 @@ export function BrushQuickPanel({
   useEffect(() => {
     if (!isOpen) return;
     setSearchQuery('');
+    setCollapsedGroups(new Set());
+    setGroupContextMenu((prev) => ({ ...prev, visible: false, groupName: null }));
   }, [isOpen]);
 
   useEffect(() => {
@@ -335,6 +352,31 @@ export function BrushQuickPanel({
       window.removeEventListener('resize', handleResize);
     };
   }, [isOpen, updatePanelLayout]);
+
+  useEffect(() => {
+    if (!groupContextMenu.visible) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const menu = groupContextMenuRef.current;
+      if (menu && menu.contains(event.target as Node)) {
+        return;
+      }
+      setGroupContextMenu((prev) => ({ ...prev, visible: false }));
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setGroupContextMenu((prev) => ({ ...prev, visible: false }));
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [groupContextMenu.visible]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -436,7 +478,51 @@ export function BrushQuickPanel({
     }
   };
 
+  const toggleGroupCollapsed = useCallback((groupName: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
+  }, []);
+
+  const openGroupContextMenu = (event: React.MouseEvent, groupName: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setGroupContextMenu({
+      visible: true,
+      x: event.clientX,
+      y: event.clientY,
+      groupName,
+    });
+  };
+
+  const handleToggleGroupFromMenu = () => {
+    const groupName = groupContextMenu.groupName;
+    if (!groupName) {
+      return;
+    }
+    toggleGroupCollapsed(groupName);
+    setGroupContextMenu((prev) => ({ ...prev, visible: false }));
+  };
+
   if (!isOpen) return null;
+
+  const isContextGroupCollapsed = groupContextMenu.groupName
+    ? collapsedGroups.has(groupContextMenu.groupName)
+    : false;
+  const contextMenuLeft =
+    typeof window === 'undefined'
+      ? groupContextMenu.x
+      : Math.min(groupContextMenu.x, Math.max(0, window.innerWidth - 180));
+  const contextMenuTop =
+    typeof window === 'undefined'
+      ? groupContextMenu.y
+      : Math.min(groupContextMenu.y, Math.max(0, window.innerHeight - 52));
 
   return (
     <div
@@ -506,34 +592,71 @@ export function BrushQuickPanel({
           ) : groupedPresets.length === 0 ? (
             <div className="brush-quick-empty">No brushes matched the search.</div>
           ) : (
-            groupedPresets.map((group) => (
-              <div key={group.name} className="brush-quick-group">
-                <div className="brush-quick-group-title">
-                  <span>{group.name}</span>
-                  <span>{group.presets.length}</span>
-                </div>
-                <div className="brush-quick-grid">
-                  {group.presets.map((preset) => (
+            groupedPresets.map((group) => {
+              const isCollapsed = collapsedGroups.has(group.name);
+              return (
+                <div key={group.name} className="brush-quick-group">
+                  <div
+                    className="brush-quick-group-title"
+                    onContextMenu={(event) => openGroupContextMenu(event, group.name)}
+                  >
+                    <div className="brush-quick-group-title-main">
+                      <span className="brush-quick-group-name">{group.name}</span>
+                      <span className="brush-quick-group-count">{group.presets.length}</span>
+                    </div>
                     <button
-                      key={preset.id}
-                      aria-label={preset.name}
-                      className={`brush-quick-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
-                      onClick={() => applyPresetById(preset.id)}
-                      title={preset.name}
+                      className="brush-quick-group-toggle-btn"
+                      onClick={() => toggleGroupCollapsed(group.name)}
+                      title={isCollapsed ? 'Expand group' : 'Collapse group'}
+                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} group ${group.name}`}
                     >
-                      <BrushPresetThumbnail
-                        preset={preset}
-                        size={30}
-                        className="brush-quick-thumb"
-                      />
+                      {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
                     </button>
-                  ))}
+                  </div>
+
+                  {!isCollapsed && (
+                    <div className="brush-quick-grid">
+                      {group.presets.map((preset) => (
+                        <button
+                          key={preset.id}
+                          aria-label={preset.name}
+                          className={`brush-quick-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
+                          onClick={() => applyPresetById(preset.id)}
+                          title={preset.name}
+                        >
+                          <BrushPresetThumbnail
+                            preset={preset}
+                            size={30}
+                            className="brush-quick-thumb"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
+
+      {groupContextMenu.visible && groupContextMenu.groupName && (
+        <div
+          ref={groupContextMenuRef}
+          className="brush-quick-context-menu"
+          style={{
+            position: 'fixed',
+            left: contextMenuLeft,
+            top: contextMenuTop,
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button className="brush-quick-context-item" onClick={handleToggleGroupFromMenu}>
+            {isContextGroupCollapsed ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <span>{isContextGroupCollapsed ? 'Expand Group' : 'Collapse Group'}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
