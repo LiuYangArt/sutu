@@ -3,11 +3,9 @@ import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark';
-import { StrokeBuffer, Point as BufferPoint } from '@/utils/interpolation';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { getEffectiveInputData } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
-import type { RawInputPoint } from '@/stores/tablet';
 
 function pointerEventToCanvasPoint(
   canvas: HTMLCanvasElement,
@@ -50,7 +48,6 @@ interface UsePointerHandlersParams {
   activeLayerId: string | null;
   captureBeforeImage: () => Promise<void>;
   initializeBrushStroke: () => Promise<void>;
-  drawPoints: (points: RawInputPoint[]) => void;
   finishCurrentStroke: () => Promise<void>;
   isSelectionToolActive: boolean;
   handleSelectionPointerDown: (
@@ -84,7 +81,6 @@ interface UsePointerHandlersParams {
   constrainShiftLinePoint: (x: number, y: number) => { x: number; y: number };
   usingRawInput: MutableRefObject<boolean>;
   isDrawingRef: MutableRefObject<boolean>;
-  strokeBufferRef: MutableRefObject<StrokeBuffer>;
   strokeStateRef: MutableRefObject<string>;
   pendingPointsRef: MutableRefObject<QueuedPoint[]>;
   inputQueueRef: MutableRefObject<QueuedPoint[]>;
@@ -93,15 +89,6 @@ interface UsePointerHandlersParams {
   lastInputPosRef: MutableRefObject<{ x: number; y: number } | null>;
   latencyProfilerRef: MutableRefObject<LatencyProfiler>;
   onBeforeCanvasMutation?: () => void;
-}
-
-function toRawInputPoint(point: BufferPoint): RawInputPoint {
-  return {
-    ...point,
-    tilt_x: point.tiltX ?? 0,
-    tilt_y: point.tiltY ?? 0,
-    timestamp_ms: 0,
-  };
 }
 
 function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
@@ -139,7 +126,6 @@ export function usePointerHandlers({
   activeLayerId,
   captureBeforeImage,
   initializeBrushStroke,
-  drawPoints,
   finishCurrentStroke,
   isSelectionToolActive,
   handleSelectionPointerDown,
@@ -153,7 +139,6 @@ export function usePointerHandlers({
   constrainShiftLinePoint,
   usingRawInput,
   isDrawingRef,
-  strokeBufferRef,
   strokeStateRef,
   pendingPointsRef,
   inputQueueRef,
@@ -359,45 +344,31 @@ export function usePointerHandlers({
 
       onBeforeCanvasMutation?.();
 
-      // Brush Tool: Use State Machine Logic
-      if (currentTool === 'brush') {
-        isDrawingRef.current = true;
-        strokeBufferRef.current?.reset();
-        const idx = pointIndexRef.current++;
-        latencyProfilerRef.current.markInputReceived(idx, e.nativeEvent as PointerEvent);
-
-        strokeStateRef.current = 'starting';
-        pendingPointsRef.current = [
-          { x: canvasX, y: canvasY, pressure, tiltX, tiltY, rotation, pointIndex: idx },
-        ];
-        pendingEndRef.current = false;
-
-        // 先抓撤销基线，再初始化 GPU 笔触。
-        // 避免 beforeImage 过旧导致一次撤销回退多笔。
-        window.__strokeDiagnostics?.onStrokeStart();
-        void (async () => {
-          await captureBeforeImage();
-          await initializeBrushStroke();
-        })();
-        return;
-      }
-
-      // Eraser/Other Tools: Legacy Logic
       isDrawingRef.current = true;
-      strokeBufferRef.current?.reset();
-      void captureBeforeImage();
-      const point: BufferPoint = {
-        x: constrainedDown.x,
-        y: constrainedDown.y,
-        pressure,
-        tiltX,
-        tiltY,
-      };
+      const idx = pointIndexRef.current++;
+      latencyProfilerRef.current.markInputReceived(idx, e.nativeEvent as PointerEvent);
 
-      const interpolatedPoints = strokeBufferRef.current?.addPoint(point) ?? [];
-      if (interpolatedPoints.length > 0) {
-        drawPoints(interpolatedPoints.map(toRawInputPoint));
-      }
+      strokeStateRef.current = 'starting';
+      pendingPointsRef.current = [
+        {
+          x: constrainedDown.x,
+          y: constrainedDown.y,
+          pressure,
+          tiltX,
+          tiltY,
+          rotation,
+          pointIndex: idx,
+        },
+      ];
+      pendingEndRef.current = false;
+
+      // 先抓撤销基线，再初始化 GPU 笔触。
+      // 避免 beforeImage 过旧导致一次撤销回退多笔。
+      window.__strokeDiagnostics?.onStrokeStart();
+      void (async () => {
+        await captureBeforeImage();
+        await initializeBrushStroke();
+      })();
     },
     [
       spacePressed,
@@ -408,7 +379,6 @@ export function usePointerHandlers({
       activeLayerId,
       captureBeforeImage,
       initializeBrushStroke,
-      drawPoints,
       finishCurrentStroke,
       setIsPanning,
       isSelectionToolActive,
@@ -423,7 +393,6 @@ export function usePointerHandlers({
       isZoomingRef,
       zoomStartRef,
       isDrawingRef,
-      strokeBufferRef,
       strokeStateRef,
       pendingPointsRef,
       pointIndexRef,
@@ -518,7 +487,7 @@ export function usePointerHandlers({
 
       // Q1 Optimization: Skip brush input if pointerrawupdate is handling it
       // pointerrawupdate provides lower-latency input (1-3ms improvement)
-      if (currentTool === 'brush' && usingRawInput.current) {
+      if ((currentTool === 'brush' || currentTool === 'eraser') && usingRawInput.current) {
         return;
       }
 
@@ -553,58 +522,36 @@ export function usePointerHandlers({
         // Note: evt is PointerEvent here
         latencyProfilerRef.current.markInputReceived(idx, evt as PointerEvent);
 
-        // For brush tool, use state machine + input buffering
-        if (currentTool === 'brush') {
-          const state = strokeStateRef.current;
-          if (state === 'starting') {
-            // Buffer points during 'starting' phase, replay after beginStroke completes
-            pendingPointsRef.current.push({
-              x: canvasX,
-              y: canvasY,
-              pressure,
-              tiltX,
-              tiltY,
-              rotation,
-              pointIndex: idx,
-            });
-            window.__strokeDiagnostics?.onPointBuffered(); // Telemetry: Buffered point
-          } else if (state === 'active') {
-            inputQueueRef.current.push({
-              x: canvasX,
-              y: canvasY,
-              pressure,
-              tiltX,
-              tiltY,
-              rotation,
-              pointIndex: idx,
-            });
-            window.__strokeDiagnostics?.onPointBuffered();
-          }
-          // Ignore in 'idle' or 'finishing' state
-          continue;
-        }
-
-        // For eraser, use the legacy stroke buffer
-        const constrained = constrainShiftLinePoint(canvasX, canvasY);
-        lastInputPosRef.current = { x: constrained.x, y: constrained.y };
-        const point: BufferPoint = {
-          x: constrained.x,
-          y: constrained.y,
-          pressure,
-          tiltX,
-          tiltY,
-        };
-
-        const interpolatedPoints = strokeBufferRef.current?.addPoint(point) ?? [];
-        if (interpolatedPoints.length > 0) {
-          drawPoints(interpolatedPoints.map(toRawInputPoint));
+        const state = strokeStateRef.current;
+        if (state === 'starting') {
+          // Buffer points during 'starting' phase, replay after beginStroke completes
+          pendingPointsRef.current.push({
+            x: canvasX,
+            y: canvasY,
+            pressure,
+            tiltX,
+            tiltY,
+            rotation,
+            pointIndex: idx,
+          });
+          window.__strokeDiagnostics?.onPointBuffered();
+        } else if (state === 'active') {
+          inputQueueRef.current.push({
+            x: canvasX,
+            y: canvasY,
+            pressure,
+            tiltX,
+            tiltY,
+            rotation,
+            pointIndex: idx,
+          });
+          window.__strokeDiagnostics?.onPointBuffered();
         }
       }
     },
     [
       isPanning,
       pan,
-      drawPoints,
       setScale,
       currentTool,
       usingRawInput,
@@ -612,19 +559,16 @@ export function usePointerHandlers({
       handleSelectionPointerMove,
       handleMovePointerMove,
       updateShiftLineCursor,
-      constrainShiftLinePoint,
       containerRef,
       canvasRef,
       panStartRef,
       isZoomingRef,
       zoomStartRef,
       isDrawingRef,
-      strokeBufferRef,
       strokeStateRef,
       pendingPointsRef,
       inputQueueRef,
       pointIndexRef,
-      lastInputPosRef,
       latencyProfilerRef,
     ]
   );

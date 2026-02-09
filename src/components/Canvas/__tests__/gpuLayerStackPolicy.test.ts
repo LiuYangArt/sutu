@@ -126,9 +126,15 @@ describe('gpuLayerStackPolicy', () => {
         currentTool: 'brush',
       })
     ).toBe(true);
+    expect(
+      isGpuHistoryPathAvailable({
+        gpuDisplayActive: true,
+        currentTool: 'eraser',
+      })
+    ).toBe(true);
   });
 
-  it('disables gpu history when gpu display is inactive or tool is not brush', () => {
+  it('disables gpu history when gpu display is inactive or tool is not brush-like', () => {
     expect(
       isGpuHistoryPathAvailable({
         gpuDisplayActive: false,

@@ -11,7 +11,7 @@ import { TextureSettings } from './settings/TextureSettings';
 import { DualBrushSettings } from './settings/DualBrushSettings';
 import { BuildupSettings } from './settings/BuildupSettings';
 import { NoiseSettings } from './settings/NoiseSettings';
-import { useBrushLibraryStore } from '@/stores/brushLibrary';
+import { useBrushLibraryStore, useSelectedPresetIdForCurrentTool } from '@/stores/brushLibrary';
 
 interface PresetDialogResult {
   name: string;
@@ -38,7 +38,7 @@ export function BrushPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('tip_shape');
   const loadLibrary = useBrushLibraryStore((state) => state.loadLibrary);
   const presets = useBrushLibraryStore((state) => state.presets);
-  const selectedPresetId = useBrushLibraryStore((state) => state.selectedPresetId);
+  const selectedPresetId = useSelectedPresetIdForCurrentTool();
   const saveActivePreset = useBrushLibraryStore((state) => state.saveActivePreset);
   const saveActivePresetAs = useBrushLibraryStore((state) => state.saveActivePresetAs);
   const setSelectedPresetId = useBrushLibraryStore((state) => state.setSelectedPresetId);

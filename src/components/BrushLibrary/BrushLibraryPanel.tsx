@@ -12,7 +12,11 @@ import {
   X,
 } from 'lucide-react';
 import { BrushPresetThumbnail } from '@/components/BrushPanel/BrushPresetThumbnail';
-import { useBrushLibraryStore, useGroupedBrushPresets } from '@/stores/brushLibrary';
+import {
+  useBrushLibraryStore,
+  useGroupedBrushPresets,
+  useSelectedPresetIdForCurrentTool,
+} from '@/stores/brushLibrary';
 import './BrushLibraryPanel.css';
 
 interface BrushLibraryPanelProps {
@@ -24,7 +28,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const presetCount = useBrushLibraryStore((state) => state.presets.length);
   const tipsCount = useBrushLibraryStore((state) => state.tips.length);
-  const selectedPresetId = useBrushLibraryStore((state) => state.selectedPresetId);
+  const selectedPresetId = useSelectedPresetIdForCurrentTool();
   const {
     isLoading,
     error,

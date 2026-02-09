@@ -16,6 +16,7 @@ export type {
   RenderBackend,
   IGPUStrokeAccumulator,
   GPUDabParams,
+  StrokeCompositeMode,
   GpuScratchHandle,
   GpuStrokePrepareResult,
   GpuStrokeCommitResult,

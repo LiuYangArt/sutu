@@ -312,6 +312,146 @@ export function applyPressureCurve(pressure: number, curve: PressureCurve): numb
   }
 }
 
+export type EraserBackgroundMode = 'background-color' | 'transparent';
+
+export interface BrushToolProfile {
+  size: number;
+  flow: number;
+  opacity: number;
+  hardness: number;
+  maskType: BrushMaskType;
+  spacing: number;
+  roundness: number;
+  angle: number;
+  texture: BrushTexture | null;
+  pressureSizeEnabled: boolean;
+  pressureFlowEnabled: boolean;
+  pressureOpacityEnabled: boolean;
+  pressureCurve: PressureCurve;
+  shapeDynamicsEnabled: boolean;
+  shapeDynamics: ShapeDynamicsSettings;
+  scatterEnabled: boolean;
+  scatter: ScatterSettings;
+  colorDynamicsEnabled: boolean;
+  colorDynamics: ColorDynamicsSettings;
+  wetEdgeEnabled: boolean;
+  wetEdge: number;
+  buildupEnabled: boolean;
+  transferEnabled: boolean;
+  transfer: TransferSettings;
+  textureEnabled: boolean;
+  textureSettings: TextureSettings;
+  noiseEnabled: boolean;
+  dualBrushEnabled: boolean;
+  dualBrush: DualBrushSettings;
+}
+
+type BrushProfileTool = 'brush' | 'eraser';
+
+function toBrushProfileTool(tool: ToolType): BrushProfileTool | null {
+  if (tool === 'brush' || tool === 'eraser') {
+    return tool;
+  }
+  return null;
+}
+
+function cloneCursorBounds(
+  bounds: BrushTexture['cursorBounds'] | undefined
+): BrushTexture['cursorBounds'] | undefined {
+  if (!bounds) return undefined;
+  return { width: bounds.width, height: bounds.height };
+}
+
+function cloneBrushTexture(texture: BrushTexture | null): BrushTexture | null {
+  if (!texture) return null;
+  return {
+    ...texture,
+    cursorBounds: cloneCursorBounds(texture.cursorBounds),
+  };
+}
+
+function cloneDualBrushSettings(dual: DualBrushSettings): DualBrushSettings {
+  return {
+    ...dual,
+    texture: dual.texture
+      ? { ...dual.texture, cursorBounds: cloneCursorBounds(dual.texture.cursorBounds) }
+      : undefined,
+  };
+}
+
+function normalizeBrushProfile(profile: BrushToolProfile): BrushToolProfile {
+  const size = clampSize(profile.size);
+  const dualBrush = normalizeDualBrush(size, cloneDualBrushSettings(profile.dualBrush), {});
+  return {
+    size,
+    flow: Math.max(0.01, Math.min(1, profile.flow)),
+    opacity: Math.max(0.01, Math.min(1, profile.opacity)),
+    hardness: Math.max(0, Math.min(100, profile.hardness)),
+    maskType: profile.maskType,
+    spacing: Math.max(0.01, Math.min(10, profile.spacing)),
+    roundness: Math.max(1, Math.min(100, profile.roundness)),
+    angle: ((profile.angle % 360) + 360) % 360,
+    texture: cloneBrushTexture(profile.texture),
+    pressureSizeEnabled: profile.pressureSizeEnabled,
+    pressureFlowEnabled: profile.pressureFlowEnabled,
+    pressureOpacityEnabled: profile.pressureOpacityEnabled,
+    pressureCurve: profile.pressureCurve,
+    shapeDynamicsEnabled: profile.shapeDynamicsEnabled,
+    shapeDynamics: { ...profile.shapeDynamics },
+    scatterEnabled: profile.scatterEnabled,
+    scatter: { ...profile.scatter },
+    colorDynamicsEnabled: profile.colorDynamicsEnabled,
+    colorDynamics: {
+      ...profile.colorDynamics,
+      applyPerTip: profile.colorDynamics.applyPerTip !== false,
+    },
+    wetEdgeEnabled: profile.wetEdgeEnabled,
+    wetEdge: Math.max(0, Math.min(1, profile.wetEdge)),
+    buildupEnabled: profile.buildupEnabled,
+    transferEnabled: profile.transferEnabled,
+    transfer: { ...profile.transfer },
+    textureEnabled: profile.textureEnabled,
+    textureSettings: { ...profile.textureSettings },
+    noiseEnabled: profile.noiseEnabled,
+    dualBrushEnabled: profile.dualBrushEnabled,
+    dualBrush,
+  };
+}
+
+function getDefaultBrushProfile(): BrushToolProfile {
+  return normalizeBrushProfile({
+    size: 20,
+    flow: 1,
+    opacity: 1,
+    hardness: 100,
+    maskType: 'default',
+    spacing: 0.25,
+    roundness: 100,
+    angle: 0,
+    texture: null,
+    pressureSizeEnabled: false,
+    pressureFlowEnabled: false,
+    pressureOpacityEnabled: true,
+    pressureCurve: 'linear',
+    shapeDynamicsEnabled: false,
+    shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS },
+    scatterEnabled: false,
+    scatter: { ...DEFAULT_SCATTER_SETTINGS },
+    colorDynamicsEnabled: false,
+    colorDynamics: { ...DEFAULT_COLOR_DYNAMICS },
+    wetEdgeEnabled: false,
+    wetEdge: 1.0,
+    buildupEnabled: false,
+    transferEnabled: false,
+    transfer: { ...DEFAULT_TRANSFER_SETTINGS },
+    textureEnabled: false,
+    textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
+    noiseEnabled: false,
+    dualBrushEnabled: false,
+    dualBrush: { ...DEFAULT_DUAL_BRUSH },
+  });
+}
+
 interface ToolState {
   // Current tool
   currentTool: ToolType;
@@ -331,6 +471,9 @@ interface ToolState {
 
   // Eraser settings (independent from brush)
   eraserSize: number;
+  eraserBackgroundMode: EraserBackgroundMode;
+  brushProfile: BrushToolProfile;
+  eraserProfile: BrushToolProfile;
 
   // Pressure sensitivity settings
   pressureSizeEnabled: boolean;
@@ -396,6 +539,8 @@ interface ToolState {
   setBrushTexture: (texture: BrushTexture | null) => void;
   clearBrushTexture: () => void;
   setEraserSize: (size: number) => void;
+  setEraserBackgroundMode: (mode: EraserBackgroundMode) => void;
+  toggleEraserBackgroundMode: () => void;
   // Get current tool's size (brush or eraser)
   getCurrentSize: () => number;
   // Set current tool's size (brush or eraser)
@@ -455,344 +600,644 @@ interface ToolState {
   resetDualBrush: () => void;
 }
 
+function snapshotProfileFromLiveState(state: ToolState): BrushToolProfile {
+  return normalizeBrushProfile({
+    size: state.brushSize,
+    flow: state.brushFlow,
+    opacity: state.brushOpacity,
+    hardness: state.brushHardness,
+    maskType: state.brushMaskType,
+    spacing: state.brushSpacing,
+    roundness: state.brushRoundness,
+    angle: state.brushAngle,
+    texture: state.brushTexture,
+    pressureSizeEnabled: state.pressureSizeEnabled,
+    pressureFlowEnabled: state.pressureFlowEnabled,
+    pressureOpacityEnabled: state.pressureOpacityEnabled,
+    pressureCurve: state.pressureCurve,
+    shapeDynamicsEnabled: state.shapeDynamicsEnabled,
+    shapeDynamics: state.shapeDynamics,
+    scatterEnabled: state.scatterEnabled,
+    scatter: state.scatter,
+    colorDynamicsEnabled: state.colorDynamicsEnabled,
+    colorDynamics: state.colorDynamics,
+    wetEdgeEnabled: state.wetEdgeEnabled,
+    wetEdge: state.wetEdge,
+    buildupEnabled: state.buildupEnabled,
+    transferEnabled: state.transferEnabled,
+    transfer: state.transfer,
+    textureEnabled: state.textureEnabled,
+    textureSettings: state.textureSettings,
+    noiseEnabled: state.noiseEnabled,
+    dualBrushEnabled: state.dualBrushEnabled,
+    dualBrush: state.dualBrush,
+  });
+}
+
+function applyProfileToLiveState(profile: BrushToolProfile): Partial<ToolState> {
+  return {
+    brushSize: profile.size,
+    brushFlow: profile.flow,
+    brushOpacity: profile.opacity,
+    brushHardness: profile.hardness,
+    brushMaskType: profile.maskType,
+    brushSpacing: profile.spacing,
+    brushRoundness: profile.roundness,
+    brushAngle: profile.angle,
+    brushTexture: cloneBrushTexture(profile.texture),
+    pressureSizeEnabled: profile.pressureSizeEnabled,
+    pressureFlowEnabled: profile.pressureFlowEnabled,
+    pressureOpacityEnabled: profile.pressureOpacityEnabled,
+    pressureCurve: profile.pressureCurve,
+    shapeDynamicsEnabled: profile.shapeDynamicsEnabled,
+    shapeDynamics: { ...profile.shapeDynamics },
+    scatterEnabled: profile.scatterEnabled,
+    scatter: { ...profile.scatter },
+    colorDynamicsEnabled: profile.colorDynamicsEnabled,
+    colorDynamics: { ...profile.colorDynamics },
+    wetEdgeEnabled: profile.wetEdgeEnabled,
+    wetEdge: profile.wetEdge,
+    buildupEnabled: profile.buildupEnabled,
+    transferEnabled: profile.transferEnabled,
+    transfer: { ...profile.transfer },
+    textureEnabled: profile.textureEnabled,
+    textureSettings: { ...profile.textureSettings },
+    noiseEnabled: profile.noiseEnabled,
+    dualBrushEnabled: profile.dualBrushEnabled,
+    dualBrush: cloneDualBrushSettings(profile.dualBrush),
+  };
+}
+
+function syncActiveProfilePatch(state: ToolState, patch: Partial<ToolState>): Partial<ToolState> {
+  const tool = toBrushProfileTool(state.currentTool);
+  if (!tool) {
+    return patch;
+  }
+
+  const nextLike = { ...state, ...patch } as ToolState;
+  const snapshot = snapshotProfileFromLiveState(nextLike);
+  if (tool === 'brush') {
+    return { ...patch, brushProfile: snapshot };
+  }
+  return { ...patch, eraserProfile: snapshot, eraserSize: snapshot.size };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function coerceBrushTexture(value: unknown, fallback: BrushTexture | null): BrushTexture | null {
+  if (!isRecord(value)) return cloneBrushTexture(fallback);
+  const textureId = typeof value.id === 'string' ? value.id : null;
+  const width = typeof value.width === 'number' ? value.width : null;
+  const height = typeof value.height === 'number' ? value.height : null;
+  if (!textureId || width === null || height === null) return cloneBrushTexture(fallback);
+  return {
+    id: textureId,
+    data: typeof value.data === 'string' ? value.data : '',
+    width,
+    height,
+    cursorPath: typeof value.cursorPath === 'string' ? value.cursorPath : undefined,
+    cursorBounds: isRecord(value.cursorBounds)
+      ? {
+          width: typeof value.cursorBounds.width === 'number' ? value.cursorBounds.width : width,
+          height:
+            typeof value.cursorBounds.height === 'number' ? value.cursorBounds.height : height,
+        }
+      : undefined,
+  };
+}
+
+function coerceBrushProfile(value: unknown, fallback: BrushToolProfile): BrushToolProfile {
+  if (!isRecord(value)) {
+    return normalizeBrushProfile(fallback);
+  }
+  const raw = value as Partial<BrushToolProfile> & Record<string, unknown>;
+
+  return normalizeBrushProfile({
+    ...fallback,
+    ...raw,
+    texture: coerceBrushTexture(raw.texture, fallback.texture),
+    shapeDynamics: isRecord(raw.shapeDynamics)
+      ? { ...fallback.shapeDynamics, ...raw.shapeDynamics }
+      : { ...fallback.shapeDynamics },
+    scatter: isRecord(raw.scatter)
+      ? { ...fallback.scatter, ...raw.scatter }
+      : { ...fallback.scatter },
+    colorDynamics: isRecord(raw.colorDynamics)
+      ? { ...fallback.colorDynamics, ...raw.colorDynamics }
+      : { ...fallback.colorDynamics },
+    transfer: isRecord(raw.transfer)
+      ? { ...fallback.transfer, ...raw.transfer }
+      : { ...fallback.transfer },
+    textureSettings: isRecord(raw.textureSettings)
+      ? { ...fallback.textureSettings, ...raw.textureSettings }
+      : { ...fallback.textureSettings },
+    dualBrush: isRecord(raw.dualBrush)
+      ? normalizeDualBrush(
+          typeof raw.size === 'number' ? raw.size : fallback.size,
+          { ...fallback.dualBrush, ...raw.dualBrush },
+          {}
+        )
+      : cloneDualBrushSettings(fallback.dualBrush),
+  });
+}
+
 export const useToolStore = create<ToolState>()(
   persist(
-    (set, get) => ({
-      // Initial state
-      currentTool: 'brush',
-      brushSize: 20,
-      brushFlow: 1, // Default: full flow
-      brushOpacity: 1, // Default: full opacity ceiling
-      brushHardness: 100,
-      brushMaskType: 'default', // Default to simple Gaussian (perf preferred)
-      brushSpacing: 0.25, // 25% of tip short edge
-      brushRoundness: 100, // 100 = perfect circle
-      brushAngle: 0, // 0 degrees
-      brushColor: '#000000',
-      backgroundColor: '#ffffff',
-      brushTexture: null, // No texture by default (procedural brush)
-      eraserSize: 20,
-      pressureSizeEnabled: false,
-      pressureFlowEnabled: false,
-      pressureOpacityEnabled: true, // Only opacity affected by pressure by default
-      pressureCurve: 'linear',
-      showCrosshair: false,
+    (set, get) => {
+      const setWithActiveProfile = (updater: (state: ToolState) => Partial<ToolState>): void => {
+        set((state) => syncActiveProfilePatch(state, updater(state)));
+      };
 
-      // Shape Dynamics (default: disabled with all jitter at 0)
-      shapeDynamicsEnabled: false,
-      shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS },
+      return {
+        // Initial state
+        currentTool: 'brush',
+        brushProfile: getDefaultBrushProfile(),
+        eraserProfile: getDefaultBrushProfile(),
+        brushSize: 20,
+        brushFlow: 1, // Default: full flow
+        brushOpacity: 1, // Default: full opacity ceiling
+        brushHardness: 100,
+        brushMaskType: 'default', // Default to simple Gaussian (perf preferred)
+        brushSpacing: 0.25, // 25% of tip short edge
+        brushRoundness: 100, // 100 = perfect circle
+        brushAngle: 0, // 0 degrees
+        brushColor: '#000000',
+        backgroundColor: '#ffffff',
+        brushTexture: null, // No texture by default (procedural brush)
+        eraserSize: 20,
+        eraserBackgroundMode: 'background-color',
+        pressureSizeEnabled: false,
+        pressureFlowEnabled: false,
+        pressureOpacityEnabled: true, // Only opacity affected by pressure by default
+        pressureCurve: 'linear',
+        showCrosshair: false,
 
-      // Scatter (default: disabled)
-      scatterEnabled: false,
-      scatter: { ...DEFAULT_SCATTER_SETTINGS },
+        // Shape Dynamics (default: disabled with all jitter at 0)
+        shapeDynamicsEnabled: false,
+        shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS },
 
-      // Color Dynamics (default: disabled with all jitter at 0)
-      colorDynamicsEnabled: false,
-      colorDynamics: { ...DEFAULT_COLOR_DYNAMICS },
+        // Scatter (default: disabled)
+        scatterEnabled: false,
+        scatter: { ...DEFAULT_SCATTER_SETTINGS },
 
-      // Wet Edge (default: disabled, full strength when enabled)
-      wetEdgeEnabled: false,
-      wetEdge: 1.0,
+        // Color Dynamics (default: disabled with all jitter at 0)
+        colorDynamicsEnabled: false,
+        colorDynamics: { ...DEFAULT_COLOR_DYNAMICS },
 
-      // Build-up (default: disabled)
-      buildupEnabled: false,
+        // Wet Edge (default: disabled, full strength when enabled)
+        wetEdgeEnabled: false,
+        wetEdge: 1.0,
 
-      // Transfer (default: disabled with all jitter at 0)
-      transferEnabled: false,
-      transfer: { ...DEFAULT_TRANSFER_SETTINGS },
+        // Build-up (default: disabled)
+        buildupEnabled: false,
 
-      // Texture (default: disabled)
-      textureEnabled: false,
-      textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
+        // Transfer (default: disabled with all jitter at 0)
+        transferEnabled: false,
+        transfer: { ...DEFAULT_TRANSFER_SETTINGS },
 
-      // Noise (default: disabled)
-      noiseEnabled: false,
+        // Texture (default: disabled)
+        textureEnabled: false,
+        textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
 
-      // Dual Brush (default: disabled)
-      dualBrushEnabled: false,
-      dualBrush: { ...DEFAULT_DUAL_BRUSH },
+        // Noise (default: disabled)
+        noiseEnabled: false,
 
-      // Patterns
-      patterns: [],
+        // Dual Brush (default: disabled)
+        dualBrushEnabled: false,
+        dualBrush: { ...DEFAULT_DUAL_BRUSH },
 
-      // Actions
-      setPatterns: (patterns) => set({ patterns }),
-      appendPatterns: (newPatterns) =>
-        set((state) => ({ patterns: [...state.patterns, ...newPatterns] })),
+        // Patterns
+        patterns: [],
 
-      setTool: (tool) => set({ currentTool: tool }),
+        // Actions
+        setPatterns: (patterns) => set({ patterns }),
+        appendPatterns: (newPatterns) =>
+          set((state) => ({ patterns: [...state.patterns, ...newPatterns] })),
 
-      setBrushSize: (size) =>
-        set((state) => {
-          const clamped = clampSize(size);
-          const ratio = clampDualSizeRatio(state.dualBrush.sizeRatio);
-          return {
-            brushSize: clamped,
-            dualBrush: {
+        setTool: (tool) =>
+          set((state) => {
+            if (state.currentTool === tool) {
+              return { currentTool: tool };
+            }
+
+            const currentProfileTool = toBrushProfileTool(state.currentTool);
+            const nextProfileTool = toBrushProfileTool(tool);
+
+            let nextBrushProfile = state.brushProfile;
+            let nextEraserProfile = state.eraserProfile;
+
+            if (currentProfileTool === 'brush') {
+              nextBrushProfile = snapshotProfileFromLiveState(state);
+            } else if (currentProfileTool === 'eraser') {
+              nextEraserProfile = snapshotProfileFromLiveState(state);
+            }
+
+            if (!nextProfileTool) {
+              return {
+                currentTool: tool,
+                brushProfile: nextBrushProfile,
+                eraserProfile: nextEraserProfile,
+              };
+            }
+
+            const targetProfile = normalizeBrushProfile(
+              nextProfileTool === 'brush' ? nextBrushProfile : nextEraserProfile
+            );
+            if (nextProfileTool === 'brush') {
+              nextBrushProfile = targetProfile;
+            } else {
+              nextEraserProfile = targetProfile;
+            }
+
+            return {
+              currentTool: tool,
+              brushProfile: nextBrushProfile,
+              eraserProfile: nextEraserProfile,
+              ...applyProfileToLiveState(targetProfile),
+              eraserSize: nextEraserProfile.size,
+            };
+          }),
+
+        setBrushSize: (size) =>
+          setWithActiveProfile((state) => {
+            const clamped = clampSize(size);
+            const ratio = clampDualSizeRatio(state.dualBrush.sizeRatio);
+            const normalizedDualBrush = {
               ...state.dualBrush,
               size: computeDualSizeFromRatio(clamped, ratio),
               sizeRatio: ratio,
-            },
-          };
-        }),
-
-      setBrushFlow: (flow) => set({ brushFlow: Math.max(0.01, Math.min(1, flow)) }),
-
-      setBrushOpacity: (opacity) => set({ brushOpacity: Math.max(0.01, Math.min(1, opacity)) }),
-
-      setBrushHardness: (hardness) => set({ brushHardness: Math.max(0, Math.min(100, hardness)) }),
-
-      setBrushMaskType: (maskType) => set({ brushMaskType: maskType }),
-
-      setBrushSpacing: (spacing) => set({ brushSpacing: Math.max(0.01, Math.min(10, spacing)) }),
-
-      setBrushRoundness: (roundness) =>
-        set({ brushRoundness: Math.max(1, Math.min(100, roundness)) }),
-
-      setBrushAngle: (angle) => set({ brushAngle: ((angle % 360) + 360) % 360 }),
-
-      setBrushColor: (color) => set({ brushColor: color }),
-
-      setBackgroundColor: (color) => set({ backgroundColor: color }),
-
-      setBrushTexture: (texture) => set({ brushTexture: texture }),
-
-      clearBrushTexture: () => set({ brushTexture: null }),
-
-      setEraserSize: (size) => set({ eraserSize: clampSize(size) }),
-
-      getCurrentSize: () => {
-        const state = get();
-        return state.currentTool === 'eraser' ? state.eraserSize : state.brushSize;
-      },
-
-      setCurrentSize: (size) => {
-        const state = get();
-        if (state.currentTool === 'eraser') {
-          set({ eraserSize: clampSize(size) });
-        } else {
-          set((s) => {
-            const clamped = clampSize(size);
-            const ratio = clampDualSizeRatio(s.dualBrush.sizeRatio);
+            };
+            const eraserSize = state.currentTool === 'eraser' ? clamped : state.eraserSize;
             return {
               brushSize: clamped,
-              dualBrush: {
-                ...s.dualBrush,
-                size: computeDualSizeFromRatio(clamped, ratio),
-                sizeRatio: ratio,
-              },
+              eraserSize,
+              dualBrush: normalizedDualBrush,
+            };
+          }),
+
+        setBrushFlow: (flow) =>
+          setWithActiveProfile(() => ({ brushFlow: Math.max(0.01, Math.min(1, flow)) })),
+
+        setBrushOpacity: (opacity) =>
+          setWithActiveProfile(() => ({ brushOpacity: Math.max(0.01, Math.min(1, opacity)) })),
+
+        setBrushHardness: (hardness) =>
+          setWithActiveProfile(() => ({ brushHardness: Math.max(0, Math.min(100, hardness)) })),
+
+        setBrushMaskType: (maskType) => setWithActiveProfile(() => ({ brushMaskType: maskType })),
+
+        setBrushSpacing: (spacing) =>
+          setWithActiveProfile(() => ({ brushSpacing: Math.max(0.01, Math.min(10, spacing)) })),
+
+        setBrushRoundness: (roundness) =>
+          setWithActiveProfile(() => ({ brushRoundness: Math.max(1, Math.min(100, roundness)) })),
+
+        setBrushAngle: (angle) =>
+          setWithActiveProfile(() => ({ brushAngle: ((angle % 360) + 360) % 360 })),
+
+        setBrushColor: (color) => set({ brushColor: color }),
+
+        setBackgroundColor: (color) => set({ backgroundColor: color }),
+
+        setBrushTexture: (texture) =>
+          setWithActiveProfile(() => ({ brushTexture: cloneBrushTexture(texture) })),
+
+        clearBrushTexture: () => setWithActiveProfile(() => ({ brushTexture: null })),
+
+        setEraserSize: (size) =>
+          set((state) => {
+            const clamped = clampSize(size);
+            if (state.currentTool === 'eraser') {
+              return syncActiveProfilePatch(state, {
+                eraserSize: clamped,
+                brushSize: clamped,
+              });
+            }
+            return {
+              eraserSize: clamped,
+              eraserProfile: normalizeBrushProfile({
+                ...state.eraserProfile,
+                size: clamped,
+              }),
+            };
+          }),
+
+        setEraserBackgroundMode: (mode) => set({ eraserBackgroundMode: mode }),
+
+        toggleEraserBackgroundMode: () =>
+          set((state) => ({
+            eraserBackgroundMode:
+              state.eraserBackgroundMode === 'background-color'
+                ? 'transparent'
+                : 'background-color',
+          })),
+
+        getCurrentSize: () => {
+          const state = get();
+          return state.currentTool === 'eraser' ? state.eraserSize : state.brushSize;
+        },
+
+        setCurrentSize: (size) => {
+          const state = get();
+          if (state.currentTool === 'eraser') {
+            state.setEraserSize(size);
+          } else {
+            state.setBrushSize(size);
+          }
+        },
+
+        swapColors: () =>
+          set((state) => ({
+            brushColor: state.backgroundColor,
+            backgroundColor: state.brushColor,
+          })),
+
+        resetColors: () =>
+          set({
+            brushColor: '#000000',
+            backgroundColor: '#ffffff',
+          }),
+
+        togglePressureSize: () =>
+          setWithActiveProfile((state) => ({ pressureSizeEnabled: !state.pressureSizeEnabled })),
+
+        togglePressureFlow: () =>
+          setWithActiveProfile((state) => ({ pressureFlowEnabled: !state.pressureFlowEnabled })),
+
+        togglePressureOpacity: () =>
+          setWithActiveProfile((state) => ({
+            pressureOpacityEnabled: !state.pressureOpacityEnabled,
+          })),
+
+        setPressureCurve: (curve) => setWithActiveProfile(() => ({ pressureCurve: curve })),
+
+        toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
+
+        // Texture actions
+        setTextureEnabled: (enabled) => setWithActiveProfile(() => ({ textureEnabled: enabled })),
+
+        toggleTexture: () =>
+          setWithActiveProfile((state) => ({ textureEnabled: !state.textureEnabled })),
+
+        setTextureSettings: (settings) => {
+          // Optimistically load pattern if ID is provided
+          if (settings.patternId) {
+            patternManager.loadPattern(settings.patternId);
+          }
+          setWithActiveProfile((state) => {
+            const nextScale =
+              settings.scale === undefined
+                ? state.textureSettings.scale
+                : clampTextureScale(settings.scale);
+            return {
+              textureSettings: { ...state.textureSettings, ...settings, scale: nextScale },
             };
           });
-        }
-      },
+        },
 
-      swapColors: () =>
-        set((state) => ({
-          brushColor: state.backgroundColor,
-          backgroundColor: state.brushColor,
-        })),
+        resetTextureSettings: () =>
+          setWithActiveProfile(() => ({ textureSettings: { ...DEFAULT_TEXTURE_SETTINGS } })),
 
-      resetColors: () =>
-        set({
-          brushColor: '#000000',
-          backgroundColor: '#ffffff',
-        }),
+        // Noise actions
+        setNoiseEnabled: (enabled) => setWithActiveProfile(() => ({ noiseEnabled: enabled })),
 
-      togglePressureSize: () =>
-        set((state) => ({ pressureSizeEnabled: !state.pressureSizeEnabled })),
+        toggleNoise: () => setWithActiveProfile((state) => ({ noiseEnabled: !state.noiseEnabled })),
 
-      togglePressureFlow: () =>
-        set((state) => ({ pressureFlowEnabled: !state.pressureFlowEnabled })),
+        // Shape Dynamics actions
+        setShapeDynamicsEnabled: (enabled) =>
+          setWithActiveProfile(() => ({ shapeDynamicsEnabled: enabled })),
 
-      togglePressureOpacity: () =>
-        set((state) => ({ pressureOpacityEnabled: !state.pressureOpacityEnabled })),
+        toggleShapeDynamics: () =>
+          setWithActiveProfile((state) => ({ shapeDynamicsEnabled: !state.shapeDynamicsEnabled })),
 
-      setPressureCurve: (curve) => set({ pressureCurve: curve }),
+        setShapeDynamics: (settings) =>
+          setWithActiveProfile((state) => ({
+            shapeDynamics: { ...state.shapeDynamics, ...settings },
+          })),
 
-      toggleCrosshair: () => set((state) => ({ showCrosshair: !state.showCrosshair })),
+        resetShapeDynamics: () =>
+          setWithActiveProfile(() => ({ shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS } })),
 
-      // Texture actions
-      setTextureEnabled: (enabled) => set({ textureEnabled: enabled }),
+        // Scatter actions
+        setScatterEnabled: (enabled) => setWithActiveProfile(() => ({ scatterEnabled: enabled })),
 
-      toggleTexture: () => set((state) => ({ textureEnabled: !state.textureEnabled })),
+        toggleScatter: () =>
+          setWithActiveProfile((state) => ({ scatterEnabled: !state.scatterEnabled })),
 
-      setTextureSettings: (settings) => {
-        // Optimistically load pattern if ID is provided
-        if (settings.patternId) {
-          patternManager.loadPattern(settings.patternId);
-        }
-        set((state) => {
-          const nextScale =
-            settings.scale === undefined
-              ? state.textureSettings.scale
-              : clampTextureScale(settings.scale);
-          return {
-            textureSettings: { ...state.textureSettings, ...settings, scale: nextScale },
-          };
-        });
-      },
+        setScatter: (settings) =>
+          setWithActiveProfile((state) => ({
+            scatter: { ...state.scatter, ...settings },
+          })),
 
-      resetTextureSettings: () => set({ textureSettings: { ...DEFAULT_TEXTURE_SETTINGS } }),
+        resetScatter: () =>
+          setWithActiveProfile(() => ({ scatter: { ...DEFAULT_SCATTER_SETTINGS } })),
 
-      // Noise actions
-      setNoiseEnabled: (enabled) => set({ noiseEnabled: enabled }),
+        // Color Dynamics actions
+        setColorDynamicsEnabled: (enabled) =>
+          setWithActiveProfile(() => ({ colorDynamicsEnabled: enabled })),
 
-      toggleNoise: () => set((state) => ({ noiseEnabled: !state.noiseEnabled })),
+        toggleColorDynamics: () =>
+          setWithActiveProfile((state) => ({ colorDynamicsEnabled: !state.colorDynamicsEnabled })),
 
-      // Shape Dynamics actions
-      setShapeDynamicsEnabled: (enabled) => set({ shapeDynamicsEnabled: enabled }),
+        setColorDynamics: (settings) =>
+          setWithActiveProfile((state) => ({
+            colorDynamics: { ...state.colorDynamics, ...settings },
+          })),
 
-      toggleShapeDynamics: () =>
-        set((state) => ({ shapeDynamicsEnabled: !state.shapeDynamicsEnabled })),
+        resetColorDynamics: () =>
+          setWithActiveProfile(() => ({ colorDynamics: { ...DEFAULT_COLOR_DYNAMICS } })),
 
-      setShapeDynamics: (settings) =>
-        set((state) => ({
-          shapeDynamics: { ...state.shapeDynamics, ...settings },
-        })),
+        // Wet Edge actions
+        setWetEdgeEnabled: (enabled) => setWithActiveProfile(() => ({ wetEdgeEnabled: enabled })),
 
-      resetShapeDynamics: () => set({ shapeDynamics: { ...DEFAULT_SHAPE_DYNAMICS } }),
+        toggleWetEdge: () =>
+          setWithActiveProfile((state) => ({ wetEdgeEnabled: !state.wetEdgeEnabled })),
 
-      // Scatter actions
-      setScatterEnabled: (enabled) => set({ scatterEnabled: enabled }),
+        setWetEdge: (value) =>
+          setWithActiveProfile(() => ({ wetEdge: Math.max(0, Math.min(1, value)) })),
 
-      toggleScatter: () => set((state) => ({ scatterEnabled: !state.scatterEnabled })),
+        // Build-up actions
+        setBuildupEnabled: (enabled) => setWithActiveProfile(() => ({ buildupEnabled: enabled })),
 
-      setScatter: (settings) =>
-        set((state) => ({
-          scatter: { ...state.scatter, ...settings },
-        })),
+        toggleBuildup: () =>
+          setWithActiveProfile((state) => ({ buildupEnabled: !state.buildupEnabled })),
 
-      resetScatter: () => set({ scatter: { ...DEFAULT_SCATTER_SETTINGS } }),
+        // Transfer actions
+        setTransferEnabled: (enabled) => setWithActiveProfile(() => ({ transferEnabled: enabled })),
 
-      // Color Dynamics actions
-      setColorDynamicsEnabled: (enabled) => set({ colorDynamicsEnabled: enabled }),
+        toggleTransfer: () =>
+          setWithActiveProfile((state) => ({ transferEnabled: !state.transferEnabled })),
 
-      toggleColorDynamics: () =>
-        set((state) => ({ colorDynamicsEnabled: !state.colorDynamicsEnabled })),
+        setTransfer: (settings) =>
+          setWithActiveProfile((state) => ({
+            transfer: { ...state.transfer, ...settings },
+          })),
 
-      setColorDynamics: (settings) =>
-        set((state) => ({
-          colorDynamics: { ...state.colorDynamics, ...settings },
-        })),
+        resetTransfer: () =>
+          setWithActiveProfile(() => ({ transfer: { ...DEFAULT_TRANSFER_SETTINGS } })),
 
-      resetColorDynamics: () => set({ colorDynamics: { ...DEFAULT_COLOR_DYNAMICS } }),
+        // Dual Brush actions
+        setDualBrushEnabled: (enabled) =>
+          setWithActiveProfile(() => ({ dualBrushEnabled: enabled })),
 
-      // Wet Edge actions
-      setWetEdgeEnabled: (enabled) => set({ wetEdgeEnabled: enabled }),
+        toggleDualBrush: () =>
+          setWithActiveProfile((state) => ({ dualBrushEnabled: !state.dualBrushEnabled })),
 
-      toggleWetEdge: () => set((state) => ({ wetEdgeEnabled: !state.wetEdgeEnabled })),
+        setDualBrush: (settings) =>
+          setWithActiveProfile((state) => ({
+            dualBrush: normalizeDualBrush(state.brushSize, state.dualBrush, settings),
+          })),
 
-      setWetEdge: (value) => set({ wetEdge: Math.max(0, Math.min(1, value)) }),
-
-      // Build-up actions
-      setBuildupEnabled: (enabled) => set({ buildupEnabled: enabled }),
-
-      toggleBuildup: () => set((state) => ({ buildupEnabled: !state.buildupEnabled })),
-
-      // Transfer actions
-      setTransferEnabled: (enabled) => set({ transferEnabled: enabled }),
-
-      toggleTransfer: () => set((state) => ({ transferEnabled: !state.transferEnabled })),
-
-      setTransfer: (settings) =>
-        set((state) => ({
-          transfer: { ...state.transfer, ...settings },
-        })),
-
-      resetTransfer: () => set({ transfer: { ...DEFAULT_TRANSFER_SETTINGS } }),
-
-      // Dual Brush actions
-      setDualBrushEnabled: (enabled) => set({ dualBrushEnabled: enabled }),
-
-      toggleDualBrush: () => set((state) => ({ dualBrushEnabled: !state.dualBrushEnabled })),
-
-      setDualBrush: (settings) =>
-        set((state) => ({
-          dualBrush: normalizeDualBrush(state.brushSize, state.dualBrush, settings),
-        })),
-
-      resetDualBrush: () => set({ dualBrush: { ...DEFAULT_DUAL_BRUSH } }),
-    }),
+        resetDualBrush: () =>
+          setWithActiveProfile(() => ({ dualBrush: { ...DEFAULT_DUAL_BRUSH } })),
+      };
+    },
     {
       name: 'paintboard-brush-settings',
-      version: 3,
+      version: 4,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
-        if (!persistedState || typeof persistedState !== 'object')
+        if (!isRecord(persistedState)) {
           return persistedState as ToolState;
-
-        const state = persistedState as Record<string, unknown>;
-        const brushSize = typeof state.brushSize === 'number' ? state.brushSize : 20;
-
-        if (state.dualBrush && typeof state.dualBrush === 'object') {
-          const dual = state.dualBrush as Record<string, unknown>;
-          const size = typeof dual.size === 'number' ? dual.size : 25;
-
-          if (typeof dual.sizeRatio !== 'number' || !Number.isFinite(dual.sizeRatio)) {
-            dual.sizeRatio = computeDualSizeRatioFromSize(brushSize, size);
-          } else {
-            dual.sizeRatio = clampDualSizeRatio(dual.sizeRatio);
-          }
         }
 
-        if (state.colorDynamics && typeof state.colorDynamics === 'object') {
-          const colorDynamics = state.colorDynamics as Record<string, unknown>;
-          if (typeof colorDynamics.applyPerTip !== 'boolean') {
-            colorDynamics.applyPerTip = true;
-          }
-        }
+        const state = persistedState;
+        const defaultProfile = getDefaultBrushProfile();
+        const legacyProfile = coerceBrushProfile(
+          {
+            ...defaultProfile,
+            size: typeof state.brushSize === 'number' ? state.brushSize : defaultProfile.size,
+            flow: state.brushFlow,
+            opacity: state.brushOpacity,
+            hardness: state.brushHardness,
+            maskType: state.brushMaskType,
+            spacing: state.brushSpacing,
+            roundness: state.brushRoundness,
+            angle: state.brushAngle,
+            texture: state.brushTexture,
+            pressureSizeEnabled: state.pressureSizeEnabled,
+            pressureFlowEnabled: state.pressureFlowEnabled,
+            pressureOpacityEnabled: state.pressureOpacityEnabled,
+            pressureCurve: state.pressureCurve,
+            shapeDynamicsEnabled: state.shapeDynamicsEnabled,
+            shapeDynamics: state.shapeDynamics,
+            scatterEnabled: state.scatterEnabled,
+            scatter: state.scatter,
+            colorDynamicsEnabled: state.colorDynamicsEnabled,
+            colorDynamics: state.colorDynamics,
+            wetEdgeEnabled: state.wetEdgeEnabled,
+            wetEdge: state.wetEdge,
+            buildupEnabled: state.buildupEnabled,
+            transferEnabled: state.transferEnabled,
+            transfer: state.transfer,
+            textureEnabled: state.textureEnabled,
+            textureSettings: state.textureSettings,
+            noiseEnabled: state.noiseEnabled,
+            dualBrushEnabled: state.dualBrushEnabled,
+            dualBrush: state.dualBrush,
+          },
+          defaultProfile
+        );
 
-        return state as unknown as ToolState;
+        const brushProfile = coerceBrushProfile(state.brushProfile, legacyProfile);
+        const eraserProfile = coerceBrushProfile(state.eraserProfile, {
+          ...legacyProfile,
+          size:
+            typeof state.eraserSize === 'number' ? clampSize(state.eraserSize) : legacyProfile.size,
+        });
+        const eraserBackgroundMode: EraserBackgroundMode =
+          state.eraserBackgroundMode === 'transparent' ? 'transparent' : 'background-color';
+
+        return {
+          ...(state as unknown as ToolState),
+          ...applyProfileToLiveState(brushProfile),
+          brushProfile,
+          eraserProfile,
+          eraserSize: eraserProfile.size,
+          eraserBackgroundMode,
+        };
       },
       partialize: (state) =>
-        ({
-          brushSize: state.brushSize,
-          brushFlow: state.brushFlow,
-          brushOpacity: state.brushOpacity,
-          brushHardness: state.brushHardness,
-          brushMaskType: state.brushMaskType,
-          brushSpacing: state.brushSpacing,
-          brushRoundness: state.brushRoundness,
-          brushAngle: state.brushAngle,
-          brushColor: state.brushColor,
-          backgroundColor: state.backgroundColor,
-          eraserSize: state.eraserSize,
-          pressureSizeEnabled: state.pressureSizeEnabled,
-          pressureFlowEnabled: state.pressureFlowEnabled,
-          pressureOpacityEnabled: state.pressureOpacityEnabled,
-          pressureCurve: state.pressureCurve,
-          shapeDynamicsEnabled: state.shapeDynamicsEnabled,
-          shapeDynamics: state.shapeDynamics,
-          scatterEnabled: state.scatterEnabled,
-          scatter: state.scatter,
-          colorDynamicsEnabled: state.colorDynamicsEnabled,
-          colorDynamics: state.colorDynamics,
-          wetEdgeEnabled: state.wetEdgeEnabled,
-          wetEdge: state.wetEdge,
-          buildupEnabled: state.buildupEnabled,
-          transferEnabled: state.transferEnabled,
-          transfer: state.transfer,
-          noiseEnabled: state.noiseEnabled,
-          dualBrushEnabled: state.dualBrushEnabled,
-          dualBrush: state.dualBrush
-            ? {
-                enabled: state.dualBrush.enabled,
-                brushId: state.dualBrush.brushId,
-                brushIndex: state.dualBrush.brushIndex,
-                brushName: state.dualBrush.brushName,
-                mode: state.dualBrush.mode,
-                flip: state.dualBrush.flip,
-                size: state.dualBrush.size,
-                sizeRatio: state.dualBrush.sizeRatio,
-                spacing: state.dualBrush.spacing,
-                roundness: state.dualBrush.roundness,
-                scatter: state.dualBrush.scatter,
-                bothAxes: state.dualBrush.bothAxes,
-                count: state.dualBrush.count,
-                // texture is excluded - it's runtime data
-              }
-            : state.dualBrush,
-        }) as unknown as ToolState,
+        (() => {
+          const serializeTexture = (texture: BrushTexture | null): BrushTexture | null => {
+            if (!texture) return null;
+            return {
+              ...texture,
+              imageData: undefined,
+              cursorBounds: cloneCursorBounds(texture.cursorBounds),
+            };
+          };
+          const serializeDualBrush = (dual: DualBrushSettings): DualBrushSettings => ({
+            ...dual,
+            texture: dual.texture ? { ...dual.texture, imageData: undefined } : undefined,
+          });
+          const serializeProfile = (profile: BrushToolProfile): BrushToolProfile => ({
+            ...profile,
+            texture: serializeTexture(profile.texture),
+            shapeDynamics: { ...profile.shapeDynamics },
+            scatter: { ...profile.scatter },
+            colorDynamics: { ...profile.colorDynamics },
+            transfer: { ...profile.transfer },
+            textureSettings: { ...profile.textureSettings },
+            dualBrush: serializeDualBrush(profile.dualBrush),
+          });
+
+          return {
+            brushSize: state.brushSize,
+            brushFlow: state.brushFlow,
+            brushOpacity: state.brushOpacity,
+            brushHardness: state.brushHardness,
+            brushMaskType: state.brushMaskType,
+            brushSpacing: state.brushSpacing,
+            brushRoundness: state.brushRoundness,
+            brushAngle: state.brushAngle,
+            brushColor: state.brushColor,
+            backgroundColor: state.backgroundColor,
+            eraserSize: state.eraserSize,
+            eraserBackgroundMode: state.eraserBackgroundMode,
+            pressureSizeEnabled: state.pressureSizeEnabled,
+            pressureFlowEnabled: state.pressureFlowEnabled,
+            pressureOpacityEnabled: state.pressureOpacityEnabled,
+            pressureCurve: state.pressureCurve,
+            shapeDynamicsEnabled: state.shapeDynamicsEnabled,
+            shapeDynamics: state.shapeDynamics,
+            scatterEnabled: state.scatterEnabled,
+            scatter: state.scatter,
+            colorDynamicsEnabled: state.colorDynamicsEnabled,
+            colorDynamics: state.colorDynamics,
+            wetEdgeEnabled: state.wetEdgeEnabled,
+            wetEdge: state.wetEdge,
+            buildupEnabled: state.buildupEnabled,
+            transferEnabled: state.transferEnabled,
+            transfer: state.transfer,
+            textureEnabled: state.textureEnabled,
+            textureSettings: state.textureSettings,
+            noiseEnabled: state.noiseEnabled,
+            dualBrushEnabled: state.dualBrushEnabled,
+            brushProfile: serializeProfile(state.brushProfile),
+            eraserProfile: serializeProfile(state.eraserProfile),
+            dualBrush: state.dualBrush
+              ? {
+                  enabled: state.dualBrush.enabled,
+                  brushId: state.dualBrush.brushId,
+                  brushIndex: state.dualBrush.brushIndex,
+                  brushName: state.dualBrush.brushName,
+                  mode: state.dualBrush.mode,
+                  flip: state.dualBrush.flip,
+                  size: state.dualBrush.size,
+                  sizeRatio: state.dualBrush.sizeRatio,
+                  spacing: state.dualBrush.spacing,
+                  roundness: state.dualBrush.roundness,
+                  scatter: state.dualBrush.scatter,
+                  bothAxes: state.dualBrush.bothAxes,
+                  count: state.dualBrush.count,
+                  // texture is excluded - it's runtime data
+                }
+              : state.dualBrush,
+          };
+        })() as unknown as ToolState,
     }
   )
 );

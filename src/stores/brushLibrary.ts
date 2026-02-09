@@ -4,6 +4,13 @@ import { useToolStore } from '@/stores/tool';
 import type { BrushPreset, DualBrushSettingsPreset } from '@/components/BrushPanel/types';
 import { applyPresetToToolStore } from '@/components/BrushPanel/settings/BrushPresets';
 
+type BrushPresetSelectionTool = 'brush' | 'eraser';
+
+export interface BrushPresetSelectionByTool {
+  brush: string | null;
+  eraser: string | null;
+}
+
 export interface BrushTipResource extends BrushPreset {
   source: string;
   contentHash: string;
@@ -48,11 +55,48 @@ function findPresetById<T extends { id: string }>(items: T[], id: string | null)
   return items.find((item) => item.id === id);
 }
 
+function resolveSelectionTool(tool: string): BrushPresetSelectionTool {
+  return tool === 'eraser' ? 'eraser' : 'brush';
+}
+
+function getSelectionToolFromToolStore(): BrushPresetSelectionTool {
+  return resolveSelectionTool(useToolStore.getState().currentTool);
+}
+
+function getSelectedPresetIdForTool(
+  selectedPresetByTool: BrushPresetSelectionByTool,
+  tool: BrushPresetSelectionTool
+): string | null {
+  return selectedPresetByTool[tool] ?? null;
+}
+
+function setSelectedPresetIdForTool(
+  selectedPresetByTool: BrushPresetSelectionByTool,
+  tool: BrushPresetSelectionTool,
+  id: string | null
+): BrushPresetSelectionByTool {
+  return {
+    ...selectedPresetByTool,
+    [tool]: id,
+  };
+}
+
+function sanitizeSelectionByTool(
+  presets: BrushLibraryPreset[],
+  selectedPresetByTool: BrushPresetSelectionByTool
+): BrushPresetSelectionByTool {
+  const hasPreset = (id: string | null): boolean => !!findPresetById(presets, id);
+  return {
+    brush: hasPreset(selectedPresetByTool.brush) ? selectedPresetByTool.brush : null,
+    eraser: hasPreset(selectedPresetByTool.eraser) ? selectedPresetByTool.eraser : null,
+  };
+}
+
 interface BrushLibraryState {
   presets: BrushLibraryPreset[];
   tips: BrushTipResource[];
   groups: BrushLibraryGroup[];
-  selectedPresetId: string | null;
+  selectedPresetByTool: BrushPresetSelectionByTool;
   searchQuery: string;
   isLoading: boolean;
   error: string | null;
@@ -197,7 +241,10 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   presets: [],
   tips: [],
   groups: [],
-  selectedPresetId: null,
+  selectedPresetByTool: {
+    brush: null,
+    eraser: null,
+  },
   searchQuery: '',
   isLoading: false,
   error: null,
@@ -208,9 +255,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
       const snapshot = await fetchLibrarySnapshot();
       set((state) => ({
         ...snapshotState(snapshot),
-        selectedPresetId: findPresetById(snapshot.presets, state.selectedPresetId)
-          ? state.selectedPresetId
-          : null,
+        selectedPresetByTool: sanitizeSelectionByTool(snapshot.presets, state.selectedPresetByTool),
         isLoading: false,
       }));
     } catch (err) {
@@ -258,7 +303,11 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
       const snapshot = await fetchLibrarySnapshot();
       set((state) => ({
         ...snapshotState(snapshot),
-        selectedPresetId: state.selectedPresetId === id ? null : state.selectedPresetId,
+        selectedPresetByTool: {
+          brush: state.selectedPresetByTool.brush === id ? null : state.selectedPresetByTool.brush,
+          eraser:
+            state.selectedPresetByTool.eraser === id ? null : state.selectedPresetByTool.eraser,
+        },
       }));
     } catch (err) {
       set({ error: String(err) });
@@ -272,9 +321,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
       const snapshot = await fetchLibrarySnapshot();
       set((state) => ({
         ...snapshotState(snapshot),
-        selectedPresetId: findPresetById(snapshot.presets, state.selectedPresetId)
-          ? state.selectedPresetId
-          : null,
+        selectedPresetByTool: sanitizeSelectionByTool(snapshot.presets, state.selectedPresetByTool),
       }));
     } catch (err) {
       set({ error: String(err) });
@@ -305,7 +352,9 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   },
 
   saveActivePreset: async () => {
-    const { selectedPresetId, presets, tips } = get();
+    const tool = getSelectionToolFromToolStore();
+    const { selectedPresetByTool, presets, tips } = get();
+    const selectedPresetId = getSelectedPresetIdForTool(selectedPresetByTool, tool);
     const currentPreset = findPresetById(presets, selectedPresetId);
 
     if (!currentPreset) {
@@ -319,13 +368,15 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
     const snapshot = await fetchLibrarySnapshot();
     set({
       ...snapshotState(snapshot),
-      selectedPresetId: updated.id,
+      selectedPresetByTool: setSelectedPresetIdForTool(selectedPresetByTool, tool, updated.id),
     });
     return updated;
   },
 
   saveActivePresetAs: async (newName: string, targetGroup?: string | null) => {
-    const { selectedPresetId, presets, tips } = get();
+    const tool = getSelectionToolFromToolStore();
+    const { selectedPresetByTool, presets, tips } = get();
+    const selectedPresetId = getSelectedPresetIdForTool(selectedPresetByTool, tool);
     const currentPreset = findPresetById(presets, selectedPresetId);
 
     const payload = buildPresetFromToolState(currentPreset, tips);
@@ -340,7 +391,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
     const snapshot = await fetchLibrarySnapshot();
     set({
       ...snapshotState(snapshot),
-      selectedPresetId: created.id,
+      selectedPresetByTool: setSelectedPresetIdForTool(selectedPresetByTool, tool, created.id),
     });
 
     get().applyPresetById(created.id);
@@ -348,6 +399,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
   },
 
   applyPresetById: (id: string) => {
+    const tool = getSelectionToolFromToolStore();
     const { presets, tips } = get();
     const preset = findPresetById(presets, id);
     if (!preset) {
@@ -355,7 +407,9 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
     }
 
     applyPresetToToolStore(preset, tips);
-    set({ selectedPresetId: id });
+    set((state) => ({
+      selectedPresetByTool: setSelectedPresetIdForTool(state.selectedPresetByTool, tool, id),
+    }));
   },
 
   applyMainTip: (tipId: string | null) => {
@@ -388,12 +442,24 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
     tool.clearBrushTexture();
   },
 
-  setSelectedPresetId: (id: string | null) => set({ selectedPresetId: id }),
+  setSelectedPresetId: (id: string | null) => {
+    const tool = getSelectionToolFromToolStore();
+    set((state) => ({
+      selectedPresetByTool: setSelectedPresetIdForTool(state.selectedPresetByTool, tool, id),
+    }));
+  },
 
   setSearchQuery: (query: string) => set({ searchQuery: query }),
 
   clearError: () => set({ error: null }),
 }));
+
+export function useSelectedPresetIdForCurrentTool(): string | null {
+  const selectionTool = useToolStore((state) =>
+    state.currentTool === 'eraser' ? 'eraser' : 'brush'
+  );
+  return useBrushLibraryStore((state) => state.selectedPresetByTool[selectionTool]);
+}
 
 export function useFilteredBrushPresets(): BrushLibraryPreset[] {
   const presets = useBrushLibraryStore((state) => state.presets);

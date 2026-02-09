@@ -37,6 +37,7 @@ import {
   shouldUseGPU,
   reportGPUFallback,
   type RenderBackend,
+  type StrokeCompositeMode,
   type GpuScratchHandle,
   type GpuStrokePrepareResult,
 } from '@/gpu';
@@ -150,6 +151,7 @@ export interface BrushRenderConfig {
   dualBrush?: DualBrushSettings;
   // When true, selection clipping is fully handled in GPU compositing shader.
   selectionHandledByGpu?: boolean;
+  strokeCompositeMode: StrokeCompositeMode;
 }
 
 export interface UseBrushRendererProps {
@@ -174,6 +176,7 @@ export interface UseBrushRendererResult {
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
   getPreviewOpacity: () => number;
+  getPreviewCompositeMode: () => StrokeCompositeMode;
   isStrokeActive: () => boolean;
   getLastDabPosition: () => { x: number; y: number } | null;
   /** Flush pending dabs to GPU (call once per frame) */
@@ -243,6 +246,8 @@ export function useBrushRenderer({
   // Stroke Opacity (Photoshop-like): applied when compositing stroke buffer to layer.
   // We store it in a ref because endStroke() does not receive config.
   const strokeOpacityRef = useRef<number>(1.0);
+  const strokeCompositeModeRef = useRef<StrokeCompositeMode>('paint');
+  const strokeCompositeModeLockedRef = useRef(false);
   const strokeColorJitterSampleRef = useRef<ColorJitterSample | null>(null);
 
   // Initialize WebGPU backend
@@ -346,6 +351,8 @@ export function useBrushRenderer({
       initialDirectionRef.current = null;
       lastDabPosRef.current = null;
       strokeOpacityRef.current = 1.0;
+      strokeCompositeModeRef.current = 'paint';
+      strokeCompositeModeLockedRef.current = false;
       strokeColorJitterSampleRef.current = null;
 
       if (backend === 'gpu' && gpuBufferRef.current) {
@@ -377,6 +384,11 @@ export function useBrushRenderer({
       // Start CPU encode timing
       if (pointIndex !== undefined) {
         benchmarkProfiler?.markCpuEncodeStart();
+      }
+
+      if (!strokeCompositeModeLockedRef.current) {
+        strokeCompositeModeRef.current = config.strokeCompositeMode;
+        strokeCompositeModeLockedRef.current = true;
       }
 
       const stamper = stamperRef.current;
@@ -774,7 +786,11 @@ export function useBrushRenderer({
 
             // 2. Sync atomic transaction: composite + clear in same JS task
             // This prevents browser paint between composite and clear (no flicker)
-            gpuBuffer.compositeToLayer(layerCtx, strokeOpacityRef.current);
+            gpuBuffer.compositeToLayer(
+              layerCtx,
+              strokeOpacityRef.current,
+              strokeCompositeModeRef.current
+            );
             gpuBuffer.clear();
           } finally {
             finishingPromiseRef.current = null;
@@ -783,7 +799,11 @@ export function useBrushRenderer({
 
         await finishingPromiseRef.current;
       } else if (cpuBufferRef.current) {
-        cpuBufferRef.current.endStroke(layerCtx, strokeOpacityRef.current);
+        cpuBufferRef.current.endStroke(
+          layerCtx,
+          strokeOpacityRef.current,
+          strokeCompositeModeRef.current
+        );
       }
     },
     [backend]
@@ -803,6 +823,7 @@ export function useBrushRenderer({
    * Get preview opacity (stroke-level opacity applied during compositing)
    */
   const getPreviewOpacity = useCallback(() => strokeOpacityRef.current, []);
+  const getPreviewCompositeMode = useCallback(() => strokeCompositeModeRef.current, []);
 
   /**
    * Check if stroke is active
@@ -864,6 +885,7 @@ export function useBrushRenderer({
         return {
           dirtyRect: gpuBufferRef.current.getDirtyRect(),
           strokeOpacity: strokeOpacityRef.current,
+          compositeMode: strokeCompositeModeRef.current,
           scratch: texture
             ? {
                 texture,
@@ -879,6 +901,7 @@ export function useBrushRenderer({
     return {
       dirtyRect: null,
       strokeOpacity: strokeOpacityRef.current,
+      compositeMode: strokeCompositeModeRef.current,
       scratch: null,
     };
   }, [backend, releaseGpuCommitLock]);
@@ -961,6 +984,7 @@ export function useBrushRenderer({
     endStroke,
     getPreviewCanvas,
     getPreviewOpacity,
+    getPreviewCompositeMode,
     isStrokeActive,
     getLastDabPosition,
     getDebugRects,

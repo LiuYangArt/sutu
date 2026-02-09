@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import {
   useBrushLibraryStore,
+  useSelectedPresetIdForCurrentTool,
   type BrushLibraryGroup,
   type BrushLibraryPreset,
 } from '@/stores/brushLibrary';
@@ -263,7 +264,7 @@ export function BrushQuickPanel({
 
   const presets = useBrushLibraryStore((state) => state.presets);
   const groups = useBrushLibraryStore((state) => state.groups);
-  const selectedPresetId = useBrushLibraryStore((state) => state.selectedPresetId);
+  const selectedPresetId = useSelectedPresetIdForCurrentTool();
   const isLoading = useBrushLibraryStore((state) => state.isLoading);
   const error = useBrushLibraryStore((state) => state.error);
   const loadLibrary = useBrushLibraryStore((state) => state.loadLibrary);

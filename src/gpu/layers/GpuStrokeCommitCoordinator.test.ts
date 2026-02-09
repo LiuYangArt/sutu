@@ -8,6 +8,7 @@ function makeScratchPrepareResult(): GpuStrokePrepareResult {
   return {
     dirtyRect: { left: 0, top: 0, right: 10, bottom: 10 },
     strokeOpacity: 1,
+    compositeMode: 'paint',
     scratch: {
       texture: {} as GPUTexture,
       renderScale: 1,
@@ -40,7 +41,7 @@ describe('GpuStrokeCommitCoordinator', () => {
     } as unknown as GpuCanvasRenderer;
 
     const prepareQueue: GpuStrokePrepareResult[] = [
-      { dirtyRect: null, strokeOpacity: 1, scratch: null },
+      { dirtyRect: null, strokeOpacity: 1, compositeMode: 'paint', scratch: null },
       makeScratchPrepareResult(),
       makeScratchPrepareResult(),
       makeScratchPrepareResult(),
@@ -177,6 +178,7 @@ describe('GpuStrokeCommitCoordinator', () => {
     expect(result.committed).toBe(true);
     expect(commitStroke).toHaveBeenCalledWith(
       expect.objectContaining({
+        compositeMode: 'paint',
         historyCapture: {
           entryId: 'history-entry-1',
           store: historyStore,

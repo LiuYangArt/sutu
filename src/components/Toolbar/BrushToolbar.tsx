@@ -45,6 +45,8 @@ export function BrushToolbar() {
     togglePressureOpacity,
     showCrosshair,
     toggleCrosshair,
+    eraserBackgroundMode,
+    toggleEraserBackgroundMode,
   } = useToolStore();
 
   // Brush panel toggle
@@ -129,6 +131,18 @@ export function BrushToolbar() {
         />
         <span className="setting-value">{Math.round(brushOpacity * 100)}%</span>
       </label>
+
+      {currentTool === 'eraser' && (
+        <button
+          className="tool-option-btn"
+          onClick={toggleEraserBackgroundMode}
+          title="Eraser background mode"
+        >
+          {eraserBackgroundMode === 'background-color'
+            ? 'Erase to BG Color'
+            : 'Erase to Transparent'}
+        </button>
+      )}
 
       <button
         className={`tool-btn ${showCrosshair ? 'active' : ''}`}

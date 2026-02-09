@@ -6,6 +6,8 @@ struct Uniforms {
   apply_dither: u32,
   dither_strength: f32,
   render_scale: f32,
+  composite_mode: u32,
+  _padding: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -85,6 +87,11 @@ fn composite_pixel(pos: vec4<f32>) -> vec4<f32> {
   let src_alpha = clamp(src.a * uniforms.stroke_opacity * mask, 0.0, 1.0);
   if (src_alpha <= 0.0001) {
     return dst;
+  }
+
+  if (uniforms.composite_mode == 1u) {
+    let out_alpha = dst.a * (1.0 - src_alpha);
+    return vec4<f32>(dst.rgb, out_alpha);
   }
 
   let dst_alpha = dst.a;

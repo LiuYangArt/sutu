@@ -1,5 +1,6 @@
 import { BlendMode, type ResizeCanvasOptions } from '@/stores/document';
 import { compositePixelWithTransparentFallback, TRANSPARENT_BACKDROP_EPS } from './layerBlendMath';
+import type { StrokeCompositeMode } from './strokeBuffer';
 
 /**
  * Layer canvas data for rendering
@@ -204,9 +205,12 @@ export class LayerRenderer {
     layerCanvas: HTMLCanvasElement,
     previewCanvas: HTMLCanvasElement,
     previewOpacity: number,
+    compositeMode: StrokeCompositeMode,
     region?: CompositeRegion | null
   ): HTMLCanvasElement {
     const opacity = Math.max(0, Math.min(1, previewOpacity));
+    const previewCompositeOp: GlobalCompositeOperation =
+      compositeMode === 'erase' ? 'destination-out' : 'source-over';
     const ctx = this.previewLayerCtx;
     const normalizedRegion = normalizeCompositeRegion(region ?? undefined, this.width, this.height);
 
@@ -218,7 +222,7 @@ export class LayerRenderer {
       ctx.drawImage(layerCanvas, 0, 0);
 
       if (opacity > 0) {
-        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalCompositeOperation = previewCompositeOp;
         ctx.globalAlpha = opacity;
         ctx.drawImage(previewCanvas, 0, 0);
       }
@@ -239,6 +243,7 @@ export class LayerRenderer {
     ctx.drawImage(layerCanvas, x, y, width, height, x, y, width, height);
 
     if (opacity > 0) {
+      ctx.globalCompositeOperation = previewCompositeOp;
       ctx.globalAlpha = opacity;
       ctx.drawImage(previewCanvas, x, y, width, height, x, y, width, height);
     }
@@ -351,6 +356,7 @@ export class LayerRenderer {
       activeLayerId: string;
       canvas: HTMLCanvasElement;
       opacity: number;
+      compositeMode?: StrokeCompositeMode;
     },
     region?: CompositeRegion
   ): HTMLCanvasElement {
@@ -378,6 +384,7 @@ export class LayerRenderer {
           layer.canvas,
           preview.canvas,
           preview.opacity,
+          preview.compositeMode ?? 'paint',
           normalizedRegion
         );
       }

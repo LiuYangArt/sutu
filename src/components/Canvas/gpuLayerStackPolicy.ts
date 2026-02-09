@@ -67,7 +67,7 @@ export function isGpuHistoryPathAvailable(args: {
   currentTool: ToolType | null;
 }): boolean {
   const { gpuDisplayActive, currentTool } = args;
-  return gpuDisplayActive && currentTool === 'brush';
+  return gpuDisplayActive && (currentTool === 'brush' || currentTool === 'eraser');
 }
 
 export function reconcileLayerRevisionMap(

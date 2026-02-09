@@ -61,6 +61,7 @@ describe('useBrushRenderer opacity pipeline', () => {
       textureEnabled: false,
       noiseEnabled: false,
       dualBrushEnabled: false,
+      strokeCompositeMode: 'paint',
     };
 
     const { result } = renderHook(() =>

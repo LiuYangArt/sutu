@@ -61,6 +61,43 @@ export interface Rect {
   bottom: number;
 }
 
+export type StrokeCompositeMode = 'paint' | 'erase';
+
+export function compositeStrokePixel(args: {
+  dstR: number;
+  dstG: number;
+  dstB: number;
+  dstAlpha: number;
+  srcR: number;
+  srcG: number;
+  srcB: number;
+  srcAlpha: number;
+  mode: StrokeCompositeMode;
+}): { r: number; g: number; b: number; alpha: number } {
+  const { dstR, dstG, dstB, dstAlpha, srcR, srcG, srcB, srcAlpha, mode } = args;
+
+  if (mode === 'erase') {
+    return {
+      r: dstR,
+      g: dstG,
+      b: dstB,
+      alpha: dstAlpha * (1 - srcAlpha),
+    };
+  }
+
+  const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
+  if (outAlpha <= 0) {
+    return { r: 0, g: 0, b: 0, alpha: 0 };
+  }
+
+  return {
+    r: (srcR * srcAlpha + dstR * dstAlpha * (1 - srcAlpha)) / outAlpha,
+    g: (srcG * srcAlpha + dstG * dstAlpha * (1 - srcAlpha)) / outAlpha,
+    b: (srcB * srcAlpha + dstB * dstAlpha * (1 - srcAlpha)) / outAlpha,
+    alpha: outAlpha,
+  };
+}
+
 const HARD_BRUSH_THRESHOLD = 0.99;
 const ROUNDNESS_HARD_PATH_THRESHOLD = 0.999;
 const ROUNDNESS_AA_HARDNESS_CLAMP = 0.98;
@@ -1045,9 +1082,14 @@ export class StrokeAccumulator {
    *
    * @param layerCtx - Target layer context
    * @param opacity - Maximum opacity (ceiling) for this stroke
+   * @param compositeMode - paint: source-over, erase: destination-out
    * @returns The dirty rectangle that was modified
    */
-  endStroke(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
+  endStroke(
+    layerCtx: CanvasRenderingContext2D,
+    opacity: number,
+    compositeMode: StrokeCompositeMode = 'paint'
+  ): Rect {
     if (!this.active) {
       return { left: 0, top: 0, right: 0, bottom: 0 };
     }
@@ -1107,21 +1149,22 @@ export class StrokeAccumulator {
       const dstB = layerData.data[i + 2] ?? 0;
       const dstAlpha = (layerData.data[i + 3] ?? 0) / 255;
 
-      // Porter-Duff "over" compositing
-      const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
+      const out = compositeStrokePixel({
+        dstR,
+        dstG,
+        dstB,
+        dstAlpha,
+        srcR,
+        srcG,
+        srcB,
+        srcAlpha,
+        mode: compositeMode,
+      });
 
-      if (outAlpha > 0) {
-        layerData.data[i] = Math.round(
-          (srcR * srcAlpha + dstR * dstAlpha * (1 - srcAlpha)) / outAlpha
-        );
-        layerData.data[i + 1] = Math.round(
-          (srcG * srcAlpha + dstG * dstAlpha * (1 - srcAlpha)) / outAlpha
-        );
-        layerData.data[i + 2] = Math.round(
-          (srcB * srcAlpha + dstB * dstAlpha * (1 - srcAlpha)) / outAlpha
-        );
-        layerData.data[i + 3] = Math.round(outAlpha * 255);
-      }
+      layerData.data[i] = Math.round(Math.max(0, Math.min(255, out.r)));
+      layerData.data[i + 1] = Math.round(Math.max(0, Math.min(255, out.g)));
+      layerData.data[i + 2] = Math.round(Math.max(0, Math.min(255, out.b)));
+      layerData.data[i + 3] = Math.round(Math.max(0, Math.min(255, out.alpha * 255)));
     }
 
     // Write back to layer

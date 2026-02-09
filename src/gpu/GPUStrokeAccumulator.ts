@@ -12,7 +12,12 @@
  */
 
 import type { Rect } from '@/utils/strokeBuffer';
-import type { GPUDabParams, DabInstanceData, TextureDabInstanceData } from './types';
+import type {
+  GPUDabParams,
+  DabInstanceData,
+  TextureDabInstanceData,
+  StrokeCompositeMode,
+} from './types';
 import { calculateEffectiveRadius } from './types';
 import { PingPongBuffer } from './resources/PingPongBuffer';
 import { InstanceBuffer } from './resources/InstanceBuffer';
@@ -83,6 +88,41 @@ function decodeFloat16(value: number): number {
     float16LutReady = true;
   }
   return FLOAT16_TO_FLOAT32_LUT[value & 0xffff] ?? 0;
+}
+
+function compositeStrokePixel(args: {
+  dstR: number;
+  dstG: number;
+  dstB: number;
+  dstAlpha: number;
+  srcR: number;
+  srcG: number;
+  srcB: number;
+  srcAlpha: number;
+  mode: StrokeCompositeMode;
+}): { r: number; g: number; b: number; alpha: number } {
+  const { dstR, dstG, dstB, dstAlpha, srcR, srcG, srcB, srcAlpha, mode } = args;
+
+  if (mode === 'erase') {
+    return {
+      r: dstR,
+      g: dstG,
+      b: dstB,
+      alpha: dstAlpha * (1 - srcAlpha),
+    };
+  }
+
+  const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
+  if (outAlpha <= 0) {
+    return { r: 0, g: 0, b: 0, alpha: 0 };
+  }
+
+  return {
+    r: (srcR * srcAlpha + dstR * dstAlpha * (1 - srcAlpha)) / outAlpha,
+    g: (srcG * srcAlpha + dstG * dstAlpha * (1 - srcAlpha)) / outAlpha,
+    b: (srcB * srcAlpha + dstB * dstAlpha * (1 - srcAlpha)) / outAlpha,
+    alpha: outAlpha,
+  };
 }
 
 export class GPUStrokeAccumulator {
@@ -2360,9 +2400,13 @@ export class GPUStrokeAccumulator {
    * Uses previewCanvas as source to ensure WYSIWYG (preview = composite)
    * @returns The dirty rectangle that was modified
    */
-  async endStroke(layerCtx: CanvasRenderingContext2D, opacity: number): Promise<Rect> {
+  async endStroke(
+    layerCtx: CanvasRenderingContext2D,
+    opacity: number,
+    compositeMode: StrokeCompositeMode = 'paint'
+  ): Promise<Rect> {
     await this.prepareEndStroke();
-    return this.compositeToLayer(layerCtx, opacity);
+    return this.compositeToLayer(layerCtx, opacity, compositeMode);
   }
 
   /**
@@ -2411,13 +2455,17 @@ export class GPUStrokeAccumulator {
    * Optimization 4: Removed !this.active check - caller guarantees correctness
    * @returns The dirty rectangle that was modified
    */
-  compositeToLayer(layerCtx: CanvasRenderingContext2D, opacity: number): Rect {
+  compositeToLayer(
+    layerCtx: CanvasRenderingContext2D,
+    opacity: number,
+    compositeMode: StrokeCompositeMode = 'paint'
+  ): Rect {
     // Optimization 4: No active check here - caller (useBrushRenderer) guarantees
     // this is called immediately after prepareEndStroke() in same sync block.
     // The old check caused stroke loss when user started new stroke during await.
 
     // Composite from previewCanvas (not GPU texture) to ensure WYSIWYG
-    this.compositeFromPreview(layerCtx, opacity);
+    this.compositeFromPreview(layerCtx, opacity, compositeMode);
 
     this.active = false;
 
@@ -2435,7 +2483,11 @@ export class GPUStrokeAccumulator {
    * Uses the same data that was displayed as preview
    * Applies selection mask clipping if active
    */
-  private compositeFromPreview(layerCtx: CanvasRenderingContext2D, opacity: number): void {
+  private compositeFromPreview(
+    layerCtx: CanvasRenderingContext2D,
+    opacity: number,
+    compositeMode: StrokeCompositeMode
+  ): void {
     // Use integer coordinates for consistent mask lookup
     const rect = {
       left: Math.floor(Math.max(0, this.dirtyRect.left)),
@@ -2459,7 +2511,8 @@ export class GPUStrokeAccumulator {
       if (clampedOpacity <= 0) return;
 
       layerCtx.save();
-      layerCtx.globalCompositeOperation = 'source-over';
+      layerCtx.globalCompositeOperation =
+        compositeMode === 'erase' ? 'destination-out' : 'source-over';
       layerCtx.globalAlpha = clampedOpacity;
       layerCtx.drawImage(
         this.previewCanvas,
@@ -2524,21 +2577,22 @@ export class GPUStrokeAccumulator {
       const dstB = layerData.data[i + 2]!;
       const dstAlpha = layerData.data[i + 3]! / 255;
 
-      // Porter-Duff over
-      const outAlpha = srcAlpha + dstAlpha * (1 - srcAlpha);
+      const out = compositeStrokePixel({
+        dstR,
+        dstG,
+        dstB,
+        dstAlpha,
+        srcR: strokeR,
+        srcG: strokeG,
+        srcB: strokeB,
+        srcAlpha,
+        mode: compositeMode,
+      });
 
-      if (outAlpha > 0) {
-        layerData.data[i] = Math.round(
-          (strokeR * srcAlpha + dstR * dstAlpha * (1 - srcAlpha)) / outAlpha
-        );
-        layerData.data[i + 1] = Math.round(
-          (strokeG * srcAlpha + dstG * dstAlpha * (1 - srcAlpha)) / outAlpha
-        );
-        layerData.data[i + 2] = Math.round(
-          (strokeB * srcAlpha + dstB * dstAlpha * (1 - srcAlpha)) / outAlpha
-        );
-        layerData.data[i + 3] = Math.round(outAlpha * 255);
-      }
+      layerData.data[i] = Math.round(Math.max(0, Math.min(255, out.r)));
+      layerData.data[i + 1] = Math.round(Math.max(0, Math.min(255, out.g)));
+      layerData.data[i + 2] = Math.round(Math.max(0, Math.min(255, out.b)));
+      layerData.data[i + 3] = Math.round(Math.max(0, Math.min(255, out.alpha * 255)));
     }
 
     // Write back to layer

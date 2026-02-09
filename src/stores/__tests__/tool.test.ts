@@ -1,7 +1,48 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { useToolStore, DEFAULT_DUAL_BRUSH } from '../tool';
 
 describe('ToolStore', () => {
+  const resetToolState = () => {
+    const current = useToolStore.getState();
+    const resetProfile = {
+      ...current.brushProfile,
+      size: 20,
+      flow: 1,
+      opacity: 1,
+      hardness: 100,
+      spacing: 0.25,
+      roundness: 100,
+      angle: 0,
+      texture: null,
+      dualBrushEnabled: false,
+      dualBrush: { ...DEFAULT_DUAL_BRUSH },
+    };
+
+    useToolStore.setState({
+      currentTool: 'brush',
+      brushSize: 20,
+      eraserSize: 20,
+      brushFlow: 1,
+      brushOpacity: 1,
+      brushHardness: 100,
+      brushSpacing: 0.25,
+      brushRoundness: 100,
+      brushAngle: 0,
+      pressureSizeEnabled: false,
+      pressureFlowEnabled: false,
+      pressureOpacityEnabled: true,
+      dualBrushEnabled: false,
+      dualBrush: { ...DEFAULT_DUAL_BRUSH },
+      eraserBackgroundMode: 'background-color',
+      brushProfile: { ...resetProfile },
+      eraserProfile: { ...resetProfile },
+    });
+  };
+
+  beforeEach(() => {
+    resetToolState();
+  });
+
   describe('setTool', () => {
     it('should change current tool', () => {
       const store = useToolStore.getState();
@@ -11,6 +52,34 @@ describe('ToolStore', () => {
 
       store.setTool('brush');
       expect(useToolStore.getState().currentTool).toBe('brush');
+    });
+
+    it('should keep brush and eraser profiles independent across tool switches', () => {
+      const store = useToolStore.getState();
+
+      store.setBrushSize(48);
+      store.setBrushFlow(0.72);
+      store.setBrushHardness(88);
+
+      store.setTool('eraser');
+      store.setBrushSize(16);
+      store.setBrushFlow(0.25);
+      store.setBrushHardness(42);
+
+      store.setTool('brush');
+      let state = useToolStore.getState();
+      expect(state.brushSize).toBe(48);
+      expect(state.brushFlow).toBeCloseTo(0.72);
+      expect(state.brushHardness).toBe(88);
+      expect(state.brushProfile.size).toBe(48);
+
+      store.setTool('eraser');
+      state = useToolStore.getState();
+      expect(state.eraserSize).toBe(16);
+      expect(state.brushSize).toBe(16);
+      expect(state.brushFlow).toBeCloseTo(0.25);
+      expect(state.brushHardness).toBe(42);
+      expect(state.eraserProfile.size).toBe(16);
     });
   });
 
@@ -126,6 +195,19 @@ describe('ToolStore', () => {
 
       expect(useToolStore.getState().brushColor).toBe('#000000');
       expect(useToolStore.getState().backgroundColor).toBe('#ffffff');
+    });
+  });
+
+  describe('eraser background mode', () => {
+    it('should toggle between background-color and transparent', () => {
+      const store = useToolStore.getState();
+      expect(store.eraserBackgroundMode).toBe('background-color');
+
+      store.toggleEraserBackgroundMode();
+      expect(useToolStore.getState().eraserBackgroundMode).toBe('transparent');
+
+      store.setEraserBackgroundMode('background-color');
+      expect(useToolStore.getState().eraserBackgroundMode).toBe('background-color');
     });
   });
 });

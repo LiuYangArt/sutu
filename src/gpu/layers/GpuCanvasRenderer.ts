@@ -15,7 +15,7 @@ import {
 import { alignTo } from '../utils/textureCopyRect';
 import type { Rect } from '@/utils/strokeBuffer';
 import { TRANSPARENT_BACKDROP_EPS } from '@/utils/layerBlendMath';
-import type { GpuRenderableLayer } from '../types';
+import type { GpuRenderableLayer, StrokeCompositeMode } from '../types';
 
 interface GpuCanvasRendererOptions {
   tileSize: number;
@@ -26,6 +26,7 @@ interface RenderFrameParams {
   layerId: string;
   scratchTexture: GPUTexture | null;
   strokeOpacity: number;
+  compositeMode?: StrokeCompositeMode;
   renderScale: number;
 }
 
@@ -34,6 +35,7 @@ interface CommitStrokeParams {
   scratchTexture: GPUTexture;
   dirtyRect: Rect;
   strokeOpacity: number;
+  compositeMode: StrokeCompositeMode;
   renderScale: number;
   applyDither: boolean;
   ditherStrength: number;
@@ -51,6 +53,7 @@ interface RenderLayerStackFrameParams {
   activeLayerId: string | null;
   scratchTexture: GPUTexture | null;
   strokeOpacity: number;
+  compositeMode?: StrokeCompositeMode;
   renderScale: number;
 }
 
@@ -421,6 +424,7 @@ export class GpuCanvasRenderer {
 
   renderFrame(params: RenderFrameParams): void {
     const { layerId, scratchTexture, strokeOpacity, renderScale } = params;
+    const compositeMode = params.compositeMode ?? 'paint';
     const clampedOpacity = Math.max(0, Math.min(1, strokeOpacity));
     this.ensureUniformBufferCapacity(this.visibleTiles.length);
     const view = this.context.getCurrentTexture().createView();
@@ -457,6 +461,7 @@ export class GpuCanvasRenderer {
         positionOriginX: 0,
         positionOriginY: 0,
         strokeOpacity: clampedOpacity,
+        compositeMode,
         applyDither: false,
         ditherStrength: DEFAULT_DITHER_STRENGTH,
         renderScale,
@@ -485,6 +490,7 @@ export class GpuCanvasRenderer {
 
   renderLayerStackFrame(params: RenderLayerStackFrameParams): void {
     const { layers, activeLayerId, scratchTexture, strokeOpacity, renderScale } = params;
+    const compositeMode = params.compositeMode ?? 'paint';
     this.pruneLayerRevisionState(layers);
     const visibleLayers = layers.filter((layer) => layer.visible);
     if (visibleLayers.length === 0) {
@@ -554,6 +560,7 @@ export class GpuCanvasRenderer {
             selectionView,
             tileRect: rect,
             strokeOpacity: clampedStrokeOpacity,
+            compositeMode,
             renderScale,
             applyDither: false,
             ditherStrength: DEFAULT_DITHER_STRENGTH,
@@ -631,6 +638,7 @@ export class GpuCanvasRenderer {
       scratchTexture,
       dirtyRect,
       strokeOpacity,
+      compositeMode,
       renderScale,
       applyDither,
       baseLayerCanvas,
@@ -697,6 +705,7 @@ export class GpuCanvasRenderer {
           tileRect: rect,
           drawRegion,
           strokeOpacity: clampedOpacity,
+          compositeMode,
           renderScale,
           applyDither,
           ditherStrength,
@@ -727,6 +736,7 @@ export class GpuCanvasRenderer {
           tileRect: rect,
           drawRegion,
           strokeOpacity: clampedOpacity,
+          compositeMode,
           renderScale,
           applyDither,
           ditherStrength,
@@ -1094,6 +1104,7 @@ export class GpuCanvasRenderer {
       positionOriginX: 0,
       positionOriginY: 0,
       strokeOpacity: 0,
+      compositeMode: 'paint',
       applyDither: false,
       ditherStrength: DEFAULT_DITHER_STRENGTH,
       renderScale: 1,
@@ -1385,6 +1396,7 @@ export class GpuCanvasRenderer {
     tileRect: TileRect;
     drawRegion?: TileDrawRegion;
     strokeOpacity: number;
+    compositeMode: StrokeCompositeMode;
     renderScale: number;
     applyDither: boolean;
     ditherStrength: number;
@@ -1400,6 +1412,7 @@ export class GpuCanvasRenderer {
       tileRect,
       drawRegion,
       strokeOpacity,
+      compositeMode,
       renderScale,
       applyDither,
       ditherStrength,
@@ -1415,6 +1428,7 @@ export class GpuCanvasRenderer {
       positionOriginX: tileRect.originX,
       positionOriginY: tileRect.originY,
       strokeOpacity,
+      compositeMode,
       applyDither,
       ditherStrength,
       renderScale,
@@ -1460,6 +1474,7 @@ export class GpuCanvasRenderer {
       positionOriginX: number;
       positionOriginY: number;
       strokeOpacity: number;
+      compositeMode: StrokeCompositeMode;
       applyDither: boolean;
       ditherStrength: number;
       renderScale: number;
@@ -1477,6 +1492,7 @@ export class GpuCanvasRenderer {
     view.setUint32(28, args.applyDither ? 1 : 0, true);
     view.setFloat32(32, args.ditherStrength, true);
     view.setFloat32(36, args.renderScale, true);
+    view.setUint32(40, args.compositeMode === 'erase' ? 1 : 0, true);
     this.device.queue.writeBuffer(this.uniformBuffer, offset, this.uniformData);
     return offset;
   }

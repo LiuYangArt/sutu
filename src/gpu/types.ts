@@ -82,9 +82,12 @@ export interface GpuScratchHandle {
   renderScale: number;
 }
 
+export type StrokeCompositeMode = 'paint' | 'erase';
+
 export interface GpuStrokePrepareResult {
   dirtyRect: Rect | null;
   strokeOpacity: number;
+  compositeMode: StrokeCompositeMode;
   scratch: GpuScratchHandle | null;
 }
 
@@ -164,7 +167,11 @@ export interface IGPUStrokeAccumulator {
   clear(): void;
   isActive(): boolean;
   stampDab(params: GPUDabParams): void;
-  endStroke(layerCtx: CanvasRenderingContext2D, opacity: number): Promise<Rect>;
+  endStroke(
+    layerCtx: CanvasRenderingContext2D,
+    opacity: number,
+    compositeMode?: StrokeCompositeMode
+  ): Promise<Rect>;
   getCanvas(): HTMLCanvasElement;
   getDirtyRect(): Rect;
   getDimensions(): { width: number; height: number };

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
-import { applyPressureCurve, PressureCurve, ToolType } from '@/stores/tool';
-import { clearPointBuffer, useTabletStore, type RawInputPoint } from '@/stores/tablet';
-import { useDocumentStore } from '@/stores/document';
+import { ToolType } from '@/stores/tool';
+import { clearPointBuffer, useTabletStore } from '@/stores/tablet';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
-import { StrokeBuffer } from '@/utils/interpolation';
-import type { GpuStrokeCommitResult, RenderBackend } from '@/gpu';
+import type { GpuStrokeCommitResult, RenderBackend, StrokeCompositeMode } from '@/gpu';
 
 const MAX_POINTS_PER_FRAME = 80;
 // Photoshop Build-up (Airbrush) rate tuning:
@@ -36,6 +34,10 @@ function isBrushStrokeState(state: string): boolean {
   return state === 'active' || state === 'finishing';
 }
 
+function isStrokeTool(tool: ToolType): boolean {
+  return tool === 'brush' || tool === 'eraser';
+}
+
 function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
   const activeBackend =
     typeof state.activeBackend === 'string' && state.activeBackend.length > 0
@@ -56,10 +58,6 @@ interface UseStrokeProcessorParams {
   scale: number;
   activeLayerId: string | null;
   currentTool: ToolType;
-  currentSize: number;
-  brushColor: string;
-  brushOpacity: number;
-  pressureCurve: PressureCurve;
   brushHardness: number;
   wetEdge: number;
   wetEdgeEnabled: boolean;
@@ -75,7 +73,6 @@ interface UseStrokeProcessorParams {
   constrainShiftLinePoint: (x: number, y: number) => { x: number; y: number };
   onShiftLineStrokeEnd: (lastDabPos?: { x: number; y: number } | null) => void;
   isDrawingRef: MutableRefObject<boolean>;
-  strokeBufferRef: MutableRefObject<StrokeBuffer>;
   strokeStateRef: MutableRefObject<string>;
   pendingPointsRef: MutableRefObject<QueuedPoint[]>;
   inputQueueRef: MutableRefObject<QueuedPoint[]>;
@@ -98,6 +95,7 @@ interface UseStrokeProcessorParams {
   endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
   getPreviewOpacity: () => number;
+  getPreviewCompositeMode: () => StrokeCompositeMode;
   isStrokeActive: () => boolean;
   getLastDabPosition: () => { x: number; y: number } | null;
   getDebugRects: () => DebugRect[] | null;
@@ -153,10 +151,6 @@ export function useStrokeProcessor({
   scale,
   activeLayerId,
   currentTool,
-  currentSize,
-  brushColor,
-  brushOpacity,
-  pressureCurve,
   brushHardness,
   wetEdge,
   wetEdgeEnabled,
@@ -169,7 +163,6 @@ export function useStrokeProcessor({
   constrainShiftLinePoint,
   onShiftLineStrokeEnd,
   isDrawingRef,
-  strokeBufferRef,
   strokeStateRef,
   pendingPointsRef,
   inputQueueRef,
@@ -185,6 +178,7 @@ export function useStrokeProcessor({
   endBrushStroke,
   getPreviewCanvas,
   getPreviewOpacity,
+  getPreviewCompositeMode,
   isStrokeActive,
   getLastDabPosition,
   getDebugRects,
@@ -208,13 +202,6 @@ export function useStrokeProcessor({
   });
   const buildupAccMsRef = useRef(0);
   const rafPrevTimeRef = useRef<number | null>(null);
-
-  // Check if active layer is a background layer
-  const isActiveLayerBackground = useCallback(() => {
-    if (!layerRendererRef.current || !activeLayerId) return false;
-    const layer = layerRendererRef.current.getLayer(activeLayerId);
-    return layer?.isBackground ?? false;
-  }, [activeLayerId, layerRendererRef]);
 
   // Composite with stroke buffer preview overlay at correct layer position
   const renderGuideLine = useCallback(
@@ -280,7 +267,12 @@ export function useStrokeProcessor({
         ? (() => {
             const previewCanvas = getPreviewCanvas();
             return previewCanvas
-              ? { activeLayerId, canvas: previewCanvas, opacity: getPreviewOpacity() }
+              ? {
+                  activeLayerId,
+                  canvas: previewCanvas,
+                  opacity: getPreviewOpacity(),
+                  compositeMode: getPreviewCompositeMode(),
+                }
               : undefined;
           })()
         : undefined;
@@ -306,6 +298,7 @@ export function useStrokeProcessor({
     isStrokeActive,
     getPreviewCanvas,
     getPreviewOpacity,
+    getPreviewCompositeMode,
     getDebugRects,
     activeLayerId,
     renderGuideLine,
@@ -425,7 +418,7 @@ export function useStrokeProcessor({
 
       // Build-up tick: stationary hold behavior (CPU/GPU)
       const canBuildupTick =
-        currentTool === 'brush' && isDrawingRef.current && strokeStateRef.current === 'active';
+        isStrokeTool(currentTool) && isDrawingRef.current && strokeStateRef.current === 'active';
 
       if (canBuildupTick) {
         const config = getBrushConfig();
@@ -502,71 +495,6 @@ export function useStrokeProcessor({
     strokeStateRef,
   ]);
 
-  // 绘制插值后的点序列 (used for eraser, legacy fallback)
-  const drawPoints = useCallback(
-    (points: RawInputPoint[]) => {
-      const ctx = getActiveLayerCtx();
-      if (!ctx || points.length < 2) return;
-
-      const isEraser = currentTool === 'eraser';
-      const isBackground = isActiveLayerBackground();
-
-      for (let i = 1; i < points.length; i++) {
-        const from = points[i - 1];
-        const to = points[i];
-
-        if (!from || !to) continue;
-
-        // 应用压感曲线后计算线条粗细
-        const adjustedPressure = applyPressureCurve(to.pressure, pressureCurve);
-        const size = currentSize * adjustedPressure;
-        const opacity = brushOpacity * adjustedPressure;
-
-        ctx.globalAlpha = opacity;
-        ctx.lineWidth = Math.max(1, size);
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        if (isEraser) {
-          if (isBackground) {
-            // Background layer: draw background fill color instead of erasing to transparency
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = useDocumentStore.getState().backgroundFillColor || '#ffffff';
-          } else {
-            // Normal layer: erase to transparency
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.strokeStyle = 'rgba(0,0,0,1)';
-          }
-        } else {
-          // Brush: normal drawing
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.strokeStyle = brushColor;
-        }
-
-        ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
-        ctx.stroke();
-      }
-
-      // Reset composite operation
-      ctx.globalCompositeOperation = 'source-over';
-
-      // Update composite display
-      compositeAndRender();
-    },
-    [
-      currentSize,
-      brushColor,
-      brushOpacity,
-      pressureCurve,
-      currentTool,
-      getActiveLayerCtx,
-      compositeAndRender,
-      isActiveLayerBackground,
-    ]
-  );
-
   // Internal stroke finishing logic (called after state machine validation)
   // Renamed to finalizeStroke for clarity
   const finalizeStroke = useCallback(async () => {
@@ -575,7 +503,6 @@ export function useStrokeProcessor({
 
     const isBrushStroke = isBrushStrokeState(strokeStateRef.current) || isStrokeActive();
 
-    // For brush tool, composite stroke buffer to layer with opacity ceiling
     if (isBrushStroke) {
       // Process any remaining points in queue before finalizing
       const remainingQueue = inputQueueRef.current;
@@ -609,26 +536,11 @@ export function useStrokeProcessor({
         }
       }
       compositeAndRender();
-    } else {
-      // For eraser, use the legacy stroke buffer
-      const remainingPoints = strokeBufferRef.current?.finish() ?? [];
-      if (remainingPoints.length > 0) {
-        drawPoints(
-          remainingPoints.map((p) => ({
-            ...p,
-            tilt_x: p.tiltX ?? 0,
-            tilt_y: p.tiltY ?? 0,
-            timestamp_ms: 0,
-          }))
-        );
-      }
     }
 
-    if (isBrushStroke || currentTool === 'eraser') {
+    if (isBrushStroke) {
       const fallbackPos = lastRenderedPosRef.current ?? lastInputPosRef.current;
-      const lastPos = isBrushStroke
-        ? (getLastDabPosition() ?? fallbackPos)
-        : lastInputPosRef.current;
+      const lastPos = getLastDabPosition() ?? fallbackPos;
       onShiftLineStrokeEnd(lastPos ?? null);
     }
     lastInputPosRef.current = null;
@@ -648,7 +560,6 @@ export function useStrokeProcessor({
     lastDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
     window.__strokeDiagnostics?.onStrokeEnd();
   }, [
-    currentTool,
     inputQueueRef,
     pendingPointsRef,
     pendingEndRef,
@@ -660,8 +571,6 @@ export function useStrokeProcessor({
     getActiveLayerCtx,
     endBrushStroke,
     compositeAndRender,
-    strokeBufferRef,
-    drawPoints,
     saveStrokeToHistory,
     activeLayerId,
     updateThumbnail,
@@ -794,5 +703,5 @@ export function useStrokeProcessor({
     lastDynamicsRef,
   ]);
 
-  return { drawPoints, finishCurrentStroke, initializeBrushStroke };
+  return { finishCurrentStroke, initializeBrushStroke };
 }

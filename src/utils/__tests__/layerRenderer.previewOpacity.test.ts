@@ -137,4 +137,34 @@ describe('LayerRenderer preview compositing', () => {
     expect(groupedDrawOps[1]!.alpha).toBeCloseTo(1, 6);
     expect(groupedDrawOps[1]!.img).toBe(previewCanvas);
   });
+
+  it('uses destination-out when preview composite mode is erase', () => {
+    const renderer = new LayerRenderer(10, 10);
+    renderer.createLayer('layer1', { opacity: 100, blendMode: 'normal' });
+    const previewCanvas = document.createElement('canvas');
+    previewCanvas.width = 10;
+    previewCanvas.height = 10;
+
+    const compositeCanvas = renderer.composite({
+      activeLayerId: 'layer1',
+      canvas: previewCanvas,
+      opacity: 0.5,
+      compositeMode: 'erase',
+    });
+
+    const compositeCtx = ctxByCanvas.get(compositeCanvas);
+    expect(compositeCtx).toBeTruthy();
+    const groupedCanvas = compositeCtx!.ops.find(
+      (op): op is DrawImageOp => op.type === 'drawImage'
+    )!.img as HTMLCanvasElement;
+    const groupedCtx = ctxByCanvas.get(groupedCanvas);
+    expect(groupedCtx).toBeTruthy();
+
+    const groupedDrawOps = groupedCtx!.ops.filter(
+      (op): op is DrawImageOp => op.type === 'drawImage'
+    );
+    expect(groupedDrawOps).toHaveLength(2);
+    expect(groupedDrawOps[1]!.op).toBe('destination-out');
+    expect(groupedDrawOps[1]!.alpha).toBeCloseTo(0.5, 6);
+  });
 });

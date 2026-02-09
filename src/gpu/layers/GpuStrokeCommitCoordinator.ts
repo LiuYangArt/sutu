@@ -4,6 +4,7 @@ import type {
   GpuBrushCommitMetricsSnapshot,
   GpuStrokeCommitResult,
   GpuStrokePrepareResult,
+  StrokeCompositeMode,
 } from '../types';
 import type { GpuCanvasRenderer } from './GpuCanvasRenderer';
 import type { GpuStrokeHistoryStore } from './GpuStrokeHistoryStore';
@@ -23,6 +24,10 @@ function emptyCommitResult(dirtyRect: Rect | null = null): GpuStrokeCommitResult
       readbackMs: 0,
     },
   };
+}
+
+function normalizeCompositeMode(mode: StrokeCompositeMode): StrokeCompositeMode {
+  return mode === 'erase' ? 'erase' : 'paint';
 }
 
 export interface GpuStrokeCommitCoordinatorOptions {
@@ -179,11 +184,13 @@ export class GpuStrokeCommitCoordinator {
       }
 
       const commitStart = performance.now();
+      const compositeMode = normalizeCompositeMode(prepareResult.compositeMode);
       const dirtyTiles = this.gpuRenderer.commitStroke({
         layerId,
         scratchTexture: prepareResult.scratch.texture,
         dirtyRect: prepareResult.dirtyRect,
         strokeOpacity: prepareResult.strokeOpacity,
+        compositeMode,
         renderScale: prepareResult.scratch.renderScale,
         applyDither: true,
         ditherStrength: 1.0,

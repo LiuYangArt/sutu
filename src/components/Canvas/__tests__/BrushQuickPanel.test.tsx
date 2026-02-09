@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { BrushQuickPanel } from '../BrushQuickPanel';
 import { useToolStore } from '@/stores/tool';
 import { useBrushLibraryStore, type BrushLibraryPreset } from '@/stores/brushLibrary';
@@ -46,7 +46,7 @@ describe('BrushQuickPanel', () => {
         { name: 'Basics', presetIds: ['soft-round'] },
         { name: 'Texture', presetIds: ['hard-chalk'] },
       ],
-      selectedPresetId: null,
+      selectedPresetByTool: { brush: null, eraser: null },
       searchQuery: '',
       isLoading: false,
       error: null,
@@ -72,12 +72,54 @@ describe('BrushQuickPanel', () => {
     expect(applyPresetById).toHaveBeenCalledWith('hard-chalk');
   });
 
+  it('按工具切换 selected preset 高亮', async () => {
+    useToolStore.setState((state) => ({
+      ...state,
+      currentTool: 'brush',
+    }));
+
+    useBrushLibraryStore.setState((state) => ({
+      ...state,
+      presets: [
+        createPreset('soft-round', 'Soft Round', 'Basics'),
+        createPreset('hard-chalk', 'Hard Chalk', 'Texture'),
+      ],
+      groups: [
+        { name: 'Basics', presetIds: ['soft-round'] },
+        { name: 'Texture', presetIds: ['hard-chalk'] },
+      ],
+      selectedPresetByTool: { brush: 'soft-round', eraser: 'hard-chalk' },
+      searchQuery: '',
+      isLoading: false,
+      error: null,
+      loadLibrary: vi.fn(),
+      applyPresetById: vi.fn(),
+      clearError: vi.fn(),
+    }));
+
+    render(<BrushQuickPanel isOpen anchorX={120} anchorY={120} onRequestClose={vi.fn()} />);
+
+    const softButton = screen.getByRole('button', { name: /Soft Round/ });
+    const hardButton = screen.getByRole('button', { name: /Hard Chalk/ });
+    expect(softButton.className).toContain('selected');
+    expect(hardButton.className).not.toContain('selected');
+
+    act(() => {
+      useToolStore.getState().setTool('eraser');
+    });
+
+    await waitFor(() => {
+      expect(softButton.className).not.toContain('selected');
+      expect(hardButton.className).toContain('selected');
+    });
+  });
+
   it('closes on Escape and outside pointerdown', () => {
     useBrushLibraryStore.setState((state) => ({
       ...state,
       presets: [createPreset('soft-round', 'Soft Round', 'Basics')],
       groups: [{ name: 'Basics', presetIds: ['soft-round'] }],
-      selectedPresetId: null,
+      selectedPresetByTool: { brush: null, eraser: null },
       searchQuery: '',
       isLoading: false,
       error: null,
@@ -102,7 +144,7 @@ describe('BrushQuickPanel', () => {
       ...state,
       presets: [],
       groups: [],
-      selectedPresetId: null,
+      selectedPresetByTool: { brush: null, eraser: null },
       searchQuery: '',
       isLoading: false,
       error: null,
@@ -123,7 +165,7 @@ describe('BrushQuickPanel', () => {
       ...state,
       presets: [createPreset('soft-round', 'Soft Round', 'Basics')],
       groups: [{ name: 'Basics', presetIds: ['soft-round'] }],
-      selectedPresetId: null,
+      selectedPresetByTool: { brush: null, eraser: null },
       searchQuery: '',
       isLoading: false,
       error: null,
@@ -151,7 +193,7 @@ describe('BrushQuickPanel', () => {
         createPreset('hard-round', 'Hard Round', 'Basics'),
       ],
       groups: [{ name: 'Basics', presetIds: ['soft-round', 'hard-round'] }],
-      selectedPresetId: null,
+      selectedPresetByTool: { brush: null, eraser: null },
       searchQuery: '',
       isLoading: false,
       error: null,

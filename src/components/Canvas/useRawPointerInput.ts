@@ -85,8 +85,8 @@ export function useRawPointerInput({
       // Cast to PointerEvent (pointerrawupdate is a PointerEvent)
       const pe = e as PointerEvent;
 
-      // Only process during active drawing with brush tool
-      if (!isDrawingRef.current || currentTool !== 'brush') return;
+      // Only process during active drawing with brush-like tools
+      if (!isDrawingRef.current || (currentTool !== 'brush' && currentTool !== 'eraser')) return;
 
       const state = strokeStateRef.current;
       if (state !== 'starting' && state !== 'active') return;

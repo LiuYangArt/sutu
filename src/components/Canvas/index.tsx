@@ -23,7 +23,6 @@ import { BrushQuickPanel } from './BrushQuickPanel';
 import { getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer } from '@/utils/layerRenderer';
-import { StrokeBuffer } from '@/utils/interpolation';
 import {
   StrokeCaptureController,
   type FixedStrokeCaptureLoadResult,
@@ -191,7 +190,6 @@ export function Canvas() {
   const brushCursorRef = useRef<HTMLDivElement>(null);
   const eyedropperCursorRef = useRef<HTMLDivElement>(null);
   const layerRendererRef = useRef<LayerRenderer | null>(null);
-  const strokeBufferRef = useRef(new StrokeBuffer());
   const gpuRendererRef = useRef<GpuCanvasRenderer | null>(null);
   const gpuCommitCoordinatorRef = useRef<GpuStrokeCommitCoordinator | null>(null);
   const gpuStrokeHistoryStoreRef = useRef<GpuStrokeHistoryStore | null>(null);
@@ -273,6 +271,7 @@ export function Canvas() {
     pressureFlowEnabled,
     pressureOpacityEnabled,
     pressureSizeEnabled,
+    eraserBackgroundMode,
   } = useToolStore();
 
   const { eraserSize } = useToolStore();
@@ -458,6 +457,7 @@ export function Canvas() {
     endStroke: endBrushStroke,
     getPreviewCanvas,
     getPreviewOpacity,
+    getPreviewCompositeMode,
     isStrokeActive,
     getLastDabPosition,
     getDebugRects,
@@ -936,6 +936,7 @@ export function Canvas() {
           activeLayerId,
           scratchTexture: null,
           strokeOpacity: 1,
+          compositeMode: 'paint',
           renderScale: getGpuRenderScale(),
         });
         const ctx = canvas.getContext('2d');
@@ -950,6 +951,7 @@ export function Canvas() {
           activeLayerId: null,
           scratchTexture: null,
           strokeOpacity: 1,
+          compositeMode: 'paint',
           renderScale: 1,
         });
         gpuCanvasClearedForCpuRef.current = true;
@@ -1120,12 +1122,14 @@ export function Canvas() {
 
       const scratchHandle = showScratch ? getScratchHandle() : null;
       const strokeOpacity = showScratch ? getPreviewOpacity() : 1;
+      const strokeCompositeMode = showScratch ? getPreviewCompositeMode() : 'paint';
 
       gpuRenderer.renderLayerStackFrame({
         layers: visibleGpuLayers,
         activeLayerId,
         scratchTexture: showScratch ? (scratchHandle?.texture ?? null) : null,
         strokeOpacity: showScratch ? strokeOpacity : 1,
+        compositeMode: showScratch ? strokeCompositeMode : 'paint',
         renderScale: showScratch ? (scratchHandle?.renderScale ?? getGpuRenderScale()) : 1,
       });
     },
@@ -1133,6 +1137,7 @@ export function Canvas() {
       activeLayerId,
       getScratchHandle,
       getPreviewOpacity,
+      getPreviewCompositeMode,
       getGpuRenderScale,
       getVisibleGpuRenderableLayers,
     ]
@@ -1455,6 +1460,14 @@ export function Canvas() {
 
   // Build brush render config for the three-level pipeline
   const getBrushConfig = useCallback((): BrushRenderConfig => {
+    const activeLayer = activeLayerId ? layers.find((layer) => layer.id === activeLayerId) : null;
+    const isBackgroundLayer = activeLayer?.isBackground === true;
+    const shouldPaintBackgroundColor =
+      currentTool === 'eraser' && isBackgroundLayer && eraserBackgroundMode === 'background-color';
+    const strokeCompositeMode =
+      currentTool === 'eraser' && !shouldPaintBackgroundColor ? 'erase' : 'paint';
+    const strokeColor = shouldPaintBackgroundColor ? backgroundFillColor : brushColor;
+
     return {
       size: currentSize,
       flow: brushFlow,
@@ -1464,7 +1477,7 @@ export function Canvas() {
       spacing: brushSpacing,
       roundness: brushRoundness,
       angle: brushAngle,
-      color: brushColor,
+      color: strokeColor,
       backgroundColor,
       pressureSizeEnabled,
       pressureFlowEnabled,
@@ -1487,6 +1500,7 @@ export function Canvas() {
       noiseEnabled,
       dualBrushEnabled,
       dualBrush,
+      strokeCompositeMode,
       selectionHandledByGpu:
         gpuDisplayActive &&
         gpuSelectionPipelineV2Enabled &&
@@ -1503,7 +1517,12 @@ export function Canvas() {
     brushRoundness,
     brushAngle,
     brushColor,
+    backgroundFillColor,
     backgroundColor,
+    currentTool,
+    eraserBackgroundMode,
+    activeLayerId,
+    layers,
     pressureSizeEnabled,
     pressureFlowEnabled,
     pressureOpacityEnabled,
@@ -1532,7 +1551,7 @@ export function Canvas() {
     selectionMaskPending,
   ]);
 
-  const { drawPoints, finishCurrentStroke, initializeBrushStroke } = useStrokeProcessor({
+  const { finishCurrentStroke, initializeBrushStroke } = useStrokeProcessor({
     canvasRef,
     layerRendererRef,
     width,
@@ -1540,10 +1559,6 @@ export function Canvas() {
     scale: displayScale,
     activeLayerId,
     currentTool,
-    currentSize,
-    brushColor,
-    brushOpacity,
-    pressureCurve,
     brushHardness,
     wetEdge,
     wetEdgeEnabled,
@@ -1556,7 +1571,6 @@ export function Canvas() {
     constrainShiftLinePoint,
     onShiftLineStrokeEnd,
     isDrawingRef,
-    strokeBufferRef,
     strokeStateRef,
     pendingPointsRef,
     inputQueueRef,
@@ -1572,6 +1586,7 @@ export function Canvas() {
     endBrushStroke,
     getPreviewCanvas,
     getPreviewOpacity,
+    getPreviewCompositeMode,
     isStrokeActive,
     getLastDabPosition,
     getDebugRects,
@@ -1656,7 +1671,6 @@ export function Canvas() {
     activeLayerId,
     captureBeforeImage,
     initializeBrushStroke,
-    drawPoints,
     finishCurrentStroke,
     isSelectionToolActive,
     handleSelectionPointerDown,
@@ -1670,7 +1684,6 @@ export function Canvas() {
     constrainShiftLinePoint,
     usingRawInput,
     isDrawingRef,
-    strokeBufferRef,
     strokeStateRef,
     pendingPointsRef,
     inputQueueRef,
