@@ -309,44 +309,15 @@
   color: var(--text-secondary);
 }
 
-.tablet-hint-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-tertiary) 82%, var(--primary) 18%);
+.tablet-status-info .status-row-warning span:first-child {
+  color: var(--danger);
 }
 
-.tablet-hint-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
+.tablet-status-info .status-row-warning span:last-child {
   color: var(--text-primary);
-}
-
-.tablet-hint-text {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-}
-
-.tablet-hint-text code {
-  font-family: 'Fira Code', 'Consolas', monospace;
-  font-size: 11px;
-  color: var(--text-primary);
-}
-
-.tablet-hint-list {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-primary);
+  max-width: 70%;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .tablet-live-card {
@@ -357,6 +328,28 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg-tertiary);
+}
+
+.tablet-live-card .status-row {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tablet-live-card .status-row span:first-child {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tablet-live-card .status-row span:last-child {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
 }
 
 .tablet-live-empty {

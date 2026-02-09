@@ -4,17 +4,20 @@
 //! This is the fallback backend when WinTab is not available.
 //! Input is received from the frontend via Tauri commands.
 
-use super::backend::{TabletBackend, TabletConfig, TabletEvent, TabletInfo, TabletStatus};
-use super::RawInputPoint;
-use std::sync::{Arc, Mutex};
+use super::backend::{
+    default_event_queue_capacity, InputEventQueue, InputPhase, InputQueueMetrics, InputSampleV2,
+    InputSource, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+};
+use std::sync::Arc;
 
 /// PointerEvent backend for cross-platform tablet input
 pub struct PointerEventBackend {
     status: TabletStatus,
     info: Option<TabletInfo>,
     config: TabletConfig,
-    events: Arc<Mutex<Vec<TabletEvent>>>,
+    events: Arc<InputEventQueue>,
     pressure_curve: super::backend::PressureCurve,
+    stream_id: u64,
 }
 
 impl PointerEventBackend {
@@ -24,47 +27,61 @@ impl PointerEventBackend {
             status: TabletStatus::Disconnected,
             info: None,
             config: TabletConfig::default(),
-            events: Arc::new(Mutex::new(Vec::with_capacity(64))),
+            events: Arc::new(InputEventQueue::new(
+                super::backend::InputBackpressureMode::Lossless,
+                default_event_queue_capacity(),
+            )),
             pressure_curve: super::backend::PressureCurve::Linear,
+            stream_id: 2,
         }
     }
 
     /// Push input from frontend PointerEvent
     /// Called by Tauri command when frontend receives pointer events
-    pub fn push_input(&self, x: f32, y: f32, pressure: f32, tilt_x: f32, tilt_y: f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_input(
+        &self,
+        x: f32,
+        y: f32,
+        pressure: f32,
+        tilt_x: f32,
+        tilt_y: f32,
+        rotation: f32,
+        pointer_id: u32,
+        phase: InputPhase,
+        device_time_us: Option<u64>,
+    ) {
         let adjusted_pressure = self.pressure_curve.apply(pressure);
+        let host_time_us = super::current_time_us();
 
-        let point = RawInputPoint {
+        let sample = InputSampleV2 {
+            seq: 0,
+            stream_id: self.stream_id,
+            source: InputSource::PointerEvent,
+            pointer_id,
+            phase,
             x,
             y,
             pressure: adjusted_pressure,
             tilt_x: tilt_x.clamp(-90.0, 90.0),
             tilt_y: tilt_y.clamp(-90.0, 90.0),
-            timestamp_ms: super::current_time_ms(),
+            rotation,
+            host_time_us,
+            device_time_us: device_time_us.unwrap_or(host_time_us),
+            timestamp_ms: host_time_us / 1000,
         };
 
-        if let Ok(mut events) = self.events.lock() {
-            events.push(TabletEvent::Input(point));
-        }
+        let _ = self.events.enqueue_sample(sample);
     }
 
     /// Push proximity enter event
     pub fn push_proximity_enter(&self) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(TabletEvent::ProximityEnter);
-        }
+        let _ = self.events.enqueue_event(TabletEventV2::ProximityEnter);
     }
 
     /// Push proximity leave event
     pub fn push_proximity_leave(&self) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(TabletEvent::ProximityLeave);
-        }
-    }
-
-    /// Get shared events reference for external access
-    pub fn events_ref(&self) -> Arc<Mutex<Vec<TabletEvent>>> {
-        self.events.clone()
+        let _ = self.events.enqueue_event(TabletEventV2::ProximityLeave);
     }
 }
 
@@ -78,6 +95,10 @@ impl TabletBackend for PointerEventBackend {
     fn init(&mut self, config: &TabletConfig) -> Result<(), String> {
         self.config = config.clone();
         self.pressure_curve = config.pressure_curve;
+        self.events = Arc::new(InputEventQueue::new(
+            config.backpressure_mode,
+            default_event_queue_capacity(),
+        ));
 
         self.info = Some(TabletInfo {
             name: "PointerEvent".to_string(),
@@ -96,14 +117,14 @@ impl TabletBackend for PointerEventBackend {
         if self.status != TabletStatus::Connected {
             return Err("Backend not initialized".to_string());
         }
+        self.events.reopen();
         tracing::info!("[PointerEvent] Started (waiting for frontend events)");
         Ok(())
     }
 
     fn stop(&mut self) {
-        if let Ok(mut events) = self.events.lock() {
-            events.clear();
-        }
+        self.events.close();
+        self.events.clear();
         tracing::info!("[PointerEvent] Stopped");
     }
 
@@ -115,14 +136,12 @@ impl TabletBackend for PointerEventBackend {
         self.info.as_ref()
     }
 
-    fn poll(&mut self, events: &mut Vec<TabletEvent>) -> usize {
-        if let Ok(mut events_lock) = self.events.lock() {
-            let count = events_lock.len();
-            events.append(&mut events_lock);
-            count
-        } else {
-            0
-        }
+    fn poll(&mut self, events: &mut Vec<TabletEventV2>) -> usize {
+        self.events.drain_into(events, super::current_time_us)
+    }
+
+    fn queue_metrics(&self) -> InputQueueMetrics {
+        self.events.metrics_snapshot()
     }
 
     fn is_available() -> bool {
@@ -163,16 +182,27 @@ mod tests {
         backend.init(&TabletConfig::default())?;
         backend.start()?;
 
-        backend.push_input(100.0, 200.0, 0.5, 10.0, -5.0);
+        backend.push_input(
+            100.0,
+            200.0,
+            0.5,
+            10.0,
+            -5.0,
+            0.0,
+            1,
+            InputPhase::Move,
+            None,
+        );
 
         let mut events = Vec::new();
         let count = backend.poll(&mut events);
 
         assert_eq!(count, 1);
-        if let TabletEvent::Input(point) = &events[0] {
-            assert_eq!(point.x, 100.0);
-            assert_eq!(point.y, 200.0);
-            assert_eq!(point.pressure, 0.5);
+        if let TabletEventV2::Input(sample) = &events[0] {
+            assert_eq!(sample.x, 100.0);
+            assert_eq!(sample.y, 200.0);
+            assert_eq!(sample.pressure, 0.5);
+            assert_eq!(sample.pointer_id, 1);
         } else {
             panic!("Expected Input event");
         }

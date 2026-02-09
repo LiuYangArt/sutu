@@ -185,6 +185,7 @@ function AppMenu() {
                 >
                   <Paintbrush size={14} />
                   <span>Brush Library</span>
+                  <span className="shortcut">Ctrl+F5</span>
                 </button>
               </div>
             )}

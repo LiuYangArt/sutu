@@ -62,6 +62,7 @@ export interface TabletSettings {
   backend: 'auto' | 'wintab' | 'pointerevent';
   pollingRate: number;
   pressureCurve: 'linear' | 'soft' | 'hard' | 'scurve';
+  backpressureMode: 'lossless' | 'latency_capped';
   autoStart: boolean;
 }
 
@@ -139,6 +140,7 @@ interface SettingsState extends PersistedSettings {
   setTabletBackend: (backend: TabletSettings['backend']) => void;
   setPollingRate: (rate: number) => void;
   setPressureCurve: (curve: TabletSettings['pressureCurve']) => void;
+  setBackpressureMode: (mode: TabletSettings['backpressureMode']) => void;
   setAutoStart: (enabled: boolean) => void;
 
   // Brush/Renderer actions
@@ -209,9 +211,10 @@ const defaultSettings: PersistedSettings = {
     enableBlur: true,
   },
   tablet: {
-    backend: 'pointerevent',
+    backend: 'wintab',
     pollingRate: 200,
     pressureCurve: 'linear',
+    backpressureMode: 'lossless',
     autoStart: true,
   },
   brush: {
@@ -361,6 +364,13 @@ export const useSettingsStore = create<SettingsState>()(
     setPressureCurve: (curve) => {
       set((state) => {
         state.tablet.pressureCurve = curve;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setBackpressureMode: (mode) => {
+      set((state) => {
+        state.tablet.backpressureMode = mode;
       });
       debouncedSave(() => get()._saveSettings());
     },

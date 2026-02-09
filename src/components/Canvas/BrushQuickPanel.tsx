@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import {
   useBrushLibraryStore,
@@ -63,6 +63,7 @@ const PANEL_RESIZE_HANDLE_SIZE = 20;
 const PANEL_SIZE_STORAGE_KEY = 'paintboard-brush-quick-panel-size-v1';
 const PANEL_INTERACTIVE_SELECTOR =
   'button, input, textarea, select, .saturation-square, .vertical-hue-slider, .brush-quick-search, .brush-quick-library';
+const PANEL_SCROLLABLE_SELECTOR = '.brush-quick-library';
 
 function groupPresets(
   presets: BrushLibraryPreset[],
@@ -171,6 +172,72 @@ function isPanelInteractiveTarget(target: EventTarget | null): boolean {
   return !!target.closest(PANEL_INTERACTIVE_SELECTOR);
 }
 
+function parsePixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isPointerOnElementScrollbar(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number
+): boolean {
+  const rect = element.getBoundingClientRect();
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+    return false;
+  }
+
+  const hasVerticalOverflow = element.scrollHeight > element.clientHeight;
+  const hasHorizontalOverflow = element.scrollWidth > element.clientWidth;
+  if (!hasVerticalOverflow && !hasHorizontalOverflow) return false;
+
+  const style = window.getComputedStyle(element);
+  const borderLeft = parsePixels(style.borderLeftWidth);
+  const borderRight = parsePixels(style.borderRightWidth);
+  const borderTop = parsePixels(style.borderTopWidth);
+  const borderBottom = parsePixels(style.borderBottomWidth);
+
+  const scrollbarWidth = Math.max(
+    0,
+    element.offsetWidth - element.clientWidth - borderLeft - borderRight
+  );
+  if (hasVerticalOverflow && scrollbarWidth > 0) {
+    const scrollbarLeft = rect.right - borderRight - scrollbarWidth;
+    const scrollbarRight = rect.right - borderRight;
+    if (clientX >= scrollbarLeft && clientX <= scrollbarRight) {
+      return true;
+    }
+  }
+
+  const scrollbarHeight = Math.max(
+    0,
+    element.offsetHeight - element.clientHeight - borderTop - borderBottom
+  );
+  if (hasHorizontalOverflow && scrollbarHeight > 0) {
+    const scrollbarTop = rect.bottom - borderBottom - scrollbarHeight;
+    const scrollbarBottom = rect.bottom - borderBottom;
+    if (clientY >= scrollbarTop && clientY <= scrollbarBottom) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isPointerOnPanelScrollbar(
+  panel: HTMLDivElement,
+  event: React.PointerEvent<HTMLDivElement>
+): boolean {
+  if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return false;
+  const containers = panel.querySelectorAll<HTMLElement>(PANEL_SCROLLABLE_SELECTOR);
+  for (const container of containers) {
+    if (isPointerOnElementScrollbar(container, event.clientX, event.clientY)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function BrushQuickPanel({
   isOpen,
   anchorX,
@@ -180,6 +247,7 @@ export function BrushQuickPanel({
 }: BrushQuickPanelProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [position, setPosition] = useState<PanelPosition>({
     left: PANEL_MARGIN,
     top: PANEL_MARGIN,
@@ -245,6 +313,7 @@ export function BrushQuickPanel({
   useEffect(() => {
     if (!isOpen) return;
     setSearchQuery('');
+    setCollapsedGroups(new Set());
   }, [isOpen]);
 
   useEffect(() => {
@@ -388,6 +457,7 @@ export function BrushQuickPanel({
     event.stopPropagation();
     if (event.button !== 0) return;
     if (isPanelInteractiveTarget(event.target)) return;
+    if (isPointerOnPanelScrollbar(event.currentTarget, event)) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const isOnResizeHandle =
       event.clientX >= rect.right - PANEL_RESIZE_HANDLE_SIZE &&
@@ -435,6 +505,18 @@ export function BrushQuickPanel({
       // Ignore release errors.
     }
   };
+
+  const toggleGroupCollapsed = useCallback((groupName: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
+  }, []);
 
   if (!isOpen) return null;
 
@@ -506,31 +588,47 @@ export function BrushQuickPanel({
           ) : groupedPresets.length === 0 ? (
             <div className="brush-quick-empty">No brushes matched the search.</div>
           ) : (
-            groupedPresets.map((group) => (
-              <div key={group.name} className="brush-quick-group">
-                <div className="brush-quick-group-title">
-                  <span>{group.name}</span>
-                  <span>{group.presets.length}</span>
-                </div>
-                <div className="brush-quick-grid">
-                  {group.presets.map((preset) => (
+            groupedPresets.map((group) => {
+              const isCollapsed = collapsedGroups.has(group.name);
+              return (
+                <div key={group.name} className="brush-quick-group">
+                  <div className="brush-quick-group-title">
+                    <div className="brush-quick-group-title-main">
+                      <span className="brush-quick-group-name">{group.name}</span>
+                      <span className="brush-quick-group-count">{group.presets.length}</span>
+                    </div>
                     <button
-                      key={preset.id}
-                      aria-label={preset.name}
-                      className={`brush-quick-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
-                      onClick={() => applyPresetById(preset.id)}
-                      title={preset.name}
+                      className="brush-quick-group-toggle-btn"
+                      onClick={() => toggleGroupCollapsed(group.name)}
+                      title={isCollapsed ? 'Expand group' : 'Collapse group'}
+                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} group ${group.name}`}
                     >
-                      <BrushPresetThumbnail
-                        preset={preset}
-                        size={30}
-                        className="brush-quick-thumb"
-                      />
+                      {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
                     </button>
-                  ))}
+                  </div>
+
+                  {!isCollapsed && (
+                    <div className="brush-quick-grid">
+                      {group.presets.map((preset) => (
+                        <button
+                          key={preset.id}
+                          aria-label={preset.name}
+                          className={`brush-quick-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
+                          onClick={() => applyPresetById(preset.id)}
+                          title={preset.name}
+                        >
+                          <BrushPresetThumbnail
+                            preset={preset}
+                            size={30}
+                            className="brush-quick-thumb"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

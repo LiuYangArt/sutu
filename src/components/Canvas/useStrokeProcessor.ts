@@ -15,7 +15,6 @@ const MAX_POINTS_PER_FRAME = 80;
 const TARGET_BUILDUP_DABS_PER_SEC = 5;
 const BUILDUP_INTERVAL_MS = 1000 / TARGET_BUILDUP_DABS_PER_SEC;
 const MAX_BUILDUP_DABS_PER_FRAME = 1;
-const WINTAB_CURRENT_POINT_MAX_AGE_MS = 80;
 
 interface QueuedPoint {
   x: number;
@@ -35,6 +34,18 @@ interface DebugRect {
 
 function isBrushStrokeState(state: string): boolean {
   return state === 'active' || state === 'finishing';
+}
+
+function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+  const activeBackend =
+    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
+      ? state.activeBackend
+      : state.backend;
+  return (
+    state.isStreaming &&
+    typeof activeBackend === 'string' &&
+    activeBackend.toLowerCase() === 'wintab'
+  );
 }
 
 interface UseStrokeProcessorParams {
@@ -433,17 +444,11 @@ export function useStrokeProcessor({
 
             let pressure = lastPressureRef.current;
             const tabletState = useTabletStore.getState();
-            const isWinTabActive =
-              tabletState.isStreaming &&
-              typeof tabletState.backend === 'string' &&
-              tabletState.backend.toLowerCase() === 'wintab';
+            const isWinTabActive = isWinTabStreamingBackend(tabletState);
             if (isWinTabActive) {
               const pt = tabletState.currentPoint;
               if (pt) {
-                const now = performance.now();
-                if (Math.abs(pt.timestamp_ms - now) <= WINTAB_CURRENT_POINT_MAX_AGE_MS) {
-                  pressure = pt.pressure;
-                }
+                pressure = pt.pressure;
               }
             }
 

@@ -117,4 +117,127 @@ describe('BrushQuickPanel', () => {
       expect(loadLibrary).toHaveBeenCalledTimes(1);
     });
   });
+
+  it('shows a visible group toggle button and collapses from title row', () => {
+    useBrushLibraryStore.setState((state) => ({
+      ...state,
+      presets: [createPreset('soft-round', 'Soft Round', 'Basics')],
+      groups: [{ name: 'Basics', presetIds: ['soft-round'] }],
+      selectedPresetId: null,
+      searchQuery: '',
+      isLoading: false,
+      error: null,
+      loadLibrary: vi.fn(),
+      applyPresetById: vi.fn(),
+      clearError: vi.fn(),
+    }));
+
+    render(<BrushQuickPanel isOpen anchorX={100} anchorY={100} onRequestClose={vi.fn()} />);
+
+    const collapseBtn = screen.getByRole('button', { name: /Collapse group Basics/i });
+    expect(collapseBtn).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Soft Round/ })).toBeInTheDocument();
+
+    fireEvent.click(collapseBtn);
+    expect(screen.queryByRole('button', { name: /Soft Round/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Expand group Basics/i })).toBeInTheDocument();
+  });
+
+  it('在滚动条区域按下指针时不应启动面板拖拽', () => {
+    useBrushLibraryStore.setState((state) => ({
+      ...state,
+      presets: [
+        createPreset('soft-round', 'Soft Round', 'Basics'),
+        createPreset('hard-round', 'Hard Round', 'Basics'),
+      ],
+      groups: [{ name: 'Basics', presetIds: ['soft-round', 'hard-round'] }],
+      selectedPresetId: null,
+      searchQuery: '',
+      isLoading: false,
+      error: null,
+      loadLibrary: vi.fn(),
+      applyPresetById: vi.fn(),
+      clearError: vi.fn(),
+    }));
+
+    const { container } = render(
+      <BrushQuickPanel isOpen anchorX={120} anchorY={120} onRequestClose={vi.fn()} />
+    );
+
+    const panel = container.querySelector('.brush-quick-panel') as HTMLDivElement;
+    const library = container.querySelector('.brush-quick-library') as HTMLDivElement;
+    expect(panel).toBeTruthy();
+    expect(library).toBeTruthy();
+
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    Object.defineProperty(panel, 'setPointerCapture', {
+      value: setPointerCapture,
+      configurable: true,
+    });
+    Object.defineProperty(panel, 'releasePointerCapture', {
+      value: releasePointerCapture,
+      configurable: true,
+    });
+
+    Object.defineProperty(panel, 'getBoundingClientRect', {
+      value: () =>
+        ({
+          left: 50,
+          top: 50,
+          right: 610,
+          bottom: 484,
+          width: 560,
+          height: 434,
+          x: 50,
+          y: 50,
+          toJSON: () => ({}),
+        }) as DOMRect,
+      configurable: true,
+    });
+
+    Object.defineProperty(library, 'getBoundingClientRect', {
+      value: () =>
+        ({
+          left: 100,
+          top: 100,
+          right: 400,
+          bottom: 300,
+          width: 300,
+          height: 200,
+          x: 100,
+          y: 100,
+          toJSON: () => ({}),
+        }) as DOMRect,
+      configurable: true,
+    });
+    Object.defineProperty(library, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(library, 'clientHeight', { value: 200, configurable: true });
+    Object.defineProperty(library, 'offsetHeight', { value: 200, configurable: true });
+    Object.defineProperty(library, 'scrollWidth', { value: 280, configurable: true });
+    Object.defineProperty(library, 'clientWidth', { value: 280, configurable: true });
+    Object.defineProperty(library, 'offsetWidth', { value: 296, configurable: true });
+
+    const initialLeft = panel.style.left;
+    const initialTop = panel.style.top;
+
+    fireEvent.pointerDown(panel, {
+      pointerId: 21,
+      button: 0,
+      buttons: 1,
+      clientX: 395,
+      clientY: 150,
+    });
+    fireEvent.pointerMove(panel, {
+      pointerId: 21,
+      buttons: 1,
+      clientX: 420,
+      clientY: 190,
+    });
+
+    expect(setPointerCapture).not.toHaveBeenCalled();
+    expect(panel.className).not.toContain('dragging');
+    expect(panel.style.left).toBe(initialLeft);
+    expect(panel.style.top).toBe(initialTop);
+  });
 });

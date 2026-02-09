@@ -1,5 +1,5 @@
-import { useCallback, type RefObject, type MutableRefObject } from 'react';
-import { useTabletStore, drainPointBuffer } from '@/stores/tablet';
+import { useCallback, useRef, type RefObject, type MutableRefObject } from 'react';
+import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark';
@@ -95,6 +95,27 @@ interface UsePointerHandlersParams {
   onBeforeCanvasMutation?: () => void;
 }
 
+function toRawInputPoint(point: BufferPoint): RawInputPoint {
+  return {
+    ...point,
+    tilt_x: point.tiltX ?? 0,
+    tilt_y: point.tiltY ?? 0,
+    timestamp_ms: 0,
+  };
+}
+
+function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+  const activeBackend =
+    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
+      ? state.activeBackend
+      : state.backend;
+  return (
+    state.isStreaming &&
+    typeof activeBackend === 'string' &&
+    activeBackend.toLowerCase() === 'wintab'
+  );
+}
+
 export function usePointerHandlers({
   containerRef,
   canvasRef,
@@ -142,6 +163,8 @@ export function usePointerHandlers({
   latencyProfilerRef,
   onBeforeCanvasMutation,
 }: UsePointerHandlersParams) {
+  const wintabSeqCursorRef = useRef(0);
+
   const trySetPointerCapture = useCallback((target: Element, event: React.PointerEvent) => {
     const native = event.nativeEvent as PointerEvent;
     if (!native.isTrusted) return;
@@ -251,14 +274,16 @@ export function usePointerHandlers({
       }
       if (currentTool === 'brush' || currentTool === 'eraser') {
         const tabletState = useTabletStore.getState();
-        const isWinTabActive =
-          tabletState.isStreaming &&
-          typeof tabletState.backend === 'string' &&
-          tabletState.backend.toLowerCase() === 'wintab';
+        const isWinTabActive = isWinTabStreamingBackend(tabletState);
         // Synthetic replay events are not trusted; keep captured pressure instead of
         // overriding with live WinTab stream.
         const shouldUseWinTab = isWinTabActive && pe.isTrusted;
-        const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
+        const { points: bufferedPoints, nextSeq } = shouldUseWinTab
+          ? readPointBufferSince(wintabSeqCursorRef.current)
+          : { points: [], nextSeq: wintabSeqCursorRef.current };
+        if (shouldUseWinTab) {
+          wintabSeqCursorRef.current = nextSeq;
+        }
         const effectiveInput = getEffectiveInputData(
           pe,
           shouldUseWinTab,
@@ -371,14 +396,7 @@ export function usePointerHandlers({
 
       const interpolatedPoints = strokeBufferRef.current?.addPoint(point) ?? [];
       if (interpolatedPoints.length > 0) {
-        drawPoints(
-          interpolatedPoints.map((p) => ({
-            ...p,
-            tilt_x: p.tiltX ?? 0,
-            tilt_y: p.tiltY ?? 0,
-            timestamp_ms: 0,
-          }))
-        );
+        drawPoints(interpolatedPoints.map(toRawInputPoint));
       }
     },
     [
@@ -505,15 +523,17 @@ export function usePointerHandlers({
       }
 
       const tabletState = useTabletStore.getState();
-      const isWinTabActive =
-        tabletState.isStreaming &&
-        typeof tabletState.backend === 'string' &&
-        tabletState.backend.toLowerCase() === 'wintab';
+      const isWinTabActive = isWinTabStreamingBackend(tabletState);
       // Replay events should consume recorded pressure/tilt and must not be polluted
       // by current tablet stream state.
       const shouldUseWinTab = isWinTabActive && (e.nativeEvent as PointerEvent).isTrusted;
       // Drain input buffer once per frame/event-batch (outside the loop)
-      const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
+      const { points: bufferedPoints, nextSeq } = shouldUseWinTab
+        ? readPointBufferSince(wintabSeqCursorRef.current)
+        : { points: [], nextSeq: wintabSeqCursorRef.current };
+      if (shouldUseWinTab) {
+        wintabSeqCursorRef.current = nextSeq;
+      }
 
       // 遍历所有合并事件，恢复完整输入轨迹
       for (const evt of coalescedEvents) {
@@ -577,14 +597,7 @@ export function usePointerHandlers({
 
         const interpolatedPoints = strokeBufferRef.current?.addPoint(point) ?? [];
         if (interpolatedPoints.length > 0) {
-          drawPoints(
-            interpolatedPoints.map((p) => ({
-              ...p,
-              tilt_x: p.tiltX ?? 0,
-              tilt_y: p.tiltY ?? 0,
-              timestamp_ms: 0,
-            }))
-          );
+          drawPoints(interpolatedPoints.map(toRawInputPoint));
         }
       }
     },

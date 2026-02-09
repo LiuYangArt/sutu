@@ -1,6 +1,16 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Edit2, FolderPlus, Search, Trash2, Upload, X, ArrowRightLeft } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  ChevronDown,
+  ChevronRight,
+  Edit2,
+  FolderPlus,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { BrushPresetThumbnail } from '@/components/BrushPanel/BrushPresetThumbnail';
 import { useBrushLibraryStore, useGroupedBrushPresets } from '@/stores/brushLibrary';
 import './BrushLibraryPanel.css';
@@ -11,6 +21,7 @@ interface BrushLibraryPanelProps {
 }
 
 export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): JSX.Element | null {
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const presetCount = useBrushLibraryStore((state) => state.presets.length);
   const tipsCount = useBrushLibraryStore((state) => state.tips.length);
   const selectedPresetId = useBrushLibraryStore((state) => state.selectedPresetId);
@@ -23,6 +34,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
     importAbrFile,
     renamePreset,
     deletePreset,
+    deleteGroup,
     movePresetToGroup,
     renameGroup,
     applyPresetById,
@@ -111,21 +123,63 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
     }
   };
 
-  const handleRenameGroup = async () => {
-    if (!selectedPreset?.group) {
-      return;
-    }
-
-    const nextName = window.prompt('Rename group', selectedPreset.group)?.trim();
-    if (!nextName || nextName === selectedPreset.group) {
+  const handleRenameGroup = async (groupName: string) => {
+    const nextName = window.prompt('Rename group', groupName)?.trim();
+    if (!nextName || nextName === groupName) {
       return;
     }
 
     try {
-      await renameGroup(selectedPreset.group, nextName);
+      await renameGroup(groupName, nextName);
+      setCollapsedGroups((prev) => {
+        if (!prev.has(groupName)) {
+          return prev;
+        }
+
+        const next = new Set(prev);
+        next.delete(groupName);
+        next.add(nextName);
+        return next;
+      });
     } catch (err) {
       console.error('[BrushLibrary] rename group failed', err);
     }
+  };
+
+  const handleDeleteGroup = async (groupName: string, presetTotal: number) => {
+    const confirmed = window.confirm(
+      `Delete group "${groupName}" and all ${presetTotal} presets in it?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteGroup(groupName);
+      setCollapsedGroups((prev) => {
+        if (!prev.has(groupName)) {
+          return prev;
+        }
+
+        const next = new Set(prev);
+        next.delete(groupName);
+        return next;
+      });
+    } catch (err) {
+      console.error('[BrushLibrary] delete group failed', err);
+    }
+  };
+
+  const toggleGroupCollapsed = (groupName: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
   };
 
   if (!isOpen) {
@@ -182,14 +236,6 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
             >
               <ArrowRightLeft size={14} />
             </button>
-            <button
-              className="brush-library-btn"
-              onClick={handleRenameGroup}
-              disabled={!selectedPreset?.group}
-              title="Rename selected group"
-            >
-              <FolderPlus size={14} />
-            </button>
           </div>
         </div>
 
@@ -214,34 +260,74 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
               </button>
             </div>
           ) : (
-            groupedPresets.map((group) => (
-              <div key={group.name} className="brush-group">
-                <div className="brush-group-header">
-                  <span>{group.name}</span>
-                  <span className="brush-group-count">{group.presets.length}</span>
-                </div>
-
-                <div className="brush-grid">
-                  {group.presets.map((preset) => (
+            groupedPresets.map((group) => {
+              const isVirtualGroup = group.presets.every((preset) => preset.group !== group.name);
+              const isCollapsed = collapsedGroups.has(group.name);
+              return (
+                <div key={group.name} className="brush-group">
+                  <div className="brush-group-header">
+                    <div className="brush-group-header-main">
+                      <span className="brush-group-name">{group.name}</span>
+                      <span className="brush-group-count">{group.presets.length}</span>
+                      <button
+                        className="brush-group-icon-btn"
+                        onClick={() => {
+                          void handleRenameGroup(group.name);
+                        }}
+                        disabled={isVirtualGroup}
+                        title={isVirtualGroup ? 'This group cannot be renamed' : 'Rename group'}
+                        aria-label={`Rename group ${group.name}`}
+                      >
+                        <Edit2 size={12} />
+                      </button>
+                      <button
+                        className="brush-group-icon-btn danger"
+                        onClick={() => {
+                          void handleDeleteGroup(group.name, group.presets.length);
+                        }}
+                        disabled={isVirtualGroup}
+                        title={
+                          isVirtualGroup ? 'This group cannot be deleted' : 'Delete this group'
+                        }
+                        aria-label={`Delete group ${group.name}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                     <button
-                      key={preset.id}
-                      className={`brush-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
-                      onClick={() => {
-                        applyPresetById(preset.id);
-                      }}
-                      title={preset.name}
+                      className="brush-group-toggle-btn"
+                      onClick={() => toggleGroupCollapsed(group.name)}
+                      title={isCollapsed ? 'Expand group' : 'Collapse group'}
+                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} group ${group.name}`}
                     >
-                      <BrushPresetThumbnail
-                        preset={preset}
-                        size={48}
-                        className="brush-grid-thumb"
-                      />
-                      <span className="brush-grid-name">{preset.name}</span>
+                      {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                     </button>
-                  ))}
+                  </div>
+
+                  {!isCollapsed && (
+                    <div className="brush-grid">
+                      {group.presets.map((preset) => (
+                        <button
+                          key={preset.id}
+                          className={`brush-grid-item ${selectedPresetId === preset.id ? 'selected' : ''}`}
+                          onClick={() => {
+                            applyPresetById(preset.id);
+                          }}
+                          title={preset.name}
+                        >
+                          <BrushPresetThumbnail
+                            preset={preset}
+                            size={48}
+                            className="brush-grid-thumb"
+                          />
+                          <span className="brush-grid-name">{preset.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 

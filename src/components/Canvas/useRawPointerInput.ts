@@ -1,5 +1,5 @@
 import { useEffect, useRef, MutableRefObject } from 'react';
-import { useTabletStore, drainPointBuffer } from '@/stores/tablet';
+import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
 import { getEffectiveInputData } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 
@@ -15,6 +15,18 @@ import { clientToCanvasPoint } from './canvasGeometry';
 // Check if pointerrawupdate is supported (non-standard, mainly Chromium)
 export const supportsPointerRawUpdate =
   typeof window !== 'undefined' && 'onpointerrawupdate' in window;
+
+function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+  const activeBackend =
+    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
+      ? state.activeBackend
+      : state.backend;
+  return (
+    state.isStreaming &&
+    typeof activeBackend === 'string' &&
+    activeBackend.toLowerCase() === 'wintab'
+  );
+}
 
 type QueuedPoint = {
   x: number;
@@ -57,6 +69,7 @@ export function useRawPointerInput({
 }: RawPointerInputConfig) {
   // Track if we're using raw input (for diagnostics)
   const usingRawInputRef = useRef(false);
+  const wintabSeqCursorRef = useRef(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -90,12 +103,14 @@ export function useRawPointerInput({
 
       // Get tablet state for pressure resolution
       const tabletState = useTabletStore.getState();
-      const isWinTabActive =
-        tabletState.isStreaming &&
-        typeof tabletState.backend === 'string' &&
-        tabletState.backend.toLowerCase() === 'wintab';
+      const isWinTabActive = isWinTabStreamingBackend(tabletState);
       const shouldUseWinTab = isWinTabActive && pe.isTrusted;
-      const bufferedPoints = shouldUseWinTab ? drainPointBuffer() : [];
+      const { points: bufferedPoints, nextSeq } = shouldUseWinTab
+        ? readPointBufferSince(wintabSeqCursorRef.current)
+        : { points: [], nextSeq: wintabSeqCursorRef.current };
+      if (shouldUseWinTab) {
+        wintabSeqCursorRef.current = nextSeq;
+      }
 
       for (const evt of coalescedEvents) {
         const { x: canvasX, y: canvasY } = clientToCanvasPoint(

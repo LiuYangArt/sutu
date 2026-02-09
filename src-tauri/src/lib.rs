@@ -225,6 +225,7 @@ pub fn run() {
             commands::delete_brush_preset,
             commands::move_brush_preset_to_group,
             commands::rename_brush_group,
+            commands::delete_brush_group,
             commands::save_brush_preset,
             commands::save_brush_preset_as,
             // File operations

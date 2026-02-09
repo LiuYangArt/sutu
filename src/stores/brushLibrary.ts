@@ -61,6 +61,7 @@ interface BrushLibraryState {
   importAbrFile: (path: string) => Promise<BrushLibraryImportResult>;
   renamePreset: (id: string, newName: string) => Promise<void>;
   deletePreset: (id: string) => Promise<void>;
+  deleteGroup: (groupName: string) => Promise<void>;
   movePresetToGroup: (id: string, group: string) => Promise<void>;
   renameGroup: (oldName: string, newName: string) => Promise<void>;
   saveActivePreset: () => Promise<BrushLibraryPreset | null>;
@@ -258,6 +259,22 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
       set((state) => ({
         ...snapshotState(snapshot),
         selectedPresetId: state.selectedPresetId === id ? null : state.selectedPresetId,
+      }));
+    } catch (err) {
+      set({ error: String(err) });
+      throw err;
+    }
+  },
+
+  deleteGroup: async (groupName: string) => {
+    try {
+      await invoke('delete_brush_group', { groupName });
+      const snapshot = await fetchLibrarySnapshot();
+      set((state) => ({
+        ...snapshotState(snapshot),
+        selectedPresetId: findPresetById(snapshot.presets, state.selectedPresetId)
+          ? state.selectedPresetId
+          : null,
       }));
     } catch (err) {
       set({ error: String(err) });
