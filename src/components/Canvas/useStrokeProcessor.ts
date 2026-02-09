@@ -36,6 +36,18 @@ function isBrushStrokeState(state: string): boolean {
   return state === 'active' || state === 'finishing';
 }
 
+function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+  const activeBackend =
+    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
+      ? state.activeBackend
+      : state.backend;
+  return (
+    state.isStreaming &&
+    typeof activeBackend === 'string' &&
+    activeBackend.toLowerCase() === 'wintab'
+  );
+}
+
 interface UseStrokeProcessorParams {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -432,10 +444,7 @@ export function useStrokeProcessor({
 
             let pressure = lastPressureRef.current;
             const tabletState = useTabletStore.getState();
-            const isWinTabActive =
-              tabletState.isStreaming &&
-              typeof tabletState.backend === 'string' &&
-              tabletState.backend.toLowerCase() === 'wintab';
+            const isWinTabActive = isWinTabStreamingBackend(tabletState);
             if (isWinTabActive) {
               const pt = tabletState.currentPoint;
               if (pt) {

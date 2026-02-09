@@ -16,6 +16,18 @@ import { clientToCanvasPoint } from './canvasGeometry';
 export const supportsPointerRawUpdate =
   typeof window !== 'undefined' && 'onpointerrawupdate' in window;
 
+function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+  const activeBackend =
+    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
+      ? state.activeBackend
+      : state.backend;
+  return (
+    state.isStreaming &&
+    typeof activeBackend === 'string' &&
+    activeBackend.toLowerCase() === 'wintab'
+  );
+}
+
 type QueuedPoint = {
   x: number;
   y: number;
@@ -91,10 +103,7 @@ export function useRawPointerInput({
 
       // Get tablet state for pressure resolution
       const tabletState = useTabletStore.getState();
-      const isWinTabActive =
-        tabletState.isStreaming &&
-        typeof tabletState.backend === 'string' &&
-        tabletState.backend.toLowerCase() === 'wintab';
+      const isWinTabActive = isWinTabStreamingBackend(tabletState);
       const shouldUseWinTab = isWinTabActive && pe.isTrusted;
       const { points: bufferedPoints, nextSeq } = shouldUseWinTab
         ? readPointBufferSince(wintabSeqCursorRef.current)

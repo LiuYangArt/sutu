@@ -213,6 +213,17 @@ fn backend_type_name(backend: BackendType) -> &'static str {
     }
 }
 
+fn remember_first_error(slot: &mut Option<String>, err: String) {
+    if slot.is_none() {
+        *slot = Some(err);
+    }
+}
+
+fn backend_error_or_unknown(err: &Option<String>, backend_name: &str) -> String {
+    err.clone()
+        .unwrap_or_else(|| format!("unknown {} error", backend_name))
+}
+
 fn apply_tablet_runtime_config(
     state: &mut TabletState,
     polling_rate: Option<u32>,
@@ -337,9 +348,7 @@ fn select_backend(
                     return Ok(());
                 }
                 Err(err) => {
-                    if wintab_error.is_none() {
-                        wintab_error = Some(err);
-                    }
+                    remember_first_error(&mut wintab_error, err);
                 }
             }
 
@@ -349,16 +358,12 @@ fn select_backend(
                     state.backend_type = BackendType::PointerEvent;
                     state.fallback_reason = Some(format!(
                         "WinTab initialization failed, switched to PointerEvent: {}",
-                        wintab_error
-                            .clone()
-                            .unwrap_or_else(|| "unknown WinTab error".to_string())
+                        backend_error_or_unknown(&wintab_error, "WinTab")
                     ));
                     return Ok(());
                 }
                 Err(err) => {
-                    if pointer_error.is_none() {
-                        pointer_error = Some(err);
-                    }
+                    remember_first_error(&mut pointer_error, err);
                 }
             }
         }
@@ -370,9 +375,7 @@ fn select_backend(
                     return Ok(());
                 }
                 Err(err) => {
-                    if pointer_error.is_none() {
-                        pointer_error = Some(err);
-                    }
+                    remember_first_error(&mut pointer_error, err);
                 }
             }
 
@@ -382,16 +385,12 @@ fn select_backend(
                     state.backend_type = BackendType::WinTab;
                     state.fallback_reason = Some(format!(
                         "PointerEvent initialization failed, switched to WinTab: {}",
-                        pointer_error
-                            .clone()
-                            .unwrap_or_else(|| "unknown PointerEvent error".to_string())
+                        backend_error_or_unknown(&pointer_error, "PointerEvent")
                     ));
                     return Ok(());
                 }
                 Err(err) => {
-                    if wintab_error.is_none() {
-                        wintab_error = Some(err);
-                    }
+                    remember_first_error(&mut wintab_error, err);
                 }
             }
         }
@@ -403,9 +402,7 @@ fn select_backend(
                     return Ok(());
                 }
                 Err(err) => {
-                    if wintab_error.is_none() {
-                        wintab_error = Some(err);
-                    }
+                    remember_first_error(&mut wintab_error, err);
                 }
             }
 
@@ -415,16 +412,12 @@ fn select_backend(
                     state.backend_type = BackendType::PointerEvent;
                     state.fallback_reason = Some(format!(
                         "Auto fallback to PointerEvent after WinTab init failure: {}",
-                        wintab_error
-                            .clone()
-                            .unwrap_or_else(|| "unknown WinTab error".to_string())
+                        backend_error_or_unknown(&wintab_error, "WinTab")
                     ));
                     return Ok(());
                 }
                 Err(err) => {
-                    if pointer_error.is_none() {
-                        pointer_error = Some(err);
-                    }
+                    remember_first_error(&mut pointer_error, err);
                 }
             }
         }

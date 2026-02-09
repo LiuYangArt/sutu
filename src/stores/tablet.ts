@@ -38,6 +38,17 @@ export interface TabletStatusResponse {
   info: TabletInfo | null;
 }
 
+interface TabletStatusStatePatch {
+  status: TabletStatus;
+  backend: string;
+  requestedBackend: string;
+  activeBackend: string;
+  fallbackReason: string | null;
+  backpressureMode: InputBackpressureMode;
+  queueMetrics: InputQueueMetrics;
+  info: TabletInfo | null;
+}
+
 export type InputSource = 'wintab' | 'pointerevent' | 'win_tab' | 'pointer_event';
 export type InputPhase = 'unknown' | 'hover' | 'down' | 'move' | 'up';
 
@@ -97,7 +108,12 @@ export function readPointBufferSince(
     return { points: [], nextSeq: lastSeq };
   }
 
-  const points = pointBuffer.filter((point) => point.seq > lastSeq);
+  const startIndex = pointBuffer.findIndex((point) => point.seq > lastSeq);
+  if (startIndex < 0) {
+    return { points: [], nextSeq: lastSeq };
+  }
+
+  const points = pointBuffer.slice(startIndex);
   const sliced = points.length > limit ? points.slice(points.length - limit) : points;
   const tail = sliced[sliced.length - 1];
   return {
@@ -112,6 +128,19 @@ export function getLatestPoint(): TabletInputPoint | null {
 
 export function clearPointBuffer(): void {
   pointBuffer = [];
+}
+
+function toTabletStatusStatePatch(response: TabletStatusResponse): TabletStatusStatePatch {
+  return {
+    status: response.status,
+    backend: response.backend,
+    requestedBackend: response.requested_backend,
+    activeBackend: response.active_backend,
+    fallbackReason: response.fallback_reason,
+    backpressureMode: response.backpressure_mode,
+    queueMetrics: response.queue_metrics,
+    info: response.info,
+  };
 }
 
 interface TabletState {
@@ -190,14 +219,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
       });
 
       set({
-        status: response.status,
-        backend: response.backend,
-        requestedBackend: response.requested_backend,
-        activeBackend: response.active_backend,
-        fallbackReason: response.fallback_reason,
-        backpressureMode: response.backpressure_mode,
-        queueMetrics: response.queue_metrics,
-        info: response.info,
+        ...toTabletStatusStatePatch(response),
         isInitialized: true,
       });
     } catch (error) {
@@ -219,14 +241,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
       });
 
       set({
-        status: response.status,
-        backend: response.backend,
-        requestedBackend: response.requested_backend,
-        activeBackend: response.active_backend,
-        fallbackReason: response.fallback_reason,
-        backpressureMode: response.backpressure_mode,
-        queueMetrics: response.queue_metrics,
-        info: response.info,
+        ...toTabletStatusStatePatch(response),
         isInitialized: true,
       });
       return true;
@@ -301,16 +316,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
   refresh: async () => {
     try {
       const response = await invoke<TabletStatusResponse>('get_tablet_status');
-      set({
-        status: response.status,
-        backend: response.backend,
-        requestedBackend: response.requested_backend,
-        activeBackend: response.active_backend,
-        fallbackReason: response.fallback_reason,
-        backpressureMode: response.backpressure_mode,
-        queueMetrics: response.queue_metrics,
-        info: response.info,
-      });
+      set(toTabletStatusStatePatch(response));
     } catch (error) {
       console.error('[Tablet] Refresh failed:', error);
     }

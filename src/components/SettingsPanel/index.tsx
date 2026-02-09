@@ -21,11 +21,32 @@ interface TabConfig {
   icon: React.ReactNode;
 }
 
+interface SettingsSidebarProps {
+  tabs: TabConfig[];
+  activeTabId: string;
+  onTabSelect: (id: string) => void;
+}
+
+interface ColorSwatchProps {
+  color: string;
+  isSelected: boolean;
+  onClick: () => void;
+}
+
 const TABS: TabConfig[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={16} /> },
   { id: 'general', label: 'General', icon: <Settings2 size={16} /> },
   { id: 'brush', label: 'Brush', icon: <Brush size={16} /> },
   { id: 'tablet', label: 'Tablet', icon: <Tablet size={16} /> },
+];
+const PRESSURE_CURVE_OPTIONS: Array<{
+  value: 'linear' | 'soft' | 'hard' | 'scurve';
+  label: string;
+}> = [
+  { value: 'linear', label: 'Linear' },
+  { value: 'soft', label: 'Soft' },
+  { value: 'hard', label: 'Hard' },
+  { value: 'scurve', label: 'S-Curve' },
 ];
 
 const POINTER_DIAG_UPDATE_INTERVAL_MS = 66;
@@ -164,7 +185,7 @@ function getVerticalScrollDragScale(element: HTMLElement): number {
   const trackSize = element.clientHeight;
   if (trackSize <= 0) return 1;
 
-  // 近似 thumb 大小，足够用于将手势位移映射到 scrollTop。
+  // Approximate thumb size to map pointer travel to scrollTop.
   const estimatedThumbSize = Math.max(24, (trackSize * trackSize) / element.scrollHeight);
   const thumbTravelRange = Math.max(1, trackSize - estimatedThumbSize);
   return scrollRange / thumbTravelRange;
@@ -174,20 +195,12 @@ function releasePointerCaptureSafely(container: HTMLDivElement, pointerId: numbe
   try {
     container.releasePointerCapture(pointerId);
   } catch {
-    // 释放失败时忽略。
+    // Ignore invalid release attempts on edge cases.
   }
 }
 
 // Sidebar component
-function SettingsSidebar({
-  tabs,
-  activeTabId,
-  onTabSelect,
-}: {
-  tabs: TabConfig[];
-  activeTabId: string;
-  onTabSelect: (id: string) => void;
-}) {
+function SettingsSidebar({ tabs, activeTabId, onTabSelect }: SettingsSidebarProps) {
   return (
     <div className="settings-sidebar">
       {tabs.map((tab) => (
@@ -205,15 +218,7 @@ function SettingsSidebar({
 }
 
 // Color swatch component
-function ColorSwatch({
-  color,
-  isSelected,
-  onClick,
-}: {
-  color: string;
-  isSelected: boolean;
-  onClick: () => void;
-}) {
+function ColorSwatch({ color, isSelected, onClick }: ColorSwatchProps) {
   return (
     <button
       className={`settings-color-swatch ${isSelected ? 'selected' : ''}`}
@@ -400,13 +405,16 @@ function TabletSettings() {
   const isWinTabActive = activeBackendLower === 'wintab';
   const toggleTargetBackend: BackendType = isWinTabActive ? 'pointerevent' : 'wintab';
   const toggleBackendLabel = isWinTabActive ? 'Use PointerEvent' : 'Use WinTab';
+  const backendSwitchOptions = {
+    pollingRate: tablet.pollingRate,
+    pressureCurve: tablet.pressureCurve,
+    backpressureMode: tablet.backpressureMode,
+  };
 
   const handleInit = async () => {
     await init({
       backend: tablet.backend,
-      pollingRate: tablet.pollingRate,
-      pressureCurve: tablet.pressureCurve,
-      backpressureMode: tablet.backpressureMode,
+      ...backendSwitchOptions,
     });
     if (tablet.autoStart) {
       await start();
@@ -422,11 +430,7 @@ function TabletSettings() {
   };
 
   const handleToggleBackend = async () => {
-    const switched = await switchBackend(toggleTargetBackend, {
-      pollingRate: tablet.pollingRate,
-      pressureCurve: tablet.pressureCurve,
-      backpressureMode: tablet.backpressureMode,
-    });
+    const switched = await switchBackend(toggleTargetBackend, backendSwitchOptions);
     if (switched) {
       setTabletBackend(toggleTargetBackend);
     }
@@ -436,11 +440,7 @@ function TabletSettings() {
     if (!isInitialized) return;
     setIsApplyingPipelineConfig(true);
     try {
-      const switched = await switchBackend(requestedBackendType, {
-        pollingRate: tablet.pollingRate,
-        pressureCurve: tablet.pressureCurve,
-        backpressureMode: tablet.backpressureMode,
-      });
+      const switched = await switchBackend(requestedBackendType, backendSwitchOptions);
       if (switched) {
         setTabletBackend(requestedBackendType);
       }
@@ -561,10 +561,11 @@ function TabletSettings() {
               setPressureCurve(e.target.value as 'linear' | 'soft' | 'hard' | 'scurve')
             }
           >
-            <option value="linear">Linear</option>
-            <option value="soft">Soft</option>
-            <option value="hard">Hard</option>
-            <option value="scurve">S-Curve</option>
+            {PRESSURE_CURVE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -966,7 +967,8 @@ export function SettingsPanel() {
       event.clientX,
       event.clientY
     );
-    // 某些平台在滚动条上会把 pen 事件上报为 mouse；滚动条模式不做 pointerType 限制。
+    // Some platforms report pen input as mouse on native scrollbars.
+    // Keep scrollbar mode unrestricted by pointerType.
     if (!onScrollbar && event.pointerType !== 'pen' && event.pointerType !== 'touch') return;
 
     event.preventDefault();
@@ -984,7 +986,7 @@ export function SettingsPanel() {
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
-      // 捕获失败时忽略，避免打断滚动。
+      // Ignore capture failures to avoid breaking scrolling.
     }
   };
 
@@ -992,8 +994,8 @@ export function SettingsPanel() {
     const drag = scrollDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (drag.mode === 'scrollbar') {
-      // 在某些 pen 实现中，离开滚动条后 buttons 可能瞬时变为 0。
-      // 这里不依赖 buttons，直到 pointerup/pointercancel 再结束拖拽。
+      // Some pen implementations can temporarily report buttons=0 after leaving the scrollbar.
+      // Keep the drag session alive until pointerup/pointercancel.
       event.preventDefault();
       const deltaY = event.clientY - drag.startY;
       event.currentTarget.scrollTop = drag.startScrollTop + deltaY * drag.scrollScaleY;
