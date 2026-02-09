@@ -83,8 +83,8 @@
 
 ### C. WinTab / Windows Ink 双栈策略
 
-1. 默认 PointerEvent（稳定优先）。
-2. WinTab 作为可选高性能链路。
+1. 默认 Wintab。
+2. pointerevent作为稳定性备选。
 3. 在设置页面由用户选择手动进行切换。
 
 ### D. 端到端可观测性
@@ -98,3 +98,29 @@
 本次修复属于“止血优先”的正确范围：
 先消除确定性的静默丢事件缺陷，恢复 WinTab 基本稳定性；
 同时保留 PointerEvent 默认基线，并沉淀了后续全面重构所需的架构方向和验收标准。
+
+## 补充记录（2026-02-09）：Settings 面板滚动条 PointerEvent 交互异常
+
+### 现象
+
+1. 仅在 `Settings -> Tablet` 页面复现。
+2. 使用 PointerEvent + pen 拖动右侧滚动条时，光标离开滚动条区域会中断滚动。
+3. 光标回到滚动条区域后，在未抬笔的情况下可继续滚动。
+4. 同场景下 mouse/WinTab 行为正常（离开滚动条后仍可持续，直到松开）。
+
+### 已尝试方向（本轮）
+
+1. 滚动条命中区域判定增强（含宽度兜底）。
+2. 内容区拖拽与滚动条拖拽分离（`content` / `scrollbar` 模式）。
+3. 引入 pointer capture 与窗口级 `pointermove/up/cancel` 兜底。
+4. 诊断卡片高频刷新节流，降低重排干扰。
+
+### 当前判断
+
+1. 问题更接近平台/容器层对 pen + scrollbar 的事件路由差异，而非普通 DOM 滚动逻辑。
+2. 现有前端层补丁已降低跳动，但“离开滚动条后立即中断”在目标机器上仍未彻底消除。
+
+### 暂定结论
+
+1. 本问题先记录为已知缺陷，后续单独立项处理。
+2. 下一轮建议先做可观测性：记录 `pointerId / pointerType / buttons / event source(window|element) / capture 状态`，先定量确认断点位置，再做定向修复。

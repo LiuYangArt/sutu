@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Palette, Tablet, Brush, Settings2 } from 'lucide-react';
 import {
   useSettingsStore,
@@ -34,6 +34,11 @@ const WINDOWS_INK_DISABLE_OPTIONS = [
   'Display additional keys pressed when using my pen',
   'Enable press and hold to perform a right-click equivalent',
 ];
+const POINTER_DIAG_UPDATE_INTERVAL_MS = 66;
+const FALLBACK_SCROLLBAR_HIT_WIDTH = 18;
+const FALLBACK_SCROLLBAR_HIT_HEIGHT = 18;
+const SETTINGS_SCROLL_DRAG_BLOCK_SELECTOR =
+  'button, input, textarea, select, option, a, [role="button"], .toggle-switch, .settings-select, .settings-number-input';
 
 function getTabletStatusColor(status: string): string {
   if (status === 'Connected') return '#4f4';
@@ -57,6 +62,15 @@ interface PointerEventDiagnosticsSnapshot {
   timeStamp: number;
 }
 
+interface SettingsScrollDragState {
+  mode: 'content' | 'scrollbar';
+  container: HTMLDivElement;
+  pointerId: number;
+  startY: number;
+  startScrollTop: number;
+  scrollScaleY: number;
+}
+
 function clampSignedUnit(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(-1, Math.min(1, value));
@@ -75,6 +89,88 @@ function toFixed(value: number, digits: number = 3): string {
 function toDegreesString(rad: number | null): string {
   if (rad === null || !Number.isFinite(rad)) return '-';
   return ((rad * 180) / Math.PI).toFixed(1);
+}
+
+function parsePixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isPointerOnElementScrollbar(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number
+): boolean {
+  const rect = element.getBoundingClientRect();
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+    return false;
+  }
+
+  const hasVerticalOverflow = element.scrollHeight > element.clientHeight;
+  const hasHorizontalOverflow = element.scrollWidth > element.clientWidth;
+  if (!hasVerticalOverflow && !hasHorizontalOverflow) return false;
+
+  const style = window.getComputedStyle(element);
+  const borderLeft = parsePixels(style.borderLeftWidth);
+  const borderRight = parsePixels(style.borderRightWidth);
+  const borderTop = parsePixels(style.borderTopWidth);
+  const borderBottom = parsePixels(style.borderBottomWidth);
+
+  const scrollbarWidth = Math.max(
+    0,
+    element.offsetWidth - element.clientWidth - borderLeft - borderRight
+  );
+  const verticalScrollbarHitWidth =
+    hasVerticalOverflow && scrollbarWidth <= 0 ? FALLBACK_SCROLLBAR_HIT_WIDTH : scrollbarWidth;
+  if (hasVerticalOverflow && verticalScrollbarHitWidth > 0) {
+    const scrollbarLeft = rect.right - borderRight - verticalScrollbarHitWidth;
+    const scrollbarRight = rect.right - borderRight;
+    if (clientX >= scrollbarLeft && clientX <= scrollbarRight) {
+      return true;
+    }
+  }
+
+  const scrollbarHeight = Math.max(
+    0,
+    element.offsetHeight - element.clientHeight - borderTop - borderBottom
+  );
+  const horizontalScrollbarHitHeight =
+    hasHorizontalOverflow && scrollbarHeight <= 0 ? FALLBACK_SCROLLBAR_HIT_HEIGHT : scrollbarHeight;
+  if (hasHorizontalOverflow && horizontalScrollbarHitHeight > 0) {
+    const scrollbarTop = rect.bottom - borderBottom - horizontalScrollbarHitHeight;
+    const scrollbarBottom = rect.bottom - borderBottom;
+    if (clientY >= scrollbarTop && clientY <= scrollbarBottom) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isSettingsScrollDragBlockedTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return !!target.closest(SETTINGS_SCROLL_DRAG_BLOCK_SELECTOR);
+}
+
+function getVerticalScrollDragScale(element: HTMLElement): number {
+  const scrollRange = element.scrollHeight - element.clientHeight;
+  if (scrollRange <= 0) return 1;
+
+  const trackSize = element.clientHeight;
+  if (trackSize <= 0) return 1;
+
+  // 近似 thumb 大小，足够用于将手势位移映射到 scrollTop。
+  const estimatedThumbSize = Math.max(24, (trackSize * trackSize) / element.scrollHeight);
+  const thumbTravelRange = Math.max(1, trackSize - estimatedThumbSize);
+  return scrollRange / thumbTravelRange;
+}
+
+function releasePointerCaptureSafely(container: HTMLDivElement, pointerId: number): void {
+  try {
+    container.releasePointerCapture(pointerId);
+  } catch {
+    // 释放失败时忽略。
+  }
 }
 
 // Sidebar component
@@ -319,11 +415,11 @@ function TabletSettings() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    let rafId: number | null = null;
+    let timeoutId: number | null = null;
     let pending: PointerEventDiagnosticsSnapshot | null = null;
 
     const flush = () => {
-      rafId = null;
+      timeoutId = null;
       if (pending) {
         setPointerDiag(pending);
         pending = null;
@@ -331,8 +427,8 @@ function TabletSettings() {
     };
 
     const scheduleFlush = () => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(flush);
+      if (timeoutId !== null) return;
+      timeoutId = window.setTimeout(flush, POINTER_DIAG_UPDATE_INTERVAL_MS);
     };
 
     const onPointer = (event: Event) => {
@@ -342,6 +438,20 @@ function TabletSettings() {
         azimuthAngle?: number;
       };
       if (pe.pointerType !== 'pen') return;
+
+      const isHighFrequencyPointerEvent =
+        pe.type === 'pointermove' || pe.type === 'pointerrawupdate';
+      if (isHighFrequencyPointerEvent && pe.buttons !== 0) {
+        const eventTarget = pe.target instanceof Element ? pe.target : null;
+        const elementAtPoint =
+          Number.isFinite(pe.clientX) && Number.isFinite(pe.clientY)
+            ? document.elementFromPoint(pe.clientX, pe.clientY)
+            : null;
+        const hitElement = eventTarget ?? elementAtPoint;
+        if (hitElement?.closest('.settings-main')) {
+          return;
+        }
+      }
 
       const rawTiltX = Number.isFinite(pe.tiltX) ? pe.tiltX : 0;
       const rawTiltY = Number.isFinite(pe.tiltY) ? pe.tiltY : 0;
@@ -379,8 +489,8 @@ function TabletSettings() {
       window.removeEventListener('pointerup', onPointer, options);
       window.removeEventListener('pointercancel', onPointer, options);
       window.removeEventListener('pointerrawupdate', onPointer, options);
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
       }
     };
   }, []);
@@ -683,8 +793,126 @@ function BrushSettings() {
 // Main Settings Panel
 export function SettingsPanel() {
   const { isOpen, activeTab, closeSettings, setActiveTab } = useSettingsStore();
+  const scrollDragRef = useRef<SettingsScrollDragState | null>(null);
+
+  const clearScrollDragSession = useCallback((pointerId?: number): boolean => {
+    const drag = scrollDragRef.current;
+    if (!drag) return false;
+    if (typeof pointerId === 'number' && drag.pointerId !== pointerId) return false;
+    releasePointerCaptureSafely(drag.container, drag.pointerId);
+    scrollDragRef.current = null;
+    return true;
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      clearScrollDragSession();
+      return;
+    }
+
+    const handleWindowPointerMove = (event: PointerEvent): void => {
+      const drag = scrollDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (drag.mode !== 'scrollbar') return;
+      const deltaY = event.clientY - drag.startY;
+      drag.container.scrollTop = drag.startScrollTop + deltaY * drag.scrollScaleY;
+      event.preventDefault();
+    };
+
+    const handleWindowPointerUp = (event: PointerEvent): void => {
+      clearScrollDragSession(event.pointerId);
+    };
+
+    const handleWindowPointerCancel = (event: PointerEvent): void => {
+      clearScrollDragSession(event.pointerId);
+    };
+
+    const handleWindowBlur = (): void => {
+      clearScrollDragSession();
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove, { capture: true });
+    window.addEventListener('pointerup', handleWindowPointerUp, { capture: true });
+    window.addEventListener('pointercancel', handleWindowPointerCancel, { capture: true });
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove, { capture: true });
+      window.removeEventListener('pointerup', handleWindowPointerUp, { capture: true });
+      window.removeEventListener('pointercancel', handleWindowPointerCancel, { capture: true });
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [isOpen, clearScrollDragSession]);
 
   if (!isOpen) return null;
+
+  const handleSettingsMainPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const currentDrag = scrollDragRef.current;
+    if (currentDrag && currentDrag.pointerId !== event.pointerId) {
+      clearScrollDragSession();
+    }
+
+    if (event.button !== 0) return;
+    if (isSettingsScrollDragBlockedTarget(event.target)) {
+      clearScrollDragSession(event.pointerId);
+      return;
+    }
+    const onScrollbar = isPointerOnElementScrollbar(
+      event.currentTarget,
+      event.clientX,
+      event.clientY
+    );
+    // 某些平台在滚动条上会把 pen 事件上报为 mouse；滚动条模式不做 pointerType 限制。
+    if (!onScrollbar && event.pointerType !== 'pen' && event.pointerType !== 'touch') return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    scrollDragRef.current = {
+      mode: onScrollbar ? 'scrollbar' : 'content',
+      container: event.currentTarget,
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startScrollTop: event.currentTarget.scrollTop,
+      scrollScaleY: onScrollbar ? getVerticalScrollDragScale(event.currentTarget) : 1,
+    };
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // 捕获失败时忽略，避免打断滚动。
+    }
+  };
+
+  const handleSettingsMainPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = scrollDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.mode === 'scrollbar') {
+      // 在某些 pen 实现中，离开滚动条后 buttons 可能瞬时变为 0。
+      // 这里不依赖 buttons，直到 pointerup/pointercancel 再结束拖拽。
+      event.preventDefault();
+      const deltaY = event.clientY - drag.startY;
+      event.currentTarget.scrollTop = drag.startScrollTop + deltaY * drag.scrollScaleY;
+      return;
+    }
+
+    if (isPointerOnElementScrollbar(event.currentTarget, event.clientX, event.clientY)) {
+      clearScrollDragSession(event.pointerId);
+      return;
+    }
+    if ((event.buttons & 1) === 0) {
+      clearScrollDragSession(event.pointerId);
+      return;
+    }
+
+    event.preventDefault();
+    const deltaY = event.clientY - drag.startY;
+    event.currentTarget.scrollTop = drag.startScrollTop - deltaY;
+  };
+
+  const finishSettingsMainPointerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    clearScrollDragSession(event.pointerId);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -715,7 +943,15 @@ export function SettingsPanel() {
         {/* Body */}
         <div className="settings-body">
           <SettingsSidebar tabs={TABS} activeTabId={activeTab} onTabSelect={setActiveTab} />
-          <div className="settings-main">{renderContent()}</div>
+          <div
+            className="settings-main"
+            onPointerDown={handleSettingsMainPointerDown}
+            onPointerMove={handleSettingsMainPointerMove}
+            onPointerUp={finishSettingsMainPointerDrag}
+            onPointerCancel={finishSettingsMainPointerDrag}
+          >
+            {renderContent()}
+          </div>
         </div>
       </div>
     </div>

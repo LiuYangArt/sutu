@@ -63,6 +63,7 @@ const PANEL_RESIZE_HANDLE_SIZE = 20;
 const PANEL_SIZE_STORAGE_KEY = 'paintboard-brush-quick-panel-size-v1';
 const PANEL_INTERACTIVE_SELECTOR =
   'button, input, textarea, select, .saturation-square, .vertical-hue-slider, .brush-quick-search, .brush-quick-library';
+const PANEL_SCROLLABLE_SELECTOR = '.brush-quick-library';
 
 function groupPresets(
   presets: BrushLibraryPreset[],
@@ -169,6 +170,72 @@ function isSamePanelSize(a: PanelSize, b: PanelSize): boolean {
 function isPanelInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return !!target.closest(PANEL_INTERACTIVE_SELECTOR);
+}
+
+function parsePixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isPointerOnElementScrollbar(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number
+): boolean {
+  const rect = element.getBoundingClientRect();
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+    return false;
+  }
+
+  const hasVerticalOverflow = element.scrollHeight > element.clientHeight;
+  const hasHorizontalOverflow = element.scrollWidth > element.clientWidth;
+  if (!hasVerticalOverflow && !hasHorizontalOverflow) return false;
+
+  const style = window.getComputedStyle(element);
+  const borderLeft = parsePixels(style.borderLeftWidth);
+  const borderRight = parsePixels(style.borderRightWidth);
+  const borderTop = parsePixels(style.borderTopWidth);
+  const borderBottom = parsePixels(style.borderBottomWidth);
+
+  const scrollbarWidth = Math.max(
+    0,
+    element.offsetWidth - element.clientWidth - borderLeft - borderRight
+  );
+  if (hasVerticalOverflow && scrollbarWidth > 0) {
+    const scrollbarLeft = rect.right - borderRight - scrollbarWidth;
+    const scrollbarRight = rect.right - borderRight;
+    if (clientX >= scrollbarLeft && clientX <= scrollbarRight) {
+      return true;
+    }
+  }
+
+  const scrollbarHeight = Math.max(
+    0,
+    element.offsetHeight - element.clientHeight - borderTop - borderBottom
+  );
+  if (hasHorizontalOverflow && scrollbarHeight > 0) {
+    const scrollbarTop = rect.bottom - borderBottom - scrollbarHeight;
+    const scrollbarBottom = rect.bottom - borderBottom;
+    if (clientY >= scrollbarTop && clientY <= scrollbarBottom) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isPointerOnPanelScrollbar(
+  panel: HTMLDivElement,
+  event: React.PointerEvent<HTMLDivElement>
+): boolean {
+  if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return false;
+  const containers = panel.querySelectorAll<HTMLElement>(PANEL_SCROLLABLE_SELECTOR);
+  for (const container of containers) {
+    if (isPointerOnElementScrollbar(container, event.clientX, event.clientY)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function BrushQuickPanel({
@@ -390,6 +457,7 @@ export function BrushQuickPanel({
     event.stopPropagation();
     if (event.button !== 0) return;
     if (isPanelInteractiveTarget(event.target)) return;
+    if (isPointerOnPanelScrollbar(event.currentTarget, event)) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const isOnResizeHandle =
       event.clientX >= rect.right - PANEL_RESIZE_HANDLE_SIZE &&

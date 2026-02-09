@@ -359,6 +359,28 @@
   background: var(--bg-tertiary);
 }
 
+.tablet-live-card .status-row {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tablet-live-card .status-row span:first-child {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tablet-live-card .status-row span:last-child {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
 .tablet-live-empty {
   font-size: 12px;
   line-height: 1.45;
