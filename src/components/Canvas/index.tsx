@@ -1462,11 +1462,16 @@ export function Canvas() {
   const getBrushConfig = useCallback((): BrushRenderConfig => {
     const activeLayer = activeLayerId ? layers.find((layer) => layer.id === activeLayerId) : null;
     const isBackgroundLayer = activeLayer?.isBackground === true;
+    const isEraser = currentTool === 'eraser';
     const shouldPaintBackgroundColor =
-      currentTool === 'eraser' && isBackgroundLayer && eraserBackgroundMode === 'background-color';
-    const strokeCompositeMode =
-      currentTool === 'eraser' && !shouldPaintBackgroundColor ? 'erase' : 'paint';
-    const strokeColor = shouldPaintBackgroundColor ? backgroundFillColor : brushColor;
+      isEraser && isBackgroundLayer && eraserBackgroundMode === 'background-color';
+
+    let strokeCompositeMode: 'paint' | 'erase' = 'paint';
+    let strokeColor = brushColor;
+    if (isEraser) {
+      strokeCompositeMode = shouldPaintBackgroundColor ? 'paint' : 'erase';
+      strokeColor = shouldPaintBackgroundColor ? backgroundFillColor : brushColor;
+    }
 
     return {
       size: currentSize,

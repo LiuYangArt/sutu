@@ -262,20 +262,18 @@ export function useStrokeProcessor({
     if (!canvas || !ctx || !renderer) return;
 
     // Build preview config if stroke is active
-    const preview =
-      isStrokeActive() && activeLayerId
-        ? (() => {
-            const previewCanvas = getPreviewCanvas();
-            return previewCanvas
-              ? {
-                  activeLayerId,
-                  canvas: previewCanvas,
-                  opacity: getPreviewOpacity(),
-                  compositeMode: getPreviewCompositeMode(),
-                }
-              : undefined;
-          })()
-        : undefined;
+    let preview: Parameters<LayerRenderer['composite']>[0];
+    if (isStrokeActive() && activeLayerId) {
+      const previewCanvas = getPreviewCanvas();
+      if (previewCanvas) {
+        preview = {
+          activeLayerId,
+          canvas: previewCanvas,
+          opacity: getPreviewOpacity(),
+          compositeMode: getPreviewCompositeMode(),
+        };
+      }
+    }
 
     // Composite with optional preview
     const compositeCanvas = renderer.composite(preview);

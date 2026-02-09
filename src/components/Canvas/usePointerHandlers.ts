@@ -103,6 +103,10 @@ function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getSta
   );
 }
 
+function isStrokeTool(tool: ToolType): boolean {
+  return tool === 'brush' || tool === 'eraser';
+}
+
 export function usePointerHandlers({
   containerRef,
   canvasRef,
@@ -257,7 +261,7 @@ export function usePointerHandlers({
       } else if (pe.pressure > 0) {
         pressure = pe.pressure;
       }
-      if (currentTool === 'brush' || currentTool === 'eraser') {
+      if (isStrokeTool(currentTool)) {
         const tabletState = useTabletStore.getState();
         const isWinTabActive = isWinTabStreamingBackend(tabletState);
         // Synthetic replay events are not trusted; keep captured pressure instead of
@@ -328,7 +332,7 @@ export function usePointerHandlers({
       if (!activeLayerId || !activeLayer?.visible) return;
 
       let constrainedDown = { x: canvasX, y: canvasY };
-      if (currentTool === 'brush' || currentTool === 'eraser') {
+      if (isStrokeTool(currentTool)) {
         lockShiftLine({ x: canvasX, y: canvasY });
         constrainedDown = constrainShiftLinePoint(canvasX, canvasY);
         lastInputPosRef.current = { x: constrainedDown.x, y: constrainedDown.y };
@@ -338,7 +342,7 @@ export function usePointerHandlers({
       trySetPointerCapture(canvas, e);
       usingRawInput.current = false;
 
-      if (currentTool !== 'brush' && currentTool !== 'eraser') {
+      if (!isStrokeTool(currentTool)) {
         return;
       }
 
@@ -483,11 +487,11 @@ export function usePointerHandlers({
       // 绘画模式
       if (!isDrawingRef.current) return;
 
-      if (currentTool !== 'brush' && currentTool !== 'eraser') return;
+      if (!isStrokeTool(currentTool)) return;
 
       // Q1 Optimization: Skip brush input if pointerrawupdate is handling it
       // pointerrawupdate provides lower-latency input (1-3ms improvement)
-      if ((currentTool === 'brush' || currentTool === 'eraser') && usingRawInput.current) {
+      if (isStrokeTool(currentTool) && usingRawInput.current) {
         return;
       }
 

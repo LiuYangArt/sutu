@@ -3,7 +3,7 @@
 > 版本: 0.2.0 | 最后更新: 2026-02-07
 
 > [!IMPORTANT]
-> 当前绘画主链路是 GPU-First。测试策略以 `docs/plans/2026-02-05-gpu-first-brush-design.md` 为准：
+> 当前绘画主链路是 GPU-First。测试策略以 `docs/design/done/2026-02-05-gpu-first-brush-design.md`（GPU-first 改造归档）为准：
 > 1) 实时绘画不走 GPU→CPU readback；2) 导出/截图允许显式分块 readback；3) GPU 改动需通过 parity gate 与稳定性门禁。
 
 ## 1. 测试哲学

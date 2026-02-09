@@ -16,7 +16,7 @@
 当前采用 **GPU-First** 架构：实时绘画链路以 WebGPU 为主，默认不走 GPU→CPU readback。
 CPU 路径仅用于 fallback（设备不支持 WebGPU）和一致性校验，不再作为实时主链路。
 笔刷系统目标是对齐 Photoshop 的手感与视觉结果。
-当前阶段进度与约束以 `docs/plans/2026-02-05-gpu-first-brush-design.md` 为准。
+当前阶段进度与约束以 `docs/design/done/2026-02-05-gpu-first-brush-design.md`（GPU-first 改造归档）为准。
 
 ## 常用命令
 
@@ -126,7 +126,7 @@ pnpm format           # 格式化代码
 - **测试策略**: [testing-strategy.md](file:///f:/CodeProjects/PaintBoard/docs/testing-strategy.md)
 - **开发环境搭建**: [development-setup.md](file:///f:/CodeProjects/PaintBoard/docs/development-setup.md)
 - **开发路线图**: [development-roadmap.md](file:///f:/CodeProjects/PaintBoard/docs/todo/development-roadmap.md)
-- **GPU-First 计划**: [2026-02-05-gpu-first-brush-design.md](file:///f:/CodeProjects/PaintBoard/docs/plans/2026-02-05-gpu-first-brush-design.md)
+- **GPU-First 归档**: [2026-02-05-gpu-first-brush-design.md](file:///f:/CodeProjects/PaintBoard/docs/design/done/2026-02-05-gpu-first-brush-design.md)
 - **项目灵感**: [project_idea.md](file:///f:/CodeProjects/PaintBoard/docs/project_idea.md)
 - **DEBUG经验**: @docs/postmortem/
 - **kirta源码**: F:\CodeProjects\krita\

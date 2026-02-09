@@ -7,7 +7,7 @@
 本文档规划 PaintBoard 从脚手架到可用产品的完整开发路径。采用**渐进式开发**策略，优先实现核心绘画功能，逐步完善专业特性。
 
 > [!IMPORTANT]
-> 本文档是产品路线图（M0~M7）。`docs/plans/2026-02-05-gpu-first-brush-design.md` 使用的是独立里程碑编号（同样含 M0~M5），两者编号不一一对应。涉及 GPU-first 实时绘画链路时，以计划文档为准。
+> 本文档是产品路线图（M0~M7）。`docs/design/done/2026-02-05-gpu-first-brush-design.md` 使用的是独立里程碑编号（同样含 M0~M5），两者编号不一一对应。涉及 GPU-first 实时绘画链路时，以该归档文档为准。
 
 ---
 

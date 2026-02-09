@@ -109,7 +109,7 @@ cargo install cargo-watch
 ## 3. 项目结构
 
 > [!NOTE]
-> 本节目录树是初始化示例，可能落后于当前实现。请以仓库根目录 `.codebase_index.md` 和 `docs/plans/2026-02-05-gpu-first-brush-design.md` 为准。
+> 本节目录树是初始化示例，可能落后于当前实现。请以仓库根目录 `.codebase_index.md` 和 `docs/design/done/2026-02-05-gpu-first-brush-design.md`（GPU-first 改造归档）为准。
 
 ```
 PaintBoard/

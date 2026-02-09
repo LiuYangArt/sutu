@@ -455,9 +455,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
 }));
 
 export function useSelectedPresetIdForCurrentTool(): string | null {
-  const selectionTool = useToolStore((state) =>
-    state.currentTool === 'eraser' ? 'eraser' : 'brush'
-  );
+  const selectionTool = useToolStore((state) => resolveSelectionTool(state.currentTool));
   return useBrushLibraryStore((state) => state.selectedPresetByTool[selectionTool]);
 }
 
