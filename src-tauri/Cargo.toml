@@ -1,6 +1,6 @@
 [package]
 name = "paintboard"
-version = "0.9.1"
+version = "0.9.2"
 description = "Professional painting software with low-latency pen input"
 authors = ["PaintBoard Team"]
 edition = "2021"
