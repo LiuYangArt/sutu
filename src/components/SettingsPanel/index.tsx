@@ -28,12 +28,6 @@ const TABS: TabConfig[] = [
   { id: 'tablet', label: 'Tablet', icon: <Tablet size={16} /> },
 ];
 
-const WINDOWS_INK_SETTINGS_PATH = 'Settings > Bluetooth & devices > Pen & Windows Ink';
-const WINDOWS_INK_DISABLE_OPTIONS = [
-  'Show visual effects',
-  'Display additional keys pressed when using my pen',
-  'Enable press and hold to perform a right-click equivalent',
-];
 const POINTER_DIAG_UPDATE_INTERVAL_MS = 66;
 const FALLBACK_SCROLLBAR_HIT_WIDTH = 18;
 const FALLBACK_SCROLLBAR_HIT_HEIGHT = 18;
@@ -556,6 +550,25 @@ function TabletSettings() {
         </div>
       )}
 
+      <div className="settings-section">
+        <label className="settings-label">PRESSURE CURVE</label>
+        <div className="settings-row">
+          <span>Curve:</span>
+          <select
+            className="settings-select"
+            value={tablet.pressureCurve}
+            onChange={(e) =>
+              setPressureCurve(e.target.value as 'linear' | 'soft' | 'hard' | 'scurve')
+            }
+          >
+            <option value="linear">Linear</option>
+            <option value="soft">Soft</option>
+            <option value="hard">Hard</option>
+            <option value="scurve">S-Curve</option>
+          </select>
+        </div>
+      </div>
+
       {/* Status */}
       <div className="settings-section">
         <label className="settings-label">STATUS</label>
@@ -656,7 +669,8 @@ function TabletSettings() {
               </button>
             </div>
             <div className="tablet-live-hint">
-              应用后会重建当前输入后端；如果正在采样，会自动无缝重启。
+              Applying this will rebuild the current input backend. If streaming is active, it will
+              restart seamlessly.
             </div>
           </>
         )}
@@ -718,53 +732,14 @@ function TabletSettings() {
             </>
           ) : (
             <div className="tablet-live-empty">
-              未收到 pen PointerEvent。把笔移到应用窗口内并悬停/落笔后，这里会实时刷新。
+              No pen PointerEvent received. Move the pen into the app window and hover or touch down
+              to see live updates here.
             </div>
           )}
           <div className="tablet-live-hint">
-            监听源：window PointerEvent（仅 pointerType=pen） | pointerrawupdate 支持：
+            Source: window PointerEvent (pointerType=pen only) | pointerrawupdate support:{' '}
             {pointerRawUpdateSupported ? 'Yes' : 'No'}
           </div>
-        </div>
-      </div>
-
-      {/* Pressure Curve - always visible */}
-      <div className="settings-section">
-        <label className="settings-label">PRESSURE CURVE</label>
-        <div className="settings-row">
-          <span>Curve:</span>
-          <select
-            className="settings-select"
-            value={tablet.pressureCurve}
-            onChange={(e) =>
-              setPressureCurve(e.target.value as 'linear' | 'soft' | 'hard' | 'scurve')
-            }
-          >
-            <option value="linear">Linear</option>
-            <option value="soft">Soft</option>
-            <option value="hard">Hard</option>
-            <option value="scurve">S-Curve</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <label className="settings-label">WINDOWS INK TIPS</label>
-        <div className="tablet-hint-card">
-          <p className="tablet-hint-title">For PointerEvent pressure stability on Windows</p>
-          <p className="tablet-hint-text">
-            Open <code>{WINDOWS_INK_SETTINGS_PATH}</code>, then under Additional pen settings turn
-            these off:
-          </p>
-          <ul className="tablet-hint-list">
-            {WINDOWS_INK_DISABLE_OPTIONS.map((option) => (
-              <li key={option}>{option}</li>
-            ))}
-          </ul>
-          <p className="tablet-hint-text">
-            In Wacom Tablet Properties, keep <code>Use Windows Ink</code> enabled when using the
-            PointerEvent backend.
-          </p>
         </div>
       </div>
 
