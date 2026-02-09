@@ -1239,15 +1239,13 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let status = std::process::Command::new("explorer")
+        // Explorer frequently returns non-zero exit code even when it successfully opens.
+        // For UX, treat successful process launch as success.
+        std::process::Command::new("explorer")
             .arg(format!("/select,{}", path))
-            .status()
+            .spawn()
             .map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("explorer returned exit status: {}", status))
-        }
+        Ok(())
     }
 
     #[cfg(not(target_os = "windows"))]

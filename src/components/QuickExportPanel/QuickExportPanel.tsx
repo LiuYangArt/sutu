@@ -19,8 +19,6 @@ import {
 } from '@/utils/quickExport';
 import './QuickExportPanel.css';
 
-type LastEditedField = 'width' | 'height';
-
 const ENCODE_QUALITY = 0.92;
 
 function parsePositiveInt(value: string): number | null {
@@ -31,13 +29,14 @@ function parsePositiveInt(value: string): number | null {
 }
 
 function getFilters(format: QuickExportFormat): Array<{ name: string; extensions: string[] }> {
-  if (format === 'jpg') {
-    return [{ name: 'JPEG Image', extensions: ['jpg', 'jpeg'] }];
+  switch (format) {
+    case 'jpg':
+      return [{ name: 'JPEG Image', extensions: ['jpg', 'jpeg'] }];
+    case 'webp':
+      return [{ name: 'WebP Image', extensions: ['webp'] }];
+    case 'png':
+      return [{ name: 'PNG Image', extensions: ['png'] }];
   }
-  if (format === 'webp') {
-    return [{ name: 'WebP Image', extensions: ['webp'] }];
-  }
-  return [{ name: 'PNG Image', extensions: ['png'] }];
 }
 
 function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
@@ -71,6 +70,17 @@ async function canvasToBytes(
   return bytes;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function resolveInitialDimension(value: number, fallback: number): number {
+  if (Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  return fallback;
+}
+
 interface QuickExportPanelProps {
   isOpen: boolean;
   onClose: () => void;
@@ -97,19 +107,12 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
   const [isExporting, setIsExporting] = useState(false);
 
   const aspectRatioRef = useRef(doc.width / Math.max(1, doc.height));
-  const lastEditedRef = useRef<LastEditedField>('width');
 
   useEffect(() => {
     if (!isOpen) return;
 
-    const initialWidth =
-      Number.isFinite(quickExport.lastWidth) && quickExport.lastWidth > 0
-        ? quickExport.lastWidth
-        : doc.width;
-    const initialHeight =
-      Number.isFinite(quickExport.lastHeight) && quickExport.lastHeight > 0
-        ? quickExport.lastHeight
-        : doc.height;
+    const initialWidth = resolveInitialDimension(quickExport.lastWidth, doc.width);
+    const initialHeight = resolveInitialDimension(quickExport.lastHeight, doc.height);
     const initialFormat = quickExport.lastFormat;
 
     let initialPath = quickExport.lastPath.trim();
@@ -128,7 +131,6 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
     setBackgroundPreset(quickExport.backgroundPreset);
     setIsExporting(false);
     aspectRatioRef.current = initialWidth / Math.max(1, initialHeight);
-    lastEditedRef.current = 'width';
   }, [isOpen, doc.width, doc.height, doc.filePath, quickExport]);
 
   const parsedSize = useMemo(
@@ -149,7 +151,6 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
 
   const handleWidthChange = (value: string) => {
     setWidthInput(value);
-    lastEditedRef.current = 'width';
     const width = parsePositiveInt(value);
     if (!width || aspectRatioRef.current <= 0) return;
 
@@ -160,7 +161,6 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
 
   const handleHeightChange = (value: string) => {
     setHeightInput(value);
-    lastEditedRef.current = 'height';
     const height = parsePositiveInt(value);
     if (!height || aspectRatioRef.current <= 0) return;
 
@@ -225,8 +225,7 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
       setExportPath(normalized);
       setQuickExport({ lastPath: normalized });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      pushToast(`Failed to choose export path: ${message}`, { variant: 'error' });
+      pushToast(`Failed to choose export path: ${getErrorMessage(error)}`, { variant: 'error' });
     }
   };
 
@@ -239,8 +238,7 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
     try {
       await invoke('reveal_in_explorer', { path });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      pushToast(`Failed to open explorer: ${message}`, { variant: 'error' });
+      pushToast(`Failed to open explorer: ${getErrorMessage(error)}`, { variant: 'error' });
     }
   };
 
@@ -309,8 +307,7 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
       });
       pushToast(`Exported to ${outputPath}`, { variant: 'success' });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      pushToast(`Quick export failed: ${message}`, { variant: 'error' });
+      pushToast(`Quick export failed: ${getErrorMessage(error)}`, { variant: 'error' });
     } finally {
       setIsExporting(false);
     }

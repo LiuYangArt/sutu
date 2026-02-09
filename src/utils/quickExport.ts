@@ -12,50 +12,71 @@ export interface QuickExportSettings {
 }
 
 export function getExtensionForQuickExportFormat(format: QuickExportFormat): string {
-  if (format === 'jpg') return 'jpg';
-  return format;
+  switch (format) {
+    case 'jpg':
+      return 'jpg';
+    case 'png':
+    case 'webp':
+      return format;
+  }
 }
 
 export function getMimeTypeForQuickExportFormat(format: QuickExportFormat): string {
-  if (format === 'jpg') return 'image/jpeg';
-  if (format === 'webp') return 'image/webp';
-  return 'image/png';
+  switch (format) {
+    case 'jpg':
+      return 'image/jpeg';
+    case 'webp':
+      return 'image/webp';
+    case 'png':
+      return 'image/png';
+  }
+}
+
+interface PathSegments {
+  dir: string;
+  fileName: string;
+  trimmed: string;
+}
+
+function splitPathSegments(path: string): PathSegments | null {
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+
+  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  const fileName = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+  const dir = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : '';
+  return { dir, fileName, trimmed };
+}
+
+function getFileBaseName(fileName: string): string {
+  const lastDot = fileName.lastIndexOf('.');
+  const hasExtension = lastDot > 0 && lastDot < fileName.length - 1;
+  return hasExtension ? fileName.slice(0, lastDot) : fileName;
 }
 
 export function replacePathExtension(path: string, format: QuickExportFormat): string {
-  const trimmed = path.trim();
-  if (!trimmed) return '';
+  const segments = splitPathSegments(path);
+  if (!segments) return '';
 
   const ext = getExtensionForQuickExportFormat(format);
-  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  const fileName = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  if (!fileName) return trimmed;
+  if (!segments.fileName) return segments.trimmed;
 
-  const dir = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : '';
-  const lastDot = fileName.lastIndexOf('.');
-  const hasExtension = lastDot > 0 && lastDot < fileName.length - 1;
-  const baseName = hasExtension ? fileName.slice(0, lastDot) : fileName;
-  return `${dir}${baseName}.${ext}`;
+  const baseName = getFileBaseName(segments.fileName);
+  return `${segments.dir}${baseName}.${ext}`;
 }
 
 export function buildDefaultQuickExportPath(
   documentPath: string,
   format: QuickExportFormat
 ): string {
-  const trimmed = documentPath.trim();
-  if (!trimmed) return '';
+  const segments = splitPathSegments(documentPath);
+  if (!segments) return '';
 
   const ext = getExtensionForQuickExportFormat(format);
-  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  const fileName = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  if (!fileName) return '';
-
-  const dir = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : '';
-  const lastDot = fileName.lastIndexOf('.');
-  const hasExtension = lastDot > 0;
-  const baseName = hasExtension ? fileName.slice(0, lastDot) : fileName;
+  if (!segments.fileName) return '';
+  const baseName = getFileBaseName(segments.fileName);
   if (!baseName) return '';
-  return `${dir}${baseName}.${ext}`;
+  return `${segments.dir}${baseName}.${ext}`;
 }
 
 export function resolveQuickExportBackgroundColor(

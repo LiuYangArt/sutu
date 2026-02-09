@@ -227,6 +227,13 @@ function normalizeQuickExportBackgroundPreset(value: unknown): QuickExportBackgr
   return 'current-bg';
 }
 
+function normalizePositiveDimension(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value);
+  }
+  return fallback;
+}
+
 function mergeLoadedQuickExportSettings(loadedQuickExport: unknown): QuickExportSettings {
   const defaults = { ...DEFAULT_QUICK_EXPORT_SETTINGS };
   if (!loadedQuickExport || typeof loadedQuickExport !== 'object') {
@@ -234,20 +241,12 @@ function mergeLoadedQuickExportSettings(loadedQuickExport: unknown): QuickExport
   }
 
   const partial = loadedQuickExport as Partial<QuickExportSettings>;
-  const width =
-    Number.isFinite(partial.lastWidth) && (partial.lastWidth as number) > 0
-      ? Math.round(partial.lastWidth as number)
-      : defaults.lastWidth;
-  const height =
-    Number.isFinite(partial.lastHeight) && (partial.lastHeight as number) > 0
-      ? Math.round(partial.lastHeight as number)
-      : defaults.lastHeight;
 
   return {
     lastPath: typeof partial.lastPath === 'string' ? partial.lastPath : defaults.lastPath,
     lastFormat: normalizeQuickExportFormat(partial.lastFormat),
-    lastWidth: width,
-    lastHeight: height,
+    lastWidth: normalizePositiveDimension(partial.lastWidth, defaults.lastWidth),
+    lastHeight: normalizePositiveDimension(partial.lastHeight, defaults.lastHeight),
     transparentBackground:
       typeof partial.transparentBackground === 'boolean'
         ? partial.transparentBackground
