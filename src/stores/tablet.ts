@@ -5,6 +5,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 // Types matching Rust backend
 export type TabletStatus = 'Disconnected' | 'Connected' | 'Error';
 export type BackendType = 'wintab' | 'pointerevent' | 'auto';
+export type InputBackpressureMode = 'lossless' | 'latency_capped';
 
 export interface TabletInfo {
   name: string;
@@ -14,11 +15,31 @@ export interface TabletInfo {
   pressure_range: [number, number];
 }
 
+export interface InputQueueMetrics {
+  enqueued: number;
+  dequeued: number;
+  dropped: number;
+  max_depth: number;
+  current_depth: number;
+  latency_p50_us: number;
+  latency_p95_us: number;
+  latency_p99_us: number;
+  latency_last_us: number;
+}
+
 export interface TabletStatusResponse {
   status: TabletStatus;
   backend: string;
+  requested_backend: string;
+  active_backend: string;
+  fallback_reason: string | null;
+  backpressure_mode: InputBackpressureMode;
+  queue_metrics: InputQueueMetrics;
   info: TabletInfo | null;
 }
+
+export type InputSource = 'wintab' | 'pointerevent' | 'win_tab' | 'pointer_event';
+export type InputPhase = 'unknown' | 'hover' | 'down' | 'move' | 'up';
 
 export interface RawInputPoint {
   x: number;
@@ -27,89 +48,100 @@ export interface RawInputPoint {
   tilt_x: number;
   tilt_y: number;
   timestamp_ms: number;
+  tiltX?: number;
+  tiltY?: number;
 }
 
-export type TabletEvent =
-  | { Input: RawInputPoint }
+// Strict V2 tablet sample shape from Rust event payload.
+export interface TabletInputPoint extends RawInputPoint {
+  seq: number;
+  stream_id: number;
+  source: InputSource;
+  pointer_id: number;
+  phase: InputPhase;
+  rotation: number;
+  host_time_us: number;
+  device_time_us: number;
+}
+
+export type TabletEventV2 =
+  | { Input: TabletInputPoint }
   | 'ProximityEnter'
   | 'ProximityLeave'
   | { StatusChanged: TabletStatus };
 
-// Ring buffer size - stores recent WinTab points for matching
-const POINT_BUFFER_SIZE = 128;
+const POINT_BUFFER_SIZE = 512;
 
-// Ring buffer for WinTab points - stored outside Zustand for performance
-// This avoids triggering React re-renders on every WinTab event
-let pointBuffer: RawInputPoint[] = [];
-let bufferWriteIndex = 0;
+// Shared sample buffer (kept outside Zustand to avoid high-frequency re-rendering).
+let pointBuffer: TabletInputPoint[] = [];
 
-/**
- * Add a point to the ring buffer (called from Tauri event listener)
- */
-function addPointToBuffer(point: RawInputPoint): void {
-  if (pointBuffer.length < POINT_BUFFER_SIZE) {
-    pointBuffer.push(point);
-  } else {
-    pointBuffer[bufferWriteIndex] = point;
+function addPointToBuffer(point: TabletInputPoint): void {
+  const latest = pointBuffer[pointBuffer.length - 1];
+  if (latest && point.seq <= latest.seq) return;
+
+  pointBuffer.push(point);
+  if (pointBuffer.length > POINT_BUFFER_SIZE) {
+    pointBuffer = pointBuffer.slice(pointBuffer.length - POINT_BUFFER_SIZE);
   }
-  bufferWriteIndex = (bufferWriteIndex + 1) % POINT_BUFFER_SIZE;
 }
 
 /**
- * Get all buffered points and clear the buffer
- * This is the primary method for consuming WinTab data
+ * Cursor-based non-destructive read.
+ * Multiple consumers can read without stealing each other's samples.
  */
-export function drainPointBuffer(): RawInputPoint[] {
-  const points = pointBuffer;
-  pointBuffer = [];
-  bufferWriteIndex = 0;
-  return points;
+export function readPointBufferSince(
+  lastSeq: number,
+  limit: number = POINT_BUFFER_SIZE
+): { points: TabletInputPoint[]; nextSeq: number } {
+  if (pointBuffer.length === 0) {
+    return { points: [], nextSeq: lastSeq };
+  }
+
+  const points = pointBuffer.filter((point) => point.seq > lastSeq);
+  const sliced = points.length > limit ? points.slice(points.length - limit) : points;
+  const tail = sliced[sliced.length - 1];
+  return {
+    points: sliced,
+    nextSeq: tail ? tail.seq : lastSeq,
+  };
 }
 
-/**
- * Get the most recent point without clearing the buffer
- */
-export function getLatestPoint(): RawInputPoint | null {
-  if (pointBuffer.length === 0) return null;
-  // The most recent point is at (bufferWriteIndex - 1)
-  const index = (bufferWriteIndex - 1 + pointBuffer.length) % pointBuffer.length;
-  return pointBuffer[index] ?? null;
+export function getLatestPoint(): TabletInputPoint | null {
+  return pointBuffer.length > 0 ? (pointBuffer[pointBuffer.length - 1] ?? null) : null;
 }
 
-/**
- * Clear the point buffer (call on stroke end)
- */
 export function clearPointBuffer(): void {
   pointBuffer = [];
-  bufferWriteIndex = 0;
 }
 
 interface TabletState {
-  // Status
   status: TabletStatus;
   backend: string;
+  requestedBackend: string;
+  activeBackend: string;
+  fallbackReason: string | null;
+  backpressureMode: InputBackpressureMode;
+  queueMetrics: InputQueueMetrics;
   info: TabletInfo | null;
   isInitialized: boolean;
   isStreaming: boolean;
 
-  // Current input state (for backward compatibility)
-  currentPoint: RawInputPoint | null;
+  currentPoint: TabletInputPoint | null;
   inProximity: boolean;
-
-  // Event listener
   unlisten: UnlistenFn | null;
 
-  // Actions
   init: (options?: {
     backend?: BackendType;
     pollingRate?: number;
     pressureCurve?: string;
+    backpressureMode?: InputBackpressureMode;
   }) => Promise<void>;
   switchBackend: (
     backend: BackendType,
     options?: {
       pollingRate?: number;
       pressureCurve?: string;
+      backpressureMode?: InputBackpressureMode;
     }
   ) => Promise<boolean>;
   start: () => Promise<void>;
@@ -117,15 +149,30 @@ interface TabletState {
   refresh: () => Promise<void>;
   cleanup: () => void;
 
-  // Internal
-  _setPoint: (point: RawInputPoint) => void;
+  _setPoint: (point: TabletInputPoint) => void;
   _setProximity: (inProximity: boolean) => void;
 }
 
+const EMPTY_QUEUE_METRICS: InputQueueMetrics = {
+  enqueued: 0,
+  dequeued: 0,
+  dropped: 0,
+  max_depth: 0,
+  current_depth: 0,
+  latency_p50_us: 0,
+  latency_p95_us: 0,
+  latency_p99_us: 0,
+  latency_last_us: 0,
+};
+
 export const useTabletStore = create<TabletState>((set, get) => ({
-  // Initial state
   status: 'Disconnected',
   backend: 'none',
+  requestedBackend: 'wintab',
+  activeBackend: 'none',
+  fallbackReason: null,
+  backpressureMode: 'lossless',
+  queueMetrics: { ...EMPTY_QUEUE_METRICS },
   info: null,
   isInitialized: false,
   isStreaming: false,
@@ -133,18 +180,23 @@ export const useTabletStore = create<TabletState>((set, get) => ({
   inProximity: false,
   unlisten: null,
 
-  // Initialize tablet backend
   init: async (options = {}) => {
     try {
       const response = await invoke<TabletStatusResponse>('init_tablet', {
         backend: options.backend,
         pollingRate: options.pollingRate,
         pressureCurve: options.pressureCurve,
+        backpressureMode: options.backpressureMode,
       });
 
       set({
         status: response.status,
         backend: response.backend,
+        requestedBackend: response.requested_backend,
+        activeBackend: response.active_backend,
+        fallbackReason: response.fallback_reason,
+        backpressureMode: response.backpressure_mode,
+        queueMetrics: response.queue_metrics,
         info: response.info,
         isInitialized: true,
       });
@@ -157,18 +209,23 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     }
   },
 
-  // Switch active backend without app restart
   switchBackend: async (backend, options = {}) => {
     try {
       const response = await invoke<TabletStatusResponse>('switch_tablet_backend', {
         backend,
         pollingRate: options.pollingRate,
         pressureCurve: options.pressureCurve,
+        backpressureMode: options.backpressureMode,
       });
 
       set({
         status: response.status,
         backend: response.backend,
+        requestedBackend: response.requested_backend,
+        activeBackend: response.active_backend,
+        fallbackReason: response.fallback_reason,
+        backpressureMode: response.backpressure_mode,
+        queueMetrics: response.queue_metrics,
         info: response.info,
         isInitialized: true,
       });
@@ -179,59 +236,46 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     }
   },
 
-  // Start streaming tablet events
   start: async () => {
     const state = get();
-
     if (!state.isInitialized) {
       console.warn('[Tablet] Not initialized, call init() first');
       return;
     }
-
     if (state.isStreaming) {
       return;
     }
 
     try {
-      // Setup event listener
-      const unlisten = await listen<TabletEvent>('tablet-event', (event) => {
+      const unlisten = await listen<TabletEventV2>('tablet-event-v2', (event) => {
         const payload = event.payload;
 
-        if (typeof payload === 'object' && 'Input' in payload) {
+        if (typeof payload === 'object' && payload !== null && 'Input' in payload) {
           const point = payload.Input;
-          // Add to ring buffer (high-frequency, no React re-render)
           addPointToBuffer(point);
-          // Also update currentPoint for backward compatibility
           get()._setPoint(point);
         } else if (payload === 'ProximityEnter') {
-          // console.log('[Tablet] Proximity enter');
           get()._setProximity(true);
         } else if (payload === 'ProximityLeave') {
-          // console.log('[Tablet] Proximity leave');
           get()._setProximity(false);
-          // Clear buffer and currentPoint on proximity leave
           clearPointBuffer();
           set({ currentPoint: null });
-        } else if (typeof payload === 'object' && 'StatusChanged' in payload) {
+        } else if (typeof payload === 'object' && payload !== null && 'StatusChanged' in payload) {
           set({ status: payload.StatusChanged });
         }
       });
 
       set({ unlisten });
-
-      // Start backend
       await invoke('start_tablet');
-
+      await get().refresh();
       set({ isStreaming: true });
     } catch (error) {
       console.error('[Tablet] Start failed:', error);
     }
   },
 
-  // Stop streaming
   stop: async () => {
     const state = get();
-
     if (!state.isStreaming) {
       return;
     }
@@ -239,7 +283,6 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     try {
       await invoke('stop_tablet');
 
-      // Cleanup listener
       if (state.unlisten) {
         state.unlisten();
       }
@@ -255,13 +298,17 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     }
   },
 
-  // Refresh status
   refresh: async () => {
     try {
       const response = await invoke<TabletStatusResponse>('get_tablet_status');
       set({
         status: response.status,
         backend: response.backend,
+        requestedBackend: response.requested_backend,
+        activeBackend: response.active_backend,
+        fallbackReason: response.fallback_reason,
+        backpressureMode: response.backpressure_mode,
+        queueMetrics: response.queue_metrics,
         info: response.info,
       });
     } catch (error) {
@@ -269,7 +316,6 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     }
   },
 
-  // Cleanup on unmount
   cleanup: () => {
     const state = get();
     if (state.unlisten) {
@@ -283,18 +329,22 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     });
   },
 
-  // Internal setters
   _setPoint: (point) => set({ currentPoint: point }),
   _setProximity: (inProximity) => set({ inProximity }),
 }));
 
-// Hook for pushing PointerEvent data to backend (fallback mode)
 export async function pushPointerEvent(
   x: number,
   y: number,
   pressure: number,
   tiltX: number,
-  tiltY: number
+  tiltY: number,
+  options?: {
+    rotation?: number;
+    pointerId?: number;
+    phase?: InputPhase;
+    deviceTimeUs?: number;
+  }
 ): Promise<void> {
   try {
     await invoke('push_pointer_event', {
@@ -303,6 +353,10 @@ export async function pushPointerEvent(
       pressure,
       tiltX,
       tiltY,
+      rotation: options?.rotation,
+      pointerId: options?.pointerId,
+      phase: options?.phase,
+      deviceTimeUs: options?.deviceTimeUs,
     });
   } catch (error) {
     console.error('[Tablet] Push pointer event failed:', error);

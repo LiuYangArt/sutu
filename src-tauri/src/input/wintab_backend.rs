@@ -3,11 +3,13 @@
 //! Provides low-latency tablet input on Windows via the WinTab API.
 //! This is the preferred backend for Wacom tablets.
 
-use super::backend::{TabletBackend, TabletConfig, TabletEvent, TabletInfo, TabletStatus};
-use super::RawInputPoint;
+use super::backend::{
+    default_event_queue_capacity, InputEventQueue, InputPhase, InputQueueMetrics, InputSampleV2,
+    InputSource, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -38,53 +40,15 @@ pub struct WinTabBackend {
     info: Option<TabletInfo>,
     config: TabletConfig,
     running: Arc<AtomicBool>,
-    events: Arc<Mutex<Vec<TabletEvent>>>,
+    events: Arc<InputEventQueue>,
     poll_thread: Option<JoinHandle<()>>,
     pressure_max: f32,
+    stream_id: u64,
     #[cfg(target_os = "windows")]
     hwnd: Option<isize>, // Window handle for WinTab context
 }
 
 impl WinTabBackend {
-    fn enqueue_polled_events(events: &Arc<Mutex<Vec<TabletEvent>>>, new_events: Vec<TabletEvent>) {
-        if new_events.is_empty() {
-            return;
-        }
-
-        // Fast path: try_lock avoids blocking on the common case.
-        if let Ok(mut events_lock) = events.try_lock() {
-            events_lock.extend(new_events);
-            return;
-        }
-
-        // Slow path: NEVER drop events on contention; block until we can enqueue.
-        let delayed_count = new_events.len();
-        tracing::warn!(
-            "[WinTab] Lock contention, delaying enqueue of {} events",
-            delayed_count
-        );
-
-        match events.lock() {
-            Ok(mut events_lock) => {
-                events_lock.extend(new_events);
-                tracing::debug!(
-                    "[WinTab] Delayed enqueue completed for {} events",
-                    delayed_count
-                );
-            }
-            Err(poisoned) => {
-                // Keep forwarding events even if mutex was poisoned by a panic
-                // in another thread. Dropping input is worse than recovering.
-                tracing::error!(
-                    "[WinTab] Event queue lock poisoned, recovering and enqueueing {} delayed events",
-                    delayed_count
-                );
-                let mut events_lock = poisoned.into_inner();
-                events_lock.extend(new_events);
-            }
-        }
-    }
-
     /// Create a new WinTab backend
     pub fn new() -> Self {
         Self {
@@ -92,9 +56,13 @@ impl WinTabBackend {
             info: None,
             config: TabletConfig::default(),
             running: Arc::new(AtomicBool::new(false)),
-            events: Arc::new(Mutex::new(Vec::with_capacity(64))),
+            events: Arc::new(InputEventQueue::new(
+                super::backend::InputBackpressureMode::Lossless,
+                default_event_queue_capacity(),
+            )),
             poll_thread: None,
             pressure_max: 32767.0,
+            stream_id: 1,
             #[cfg(target_os = "windows")]
             hwnd: None,
         }
@@ -219,6 +187,10 @@ impl TabletBackend for WinTabBackend {
     #[cfg(target_os = "windows")]
     fn init(&mut self, config: &TabletConfig) -> Result<(), String> {
         self.config = config.clone();
+        self.events = Arc::new(InputEventQueue::new(
+            config.backpressure_mode,
+            default_event_queue_capacity(),
+        ));
 
         let (lib, wt_info, _wt_open, _wt_close, _wt_packets_get, _wt_enable, _wt_overlap) =
             Self::load_wintab_functions()?;
@@ -261,12 +233,14 @@ impl TabletBackend for WinTabBackend {
             return Ok(()); // Already running
         }
 
+        self.events.reopen();
         self.running.store(true, Ordering::SeqCst);
 
         let running = self.running.clone();
         let events = self.events.clone();
         let polling_interval_ms = 1000 / self.config.polling_rate_hz as u64;
         let pressure_max = self.pressure_max;
+        let stream_id = self.stream_id;
         // Note: pressure_curve is now applied in commands.rs AFTER smoothing
         let hwnd_value = self.hwnd; // Copy the stored HWND
 
@@ -380,17 +354,15 @@ impl TabletBackend for WinTabBackend {
                 };
 
                 if count > 0 {
-                    let mut new_events = Vec::with_capacity(count as usize);
-
                     for packet in packets.iter().take(count as usize) {
                         // Check proximity from pkStatus (TPS::PROXIMITY = 0x01)
                         let proximity_bit = packet.pkStatus.bits() & 0x01 != 0;
                         let in_proximity = proximity_bit || packet.pkNormalPressure > 0;
 
                         if in_proximity && !was_in_proximity {
-                            new_events.push(TabletEvent::ProximityEnter);
+                            let _ = events.enqueue_event(TabletEventV2::ProximityEnter);
                         } else if !in_proximity && was_in_proximity {
-                            new_events.push(TabletEvent::ProximityLeave);
+                            let _ = events.enqueue_event(TabletEventV2::ProximityLeave);
                         }
                         was_in_proximity = in_proximity;
 
@@ -408,21 +380,30 @@ impl TabletBackend for WinTabBackend {
                         let tilt_y =
                             (packet.pkOrientation.orAltitude as f32 / 10.0).clamp(-90.0, 90.0);
 
-                        // Always emit input events so frontend can track current tablet position
-                        // Frontend will use pressure value to determine if pen is touching
-                        let point = RawInputPoint {
+                        let host_time_us = super::current_time_us();
+                        let device_time_us = (packet.pkTime as u64).saturating_mul(1000);
+                        let sample = InputSampleV2 {
+                            seq: 0,
+                            stream_id,
+                            source: InputSource::WinTab,
+                            pointer_id: 0,
+                            phase: if pressure > 0.0 {
+                                InputPhase::Move
+                            } else {
+                                InputPhase::Hover
+                            },
                             x,
                             y,
                             pressure,
                             tilt_x,
                             tilt_y,
-                            timestamp_ms: packet.pkTime as u64,
+                            rotation: 0.0,
+                            host_time_us,
+                            device_time_us,
+                            timestamp_ms: host_time_us / 1000,
                         };
-
-                        new_events.push(TabletEvent::Input(point));
+                        let _ = events.enqueue_sample(sample);
                     }
-
-                    WinTabBackend::enqueue_polled_events(&events, new_events);
                 }
 
                 thread::sleep(Duration::from_millis(polling_interval_ms));
@@ -447,10 +428,12 @@ impl TabletBackend for WinTabBackend {
 
     fn stop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
+        self.events.close();
 
         if let Some(handle) = self.poll_thread.take() {
             let _ = handle.join();
         }
+        self.events.clear();
 
         tracing::info!("[WinTab] Stopped");
     }
@@ -463,14 +446,12 @@ impl TabletBackend for WinTabBackend {
         self.info.as_ref()
     }
 
-    fn poll(&mut self, events: &mut Vec<TabletEvent>) -> usize {
-        if let Ok(mut events_lock) = self.events.lock() {
-            let count = events_lock.len();
-            events.append(&mut events_lock);
-            count
-        } else {
-            0
-        }
+    fn poll(&mut self, events: &mut Vec<TabletEventV2>) -> usize {
+        self.events.drain_into(events, super::current_time_us)
+    }
+
+    fn queue_metrics(&self) -> InputQueueMetrics {
+        self.events.metrics_snapshot()
     }
 
     #[cfg(target_os = "windows")]

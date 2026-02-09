@@ -15,7 +15,6 @@ const MAX_POINTS_PER_FRAME = 80;
 const TARGET_BUILDUP_DABS_PER_SEC = 5;
 const BUILDUP_INTERVAL_MS = 1000 / TARGET_BUILDUP_DABS_PER_SEC;
 const MAX_BUILDUP_DABS_PER_FRAME = 1;
-const WINTAB_CURRENT_POINT_MAX_AGE_MS = 80;
 
 interface QueuedPoint {
   x: number;
@@ -440,10 +439,7 @@ export function useStrokeProcessor({
             if (isWinTabActive) {
               const pt = tabletState.currentPoint;
               if (pt) {
-                const now = performance.now();
-                if (Math.abs(pt.timestamp_ms - now) <= WINTAB_CURRENT_POINT_MAX_AGE_MS) {
-                  pressure = pt.pressure;
-                }
+                pressure = pt.pressure;
               }
             }
 

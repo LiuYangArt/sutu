@@ -309,6 +309,17 @@
   color: var(--text-secondary);
 }
 
+.tablet-status-info .status-row-warning span:first-child {
+  color: var(--danger);
+}
+
+.tablet-status-info .status-row-warning span:last-child {
+  color: var(--text-primary);
+  max-width: 70%;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .tablet-hint-card {
   display: flex;
   flex-direction: column;

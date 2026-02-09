@@ -8,7 +8,9 @@ pub mod wintab_backend;
 pub mod wintab_spike;
 
 pub use backend::{
-    PressureCurve, TabletBackend, TabletConfig, TabletEvent, TabletInfo, TabletStatus,
+    InputBackpressureMode, InputEventQueue, InputPhase, InputQueueMetrics, InputSampleV2,
+    InputSource, PressureCurve, TabletBackend, TabletConfig, TabletEventV2, TabletInfo,
+    TabletStatus,
 };
 pub use pointer_backend::PointerEventBackend;
 pub use processor::{InputProcessor, PressureSmoother};
@@ -61,13 +63,17 @@ impl RawInputPoint {
 }
 
 /// Get current time in milliseconds
-fn current_time_ms() -> u64 {
+pub(crate) fn current_time_us() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
+        .map(|d| d.as_micros() as u64)
         .unwrap_or(0)
+}
+
+pub(crate) fn current_time_ms() -> u64 {
+    current_time_us() / 1000
 }
 
 #[cfg(test)]

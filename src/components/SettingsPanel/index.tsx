@@ -11,7 +11,7 @@ import {
   RenderMode,
   GPURenderScaleMode,
 } from '@/stores/settings';
-import { useTabletStore, BackendType } from '@/stores/tablet';
+import { useTabletStore, BackendType, InputBackpressureMode } from '@/stores/tablet';
 import './SettingsPanel.css';
 
 // Tab configuration
@@ -44,6 +44,12 @@ function getTabletStatusColor(status: string): string {
   if (status === 'Connected') return '#4f4';
   if (status === 'Error') return '#f44';
   return '#888';
+}
+
+function normalizeBackendType(value: string | null | undefined): BackendType {
+  if (value === 'wintab') return 'wintab';
+  if (value === 'pointerevent') return 'pointerevent';
+  return 'auto';
 }
 
 interface PointerEventDiagnosticsSnapshot {
@@ -84,6 +90,11 @@ function normalizeTiltDegrees(value: number): number {
 function toFixed(value: number, digits: number = 3): string {
   if (!Number.isFinite(value)) return '-';
   return value.toFixed(digits);
+}
+
+function formatLatencyUs(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '-';
+  return `${(value / 1000).toFixed(2)} ms`;
 }
 
 function toDegreesString(rad: number | null): string {
@@ -359,12 +370,23 @@ function GeneralSettings() {
 
 // Tablet settings tab
 function TabletSettings() {
-  const { tablet, setTabletBackend, setPollingRate, setAutoStart, setPressureCurve } =
-    useSettingsStore();
+  const {
+    tablet,
+    setTabletBackend,
+    setPollingRate,
+    setAutoStart,
+    setPressureCurve,
+    setBackpressureMode,
+  } = useSettingsStore();
 
   const {
     status,
     backend,
+    requestedBackend,
+    activeBackend,
+    fallbackReason,
+    backpressureMode,
+    queueMetrics,
     info,
     isInitialized,
     isStreaming,
@@ -377,9 +399,11 @@ function TabletSettings() {
 
   const statusColor = getTabletStatusColor(status);
   const [pointerDiag, setPointerDiag] = useState<PointerEventDiagnosticsSnapshot | null>(null);
-  const backendLower = typeof backend === 'string' ? backend.toLowerCase() : 'none';
-  const isWinTabActive =
-    backendLower === 'wintab' || (backendLower !== 'pointerevent' && tablet.backend === 'wintab');
+  const [isApplyingPipelineConfig, setIsApplyingPipelineConfig] = useState(false);
+  const activeBackendLower =
+    typeof activeBackend === 'string' ? activeBackend.toLowerCase() : 'none';
+  const requestedBackendType = normalizeBackendType(requestedBackend || tablet.backend);
+  const isWinTabActive = activeBackendLower === 'wintab';
   const toggleTargetBackend: BackendType = isWinTabActive ? 'pointerevent' : 'wintab';
   const toggleBackendLabel = isWinTabActive ? 'Use PointerEvent' : 'Use WinTab';
 
@@ -388,6 +412,7 @@ function TabletSettings() {
       backend: tablet.backend,
       pollingRate: tablet.pollingRate,
       pressureCurve: tablet.pressureCurve,
+      backpressureMode: tablet.backpressureMode,
     });
     if (tablet.autoStart) {
       await start();
@@ -406,9 +431,28 @@ function TabletSettings() {
     const switched = await switchBackend(toggleTargetBackend, {
       pollingRate: tablet.pollingRate,
       pressureCurve: tablet.pressureCurve,
+      backpressureMode: tablet.backpressureMode,
     });
     if (switched) {
       setTabletBackend(toggleTargetBackend);
+    }
+  };
+
+  const handleApplyPipelineConfig = async () => {
+    if (!isInitialized) return;
+    setIsApplyingPipelineConfig(true);
+    try {
+      const switched = await switchBackend(requestedBackendType, {
+        pollingRate: tablet.pollingRate,
+        pressureCurve: tablet.pressureCurve,
+        backpressureMode: tablet.backpressureMode,
+      });
+      if (switched) {
+        setTabletBackend(requestedBackendType);
+      }
+      await refresh();
+    } finally {
+      setIsApplyingPipelineConfig(false);
     }
   };
 
@@ -520,6 +564,18 @@ function TabletSettings() {
             <span>Status:</span>
             <span style={{ color: statusColor }}>{status}</span>
           </div>
+          <div className="status-row">
+            <span>Requested Backend:</span>
+            <span>{requestedBackend}</span>
+          </div>
+          <div className="status-row">
+            <span>Active Backend:</span>
+            <span>{activeBackend}</span>
+          </div>
+          <div className="status-row">
+            <span>Backpressure:</span>
+            <span>{backpressureMode}</span>
+          </div>
           {info && (
             <>
               <div className="status-row">
@@ -538,7 +594,72 @@ function TabletSettings() {
               </div>
             </>
           )}
+          {fallbackReason && (
+            <div className="status-row status-row-warning">
+              <span>Fallback:</span>
+              <span>{fallbackReason}</span>
+            </div>
+          )}
         </div>
+      </div>
+
+      <div className="settings-section">
+        <label className="settings-label">INPUT PIPELINE</label>
+        <div className="settings-row">
+          <span>Backpressure mode:</span>
+          <select
+            className="settings-select"
+            value={tablet.backpressureMode}
+            onChange={(e) => setBackpressureMode(e.target.value as InputBackpressureMode)}
+          >
+            <option value="lossless">Lossless (no sample drop)</option>
+            <option value="latency_capped">Latency capped (drop old samples)</option>
+          </select>
+        </div>
+        <div className="settings-row">
+          <span>Queue enqueued / dequeued:</span>
+          <span>
+            {queueMetrics.enqueued} / {queueMetrics.dequeued}
+          </span>
+        </div>
+        <div className="settings-row">
+          <span>Queue dropped:</span>
+          <span>{queueMetrics.dropped}</span>
+        </div>
+        <div className="settings-row">
+          <span>Queue depth (current / max):</span>
+          <span>
+            {queueMetrics.current_depth} / {queueMetrics.max_depth}
+          </span>
+        </div>
+        <div className="settings-row">
+          <span>Queue latency (p50 / p95 / p99):</span>
+          <span>
+            {formatLatencyUs(queueMetrics.latency_p50_us)} /{' '}
+            {formatLatencyUs(queueMetrics.latency_p95_us)} /{' '}
+            {formatLatencyUs(queueMetrics.latency_p99_us)}
+          </span>
+        </div>
+        <div className="settings-row">
+          <span>Queue latency (last):</span>
+          <span>{formatLatencyUs(queueMetrics.latency_last_us)}</span>
+        </div>
+        {isInitialized && (
+          <>
+            <div className="settings-actions">
+              <button
+                className="settings-btn"
+                disabled={isApplyingPipelineConfig}
+                onClick={handleApplyPipelineConfig}
+              >
+                {isApplyingPipelineConfig ? 'Applying...' : 'Apply Pipeline Config'}
+              </button>
+            </div>
+            <div className="tablet-live-hint">
+              应用后会重建当前输入后端；如果正在采样，会自动无缝重启。
+            </div>
+          </>
+        )}
       </div>
 
       <div className="settings-section">
@@ -831,13 +952,21 @@ export function SettingsPanel() {
       clearScrollDragSession();
     };
 
+    const handleWindowPointerRawUpdate = (event: Event): void => {
+      handleWindowPointerMove(event as PointerEvent);
+    };
+
     window.addEventListener('pointermove', handleWindowPointerMove, { capture: true });
+    window.addEventListener('pointerrawupdate', handleWindowPointerRawUpdate, { capture: true });
     window.addEventListener('pointerup', handleWindowPointerUp, { capture: true });
     window.addEventListener('pointercancel', handleWindowPointerCancel, { capture: true });
     window.addEventListener('blur', handleWindowBlur);
 
     return () => {
       window.removeEventListener('pointermove', handleWindowPointerMove, { capture: true });
+      window.removeEventListener('pointerrawupdate', handleWindowPointerRawUpdate, {
+        capture: true,
+      });
       window.removeEventListener('pointerup', handleWindowPointerUp, { capture: true });
       window.removeEventListener('pointercancel', handleWindowPointerCancel, { capture: true });
       window.removeEventListener('blur', handleWindowBlur);
@@ -914,6 +1043,10 @@ export function SettingsPanel() {
     clearScrollDragSession(event.pointerId);
   };
 
+  const handleSettingsMainLostPointerCapture = (event: React.PointerEvent<HTMLDivElement>) => {
+    clearScrollDragSession(event.pointerId);
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case 'appearance':
@@ -949,6 +1082,7 @@ export function SettingsPanel() {
             onPointerMove={handleSettingsMainPointerMove}
             onPointerUp={finishSettingsMainPointerDrag}
             onPointerCancel={finishSettingsMainPointerDrag}
+            onLostPointerCapture={handleSettingsMainLostPointerCapture}
           >
             {renderContent()}
           </div>
