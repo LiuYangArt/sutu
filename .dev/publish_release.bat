@@ -25,21 +25,46 @@ echo  [1] 补丁 (Patch) : 修复 Bug (!CURRENT_VERSION! -^> !NEXT_PATCH!)
 echo  [2] 次版本 (Minor): 新增功能 (!CURRENT_VERSION! -^> !NEXT_MINOR!)
 echo  [3] 主版本 (Major): 重大变更 (!CURRENT_VERSION! -^> !NEXT_MAJOR!)
 echo  [4] 退出
+echo  [5] 远程预检打包 (不发版, 仅构建验证)
 echo.
 echo ========================================================
 echo.
 
-set /p choice="请输入选项 [1-4]: "
+set /p choice="请输入选项 [1-5]: "
 
 if "%choice%"=="1" set vtype=patch
 if "%choice%"=="2" set vtype=minor
 if "%choice%"=="3" set vtype=major
 if "%choice%"=="4" goto :eof
+if "%choice%"=="5" goto preview_build
 
 if not defined vtype (
     echo 无效输入，请重新选择。
     timeout /t 2 >nul
     goto menu
+)
+
+echo.
+echo --------------------------------------------------------
+echo [0/2] 发布前本地预检
+echo --------------------------------------------------------
+echo.
+set /p run_local_check="是否执行本地预检? (Y/N, 推荐Y): "
+
+if /i "!run_local_check!"=="y" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".dev\pre_release_check.ps1"
+    if !errorlevel! neq 0 (
+        echo.
+        echo [错误] 本地预检未通过，建议先修复再发布。
+        set /p force_publish="仍要继续发布吗? (Y/N): "
+        if /i not "!force_publish!"=="y" (
+            echo 已取消发布，返回菜单。
+            timeout /t 2 >nul
+            goto menu
+        )
+    )
+) else (
+    echo 已跳过本地预检。
 )
 
 echo.
@@ -93,3 +118,29 @@ if /i "%confirm%"=="y" (
 )
 
 pause
+goto :eof
+
+:preview_build
+echo.
+echo --------------------------------------------------------
+echo 触发远程预检打包 (不发版)
+echo --------------------------------------------------------
+for /f %%i in ('git rev-parse --abbrev-ref HEAD') do set current_branch=%%i
+if not defined current_branch set current_branch=main
+
+echo 当前分支: !current_branch!
+echo 正在触发 GitHub Actions workflow: package-preview.yml
+gh workflow run package-preview.yml --ref !current_branch!
+
+if !errorlevel! equ 0 (
+    echo.
+    echo 已触发远程预检打包。
+    echo 可在以下页面查看运行状态:
+    echo https://github.com/LiuYangArt/PaintBoard/actions/workflows/package-preview.yml
+) else (
+    echo.
+    echo [错误] 触发失败，请检查 gh 登录状态或 workflow 文件是否已推送。
+)
+
+pause
+goto menu

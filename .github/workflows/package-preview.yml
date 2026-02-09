@@ -1,15 +1,20 @@
-name: Release
+name: Package Preview
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/package-preview.yml"
 
 env:
   CARGO_TERM_COLOR: always
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # ============================================
@@ -54,7 +59,7 @@ jobs:
           echo "Cargo dependency scope preflight passed."
 
   # ============================================
-  # Build per platform
+  # Build packages for preview only (no release)
   # ============================================
   build:
     name: Build ${{ matrix.platform_name }}
@@ -74,11 +79,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get version from tag
-        id: get_version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -87,8 +87,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'pnpm'
+          node-version: "20"
+          cache: "pnpm"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -108,25 +108,23 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
           $exePath = "src-tauri/target/release/PaintBoard.exe"
-          $zipName = "PaintBoard_${version}_x64-portable.zip"
+          $zipName = "PaintBoard_preview_${shortSha}_x64-portable.zip"
           $zipPath = "src-tauri/target/release/bundle/$zipName"
 
-          # Create temp directory and copy exe
           $tempDir = "src-tauri/target/release/bundle/portable"
           New-Item -ItemType Directory -Force -Path $tempDir
           Copy-Item $exePath $tempDir
 
-          # Create zip
           Compress-Archive -Path "$tempDir/*" -DestinationPath $zipPath -Force
-          Write-Host "Created portable ZIP: $zipPath"
+          Write-Host "Created preview portable ZIP: $zipPath"
 
-      - name: Collect Windows release assets
+      - name: Collect Windows preview assets
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $dest = "release-assets/windows"
+          $dest = "preview-assets/windows"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
           $patterns = @(
@@ -143,18 +141,14 @@ jobs:
 
           $copied = Get-ChildItem -Path $dest -File -ErrorAction SilentlyContinue
           if (-not $copied) {
-            throw "No Windows release assets were collected."
+            throw "No Windows preview assets were collected."
           }
 
-          $copied | ForEach-Object {
-            Write-Host "Collected Windows asset: $($_.Name)"
-          }
-
-      - name: Collect macOS release assets
+      - name: Collect macOS preview assets
         if: matrix.platform == 'macos'
         shell: bash
         run: |
-          mkdir -p release-assets/macos
+          mkdir -p preview-assets/macos
           shopt -s nullglob
           files=(
             src-tauri/target/release/bundle/dmg/*.dmg
@@ -163,67 +157,16 @@ jobs:
           )
 
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No macOS release assets were collected." >&2
+            echo "No macOS preview assets were collected." >&2
             exit 1
           fi
 
-          cp "${files[@]}" release-assets/macos/
-          for file in "${files[@]}"; do
-            echo "Collected macOS asset: $(basename "$file")"
-          done
+          cp "${files[@]}" preview-assets/macos/
 
-      - name: Upload build artifacts
+      - name: Upload preview artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-assets-${{ matrix.platform }}
-          path: release-assets/${{ matrix.platform }}/*
+          name: package-preview-${{ matrix.platform }}-${{ github.run_number }}
+          path: preview-assets/${{ matrix.platform }}/*
           if-no-files-found: error
           retention-days: 7
-
-  # ============================================
-  # Publish release after all builds completed
-  # ============================================
-  publish-release:
-    name: Publish GitHub Release
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Get version from tag
-        id: get_version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-assets-*
-          path: release-assets
-          merge-multiple: true
-
-      - name: List release assets
-        shell: bash
-        run: |
-          find release-assets -type f | sort
-
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
-        with:
-          name: PaintBoard v${{ steps.get_version.outputs.VERSION }}
-          draft: false
-          prerelease: false
-          body: |
-            ## PaintBoard v${{ steps.get_version.outputs.VERSION }}
-
-            ### Changes
-            - See commit history for details
-
-            ### Installation
-            - **Windows**: Download `.msi` or `.exe` installer; or `.zip` for portable mode
-            - **macOS**: Download `.dmg` package (and updater archive/signature if needed)
-
-            ### Requirements
-            - Windows 10 (1903) or later
-            - WebView2 Runtime (included in Windows 11, auto-installed on Windows 10)
-            - macOS 11 or later (actual minimum follows your app/SDK config)
-          files: |
-            release-assets/**/*
