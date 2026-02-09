@@ -1230,6 +1230,33 @@ pub fn delete_file_if_exists(path: String) -> Result<(), String> {
     std::fs::remove_file(path_ref).map_err(|e| e.to_string())
 }
 
+/// Reveal file in system explorer (Windows only)
+#[tauri::command]
+pub fn reveal_in_explorer(path: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("explorer returned exit status: {}", status))
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Err("reveal_in_explorer is only supported on Windows".to_string())
+    }
+}
+
 // ============================================================================
 // Brush Library Commands
 // ============================================================================

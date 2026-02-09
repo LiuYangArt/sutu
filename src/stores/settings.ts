@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { BaseDirectory, readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
+import {
+  type QuickExportBackgroundPreset,
+  type QuickExportFormat,
+  type QuickExportSettings,
+} from '@/utils/quickExport';
 
 // Settings file path (relative to app config directory)
 const SETTINGS_FILE = 'settings.json';
@@ -115,6 +120,7 @@ interface PersistedSettings {
   brush: BrushSettings;
   newFile: NewFileSettings;
   general: GeneralSettings;
+  quickExport: QuickExportSettings;
 }
 
 interface SettingsState extends PersistedSettings {
@@ -156,6 +162,9 @@ interface SettingsState extends PersistedSettings {
   setAutosaveIntervalMinutes: (minutes: number) => void;
   setOpenLastFileOnStartup: (enabled: boolean) => void;
 
+  // Quick export actions
+  setQuickExport: (patch: Partial<QuickExportSettings>) => void;
+
   // Persistence
   _loadSettings: () => Promise<void>;
   _saveSettings: () => Promise<void>;
@@ -170,6 +179,15 @@ export const DEFAULT_NEW_FILE_SETTINGS: NewFileSettings = {
     presetId: 'device-1080p',
     orientation: 'landscape',
   },
+};
+
+export const DEFAULT_QUICK_EXPORT_SETTINGS: QuickExportSettings = {
+  lastPath: '',
+  lastFormat: 'png',
+  lastWidth: 0,
+  lastHeight: 0,
+  transparentBackground: true,
+  backgroundPreset: 'current-bg',
 };
 
 function cloneDefaultNewFileSettings(): NewFileSettings {
@@ -194,6 +212,47 @@ function mergeLoadedNewFileSettings(loadedNewFile: unknown): NewFileSettings {
       ...defaults.lastUsed,
       ...(partial.lastUsed ?? {}),
     },
+  };
+}
+
+function normalizeQuickExportFormat(value: unknown): QuickExportFormat {
+  if (value === 'jpg' || value === 'webp') return value;
+  return 'png';
+}
+
+function normalizeQuickExportBackgroundPreset(value: unknown): QuickExportBackgroundPreset {
+  if (value === 'white' || value === 'black' || value === 'current-bg') {
+    return value;
+  }
+  return 'current-bg';
+}
+
+function mergeLoadedQuickExportSettings(loadedQuickExport: unknown): QuickExportSettings {
+  const defaults = { ...DEFAULT_QUICK_EXPORT_SETTINGS };
+  if (!loadedQuickExport || typeof loadedQuickExport !== 'object') {
+    return defaults;
+  }
+
+  const partial = loadedQuickExport as Partial<QuickExportSettings>;
+  const width =
+    Number.isFinite(partial.lastWidth) && (partial.lastWidth as number) > 0
+      ? Math.round(partial.lastWidth as number)
+      : defaults.lastWidth;
+  const height =
+    Number.isFinite(partial.lastHeight) && (partial.lastHeight as number) > 0
+      ? Math.round(partial.lastHeight as number)
+      : defaults.lastHeight;
+
+  return {
+    lastPath: typeof partial.lastPath === 'string' ? partial.lastPath : defaults.lastPath,
+    lastFormat: normalizeQuickExportFormat(partial.lastFormat),
+    lastWidth: width,
+    lastHeight: height,
+    transparentBackground:
+      typeof partial.transparentBackground === 'boolean'
+        ? partial.transparentBackground
+        : defaults.transparentBackground,
+    backgroundPreset: normalizeQuickExportBackgroundPreset(partial.backgroundPreset),
   };
 }
 
@@ -226,6 +285,7 @@ const defaultSettings: PersistedSettings = {
     autosaveIntervalMinutes: 10,
     openLastFileOnStartup: true,
   },
+  quickExport: { ...DEFAULT_QUICK_EXPORT_SETTINGS },
 };
 
 function createCustomSizePresetId(): string {
@@ -442,6 +502,13 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setQuickExport: (patch) => {
+      set((state) => {
+        state.quickExport = { ...state.quickExport, ...patch };
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     // Load settings from file
     _loadSettings: async () => {
       try {
@@ -479,6 +546,9 @@ export const useSettingsStore = create<SettingsState>()(
             } else {
               state.general = { ...defaultSettings.general };
             }
+            state.quickExport = mergeLoadedQuickExportSettings(
+              (loaded as Partial<PersistedSettings>).quickExport
+            );
             state.isLoaded = true;
           });
         } else {
@@ -508,6 +578,7 @@ export const useSettingsStore = create<SettingsState>()(
           brush: state.brush,
           newFile: state.newFile,
           general: state.general,
+          quickExport: state.quickExport,
         };
 
         await writeTextFile(SETTINGS_FILE, JSON.stringify(data, null, 2), {

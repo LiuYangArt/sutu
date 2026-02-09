@@ -15,7 +15,11 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
   mkdir: fsMocks.mkdir,
 }));
 
-import { DEFAULT_NEW_FILE_SETTINGS, useSettingsStore } from '../settings';
+import {
+  DEFAULT_NEW_FILE_SETTINGS,
+  DEFAULT_QUICK_EXPORT_SETTINGS,
+  useSettingsStore,
+} from '../settings';
 
 describe('settings store newFile persistence', () => {
   beforeEach(() => {
@@ -51,6 +55,7 @@ describe('settings store newFile persistence', () => {
         customSizePresets: [],
         lastUsed: { ...DEFAULT_NEW_FILE_SETTINGS.lastUsed },
       },
+      quickExport: { ...DEFAULT_QUICK_EXPORT_SETTINGS },
     }));
   });
 
@@ -89,6 +94,7 @@ describe('settings store newFile persistence', () => {
     expect('colorBlendMode' in (state.brush as unknown as Record<string, unknown>)).toBe(false);
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
+    expect(state.quickExport).toEqual(DEFAULT_QUICK_EXPORT_SETTINGS);
   });
 
   it('persists general settings fields', async () => {
@@ -99,6 +105,14 @@ describe('settings store newFile persistence', () => {
     await useSettingsStore.getState()._loadSettings();
     useSettingsStore.getState().setAutosaveIntervalMinutes(15);
     useSettingsStore.getState().setOpenLastFileOnStartup(false);
+    useSettingsStore.getState().setQuickExport({
+      lastPath: 'D:\\exports\\sample.png',
+      lastFormat: 'png',
+      lastWidth: 1000,
+      lastHeight: 500,
+      transparentBackground: false,
+      backgroundPreset: 'black',
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 600));
 
@@ -108,8 +122,22 @@ describe('settings store newFile persistence', () => {
     const content = String(lastCall?.[1] ?? '{}');
     const parsed = JSON.parse(content) as {
       general?: { autosaveIntervalMinutes?: number; openLastFileOnStartup?: boolean };
+      quickExport?: {
+        lastPath?: string;
+        lastFormat?: string;
+        lastWidth?: number;
+        lastHeight?: number;
+        transparentBackground?: boolean;
+        backgroundPreset?: string;
+      };
     };
     expect(parsed.general?.autosaveIntervalMinutes).toBe(15);
     expect(parsed.general?.openLastFileOnStartup).toBe(false);
+    expect(parsed.quickExport?.lastPath).toBe('D:\\exports\\sample.png');
+    expect(parsed.quickExport?.lastFormat).toBe('png');
+    expect(parsed.quickExport?.lastWidth).toBe(1000);
+    expect(parsed.quickExport?.lastHeight).toBe(500);
+    expect(parsed.quickExport?.transparentBackground).toBe(false);
+    expect(parsed.quickExport?.backgroundPreset).toBe('black');
   });
 });

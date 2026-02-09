@@ -5,6 +5,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { PatternLibraryPanel } from './components/PatternLibrary';
 import { BrushLibraryPanel } from './components/BrushLibrary';
 import { CanvasSizePanel } from './components/CanvasSizePanel';
+import { QuickExportPanel } from './components/QuickExportPanel';
 import { NewFilePanel, type BackgroundPreset } from './components/NewFilePanel';
 import { ConfirmUnsavedChangesDialog } from './components/ConfirmUnsavedChangesDialog';
 import { useDocumentStore, type ResizeCanvasOptions } from './stores/document';
@@ -30,6 +31,7 @@ declare global {
     __openPatternLibrary?: () => void;
     __openBrushLibrary?: () => void;
     __openCanvasSizePanel?: () => void;
+    __openQuickExportPanel?: () => void;
     __requestNewFile?: () => void;
     __requestAppExit?: () => void;
     __canvasFillLayer?: (color: string) => void;
@@ -83,6 +85,7 @@ function App() {
   const [showPatternLibrary, setShowPatternLibrary] = useState(false);
   const [showBrushLibrary, setShowBrushLibrary] = useState(false);
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState(false);
+  const [showQuickExportPanel, setShowQuickExportPanel] = useState(false);
   const [showNewFilePanel, setShowNewFilePanel] = useState(false);
   const [showUnsavedChangesDialog, setShowUnsavedChangesDialog] = useState(false);
   const settingsLoaded = useSettingsStore((s) => s.isLoaded);
@@ -265,6 +268,13 @@ function App() {
       delete window.__openCanvasSizePanel;
     };
   }, [setShowCanvasSizePanel]);
+
+  useEffect(() => {
+    window.__openQuickExportPanel = () => setShowQuickExportPanel(true);
+    return () => {
+      delete window.__openQuickExportPanel;
+    };
+  }, [setShowQuickExportPanel]);
 
   useEffect(() => {
     window.__requestNewFile = () => {
@@ -580,6 +590,10 @@ function App() {
           useDocumentStore.getState().resizeCanvas(options);
           setShowCanvasSizePanel(false);
         }}
+      />
+      <QuickExportPanel
+        isOpen={showQuickExportPanel}
+        onClose={() => setShowQuickExportPanel(false)}
       />
       <ConfirmUnsavedChangesDialog
         isOpen={showUnsavedChangesDialog}

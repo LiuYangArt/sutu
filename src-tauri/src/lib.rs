@@ -233,6 +233,7 @@ pub fn run() {
             commands::load_project,
             commands::detect_file_format,
             commands::delete_file_if_exists,
+            commands::reveal_in_explorer,
             // Pattern Library
             commands::get_patterns,
             commands::import_pat_file,

@@ -15,6 +15,7 @@ import {
   Paintbrush,
   Grid3x3,
   ImageUpscale,
+  Share,
 } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
@@ -102,6 +103,12 @@ function AppMenu() {
     await fileSave(true);
   };
 
+  const handleOpenQuickExport = () => {
+    setIsOpen(false);
+    const win = window as Window & { __openQuickExportPanel?: () => void };
+    win.__openQuickExportPanel?.();
+  };
+
   function handleExit(): void {
     setIsOpen(false);
     const win = window as Window & { __requestAppExit?: () => void };
@@ -138,6 +145,11 @@ function AppMenu() {
             <Save size={16} />
             <span>Save As...</span>
             <span className="shortcut">Ctrl+Shift+S</span>
+          </button>
+
+          <button className="menu-item" onClick={handleOpenQuickExport}>
+            <Share size={16} />
+            <span>Export</span>
           </button>
 
           <div className="menu-divider" />
@@ -227,6 +239,11 @@ export function Toolbar() {
     win.__openCanvasSizePanel?.();
   };
 
+  const handleOpenQuickExportPanel = () => {
+    const win = window as Window & { __openQuickExportPanel?: () => void };
+    win.__openQuickExportPanel?.();
+  };
+
   return (
     <header className="toolbar">
       <AppMenu />
@@ -258,6 +275,9 @@ export function Toolbar() {
       <div className="toolbar-section actions">
         <button onClick={handleOpenCanvasSizePanel} title="Canvas Size">
           <ImageUpscale {...ICON_PROPS} />
+        </button>
+        <button onClick={handleOpenQuickExportPanel} title="Quick Export">
+          <Share {...ICON_PROPS} />
         </button>
         <button
           data-testid="undo-btn"
