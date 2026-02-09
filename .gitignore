@@ -88,7 +88,6 @@ run_claude_pwsh.bat
 *.psd
 *.abr
 *.pat
-abr/
 .agent/skills/99-evolution/hooks/settings.example.json
 test-results/
 debug_output/
