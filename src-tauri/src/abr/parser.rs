@@ -1292,7 +1292,7 @@ impl AbrParser {
         {
             brush.shape_dynamics_enabled = Some(enabled);
             has_shape_info = true;
-        } else if brush_desc.get("ShDy").is_some() {
+        } else if shdy_desc.is_some() {
             // Some ABR variants store Shape Dynamics as a sub-descriptor without an explicit toggle.
             brush.shape_dynamics_enabled = Some(true);
             has_shape_info = true;
@@ -1406,11 +1406,9 @@ impl AbrParser {
             has_scatter_info = true;
         }
 
-        let mut scatter_has_direct_amount = false;
         if let Some(v) = Self::get_number(brush_desc, &["Scat", "Sctr", "scatter"]) {
             scatter.scatter = (v as f32).clamp(0.0, 1000.0);
             has_scatter_info = true;
-            scatter_has_direct_amount = true;
         }
         if let Some(v) = Self::get_bool(brush_desc, &["bothAxes"]) {
             scatter.both_axes = v;
@@ -1427,7 +1425,7 @@ impl AbrParser {
             }
             // Some ABR files store Scatter amount in scatterDynamics.jitter
             // while Scat/Sctr at root is absent (or 0 by default).
-            if !scatter_has_direct_amount || scatter.scatter <= 0.0 {
+            if scatter.scatter <= 0.0 {
                 if let Some(v) = Self::get_number(sd, &["jitter"]) {
                     scatter.scatter = (v as f32).clamp(0.0, 1000.0);
                 }
@@ -1834,6 +1832,37 @@ impl AbrParser {
 mod tests {
     use super::*;
 
+    fn make_test_brush(name: &str) -> AbrBrush {
+        AbrBrush {
+            name: name.to_string(),
+            uuid: None,
+            tip_image: None,
+            diameter: 20.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: None,
+            dynamics: None,
+            is_computed: false,
+            is_tip_only: false,
+            texture_settings: None,
+            dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
+            base_opacity: None,
+            base_flow: None,
+        }
+    }
+
     #[test]
     fn test_parse_dual_brush_size_ratio() {
         let mut brush_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
@@ -2089,34 +2118,7 @@ mod tests {
         desc.insert("Nose".to_string(), DescriptorValue::Boolean(false));
         desc.insert("Rpt ".to_string(), DescriptorValue::Boolean(true));
 
-        let mut brush = AbrBrush {
-            name: "Test".to_string(),
-            uuid: None,
-            tip_image: None,
-            diameter: 20.0,
-            spacing: 0.25,
-            angle: 0.0,
-            roundness: 1.0,
-            hardness: None,
-            dynamics: None,
-            is_computed: false,
-            is_tip_only: false,
-            texture_settings: None,
-            dual_brush_settings: None,
-            shape_dynamics_enabled: None,
-            shape_dynamics: None,
-            scatter_enabled: None,
-            scatter: None,
-            color_dynamics_enabled: None,
-            color_dynamics: None,
-            transfer_enabled: None,
-            transfer: None,
-            wet_edge_enabled: None,
-            buildup_enabled: None,
-            noise_enabled: None,
-            base_opacity: None,
-            base_flow: None,
-        };
+        let mut brush = make_test_brush("Test");
 
         AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
 
@@ -2209,34 +2211,7 @@ mod tests {
             },
         );
 
-        let mut brush = AbrBrush {
-            name: "Test".to_string(),
-            uuid: None,
-            tip_image: None,
-            diameter: 20.0,
-            spacing: 0.25,
-            angle: 0.0,
-            roundness: 1.0,
-            hardness: None,
-            dynamics: None,
-            is_computed: false,
-            is_tip_only: false,
-            texture_settings: None,
-            dual_brush_settings: None,
-            shape_dynamics_enabled: None,
-            shape_dynamics: None,
-            scatter_enabled: None,
-            scatter: None,
-            color_dynamics_enabled: None,
-            color_dynamics: None,
-            transfer_enabled: None,
-            transfer: None,
-            wet_edge_enabled: None,
-            buildup_enabled: None,
-            noise_enabled: None,
-            base_opacity: None,
-            base_flow: None,
-        };
+        let mut brush = make_test_brush("Test");
 
         AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
 
@@ -2264,34 +2239,7 @@ mod tests {
             DescriptorValue::Descriptor(sd),
         );
 
-        let mut brush = AbrBrush {
-            name: "Test".to_string(),
-            uuid: None,
-            tip_image: None,
-            diameter: 20.0,
-            spacing: 0.25,
-            angle: 0.0,
-            roundness: 1.0,
-            hardness: None,
-            dynamics: None,
-            is_computed: false,
-            is_tip_only: false,
-            texture_settings: None,
-            dual_brush_settings: None,
-            shape_dynamics_enabled: None,
-            shape_dynamics: None,
-            scatter_enabled: None,
-            scatter: None,
-            color_dynamics_enabled: None,
-            color_dynamics: None,
-            transfer_enabled: None,
-            transfer: None,
-            wet_edge_enabled: None,
-            buildup_enabled: None,
-            noise_enabled: None,
-            base_opacity: None,
-            base_flow: None,
-        };
+        let mut brush = make_test_brush("Test");
 
         AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
 
@@ -2303,34 +2251,8 @@ mod tests {
 
     #[test]
     fn test_apply_brush_tip_params_hardness_keeps_percent_scale() {
-        let mut brush = AbrBrush {
-            name: "Hardness".to_string(),
-            uuid: None,
-            tip_image: None,
-            diameter: 10.0,
-            spacing: 0.25,
-            angle: 0.0,
-            roundness: 1.0,
-            hardness: None,
-            dynamics: None,
-            is_computed: false,
-            is_tip_only: false,
-            texture_settings: None,
-            dual_brush_settings: None,
-            shape_dynamics_enabled: None,
-            shape_dynamics: None,
-            scatter_enabled: None,
-            scatter: None,
-            color_dynamics_enabled: None,
-            color_dynamics: None,
-            transfer_enabled: None,
-            transfer: None,
-            wet_edge_enabled: None,
-            buildup_enabled: None,
-            noise_enabled: None,
-            base_opacity: None,
-            base_flow: None,
-        };
+        let mut brush = make_test_brush("Hardness");
+        brush.diameter = 10.0;
 
         let mut brsh: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
         brsh.insert(
