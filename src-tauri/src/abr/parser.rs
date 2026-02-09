@@ -1285,7 +1285,11 @@ impl AbrParser {
         let mut shape = ShapeDynamicsSettings::default();
         let mut has_shape_info = false;
 
-        if let Some(enabled) = Self::get_bool(brush_desc, &["useTipDynamics"]) {
+        let shdy_desc = Self::get_descriptor(brush_desc, &["ShDy"]);
+
+        if let Some(enabled) = Self::get_bool(brush_desc, &["useTipDynamics"])
+            .or_else(|| shdy_desc.and_then(|d| Self::get_bool(d, &["useTipDynamics"])))
+        {
             brush.shape_dynamics_enabled = Some(enabled);
             has_shape_info = true;
         } else if brush_desc.get("ShDy").is_some() {
@@ -1295,7 +1299,12 @@ impl AbrParser {
         }
 
         // Size dynamics (szVr)
-        if let Some(sz) = Self::get_descriptor(brush_desc, &["szVr", "szDy"]) {
+        let root_minimum_diameter = Self::get_number(brush_desc, &["minimumDiameter"])
+            .or_else(|| shdy_desc.and_then(|d| Self::get_number(d, &["minimumDiameter"])));
+
+        if let Some(sz) = Self::get_descriptor(brush_desc, &["szVr", "szDy"])
+            .or_else(|| shdy_desc.and_then(|d| Self::get_descriptor(d, &["szVr", "szDy"])))
+        {
             has_shape_info = true;
             if let Some(v) = sz.get("bVTy") {
                 shape.size_control = Self::parse_control_source(v);
@@ -1303,18 +1312,22 @@ impl AbrParser {
             if let Some(v) = Self::get_number(sz, &["jitter"]) {
                 shape.size_jitter = (v as f32).clamp(0.0, 100.0);
             }
-            if let Some(v) = Self::get_number(sz, &["Mnm ", "minimumDiameter", "Mnm"]) {
+            if let Some(v) = root_minimum_diameter {
                 shape.minimum_diameter = (v as f32).clamp(0.0, 100.0);
-            } else if let Some(v) = Self::get_number(brush_desc, &["minimumDiameter"]) {
+            } else if let Some(v) =
+                Self::get_number(sz, &["Mnm ", "minimumDiameter", "Mnm", "minimum"])
+            {
                 shape.minimum_diameter = (v as f32).clamp(0.0, 100.0);
             }
-        } else if let Some(v) = Self::get_number(brush_desc, &["minimumDiameter"]) {
+        } else if let Some(v) = root_minimum_diameter {
             has_shape_info = true;
             shape.minimum_diameter = (v as f32).clamp(0.0, 100.0);
         }
 
         // Angle dynamics (angleDynamics)
-        if let Some(ang) = Self::get_descriptor(brush_desc, &["angleDynamics"]) {
+        if let Some(ang) = Self::get_descriptor(brush_desc, &["angleDynamics"])
+            .or_else(|| shdy_desc.and_then(|d| Self::get_descriptor(d, &["angleDynamics"])))
+        {
             has_shape_info = true;
             if let Some(v) = ang.get("bVTy") {
                 shape.angle_control = Self::parse_control_source(v);
@@ -1330,7 +1343,12 @@ impl AbrParser {
         }
 
         // Roundness dynamics (roundnessDynamics)
-        if let Some(rnd) = Self::get_descriptor(brush_desc, &["roundnessDynamics"]) {
+        let root_minimum_roundness = Self::get_number(brush_desc, &["minimumRoundness"])
+            .or_else(|| shdy_desc.and_then(|d| Self::get_number(d, &["minimumRoundness"])));
+
+        if let Some(rnd) = Self::get_descriptor(brush_desc, &["roundnessDynamics"])
+            .or_else(|| shdy_desc.and_then(|d| Self::get_descriptor(d, &["roundnessDynamics"])))
+        {
             has_shape_info = true;
             if let Some(v) = rnd.get("bVTy") {
                 shape.roundness_control = Self::parse_control_source(v);
@@ -1338,12 +1356,14 @@ impl AbrParser {
             if let Some(v) = Self::get_number(rnd, &["jitter"]) {
                 shape.roundness_jitter = (v as f32).clamp(0.0, 100.0);
             }
-            if let Some(v) = Self::get_number(rnd, &["Mnm ", "minimumRoundness", "Mnm"]) {
+            if let Some(v) = root_minimum_roundness {
                 shape.minimum_roundness = (v as f32).clamp(0.0, 100.0);
-            } else if let Some(v) = Self::get_number(brush_desc, &["minimumRoundness"]) {
+            } else if let Some(v) =
+                Self::get_number(rnd, &["Mnm ", "minimumRoundness", "Mnm", "minimum"])
+            {
                 shape.minimum_roundness = (v as f32).clamp(0.0, 100.0);
             }
-        } else if let Some(v) = Self::get_number(brush_desc, &["minimumRoundness"]) {
+        } else if let Some(v) = root_minimum_roundness {
             has_shape_info = true;
             shape.minimum_roundness = (v as f32).clamp(0.0, 100.0);
         }
@@ -1386,9 +1406,11 @@ impl AbrParser {
             has_scatter_info = true;
         }
 
+        let mut scatter_has_direct_amount = false;
         if let Some(v) = Self::get_number(brush_desc, &["Scat", "Sctr", "scatter"]) {
             scatter.scatter = (v as f32).clamp(0.0, 1000.0);
             has_scatter_info = true;
+            scatter_has_direct_amount = true;
         }
         if let Some(v) = Self::get_bool(brush_desc, &["bothAxes"]) {
             scatter.both_axes = v;
@@ -1402,6 +1424,13 @@ impl AbrParser {
             has_scatter_info = true;
             if let Some(v) = sd.get("bVTy") {
                 scatter.scatter_control = Self::parse_control_source(v);
+            }
+            // Some ABR files store Scatter amount in scatterDynamics.jitter
+            // while Scat/Sctr at root is absent (or 0 by default).
+            if !scatter_has_direct_amount || scatter.scatter <= 0.0 {
+                if let Some(v) = Self::get_number(sd, &["jitter"]) {
+                    scatter.scatter = (v as f32).clamp(0.0, 1000.0);
+                }
             }
         }
         if let Some(cd) = Self::get_descriptor(brush_desc, &["countDynamics"]) {
@@ -2139,6 +2168,140 @@ mod tests {
     }
 
     #[test]
+    fn test_shape_minimum_prefers_root_over_zero_in_dynamics_descriptor() {
+        let mut desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        desc.insert("useTipDynamics".to_string(), DescriptorValue::Boolean(true));
+
+        let mut szvr: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        szvr.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 0.0,
+            },
+        );
+        desc.insert("szVr".to_string(), DescriptorValue::Descriptor(szvr));
+        desc.insert(
+            "minimumDiameter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 44.0,
+            },
+        );
+
+        let mut rnd: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        rnd.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 0.0,
+            },
+        );
+        desc.insert(
+            "roundnessDynamics".to_string(),
+            DescriptorValue::Descriptor(rnd),
+        );
+        desc.insert(
+            "minimumRoundness".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 25.0,
+            },
+        );
+
+        let mut brush = AbrBrush {
+            name: "Test".to_string(),
+            uuid: None,
+            tip_image: None,
+            diameter: 20.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: None,
+            dynamics: None,
+            is_computed: false,
+            is_tip_only: false,
+            texture_settings: None,
+            dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
+            base_opacity: None,
+            base_flow: None,
+        };
+
+        AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
+
+        let sh = brush.shape_dynamics.expect("shape dynamics");
+        assert_eq!(sh.minimum_diameter, 44.0);
+        assert_eq!(sh.minimum_roundness, 25.0);
+    }
+
+    #[test]
+    fn test_scatter_uses_scatter_dynamics_jitter_when_root_scatter_missing() {
+        let mut desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        desc.insert("useScatter".to_string(), DescriptorValue::Boolean(true));
+
+        let mut sd: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        sd.insert("bVTy".to_string(), DescriptorValue::Integer(2));
+        sd.insert(
+            "jitter".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 236.0,
+            },
+        );
+        desc.insert(
+            "scatterDynamics".to_string(),
+            DescriptorValue::Descriptor(sd),
+        );
+
+        let mut brush = AbrBrush {
+            name: "Test".to_string(),
+            uuid: None,
+            tip_image: None,
+            diameter: 20.0,
+            spacing: 0.25,
+            angle: 0.0,
+            roundness: 1.0,
+            hardness: None,
+            dynamics: None,
+            is_computed: false,
+            is_tip_only: false,
+            texture_settings: None,
+            dual_brush_settings: None,
+            shape_dynamics_enabled: None,
+            shape_dynamics: None,
+            scatter_enabled: None,
+            scatter: None,
+            color_dynamics_enabled: None,
+            color_dynamics: None,
+            transfer_enabled: None,
+            transfer: None,
+            wet_edge_enabled: None,
+            buildup_enabled: None,
+            noise_enabled: None,
+            base_opacity: None,
+            base_flow: None,
+        };
+
+        AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
+
+        assert_eq!(brush.scatter_enabled, Some(true));
+        let sc = brush.scatter.expect("scatter");
+        assert_eq!(sc.scatter_control, crate::abr::ControlSource::PenPressure);
+        assert_eq!(sc.scatter, 236.0);
+    }
+
+    #[test]
     fn test_apply_brush_tip_params_hardness_keeps_percent_scale() {
         let mut brush = AbrBrush {
             name: "Hardness".to_string(),
@@ -2274,6 +2437,45 @@ mod tests {
                 eprintln!("Parse result: {}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_parse_liuyang_shape_minimum_and_scatter_fallback() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("abr/liuyang_paintbrushes.abr");
+
+        if !path.exists() {
+            eprintln!("Test file not found: {:?}, skipping test", path);
+            return;
+        }
+
+        let data = std::fs::read(&path).expect("Failed to read test file");
+        let abr_file = AbrParser::parse(&data).expect("Failed to parse ABR file");
+
+        let minimum_probe = abr_file
+            .brushes
+            .iter()
+            .find(|b| b.name == "Sampled Brush 1 67")
+            .expect("Sampled Brush 1 67 not found");
+        let shape = minimum_probe
+            .shape_dynamics
+            .as_ref()
+            .expect("shape dynamics should exist");
+        assert_eq!(shape.minimum_diameter, 44.0);
+        assert_eq!(shape.minimum_roundness, 25.0);
+
+        let scatter_probe = abr_file
+            .brushes
+            .iter()
+            .find(|b| b.name == "scribbles 2")
+            .expect("scribbles 2 not found");
+        let scatter = scatter_probe
+            .scatter
+            .as_ref()
+            .expect("scatter should exist");
+        assert_eq!(scatter.scatter, 62.0);
     }
 
     #[test]
