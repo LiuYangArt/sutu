@@ -354,15 +354,17 @@ export async function pushPointerEvent(
 ): Promise<void> {
   try {
     await invoke('push_pointer_event', {
-      x,
-      y,
-      pressure,
-      tiltX,
-      tiltY,
-      rotation: options?.rotation,
-      pointerId: options?.pointerId,
-      phase: options?.phase,
-      deviceTimeUs: options?.deviceTimeUs,
+      payload: {
+        x,
+        y,
+        pressure,
+        tiltX,
+        tiltY,
+        rotation: options?.rotation,
+        pointerId: options?.pointerId,
+        phase: options?.phase,
+        deviceTimeUs: options?.deviceTimeUs,
+      },
     });
   } catch (error) {
     console.error('[Tablet] Push pointer event failed:', error);

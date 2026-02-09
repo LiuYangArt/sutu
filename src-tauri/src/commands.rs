@@ -743,32 +743,36 @@ pub fn get_tablet_status() -> Result<TabletStatusResponse, String> {
 }
 
 /// Push pointer event from frontend (for PointerEvent backend)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PointerEventPayload {
+    pub x: f32,
+    pub y: f32,
+    pub pressure: f32,
+    pub tilt_x: f32,
+    pub tilt_y: f32,
+    pub rotation: Option<f32>,
+    pub pointer_id: Option<u32>,
+    pub phase: Option<InputPhase>,
+    pub device_time_us: Option<u64>,
+}
+
 #[tauri::command]
-pub fn push_pointer_event(
-    x: f32,
-    y: f32,
-    pressure: f32,
-    tilt_x: f32,
-    tilt_y: f32,
-    rotation: Option<f32>,
-    pointer_id: Option<u32>,
-    phase: Option<InputPhase>,
-    device_time_us: Option<u64>,
-) -> Result<(), String> {
+pub fn push_pointer_event(payload: PointerEventPayload) -> Result<(), String> {
     let state = get_tablet_state();
     let state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
 
     if let Some(pointer) = &state.pointer {
         pointer.push_input(
-            x,
-            y,
-            pressure,
-            tilt_x,
-            tilt_y,
-            rotation.unwrap_or(0.0),
-            pointer_id.unwrap_or(0),
-            phase.unwrap_or(InputPhase::Move),
-            device_time_us,
+            payload.x,
+            payload.y,
+            payload.pressure,
+            payload.tilt_x,
+            payload.tilt_y,
+            payload.rotation.unwrap_or(0.0),
+            payload.pointer_id.unwrap_or(0),
+            payload.phase.unwrap_or(InputPhase::Move),
+            payload.device_time_us,
         );
     }
 
