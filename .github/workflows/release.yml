@@ -13,11 +13,21 @@ permissions:
 
 jobs:
   # ============================================
-  # Build and Release
+  # Build per platform
   # ============================================
-  build-and-release:
-    name: Build Windows
-    runs-on: windows-latest
+  build:
+    name: Build ${{ matrix.platform_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            platform_name: Windows
+          - os: macos-latest
+            platform: macos
+            platform_name: macOS
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +63,7 @@ jobs:
         run: pnpm tauri build
 
       - name: Create Portable ZIP
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $version = "${{ steps.get_version.outputs.VERSION }}"
@@ -69,6 +80,89 @@ jobs:
           Compress-Archive -Path "$tempDir/*" -DestinationPath $zipPath -Force
           Write-Host "Created portable ZIP: $zipPath"
 
+      - name: Collect Windows release assets
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $dest = "release-assets/windows"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+          $patterns = @(
+            "src-tauri/target/release/bundle/msi/*.msi",
+            "src-tauri/target/release/bundle/nsis/*.exe",
+            "src-tauri/target/release/bundle/*.zip"
+          )
+
+          foreach ($pattern in $patterns) {
+            Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item $_.FullName -Destination $dest -Force
+            }
+          }
+
+          $copied = Get-ChildItem -Path $dest -File -ErrorAction SilentlyContinue
+          if (-not $copied) {
+            throw "No Windows release assets were collected."
+          }
+
+          $copied | ForEach-Object {
+            Write-Host "Collected Windows asset: $($_.Name)"
+          }
+
+      - name: Collect macOS release assets
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          mkdir -p release-assets/macos
+          shopt -s nullglob
+          files=(
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+          )
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No macOS release assets were collected." >&2
+            exit 1
+          fi
+
+          cp "${files[@]}" release-assets/macos/
+          for file in "${files[@]}"; do
+            echo "Collected macOS asset: $(basename "$file")"
+          done
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.platform }}
+          path: release-assets/${{ matrix.platform }}/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ============================================
+  # Publish release after all builds completed
+  # ============================================
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Get version from tag
+        id: get_version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        shell: bash
+        run: |
+          find release-assets -type f | sort
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
@@ -82,13 +176,12 @@ jobs:
             - See commit history for details
 
             ### Installation
-            - **Installer**: Download `.msi` or `.exe` installer
-            - **Portable**: Download `.zip`, extract and run directly (no installation needed)
+            - **Windows**: Download `.msi` or `.exe` installer; or `.zip` for portable mode
+            - **macOS**: Download `.dmg` package (and updater archive/signature if needed)
 
             ### Requirements
             - Windows 10 (1903) or later
             - WebView2 Runtime (included in Windows 11, auto-installed on Windows 10)
+            - macOS 11 or later (actual minimum follows your app/SDK config)
           files: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/*.zip
+            release-assets/**/*

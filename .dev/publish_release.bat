@@ -66,7 +66,7 @@ echo.
 echo --------------------------------------------------------
 echo [2/2] 准备推送到 GitHub ...
 echo --------------------------------------------------------
-echo 即将把新版本标签推送到远程仓库，这将触发 GitHub Actions 自动发布。
+echo 即将把新版本标签推送到远程仓库，这将触发 GitHub Actions 自动发布（Windows + macOS）。
 echo.
 set /p confirm="确认推送吗? (Y/N): "
 
@@ -79,7 +79,7 @@ if /i "%confirm%"=="y" (
         echo.
         echo ========================================================
         echo  ✅ 发布成功！
-        echo  请访问 GitHub 仓库的 Actions 页面查看构建进度。
+        echo  请访问 GitHub 仓库的 Actions 页面查看 Windows/macOS 构建进度。
         echo  https://github.com/LiuYangArt/PaintBoard/actions
         echo ========================================================
     ) else (
