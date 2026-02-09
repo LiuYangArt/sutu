@@ -158,7 +158,44 @@ if !errorlevel! equ 0 (
 ) else (
     echo.
     echo [ERROR] Failed to trigger preview workflow.
-    echo Check gh auth and make sure workflow file is pushed.
+    set "default_branch="
+    for /f %%i in ('gh repo view --json defaultBranchRef --jq ".defaultBranchRef.name" 2^>nul') do set "default_branch=%%i"
+    if not defined default_branch set "default_branch=main"
+
+    echo Default branch: !default_branch!
+    echo Current branch: !current_branch!
+    echo.
+    echo Most likely cause:
+    echo - package-preview.yml does not exist on remote default branch yet.
+    echo.
+    if /i "!current_branch!"=="!default_branch!" (
+        set "push_now="
+        set /p "push_now=Push current branch now and retry? Y/N: "
+        if /i "!push_now!"=="Y" (
+            git push -u origin !current_branch!
+            if !errorlevel! equ 0 (
+                echo.
+                echo Retrying workflow trigger...
+                gh workflow run package-preview.yml --ref !current_branch!
+                if !errorlevel! equ 0 (
+                    echo.
+                    echo Remote package preview triggered.
+                    echo See workflow runs:
+                    echo https://github.com/LiuYangArt/PaintBoard/actions/workflows/package-preview.yml
+                ) else (
+                    echo.
+                    echo [ERROR] Retry failed.
+                    echo Open Actions page and verify workflow file exists on default branch.
+                )
+            ) else (
+                echo.
+                echo [ERROR] Push failed. Could not retry workflow trigger.
+            )
+        )
+    ) else (
+        echo Switch to default branch !default_branch! and push workflow file first.
+        echo Then retry option [5].
+    )
 )
 
 pause
