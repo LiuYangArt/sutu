@@ -32,14 +32,14 @@ tower-http = { version = "0.5", features = ["cors"] }
 
 # Tablet input
 octotablet = "0.1"
-wintab_lite = { version = "1.0.1", features = ["libloading"] }
-libloading = "0.8"
 indexmap = "2.11.4"
 
 # Windows API for HWND access
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.56", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 raw-window-handle = "0.6"
+wintab_lite = { version = "1.0.1", features = ["libloading"] }
+libloading = "0.8"
 
 # Image processing
 image = "0.25"
