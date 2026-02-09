@@ -51,13 +51,6 @@ interface PanelDragState {
   startTop: number;
 }
 
-interface GroupContextMenuState {
-  visible: boolean;
-  x: number;
-  y: number;
-  groupName: string | null;
-}
-
 const DEFAULT_PANEL_SIZE: PanelSize = {
   width: 560,
   height: 434,
@@ -186,15 +179,8 @@ export function BrushQuickPanel({
   onHoveringChange,
 }: BrushQuickPanelProps): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
-  const groupContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [groupContextMenu, setGroupContextMenu] = useState<GroupContextMenuState>({
-    visible: false,
-    x: 0,
-    y: 0,
-    groupName: null,
-  });
   const [position, setPosition] = useState<PanelPosition>({
     left: PANEL_MARGIN,
     top: PANEL_MARGIN,
@@ -261,7 +247,6 @@ export function BrushQuickPanel({
     if (!isOpen) return;
     setSearchQuery('');
     setCollapsedGroups(new Set());
-    setGroupContextMenu((prev) => ({ ...prev, visible: false, groupName: null }));
   }, [isOpen]);
 
   useEffect(() => {
@@ -352,31 +337,6 @@ export function BrushQuickPanel({
       window.removeEventListener('resize', handleResize);
     };
   }, [isOpen, updatePanelLayout]);
-
-  useEffect(() => {
-    if (!groupContextMenu.visible) return;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const menu = groupContextMenuRef.current;
-      if (menu && menu.contains(event.target as Node)) {
-        return;
-      }
-      setGroupContextMenu((prev) => ({ ...prev, visible: false }));
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setGroupContextMenu((prev) => ({ ...prev, visible: false }));
-      }
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [groupContextMenu.visible]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -490,39 +450,7 @@ export function BrushQuickPanel({
     });
   }, []);
 
-  const openGroupContextMenu = (event: React.MouseEvent, groupName: string) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setGroupContextMenu({
-      visible: true,
-      x: event.clientX,
-      y: event.clientY,
-      groupName,
-    });
-  };
-
-  const handleToggleGroupFromMenu = () => {
-    const groupName = groupContextMenu.groupName;
-    if (!groupName) {
-      return;
-    }
-    toggleGroupCollapsed(groupName);
-    setGroupContextMenu((prev) => ({ ...prev, visible: false }));
-  };
-
   if (!isOpen) return null;
-
-  const isContextGroupCollapsed = groupContextMenu.groupName
-    ? collapsedGroups.has(groupContextMenu.groupName)
-    : false;
-  const contextMenuLeft =
-    typeof window === 'undefined'
-      ? groupContextMenu.x
-      : Math.min(groupContextMenu.x, Math.max(0, window.innerWidth - 180));
-  const contextMenuTop =
-    typeof window === 'undefined'
-      ? groupContextMenu.y
-      : Math.min(groupContextMenu.y, Math.max(0, window.innerHeight - 52));
 
   return (
     <div
@@ -596,10 +524,7 @@ export function BrushQuickPanel({
               const isCollapsed = collapsedGroups.has(group.name);
               return (
                 <div key={group.name} className="brush-quick-group">
-                  <div
-                    className="brush-quick-group-title"
-                    onContextMenu={(event) => openGroupContextMenu(event, group.name)}
-                  >
+                  <div className="brush-quick-group-title">
                     <div className="brush-quick-group-title-main">
                       <span className="brush-quick-group-name">{group.name}</span>
                       <span className="brush-quick-group-count">{group.presets.length}</span>
@@ -639,24 +564,6 @@ export function BrushQuickPanel({
           )}
         </div>
       </div>
-
-      {groupContextMenu.visible && groupContextMenu.groupName && (
-        <div
-          ref={groupContextMenuRef}
-          className="brush-quick-context-menu"
-          style={{
-            position: 'fixed',
-            left: contextMenuLeft,
-            top: contextMenuTop,
-          }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button className="brush-quick-context-item" onClick={handleToggleGroupFromMenu}>
-            {isContextGroupCollapsed ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <span>{isContextGroupCollapsed ? 'Expand Group' : 'Collapse Group'}</span>
-          </button>
-        </div>
-      )}
     </div>
   );
 }

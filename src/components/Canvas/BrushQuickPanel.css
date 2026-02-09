@@ -200,7 +200,6 @@
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  cursor: context-menu;
 }
 
 .brush-quick-group-title-main {
@@ -274,38 +273,6 @@
 .brush-quick-thumb {
   width: 30px;
   height: 30px;
-}
-
-.brush-quick-context-menu {
-  background-color: var(--mica-bg);
-  backdrop-filter: var(--mica-blur);
-  -webkit-backdrop-filter: var(--mica-blur);
-  border: 1px solid var(--mica-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--mica-shadow);
-  padding: 4px;
-  min-width: 160px;
-  z-index: var(--z-modal);
-}
-
-.brush-quick-context-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-  transition: background-color 0.15s ease;
-}
-
-.brush-quick-context-item:hover {
-  background: var(--surface-hover);
 }
 
 @media (max-width: 920px) {

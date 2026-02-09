@@ -109,7 +109,7 @@ function App() {
     }
   }, []);
 
-  // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill), F5 (brush panel), Ctrl+Alt+Shift+U (settings)
+  // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill), F5 (brush panel), Ctrl+F5 (brush library), Ctrl+Alt+Shift+U (settings)
   // File shortcuts: Ctrl+S (save), Ctrl+Shift+S (save as), Ctrl+O (open)
   const togglePanel = usePanelStore((s) => s.togglePanel);
   const isSettingsOpen = useSettingsStore((s) => s.isOpen);
@@ -150,6 +150,13 @@ function App() {
         } else {
           openSettings();
         }
+        return;
+      }
+
+      // Ctrl+F5: Toggle brush library panel (allow even in input fields)
+      if (e.ctrlKey && e.key === 'F5') {
+        e.preventDefault();
+        setShowBrushLibrary((prev) => !prev);
         return;
       }
 
