@@ -67,9 +67,11 @@ jobs:
           - os: windows-latest
             platform: windows
             platform_name: Windows
+            bundle_targets: msi,nsis
           - os: macos-latest
             platform: macos
             platform_name: macOS
+            bundle_targets: app,dmg
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -102,7 +104,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri app
-        run: pnpm tauri build
+        run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
 
       - name: Create Portable ZIP
         if: matrix.platform == 'windows'
@@ -162,12 +164,29 @@ jobs:
             src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           )
 
+          app_dirs=(src-tauri/target/release/bundle/macos/*.app)
+          if [ ${#app_dirs[@]} -gt 0 ]; then
+            for app_dir in "${app_dirs[@]}"; do
+              app_name="$(basename "$app_dir")"
+              archive_name="${app_name}.tar.gz"
+              tar -czf "release-assets/macos/${archive_name}" -C "$(dirname "$app_dir")" "$app_name"
+              files+=("release-assets/macos/${archive_name}")
+            done
+          fi
+
           if [ ${#files[@]} -eq 0 ]; then
             echo "No macOS release assets were collected." >&2
+            echo "Bundle directory snapshot:" >&2
+            find src-tauri/target/release/bundle -maxdepth 3 -print || true
             exit 1
           fi
 
-          cp "${files[@]}" release-assets/macos/
+          for file in "${files[@]}"; do
+            if [[ "$file" == release-assets/macos/* ]]; then
+              continue
+            fi
+            cp "$file" release-assets/macos/
+          done
           for file in "${files[@]}"; do
             echo "Collected macOS asset: $(basename "$file")"
           done
