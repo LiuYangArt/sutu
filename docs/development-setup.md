@@ -440,12 +440,13 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsof
 2. 更新显卡驱动
 3. 检查 `edge://gpu` 页面确认 WebGPU 状态
 
-### Q3: octotablet 无法识别数位板
+### Q3: 数位板压感无法识别
 
 **检查步骤**:
 1. 确认 Wacom 驱动已安装
 2. 在 Wacom 设置中启用 Windows Ink
-3. 检查设备管理器中数位板状态
+3. 检查应用设置中的输入后端是否为 WinTab/PointerEvent
+4. 检查设备管理器中数位板状态
 
 ### Q4: 热重载不工作
 

@@ -1,4 +1,4 @@
-//! Tablet manager - handles connection to graphics tablets via octotablet
+//! 数位板管理器：维护设备连接状态与运行开关（当前不直接采集原生事件）
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -29,15 +29,13 @@ impl TabletManager {
 
     /// Initialize tablet connection
     ///
-    /// Note: Full implementation requires octotablet integration.
-    /// This is a placeholder that will be expanded when we integrate
-    /// the actual tablet input handling.
+    /// 当前实现是占位逻辑，输入主链路仍由前端 PointerEvent 提供。
+    /// 后续如果引入新的原生后端，可以在此处扩展初始化流程。
     pub fn init(&mut self) -> Result<(), String> {
         tracing::info!("Initializing tablet manager...");
 
-        // TODO: Integrate octotablet
-        // For now, we rely on PointerEvents from the frontend
-        // which already provide pressure data through Windows Ink
+        // TODO: 如需新增原生输入后端，在此接入设备初始化。
+        // 目前依赖前端 PointerEvent（Windows 下由 Windows Ink 提供压感）
 
         // Placeholder - detect tablet availability
         #[cfg(target_os = "windows")]

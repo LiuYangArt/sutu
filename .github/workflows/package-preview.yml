@@ -37,7 +37,7 @@ jobs:
 
           cargo tree --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin > mac-tree.txt
 
-          if grep -E "wintab_lite v|octotablet v|libloading v" mac-tree.txt; then
+          if grep -E "wintab_lite v|libloading v" mac-tree.txt; then
             echo "Found Windows-only dependencies in macOS dependency tree."
             exit 1
           fi

@@ -101,7 +101,7 @@
 | 平台 | 推荐方案 | 备注 |
 |------|---------|------|
 | **macOS** | PointerEvent API | 通过 WebView 已支持 |
-| **macOS 高级** | octotablet (需社区贡献) | 官方标注"Help Needed" |
+| **macOS 高级** | 原生输入后端（需自研/社区贡献） | 作为可选优化，不阻塞主线 |
 | **iPad** | PointerEvent API | Safari 支持 pressure/tilt |
 
 ### 3.3 PointerEvent API 在 Safari 上的支持
@@ -131,7 +131,7 @@
 |-------|---------|-------|-----|------|
 | `tauri` | ✅ | ✅ | ✅ | 框架核心 |
 | `wintab_lite` | ✅ | ❌ | ❌ | **需条件编译** |
-| `octotablet` | ✅ | ⚠️ 不完整 | ⚠️ 不完整 | 可选 |
+| `libloading` | ✅ | ⚠️ 条件编译 | ⚠️ 条件编译 | 仅随 Windows 输入链路使用 |
 | `windows` crate | ✅ | ❌ | ❌ | **已有 `#[cfg]`** |
 | `image` | ✅ | ✅ | ✅ | 无问题 |
 | `psd` | ✅ | ✅ | ✅ | 无问题 |
@@ -250,7 +250,7 @@ gantt
 
 1. **先做 macOS** - 风险最低，可验证架构跨平台能力
 2. **iPad 放第二阶段** - 需要更多 UI 改动和触控适配
-3. **octotablet macOS 支持** - 作为可选优化，不阻塞主线
+3. **macOS 原生输入后端** - 作为可选优化，不阻塞主线
 
 ---
 

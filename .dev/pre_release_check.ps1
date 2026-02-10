@@ -36,7 +36,7 @@ function Assert-MacTreeMissingWindowsDeps {
         [string]$TreePath
     )
 
-    $blockedDeps = @("wintab_lite", "octotablet", "libloading")
+    $blockedDeps = @("wintab_lite", "libloading")
     $badLines = @()
 
     foreach ($dep in $blockedDeps) {

@@ -22,7 +22,7 @@
 | **应用框架** | Tauri 2.x              | Rust 后端 + Web 前端，兼顾性能与开发效率 |
 | **前端框架** | React 18 + TypeScript  | 生态成熟，组件化开发                     |
 | **渲染引擎** | WebGPU                 | 现代 GPU API，接近原生性能               |
-| **输入采集** | octotablet (Rust)      | 跨平台压感/倾斜采集，绕过 WebView 延迟   |
+| **输入采集** | WinTab + PointerEvent  | WinTab 提供低延迟输入，PointerEvent 负责跨平台兜底 |
 | **笔刷计算** | Rust (可选编译为 WASM) | 高性能计算，零 GC 开销                   |
 | **文件格式** | psd crate + 自定义格式 | PSD 兼容 + 高效内部格式                  |
 
@@ -42,7 +42,7 @@
 │  │  │ Input       │  │ Brush       │  │ File I/O            │ │ │
 │  │  │ Pipeline    │  │ Compute     │  │                     │ │ │
 │  │  │             │  │ (Reserve)   │  │ - PSD read/write    │ │ │
-│  │  │ octotablet  │─►│ 纯数值计算  │  │ - 项目文件          │ │ │
+│  │  │ WinTab/Pointer │─►│ 纯数值计算  │  │ - 项目文件          │ │ │
 │  │  │ 压感采集    │  │ 无渲染      │  │ - 自动保存          │ │ │
 │  │  │             │  │             │  │                     │ │ │
 │  │  └─────────────┘  └──────┬──────┘  └─────────────────────┘ │ │
@@ -373,7 +373,7 @@ interface InputStateEvent {
 
 当前优先 Windows，架构设计兼容：
 
-- macOS (octotablet 已支持)
+- macOS（PointerEvent 已支持）
 - Linux (X11/Wayland)
 
 ---
@@ -383,7 +383,7 @@ interface InputStateEvent {
 | 风险                        | 影响             | 缓解策略                 |
 | --------------------------- | ---------------- | ------------------------ |
 | WebGPU 兼容性               | 部分老显卡不支持 | 提供 WebGL2 降级方案     |
-| octotablet 不支持某些数位板 | 输入失效         | 备选 PointerEvent 方案   |
+| WinTab 驱动或设备兼容性问题 | 输入失效         | 自动回退 PointerEvent 方案 |
 | PSD 格式复杂性              | 导入/导出不完整  | 渐进式支持，明确功能边界 |
 | 大画布内存压力              | OOM 崩溃         | 分块加载 + 内存监控告警  |
 
@@ -396,7 +396,7 @@ interface InputStateEvent {
 ```toml
 [dependencies]
 tauri = { version = "2", features = ["shell-open", "dialog"] }
-octotablet = "0.4"
+wintab_lite = { version = "1.0.1", features = ["libloading"] } # 仅 Windows
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 psd = "0.3"
