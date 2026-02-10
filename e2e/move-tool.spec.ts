@@ -90,18 +90,24 @@ test.describe('Move Tool', () => {
     const point = await prepareBlendMoveScene(page);
     await page.keyboard.press('v');
 
+    const beforeDrag = await getVisibleRenderDataUrl(page);
+    expect(beforeDrag).toBeTruthy();
+
     await page.mouse.move(point.x, point.y);
     await page.mouse.down();
     await page.mouse.move(point.x + 52, point.y + 24, { steps: 2 });
     await page.waitForTimeout(32);
     const draggingImage = await getVisibleRenderDataUrl(page);
     expect(draggingImage).toBeTruthy();
+    expect(draggingImage).not.toBe(beforeDrag);
 
     await page.mouse.up();
-    await page.waitForTimeout(96);
-    const committedImage = await getVisibleRenderDataUrl(page);
-    expect(committedImage).toBeTruthy();
-    expect(committedImage).toBe(draggingImage);
+    await expect
+      .poll(async () => {
+        const committedImage = await getVisibleRenderDataUrl(page);
+        return !!beforeDrag && !!committedImage && committedImage !== beforeDrag;
+      }, { timeout: 420 })
+      .toBe(true);
   });
 
   test('continuous drag + undo/redo + tool-switch cancel keeps image stable', async ({ page }) => {

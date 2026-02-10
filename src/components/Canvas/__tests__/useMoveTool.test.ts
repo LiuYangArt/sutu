@@ -264,9 +264,136 @@ describe('useMoveTool', () => {
     });
     expect(hasMovePreviewCall).toBe(true);
 
+    const previewCanvas = compositeAndRender.mock.calls.find((call) => {
+      const payload = call[0] as
+        | {
+            movePreview?: { layerId: string; canvas?: HTMLCanvasElement };
+          }
+        | undefined;
+      return payload?.movePreview?.layerId === 'layerA';
+    })?.[0]?.movePreview?.canvas;
+    expect(previewCanvas).toBeTruthy();
+
+    const previewCtx = previewCanvas?.getContext('2d', {
+      willReadFrequently: true,
+    }) as MockContext2D | null;
+    const previewDrawImage = previewCtx
+      ? (previewCtx.drawImage as unknown as ReturnType<typeof vi.fn>)
+      : null;
+    const primedFromSource =
+      previewDrawImage?.mock.calls.some(
+        (call: unknown[]) => call[0] === layerA.canvas && call[1] === 0 && call[2] === 0
+      ) ?? false;
+    expect(primedFromSource).toBe(true);
+
     const previewDrawCount = (layerA.ctx.drawImage as unknown as ReturnType<typeof vi.fn>).mock
       .calls.length;
     expect(previewDrawCount).toBe(0);
+
+    rafSpy.mockRestore();
+    cancelSpy.mockRestore();
+  });
+
+  it('selection preview redraw clears clip rect instead of copy-clearing full canvas', async () => {
+    const width = 32;
+    const height = 32;
+    const layerA = makeLayerCanvas('layerA', width, height);
+    const renderer = {
+      getLayer: vi.fn(() => layerA),
+    } as unknown as LayerRenderer;
+
+    useSelectionStore.setState({
+      hasSelection: true,
+      selectionMask: buildSelectionMask(width, height),
+      selectionMaskPending: false,
+      selectionPath: [
+        [
+          { x: 2, y: 2, type: 'polygonal' },
+          { x: 10, y: 2, type: 'polygonal' },
+          { x: 10, y: 10, type: 'polygonal' },
+          { x: 2, y: 10, type: 'polygonal' },
+          { x: 2, y: 2, type: 'polygonal' },
+        ],
+      ],
+      bounds: { x: 2, y: 2, width: 8, height: 8 },
+    });
+
+    const compositeAndRender = vi.fn();
+
+    const { result } = renderHook(() =>
+      useMoveTool({
+        layerRendererRef: { current: renderer },
+        currentTool: 'move',
+        layers: [{ id: 'layerA', visible: true, locked: false, opacity: 100 } as Layer],
+        activeLayerId: 'layerA',
+        width,
+        height,
+        setActiveLayer: vi.fn(),
+        syncAllPendingGpuLayersToCpu: vi.fn(async () => 0),
+        captureBeforeImage: vi.fn(async () => undefined),
+        saveStrokeToHistory: vi.fn(),
+        markLayerDirty: vi.fn(),
+        compositeAndRender,
+        updateThumbnail: vi.fn(),
+      })
+    );
+
+    const rafSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+
+    act(() => {
+      result.current.handleMovePointerDown(3, 3, { ctrlKey: false, pointerId: 91 });
+      result.current.handleMovePointerMove(7, 7, { pointerId: 91 });
+    });
+
+    const previewCall = compositeAndRender.mock.calls.find((call) => {
+      const payload = call[0] as
+        | {
+            movePreview?: { layerId: string; canvas?: HTMLCanvasElement };
+            clipRect?: { left: number; top: number; right: number; bottom: number };
+          }
+        | undefined;
+      return payload?.movePreview?.layerId === 'layerA' && !!payload.clipRect;
+    })?.[0] as
+      | {
+          movePreview?: { layerId: string; canvas?: HTMLCanvasElement };
+          clipRect?: { left: number; top: number; right: number; bottom: number };
+        }
+      | undefined;
+
+    expect(previewCall?.clipRect).toBeTruthy();
+    const previewCanvas = previewCall?.movePreview?.canvas;
+    expect(previewCanvas).toBeTruthy();
+    const previewCtx = previewCanvas?.getContext('2d', {
+      willReadFrequently: true,
+    }) as MockContext2D | null;
+    const previewClearRectCalls = previewCtx
+      ? (previewCtx.clearRect as unknown as ReturnType<typeof vi.fn>).mock.calls
+      : [];
+    const clipRect = previewCall?.clipRect;
+    const expected = clipRect
+      ? [
+          clipRect.left,
+          clipRect.top,
+          clipRect.right - clipRect.left,
+          clipRect.bottom - clipRect.top,
+        ]
+      : null;
+    const hasClipClearCall =
+      !!expected &&
+      previewClearRectCalls.some(
+        (call: unknown[]) =>
+          call[0] === expected[0] &&
+          call[1] === expected[1] &&
+          call[2] === expected[2] &&
+          call[3] === expected[3]
+      );
+    expect(hasClipClearCall).toBe(true);
 
     rafSpy.mockRestore();
     cancelSpy.mockRestore();
@@ -478,7 +605,7 @@ describe('useMoveTool', () => {
         }
       | undefined;
 
-    expect(previewCall?.clipRect).toEqual({ left: 0, top: 0, right: 15, bottom: 15 });
+    expect(previewCall?.clipRect).toEqual({ left: 0, top: 0, right: 17, bottom: 17 });
 
     rafSpy.mockRestore();
     cancelSpy.mockRestore();

@@ -19,6 +19,7 @@ interface CanvasRect {
 interface MovePreviewPayload {
   layerId: string;
   canvas: HTMLCanvasElement;
+  mode: MoveMode;
   dirtyRect?: CanvasRect | null;
 }
 
@@ -93,6 +94,7 @@ const SELECTION_MASK_EDGE_PAD_LEFT = 1;
 const SELECTION_MASK_EDGE_PAD_TOP = 1;
 const SELECTION_MASK_EDGE_PAD_RIGHT = 2;
 const SELECTION_MASK_EDGE_PAD_BOTTOM = 2;
+const MOVE_PREVIEW_DIRTY_PAD = 4;
 
 function roundDelta(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -195,6 +197,24 @@ function clearCanvasWithOptionalClip(args: {
   const h = clipRect.bottom - clipRect.top;
   if (w <= 0 || h <= 0) return;
   ctx.clearRect(clipRect.left, clipRect.top, w, h);
+}
+
+function copyCanvasContent(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  clipRect: CanvasRect | null
+): void {
+  if (!clipRect) {
+    ctx.clearRect(0, 0, source.width, source.height);
+    ctx.drawImage(source, 0, 0);
+    return;
+  }
+
+  const sw = clipRect.right - clipRect.left;
+  const sh = clipRect.bottom - clipRect.top;
+  if (sw <= 0 || sh <= 0) return;
+  ctx.clearRect(clipRect.left, clipRect.top, sw, sh);
+  ctx.drawImage(source, clipRect.left, clipRect.top, sw, sh, clipRect.left, clipRect.top, sw, sh);
 }
 
 function drawCanvasAtOffset(
@@ -328,7 +348,6 @@ function renderSelectionPreview(args: {
 }): void {
   const { ctx, sourceCanvas, selection, deltaX, deltaY, width, height, clipRect } = args;
   clearCanvasWithOptionalClip({ ctx, width, height, clipRect });
-
   drawCanvasAtOffset(ctx, sourceCanvas, 0, 0, clipRect);
 
   ctx.globalCompositeOperation = 'destination-out';
@@ -446,7 +465,7 @@ function computeSelectionMoveDirtyRect(args: {
 
   const dirty = expandRect(
     unionRect(baseRect, unionRect(prevFloating, nextFloating)),
-    2,
+    MOVE_PREVIEW_DIRTY_PAD,
     width,
     height
   );
@@ -661,6 +680,7 @@ export function useMoveTool({
         movePreview: {
           layerId: session.layerId,
           canvas: session.previewCanvas,
+          mode: session.mode,
           dirtyRect,
         },
       });
@@ -820,12 +840,7 @@ export function useMoveTool({
       }
 
       moveSessionRef.current = session;
-      clearCanvasWithOptionalClip({
-        ctx: session.previewCtx,
-        width,
-        height,
-        clipRect: null,
-      });
+      copyCanvasContent(session.previewCtx, session.sourceCanvas, null);
       clearMovePreviewLayer();
       return true;
     },
