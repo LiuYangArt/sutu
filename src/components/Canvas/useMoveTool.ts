@@ -19,7 +19,6 @@ interface CanvasRect {
 interface MovePreviewPayload {
   layerId: string;
   canvas: HTMLCanvasElement;
-  mode: MoveMode;
   dirtyRect?: CanvasRect | null;
 }
 
@@ -31,7 +30,6 @@ interface MoveCompositeRenderOptions {
 
 interface UseMoveToolParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
-  movePreviewCanvasRef?: RefObject<HTMLCanvasElement | null>;
   currentTool: ToolType;
   layers: Layer[];
   activeLayerId: string | null;
@@ -45,7 +43,6 @@ interface UseMoveToolParams {
   compositeAndRender: (options?: MoveCompositeRenderOptions) => void;
   updateThumbnail: (layerId: string) => void;
   getVisibleCanvasRect?: () => CanvasRect | null;
-  getLayerRevision?: (layerId: string) => number;
 }
 
 interface MoveDownEventLike {
@@ -474,7 +471,6 @@ function computeSelectionMoveDirtyRect(args: {
 
 export function useMoveTool({
   layerRendererRef,
-  movePreviewCanvasRef,
   currentTool,
   layers,
   activeLayerId,
@@ -488,7 +484,6 @@ export function useMoveTool({
   compositeAndRender,
   updateThumbnail,
   getVisibleCanvasRect,
-  getLayerRevision: _getLayerRevision,
 }: UseMoveToolParams) {
   const moveSessionRef = useRef<MoveSession | null>(null);
   const movePreviewRafRef = useRef<number | null>(null);
@@ -500,27 +495,6 @@ export function useMoveTool({
     }
   }, []);
 
-  const clearMovePreviewLayer = useCallback(
-    (clipRect: CanvasRect | null = null) => {
-      const previewCanvas = movePreviewCanvasRef?.current;
-      if (!previewCanvas) return;
-      let previewCtx: CanvasRenderingContext2D | null = null;
-      try {
-        previewCtx = previewCanvas.getContext('2d', { willReadFrequently: true });
-      } catch {
-        previewCtx = null;
-      }
-      if (!previewCtx) return;
-      clearCanvasWithOptionalClip({
-        ctx: previewCtx,
-        width,
-        height,
-        clipRect,
-      });
-    },
-    [height, movePreviewCanvasRef, width]
-  );
-
   const getPreviewClipRect = useCallback((): CanvasRect | null => {
     if (!getVisibleCanvasRect) return null;
     return normalizeClipRect(getVisibleCanvasRect(), width, height);
@@ -529,9 +503,8 @@ export function useMoveTool({
   useEffect(() => {
     return () => {
       clearPreviewRaf();
-      clearMovePreviewLayer();
     };
-  }, [clearMovePreviewLayer, clearPreviewRaf]);
+  }, [clearPreviewRaf]);
 
   const resetSessionToBase = useCallback(
     (session: MoveSession) => {
@@ -544,10 +517,9 @@ export function useMoveTool({
       if (session.mode === 'selection') {
         useSelectionStore.getState().cancelMove();
       }
-      clearMovePreviewLayer();
       compositeAndRender();
     },
-    [clearMovePreviewLayer, compositeAndRender, height, width]
+    [compositeAndRender, height, width]
   );
 
   useEffect(() => {
@@ -680,7 +652,6 @@ export function useMoveTool({
         movePreview: {
           layerId: session.layerId,
           canvas: session.previewCanvas,
-          mode: session.mode,
           dirtyRect,
         },
       });
@@ -751,7 +722,6 @@ export function useMoveTool({
         markLayerDirty(session.layerId);
         compositeAndRender();
         updateThumbnail(session.layerId);
-        clearMovePreviewLayer();
         clearCanvasWithOptionalClip({
           ctx: session.previewCtx,
           width,
@@ -763,7 +733,6 @@ export function useMoveTool({
     },
     [
       applyMovePreview,
-      clearMovePreviewLayer,
       compositeAndRender,
       height,
       markLayerDirty,
@@ -841,13 +810,11 @@ export function useMoveTool({
 
       moveSessionRef.current = session;
       copyCanvasContent(session.previewCtx, session.sourceCanvas, null);
-      clearMovePreviewLayer();
       return true;
     },
     [
       activeLayerId,
       captureBeforeImage,
-      clearMovePreviewLayer,
       height,
       layerRendererRef,
       layers,
@@ -892,7 +859,6 @@ export function useMoveTool({
       void reason;
       const session = moveSessionRef.current;
       if (!session || session.mode !== 'selection') {
-        clearMovePreviewLayer();
         compositeAndRender();
         return;
       }
@@ -903,7 +869,7 @@ export function useMoveTool({
       useSelectionStore.getState().cancelMove();
       resetSessionToBase(session);
     },
-    [clearMovePreviewLayer, clearPreviewRaf, compositeAndRender, resetSessionToBase]
+    [clearPreviewRaf, compositeAndRender, resetSessionToBase]
   );
 
   const hasFloatingSelectionSession = useCallback((): boolean => {

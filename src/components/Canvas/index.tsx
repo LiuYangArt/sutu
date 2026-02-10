@@ -192,7 +192,6 @@ function parseTrackedTileCoordKeys(tileKeys: Set<string>): Array<{ x: number; y:
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
-  const movePreviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
   const brushCursorRef = useRef<HTMLDivElement>(null);
@@ -1123,7 +1122,6 @@ export function Canvas() {
     hasFloatingSelectionSession,
   } = useMoveTool({
     layerRendererRef,
-    movePreviewCanvasRef,
     currentTool,
     layers,
     activeLayerId,
@@ -1136,7 +1134,6 @@ export function Canvas() {
     markLayerDirty,
     compositeAndRender,
     updateThumbnail,
-    getLayerRevision,
     getVisibleCanvasRect: () => {
       const container = containerRef.current;
       if (!container || displayScale <= 0) return null;
@@ -1833,13 +1830,6 @@ export function Canvas() {
           height={height}
           className="main-canvas"
           data-testid="main-canvas"
-        />
-        <canvas
-          ref={movePreviewCanvasRef}
-          width={width}
-          height={height}
-          className="move-preview-canvas"
-          data-testid="move-preview-canvas"
         />
       </div>
       {showDomCursor && !brushQuickPanelHovering && (
