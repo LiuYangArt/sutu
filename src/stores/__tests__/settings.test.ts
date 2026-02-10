@@ -41,6 +41,7 @@ describe('settings store newFile persistence', () => {
         backend: 'pointerevent',
         pollingRate: 200,
         pressureCurve: 'linear',
+        backpressureMode: 'lossless',
         autoStart: true,
       },
       brush: {
@@ -56,6 +57,12 @@ describe('settings store newFile persistence', () => {
         lastUsed: { ...DEFAULT_NEW_FILE_SETTINGS.lastUsed },
       },
       quickExport: { ...DEFAULT_QUICK_EXPORT_SETTINGS },
+      brushLibrary: {
+        selectedPresetByTool: {
+          brush: null,
+          eraser: null,
+        },
+      },
     }));
   });
 
@@ -95,6 +102,10 @@ describe('settings store newFile persistence', () => {
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
     expect(state.quickExport).toEqual(DEFAULT_QUICK_EXPORT_SETTINGS);
+    expect(state.brushLibrary.selectedPresetByTool).toEqual({
+      brush: null,
+      eraser: null,
+    });
   });
 
   it('persists general settings fields', async () => {
@@ -113,6 +124,8 @@ describe('settings store newFile persistence', () => {
       transparentBackground: false,
       backgroundPreset: 'black',
     });
+    useSettingsStore.getState().setBrushLibrarySelectedPreset('brush', 'preset-soft-round');
+    useSettingsStore.getState().setBrushLibrarySelectedPreset('eraser', 'preset-hard-eraser');
 
     await new Promise((resolve) => setTimeout(resolve, 600));
 
@@ -130,6 +143,12 @@ describe('settings store newFile persistence', () => {
         transparentBackground?: boolean;
         backgroundPreset?: string;
       };
+      brushLibrary?: {
+        selectedPresetByTool?: {
+          brush?: string | null;
+          eraser?: string | null;
+        };
+      };
     };
     expect(parsed.general?.autosaveIntervalMinutes).toBe(15);
     expect(parsed.general?.openLastFileOnStartup).toBe(false);
@@ -139,5 +158,7 @@ describe('settings store newFile persistence', () => {
     expect(parsed.quickExport?.lastHeight).toBe(500);
     expect(parsed.quickExport?.transparentBackground).toBe(false);
     expect(parsed.quickExport?.backgroundPreset).toBe('black');
+    expect(parsed.brushLibrary?.selectedPresetByTool?.brush).toBe('preset-soft-round');
+    expect(parsed.brushLibrary?.selectedPresetByTool?.eraser).toBe('preset-hard-eraser');
   });
 });

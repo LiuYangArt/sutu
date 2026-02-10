@@ -114,6 +114,17 @@ export interface GeneralSettings {
   openLastFileOnStartup: boolean;
 }
 
+export type BrushPresetSelectionTool = 'brush' | 'eraser';
+
+export interface BrushPresetSelectionByTool {
+  brush: string | null;
+  eraser: string | null;
+}
+
+export interface BrushLibrarySettings {
+  selectedPresetByTool: BrushPresetSelectionByTool;
+}
+
 interface PersistedSettings {
   appearance: AppearanceSettings;
   tablet: TabletSettings;
@@ -121,6 +132,7 @@ interface PersistedSettings {
   newFile: NewFileSettings;
   general: GeneralSettings;
   quickExport: QuickExportSettings;
+  brushLibrary: BrushLibrarySettings;
 }
 
 interface SettingsState extends PersistedSettings {
@@ -164,6 +176,8 @@ interface SettingsState extends PersistedSettings {
 
   // Quick export actions
   setQuickExport: (patch: Partial<QuickExportSettings>) => void;
+  setBrushLibrarySelectedPreset: (tool: BrushPresetSelectionTool, id: string | null) => void;
+  setBrushLibrarySelection: (selection: BrushPresetSelectionByTool) => void;
 
   // Persistence
   _loadSettings: () => Promise<void>;
@@ -255,6 +269,29 @@ function mergeLoadedQuickExportSettings(loadedQuickExport: unknown): QuickExport
   };
 }
 
+function normalizePresetId(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function mergeLoadedBrushLibrarySettings(loadedBrushLibrary: unknown): BrushLibrarySettings {
+  const defaults = defaultSettings.brushLibrary;
+  if (!loadedBrushLibrary || typeof loadedBrushLibrary !== 'object') {
+    return {
+      selectedPresetByTool: { ...defaults.selectedPresetByTool },
+    };
+  }
+
+  const partial = loadedBrushLibrary as Partial<BrushLibrarySettings>;
+  const selected = partial.selectedPresetByTool;
+
+  return {
+    selectedPresetByTool: {
+      brush: normalizePresetId(selected?.brush),
+      eraser: normalizePresetId(selected?.eraser),
+    },
+  };
+}
+
 function clampAutosaveIntervalMinutes(value: number): number {
   if (!Number.isFinite(value)) return 10;
   return Math.max(1, Math.floor(value));
@@ -285,6 +322,12 @@ const defaultSettings: PersistedSettings = {
     openLastFileOnStartup: true,
   },
   quickExport: { ...DEFAULT_QUICK_EXPORT_SETTINGS },
+  brushLibrary: {
+    selectedPresetByTool: {
+      brush: null,
+      eraser: null,
+    },
+  },
 };
 
 function createCustomSizePresetId(): string {
@@ -508,6 +551,23 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setBrushLibrarySelectedPreset: (tool, id) => {
+      set((state) => {
+        state.brushLibrary.selectedPresetByTool[tool] = id;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setBrushLibrarySelection: (selection) => {
+      set((state) => {
+        state.brushLibrary.selectedPresetByTool = {
+          brush: normalizePresetId(selection.brush),
+          eraser: normalizePresetId(selection.eraser),
+        };
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     // Load settings from file
     _loadSettings: async () => {
       try {
@@ -548,6 +608,9 @@ export const useSettingsStore = create<SettingsState>()(
             state.quickExport = mergeLoadedQuickExportSettings(
               (loaded as Partial<PersistedSettings>).quickExport
             );
+            state.brushLibrary = mergeLoadedBrushLibrarySettings(
+              (loaded as Partial<PersistedSettings>).brushLibrary
+            );
             state.isLoaded = true;
           });
         } else {
@@ -578,6 +641,7 @@ export const useSettingsStore = create<SettingsState>()(
           newFile: state.newFile,
           general: state.general,
           quickExport: state.quickExport,
+          brushLibrary: state.brushLibrary,
         };
 
         await writeTextFile(SETTINGS_FILE, JSON.stringify(data, null, 2), {

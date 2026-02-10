@@ -14,6 +14,7 @@ import { useTabletStore } from './stores/tablet';
 import { useToolStore } from './stores/tool';
 import { useSettingsStore, initializeSettings } from './stores/settings';
 import { useFileStore } from './stores/file';
+import { useBrushLibraryStore } from './stores/brushLibrary';
 import { LeftToolbar, RightPanel } from './components/SidePanel';
 import { PanelLayer } from './components/UI/PanelLayer';
 import { ToastLayer } from './components/UI/ToastLayer';
@@ -311,6 +312,18 @@ function App() {
     const initialize = async () => {
       // Initialize settings first (load from file, apply CSS variables)
       await initializeSettings();
+
+      // Restore brush preset selection from settings file and re-apply active tool preset.
+      const brushLibraryStore = useBrushLibraryStore.getState();
+      brushLibraryStore.hydrateSelectionFromSettings();
+      const activeSelectionTool =
+        useToolStore.getState().currentTool === 'eraser' ? 'eraser' : 'brush';
+      const selectedPresetId =
+        useBrushLibraryStore.getState().selectedPresetByTool[activeSelectionTool];
+      if (selectedPresetId) {
+        await brushLibraryStore.loadLibrary();
+        useBrushLibraryStore.getState().applyPresetById(selectedPresetId);
+      }
 
       // Use ref to prevent double initialization in StrictMode
       if (tabletInitializedRef.current) return;

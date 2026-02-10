@@ -1,15 +1,15 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useToolStore } from '@/stores/tool';
+import {
+  useSettingsStore,
+  type BrushPresetSelectionByTool,
+  type BrushPresetSelectionTool,
+} from '@/stores/settings';
 import type { BrushPreset, DualBrushSettingsPreset } from '@/components/BrushPanel/types';
 import { applyPresetToToolStore } from '@/components/BrushPanel/settings/BrushPresets';
 
-type BrushPresetSelectionTool = 'brush' | 'eraser';
-
-export interface BrushPresetSelectionByTool {
-  brush: string | null;
-  eraser: string | null;
-}
+export type { BrushPresetSelectionByTool, BrushPresetSelectionTool } from '@/stores/settings';
 
 export interface BrushTipResource extends BrushPreset {
   source: string;
@@ -116,6 +116,7 @@ interface BrushLibraryState {
   applyPresetById: (id: string) => void;
   applyMainTip: (tipId: string | null) => void;
   setSelectedPresetId: (id: string | null) => void;
+  hydrateSelectionFromSettings: () => void;
   setSearchQuery: (query: string) => void;
   clearError: () => void;
 }
@@ -142,6 +143,33 @@ function snapshotState(snapshot: BrushLibrarySnapshot) {
     tips: snapshot.tips,
     groups: snapshot.groups,
   };
+}
+
+function normalizePresetId(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function readSelectionFromSettings(): BrushPresetSelectionByTool {
+  const selection = useSettingsStore.getState().brushLibrary.selectedPresetByTool;
+  return {
+    brush: normalizePresetId(selection?.brush),
+    eraser: normalizePresetId(selection?.eraser),
+  };
+}
+
+function isSameSelection(
+  left: BrushPresetSelectionByTool,
+  right: BrushPresetSelectionByTool
+): boolean {
+  return left.brush === right.brush && left.eraser === right.eraser;
+}
+
+function persistSelectionToSettings(selection: BrushPresetSelectionByTool): void {
+  const current = useSettingsStore.getState().brushLibrary.selectedPresetByTool;
+  if (isSameSelection(selection, current)) {
+    return;
+  }
+  useSettingsStore.getState().setBrushLibrarySelection(selection);
 }
 
 function buildDualBrushSettings(): DualBrushSettingsPreset | null {
@@ -237,222 +265,231 @@ async function fetchLibrarySnapshot(): Promise<BrushLibrarySnapshot> {
   return normalizeSnapshot(snapshot);
 }
 
-export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => ({
-  presets: [],
-  tips: [],
-  groups: [],
-  selectedPresetByTool: {
-    brush: null,
-    eraser: null,
-  },
-  searchQuery: '',
-  isLoading: false,
-  error: null,
+export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
+  function commitSelection(selection: BrushPresetSelectionByTool): void {
+    set({ selectedPresetByTool: selection });
+    persistSelectionToSettings(selection);
+  }
 
-  loadLibrary: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const snapshot = await fetchLibrarySnapshot();
-      set((state) => ({
-        ...snapshotState(snapshot),
-        selectedPresetByTool: sanitizeSelectionByTool(snapshot.presets, state.selectedPresetByTool),
-        isLoading: false,
-      }));
-    } catch (err) {
-      set({ isLoading: false, error: String(err) });
-    }
-  },
-
-  importAbrFile: async (path: string) => {
-    set({ isLoading: true, error: null });
-    try {
-      const result = await invoke<BrushLibraryImportResult>('import_abr_to_brush_library', {
-        path,
-      });
-      const normalized = {
-        ...result,
-        snapshot: normalizeSnapshot(result.snapshot),
-      };
-
-      set({
-        ...snapshotState(normalized.snapshot),
-        isLoading: false,
-      });
-
-      return normalized;
-    } catch (err) {
-      set({ isLoading: false, error: String(err) });
-      throw err;
-    }
-  },
-
-  renamePreset: async (id: string, newName: string) => {
-    try {
-      await invoke('rename_brush_preset', { id, newName });
-      const snapshot = await fetchLibrarySnapshot();
-      set({ ...snapshotState(snapshot) });
-    } catch (err) {
-      set({ error: String(err) });
-      throw err;
-    }
-  },
-
-  deletePreset: async (id: string) => {
-    try {
-      await invoke('delete_brush_preset', { id });
-      const snapshot = await fetchLibrarySnapshot();
-      set((state) => ({
-        ...snapshotState(snapshot),
-        selectedPresetByTool: {
-          brush: state.selectedPresetByTool.brush === id ? null : state.selectedPresetByTool.brush,
-          eraser:
-            state.selectedPresetByTool.eraser === id ? null : state.selectedPresetByTool.eraser,
-        },
-      }));
-    } catch (err) {
-      set({ error: String(err) });
-      throw err;
-    }
-  },
-
-  deleteGroup: async (groupName: string) => {
-    try {
-      await invoke('delete_brush_group', { groupName });
-      const snapshot = await fetchLibrarySnapshot();
-      set((state) => ({
-        ...snapshotState(snapshot),
-        selectedPresetByTool: sanitizeSelectionByTool(snapshot.presets, state.selectedPresetByTool),
-      }));
-    } catch (err) {
-      set({ error: String(err) });
-      throw err;
-    }
-  },
-
-  movePresetToGroup: async (id: string, group: string) => {
-    try {
-      await invoke('move_brush_preset_to_group', { id, group });
-      const snapshot = await fetchLibrarySnapshot();
-      set({ ...snapshotState(snapshot) });
-    } catch (err) {
-      set({ error: String(err) });
-      throw err;
-    }
-  },
-
-  renameGroup: async (oldName: string, newName: string) => {
-    try {
-      await invoke('rename_brush_group', { oldName, newName });
-      const snapshot = await fetchLibrarySnapshot();
-      set({ ...snapshotState(snapshot) });
-    } catch (err) {
-      set({ error: String(err) });
-      throw err;
-    }
-  },
-
-  saveActivePreset: async () => {
-    const tool = getSelectionToolFromToolStore();
-    const { selectedPresetByTool, presets, tips } = get();
-    const selectedPresetId = getSelectedPresetIdForTool(selectedPresetByTool, tool);
-    const currentPreset = findPresetById(presets, selectedPresetId);
-
-    if (!currentPreset) {
-      return null;
-    }
-
-    const payload = buildPresetFromToolState(currentPreset, tips);
-    const updated = normalizePreset(
-      await invoke<BrushLibraryPreset>('save_brush_preset', { payload })
-    );
-    const snapshot = await fetchLibrarySnapshot();
-    set({
+  function commitSnapshot(
+    snapshot: BrushLibrarySnapshot,
+    selection: BrushPresetSelectionByTool,
+    isLoading?: boolean
+  ): void {
+    const sanitizedSelection = sanitizeSelectionByTool(snapshot.presets, selection);
+    const nextState: Partial<BrushLibraryState> = {
       ...snapshotState(snapshot),
-      selectedPresetByTool: setSelectedPresetIdForTool(selectedPresetByTool, tool, updated.id),
-    });
-    return updated;
-  },
-
-  saveActivePresetAs: async (newName: string, targetGroup?: string | null) => {
-    const tool = getSelectionToolFromToolStore();
-    const { selectedPresetByTool, presets, tips } = get();
-    const selectedPresetId = getSelectedPresetIdForTool(selectedPresetByTool, tool);
-    const currentPreset = findPresetById(presets, selectedPresetId);
-
-    const payload = buildPresetFromToolState(currentPreset, tips);
-    const created = normalizePreset(
-      await invoke<BrushLibraryPreset>('save_brush_preset_as', {
-        payload,
-        newName,
-        targetGroup: targetGroup ?? null,
-      })
-    );
-
-    const snapshot = await fetchLibrarySnapshot();
-    set({
-      ...snapshotState(snapshot),
-      selectedPresetByTool: setSelectedPresetIdForTool(selectedPresetByTool, tool, created.id),
-    });
-
-    get().applyPresetById(created.id);
-    return created;
-  },
-
-  applyPresetById: (id: string) => {
-    const tool = getSelectionToolFromToolStore();
-    const { presets, tips } = get();
-    const preset = findPresetById(presets, id);
-    if (!preset) {
-      return;
+      selectedPresetByTool: sanitizedSelection,
+    };
+    if (isLoading !== undefined) {
+      nextState.isLoading = isLoading;
     }
+    set(nextState);
+    persistSelectionToSettings(sanitizedSelection);
+  }
 
-    applyPresetToToolStore(preset, tips);
-    set((state) => ({
-      selectedPresetByTool: setSelectedPresetIdForTool(state.selectedPresetByTool, tool, id),
-    }));
-  },
+  async function reloadSnapshot(selection: BrushPresetSelectionByTool): Promise<void> {
+    const snapshot = await fetchLibrarySnapshot();
+    commitSnapshot(snapshot, selection);
+  }
 
-  applyMainTip: (tipId: string | null) => {
-    const tip = findPresetById(get().tips, tipId);
-    const tool = useToolStore.getState();
+  return {
+    presets: [],
+    tips: [],
+    groups: [],
+    selectedPresetByTool: readSelectionFromSettings(),
+    searchQuery: '',
+    isLoading: false,
+    error: null,
 
-    if (!tip) {
+    loadLibrary: async () => {
+      set({ isLoading: true, error: null });
+      try {
+        const snapshot = await fetchLibrarySnapshot();
+        commitSnapshot(snapshot, get().selectedPresetByTool, false);
+      } catch (err) {
+        set({ isLoading: false, error: String(err) });
+      }
+    },
+
+    importAbrFile: async (path: string) => {
+      set({ isLoading: true, error: null });
+      try {
+        const result = await invoke<BrushLibraryImportResult>('import_abr_to_brush_library', {
+          path,
+        });
+        const normalized = {
+          ...result,
+          snapshot: normalizeSnapshot(result.snapshot),
+        };
+        commitSnapshot(normalized.snapshot, get().selectedPresetByTool, false);
+        return normalized;
+      } catch (err) {
+        set({ isLoading: false, error: String(err) });
+        throw err;
+      }
+    },
+
+    renamePreset: async (id: string, newName: string) => {
+      try {
+        await invoke('rename_brush_preset', { id, newName });
+        await reloadSnapshot(get().selectedPresetByTool);
+      } catch (err) {
+        set({ error: String(err) });
+        throw err;
+      }
+    },
+
+    deletePreset: async (id: string) => {
+      try {
+        await invoke('delete_brush_preset', { id });
+        const selection = get().selectedPresetByTool;
+        const nextSelection = {
+          brush: selection.brush === id ? null : selection.brush,
+          eraser: selection.eraser === id ? null : selection.eraser,
+        };
+        await reloadSnapshot(nextSelection);
+      } catch (err) {
+        set({ error: String(err) });
+        throw err;
+      }
+    },
+
+    deleteGroup: async (groupName: string) => {
+      try {
+        await invoke('delete_brush_group', { groupName });
+        await reloadSnapshot(get().selectedPresetByTool);
+      } catch (err) {
+        set({ error: String(err) });
+        throw err;
+      }
+    },
+
+    movePresetToGroup: async (id: string, group: string) => {
+      try {
+        await invoke('move_brush_preset_to_group', { id, group });
+        await reloadSnapshot(get().selectedPresetByTool);
+      } catch (err) {
+        set({ error: String(err) });
+        throw err;
+      }
+    },
+
+    renameGroup: async (oldName: string, newName: string) => {
+      try {
+        await invoke('rename_brush_group', { oldName, newName });
+        await reloadSnapshot(get().selectedPresetByTool);
+      } catch (err) {
+        set({ error: String(err) });
+        throw err;
+      }
+    },
+
+    saveActivePreset: async () => {
+      const tool = getSelectionToolFromToolStore();
+      const { selectedPresetByTool, presets, tips } = get();
+      const selectedPresetId = getSelectedPresetIdForTool(selectedPresetByTool, tool);
+      const currentPreset = findPresetById(presets, selectedPresetId);
+
+      if (!currentPreset) {
+        return null;
+      }
+
+      const payload = buildPresetFromToolState(currentPreset, tips);
+      const updated = normalizePreset(
+        await invoke<BrushLibraryPreset>('save_brush_preset', { payload })
+      );
+      const snapshot = await fetchLibrarySnapshot();
+      const nextSelection = setSelectedPresetIdForTool(selectedPresetByTool, tool, updated.id);
+      commitSnapshot(snapshot, nextSelection);
+      return updated;
+    },
+
+    saveActivePresetAs: async (newName: string, targetGroup?: string | null) => {
+      const tool = getSelectionToolFromToolStore();
+      const { selectedPresetByTool, presets, tips } = get();
+      const selectedPresetId = getSelectedPresetIdForTool(selectedPresetByTool, tool);
+      const currentPreset = findPresetById(presets, selectedPresetId);
+
+      const payload = buildPresetFromToolState(currentPreset, tips);
+      const created = normalizePreset(
+        await invoke<BrushLibraryPreset>('save_brush_preset_as', {
+          payload,
+          newName,
+          targetGroup: targetGroup ?? null,
+        })
+      );
+
+      const snapshot = await fetchLibrarySnapshot();
+      const nextSelection = setSelectedPresetIdForTool(selectedPresetByTool, tool, created.id);
+      commitSnapshot(snapshot, nextSelection);
+
+      get().applyPresetById(created.id);
+      return created;
+    },
+
+    applyPresetById: (id: string) => {
+      const tool = getSelectionToolFromToolStore();
+      const { presets, tips } = get();
+      const preset = findPresetById(presets, id);
+      if (!preset) {
+        return;
+      }
+
+      applyPresetToToolStore(preset, tips);
+      const nextSelection = setSelectedPresetIdForTool(get().selectedPresetByTool, tool, id);
+      commitSelection(nextSelection);
+    },
+
+    applyMainTip: (tipId: string | null) => {
+      const tip = findPresetById(get().tips, tipId);
+      const tool = useToolStore.getState();
+
+      if (!tip) {
+        tool.clearBrushTexture();
+        return;
+      }
+
+      tool.setBrushSize(Math.max(1, Math.round(tip.diameter)));
+      tool.setBrushHardness(Math.max(0, Math.round(tip.hardness)));
+      tool.setBrushRoundness(Math.max(1, Math.round(tip.roundness)));
+      tool.setBrushAngle(Math.round(tip.angle));
+      tool.setBrushSpacing(Math.max(0.01, tip.spacing / 100));
+
+      if (tip.hasTexture && tip.textureWidth && tip.textureHeight) {
+        tool.setBrushTexture({
+          id: tip.id,
+          data: '',
+          width: tip.textureWidth,
+          height: tip.textureHeight,
+          cursorPath: tip.cursorPath ?? undefined,
+          cursorBounds: tip.cursorBounds ?? undefined,
+        });
+        return;
+      }
+
       tool.clearBrushTexture();
-      return;
-    }
+    },
 
-    tool.setBrushSize(Math.max(1, Math.round(tip.diameter)));
-    tool.setBrushHardness(Math.max(0, Math.round(tip.hardness)));
-    tool.setBrushRoundness(Math.max(1, Math.round(tip.roundness)));
-    tool.setBrushAngle(Math.round(tip.angle));
-    tool.setBrushSpacing(Math.max(0.01, tip.spacing / 100));
+    setSelectedPresetId: (id: string | null) => {
+      const tool = getSelectionToolFromToolStore();
+      const nextSelection = setSelectedPresetIdForTool(get().selectedPresetByTool, tool, id);
+      commitSelection(nextSelection);
+    },
 
-    if (tip.hasTexture && tip.textureWidth && tip.textureHeight) {
-      tool.setBrushTexture({
-        id: tip.id,
-        data: '',
-        width: tip.textureWidth,
-        height: tip.textureHeight,
-        cursorPath: tip.cursorPath ?? undefined,
-        cursorBounds: tip.cursorBounds ?? undefined,
-      });
-      return;
-    }
+    hydrateSelectionFromSettings: () => {
+      const fromSettings = readSelectionFromSettings();
+      if (isSameSelection(get().selectedPresetByTool, fromSettings)) {
+        return;
+      }
+      set({ selectedPresetByTool: fromSettings });
+    },
 
-    tool.clearBrushTexture();
-  },
+    setSearchQuery: (query: string) => set({ searchQuery: query }),
 
-  setSelectedPresetId: (id: string | null) => {
-    const tool = getSelectionToolFromToolStore();
-    set((state) => ({
-      selectedPresetByTool: setSelectedPresetIdForTool(state.selectedPresetByTool, tool, id),
-    }));
-  },
-
-  setSearchQuery: (query: string) => set({ searchQuery: query }),
-
-  clearError: () => set({ error: null }),
-}));
+    clearError: () => set({ error: null }),
+  };
+});
 
 export function useSelectedPresetIdForCurrentTool(): string | null {
   const selectionTool = useToolStore((state) => resolveSelectionTool(state.currentTool));
