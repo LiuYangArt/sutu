@@ -6,6 +6,13 @@ import { VerticalHueSlider } from './VerticalHueSlider';
 import { ArrowLeftRight, RotateCcw } from 'lucide-react';
 import './ColorPanel.css';
 
+function isSameHsva(
+  a: { h: number; s: number; v: number; a: number },
+  b: { h: number; s: number; v: number; a: number }
+): boolean {
+  return a.h === b.h && a.s === b.s && a.v === b.v && a.a === b.a;
+}
+
 export function ColorPanel() {
   const { brushColor, backgroundColor, setBrushColor, swapColors, resetColors } = useToolStore();
 
@@ -36,7 +43,7 @@ export function ColorPanel() {
     // Store-driven update (eyedropper/undo/etc): always trust it and clear stale token.
     lastInitiatedHex.current = null;
     const newHsva = hexToHsva(brushColor);
-    setHsva(newHsva);
+    setHsva((prev) => (isSameHsva(prev, newHsva) ? prev : newHsva));
   }, [brushColor]);
 
   // Handler for Saturation change
@@ -46,10 +53,12 @@ export function ColorPanel() {
       // react-colorful Saturation calls onChange with { h, s, v, a } merged.
       const hex = hsvaToHex(newColor);
       lastInitiatedHex.current = hex;
-      setHsva(newColor);
-      setBrushColor(hex);
+      setHsva((prev) => (isSameHsva(prev, newColor) ? prev : newColor));
+      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
+        setBrushColor(hex);
+      }
     },
-    [setBrushColor]
+    [brushColor, setBrushColor]
   );
 
   // Handler for Hue change
@@ -58,10 +67,12 @@ export function ColorPanel() {
       const newHsva = { ...hsva, h: newHue };
       const hex = hsvaToHex(newHsva);
       lastInitiatedHex.current = hex;
-      setHsva(newHsva);
-      setBrushColor(hex);
+      setHsva((prev) => (isSameHsva(prev, newHsva) ? prev : newHsva));
+      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
+        setBrushColor(hex);
+      }
     },
-    [hsva, setBrushColor]
+    [hsva, brushColor, setBrushColor]
   );
 
   const handleHexChange = (e: React.ChangeEvent<HTMLInputElement>) => {

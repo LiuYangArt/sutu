@@ -171,6 +171,23 @@ describe('ToolStore', () => {
   });
 
   describe('swapColors', () => {
+    it('setBrushColor should be idempotent for case-insensitive same value', () => {
+      const store = useToolStore.getState();
+      const beforeStateRef = useToolStore.getState();
+      store.setBrushColor('#000000');
+      const afterSameStateRef = useToolStore.getState();
+      expect(afterSameStateRef).toBe(beforeStateRef);
+
+      store.setBrushColor('#00AAFF');
+      expect(useToolStore.getState().brushColor).toBe('#00AAFF');
+      const beforeCaseOnlyUpdateRef = useToolStore.getState();
+
+      store.setBrushColor('#00aaff');
+      const afterCaseOnlyUpdateRef = useToolStore.getState();
+      expect(afterCaseOnlyUpdateRef).toBe(beforeCaseOnlyUpdateRef);
+      expect(useToolStore.getState().brushColor).toBe('#00AAFF');
+    });
+
     it('should swap foreground and background colors', () => {
       const store = useToolStore.getState();
 

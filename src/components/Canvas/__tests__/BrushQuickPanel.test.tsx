@@ -72,6 +72,40 @@ describe('BrushQuickPanel', () => {
     expect(applyPresetById).toHaveBeenCalledWith('hard-chalk');
   });
 
+  it('打开时以锚点为中心定位面板', () => {
+    useBrushLibraryStore.setState((state) => ({
+      ...state,
+      presets: [createPreset('soft-round', 'Soft Round', 'Basics')],
+      groups: [{ name: 'Basics', presetIds: ['soft-round'] }],
+      selectedPresetByTool: { brush: null, eraser: null },
+      searchQuery: '',
+      isLoading: false,
+      error: null,
+      loadLibrary: vi.fn(),
+      applyPresetById: vi.fn(),
+      clearError: vi.fn(),
+    }));
+
+    const { container } = render(
+      <BrushQuickPanel isOpen anchorX={600} anchorY={500} onRequestClose={vi.fn()} />
+    );
+    const panel = container.querySelector('.brush-quick-panel') as HTMLDivElement;
+    expect(panel).toBeTruthy();
+    const width = Number.parseFloat(panel.style.width);
+    const height = Number.parseFloat(panel.style.height);
+    const margin = 12;
+    const expectedLeft = Math.min(
+      Math.max(margin, 600 - width / 2),
+      Math.max(margin, window.innerWidth - width - margin)
+    );
+    const expectedTop = Math.min(
+      Math.max(margin, 500 - height / 2),
+      Math.max(margin, window.innerHeight - height - margin)
+    );
+    expect(panel.style.left).toBe(`${expectedLeft}px`);
+    expect(panel.style.top).toBe(`${expectedTop}px`);
+  });
+
   it('按工具切换 selected preset 高亮', async () => {
     useToolStore.setState((state) => ({
       ...state,

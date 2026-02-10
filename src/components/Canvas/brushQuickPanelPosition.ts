@@ -6,7 +6,6 @@ export interface BrushQuickPanelPositionInput {
   viewportWidth: number;
   viewportHeight: number;
   margin?: number;
-  offset?: number;
 }
 
 export interface BrushQuickPanelPosition {
@@ -23,18 +22,10 @@ export function calculateBrushQuickPanelPosition(
   input: BrushQuickPanelPositionInput
 ): BrushQuickPanelPosition {
   const margin = input.margin ?? 12;
-  const offset = input.offset ?? 10;
-
-  let left = input.anchorX + offset;
-  let top = input.anchorY + offset;
-
-  if (left + input.panelWidth > input.viewportWidth - margin) {
-    left = input.anchorX - input.panelWidth - offset;
-  }
-
-  if (top + input.panelHeight > input.viewportHeight - margin) {
-    top = input.anchorY - input.panelHeight - offset;
-  }
+  const halfWidth = input.panelWidth / 2;
+  const halfHeight = input.panelHeight / 2;
+  const left = input.anchorX - halfWidth;
+  const top = input.anchorY - halfHeight;
 
   const maxLeft = input.viewportWidth - input.panelWidth - margin;
   const maxTop = input.viewportHeight - input.panelHeight - margin;

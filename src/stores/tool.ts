@@ -897,7 +897,13 @@ export const useToolStore = create<ToolState>()(
         setBrushAngle: (angle) =>
           setWithActiveProfile(() => ({ brushAngle: ((angle % 360) + 360) % 360 })),
 
-        setBrushColor: (color) => set({ brushColor: color }),
+        setBrushColor: (color) =>
+          set((state) => {
+            if (state.brushColor.toLowerCase() === color.toLowerCase()) {
+              return state;
+            }
+            return { brushColor: color };
+          }),
 
         setBackgroundColor: (color) => set({ backgroundColor: color }),
 

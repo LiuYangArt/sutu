@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { useToolStore } from '@/stores/tool';
 import {
@@ -168,6 +168,17 @@ function isSamePanelSize(a: PanelSize, b: PanelSize): boolean {
   return a.width === b.width && a.height === b.height;
 }
 
+function isSamePanelPosition(a: PanelPosition, b: PanelPosition): boolean {
+  return a.left === b.left && a.top === b.top;
+}
+
+function isSameHsva(
+  a: { h: number; s: number; v: number; a: number },
+  b: { h: number; s: number; v: number; a: number }
+): boolean {
+  return a.h === b.h && a.s === b.s && a.v === b.v && a.a === b.a;
+}
+
 function isPanelInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return !!target.closest(PANEL_INTERACTIVE_SELECTOR);
@@ -281,9 +292,16 @@ export function BrushQuickPanel({
 
   const updatePanelLayout = useCallback((nextSize: PanelSize, viewport: ViewportSize): void => {
     setPanelSize((prev) => (isSamePanelSize(prev, nextSize) ? prev : nextSize));
-    setPosition((prev) =>
-      clampPanelPosition(prev.left, prev.top, nextSize, viewport.width, viewport.height)
-    );
+    setPosition((prev) => {
+      const next = clampPanelPosition(
+        prev.left,
+        prev.top,
+        nextSize,
+        viewport.width,
+        viewport.height
+      );
+      return isSamePanelPosition(prev, next) ? prev : next;
+    });
   }, []);
 
   const syncPanelSizeFromDom = useCallback((): PanelSize | null => {
@@ -308,7 +326,8 @@ export function BrushQuickPanel({
       return;
     }
     lastInitiatedHex.current = null;
-    setHsva(hexToHsva(brushColor));
+    const nextHsva = hexToHsva(brushColor);
+    setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
   }, [brushColor]);
 
   useEffect(() => {
@@ -328,7 +347,7 @@ export function BrushQuickPanel({
     void loadLibrary();
   }, [isOpen, presets.length, isLoading, loadLibrary]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isOpen) {
       lastAnchorRef.current = null;
       return;
@@ -437,10 +456,12 @@ export function BrushQuickPanel({
     (nextHsva: { h: number; s: number; v: number; a: number }) => {
       const hex = hsvaToHex(nextHsva);
       lastInitiatedHex.current = hex;
-      setHsva(nextHsva);
-      setBrushColor(hex);
+      setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
+      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
+        setBrushColor(hex);
+      }
     },
-    [setBrushColor]
+    [brushColor, setBrushColor]
   );
 
   const handleHueChange = useCallback(
@@ -448,10 +469,12 @@ export function BrushQuickPanel({
       const nextHsva = { ...hsva, h: nextHue };
       const hex = hsvaToHex(nextHsva);
       lastInitiatedHex.current = hex;
-      setHsva(nextHsva);
-      setBrushColor(hex);
+      setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
+      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
+        setBrushColor(hex);
+      }
     },
-    [hsva, setBrushColor]
+    [hsva, brushColor, setBrushColor]
   );
 
   const handlePanelPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
