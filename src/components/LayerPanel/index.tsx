@@ -122,6 +122,18 @@ interface RenameDialogState {
   value: string;
 }
 
+function getNextLayerName(prefix: string, layerCount: number): string {
+  return `${prefix} ${layerCount + 1}`;
+}
+
+function resolveContextMenuLayerId(
+  selectedLayerIds: string[],
+  activeLayerId: string | null
+): string | null {
+  const selectedActiveLayerId = selectedLayerIds.find((layerId) => layerId === activeLayerId);
+  return selectedActiveLayerId ?? selectedLayerIds[0] ?? activeLayerId ?? null;
+}
+
 export function LayerPanel(): JSX.Element {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [draggedIds, setDraggedIds] = useState<string[]>([]);
@@ -202,6 +214,15 @@ export function LayerPanel(): JSX.Element {
     setContextMenu((prev) => ({ ...prev, visible: false }));
   }, []);
 
+  const openContextMenuAt = useCallback((x: number, y: number, layerId: string | null) => {
+    setContextMenu({
+      visible: true,
+      x,
+      y,
+      layerId,
+    });
+  }, []);
+
   const getDisplayOrderedSelectionIds = useCallback(
     (ids: string[]): string[] => {
       const idSet = new Set(ids);
@@ -258,12 +279,12 @@ export function LayerPanel(): JSX.Element {
   // Close context menu when clicking outside
   useEffect(() => {
     if (!contextMenu.visible) return;
-    function handleClickOutside() {
-      setContextMenu((prev) => ({ ...prev, visible: false }));
+    function handleClickOutside(): void {
+      closeContextMenu();
     }
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [contextMenu.visible]);
+  }, [closeContextMenu, contextMenu.visible]);
 
   // Close blend mode dropdown when clicking outside
   useEffect(() => {
@@ -302,14 +323,9 @@ export function LayerPanel(): JSX.Element {
       if (!selectedLayerIdSet.has(layerId)) {
         applyLayerSelection([layerId], layerId, layerId);
       }
-      setContextMenu({
-        visible: true,
-        x: e.clientX,
-        y: e.clientY,
-        layerId,
-      });
+      openContextMenuAt(e.clientX, e.clientY, layerId);
     },
-    [applyLayerSelection, selectedLayerIdSet]
+    [applyLayerSelection, openContextMenuAt, selectedLayerIdSet]
   );
 
   const handleLayerListContextMenu = useCallback(
@@ -317,18 +333,10 @@ export function LayerPanel(): JSX.Element {
       e.preventDefault();
       e.stopPropagation();
 
-      const preferredSelectionId =
-        selectedLayerIds.find((id) => id === activeLayerId) ?? selectedLayerIds[0] ?? null;
-      const fallbackLayerId = preferredSelectionId ?? activeLayerId ?? null;
-
-      setContextMenu({
-        visible: true,
-        x: e.clientX,
-        y: e.clientY,
-        layerId: fallbackLayerId,
-      });
+      const fallbackLayerId = resolveContextMenuLayerId(selectedLayerIds, activeLayerId);
+      openContextMenuAt(e.clientX, e.clientY, fallbackLayerId);
     },
-    [activeLayerId, selectedLayerIds]
+    [activeLayerId, openContextMenuAt, selectedLayerIds]
   );
 
   const handleDuplicateLayer = useCallback(() => {
@@ -416,7 +424,7 @@ export function LayerPanel(): JSX.Element {
   }, [closeContextMenu, getContextSelectionIds, openRenameDialog]);
 
   const handleCreateLayerFromContextMenu = useCallback(() => {
-    addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' });
+    addLayer({ name: getNextLayerName('Layer', layers.length), type: 'raster' });
     closeContextMenu();
   }, [addLayer, closeContextMenu, layers.length]);
 
@@ -449,6 +457,42 @@ export function LayerPanel(): JSX.Element {
     safeMergeAllLayers();
     closeContextMenu();
   }, [closeContextMenu, safeMergeAllLayers]);
+
+  const getBatchTargetLayerIds = useCallback((): string[] => {
+    if (selectedLayerIds.length > 1) return selectedLayerIds;
+    if (activeLayerId) return [activeLayerId];
+    return [];
+  }, [activeLayerId, selectedLayerIds]);
+
+  const applyProtectedBatchLayerOperation = useCallback(
+    (targetIds: string[], apply: (layerId: string) => void): void => {
+      let lockedSkipped = 0;
+      let backgroundSkipped = 0;
+      let applied = 0;
+
+      for (const layerId of targetIds) {
+        const layer = layers.find((item) => item.id === layerId);
+        if (!layer) continue;
+        if (layer.locked) {
+          lockedSkipped += 1;
+          continue;
+        }
+        if (layer.isBackground) {
+          backgroundSkipped += 1;
+          continue;
+        }
+        apply(layerId);
+        applied += 1;
+      }
+
+      if (applied > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
+        pushToast(`Skipped ${lockedSkipped} locked + ${backgroundSkipped} background layer(s).`, {
+          variant: 'info',
+        });
+      }
+    },
+    [layers, pushToast]
+  );
 
   function handleDragStart(e: React.DragEvent, layerId: string): void {
     const idsToDrag =
@@ -553,80 +597,40 @@ export function LayerPanel(): JSX.Element {
 
   const applyBatchLayerOpacity = useCallback(
     (opacity: number) => {
-      const targetIds =
-        selectedLayerIds.length > 1 ? selectedLayerIds : activeLayerId ? [activeLayerId] : [];
+      const targetIds = getBatchTargetLayerIds();
       if (targetIds.length === 0) return;
 
-      if (targetIds.length <= 1) {
-        if (activeLayerId) {
-          setLayerOpacity(activeLayerId, opacity);
-        }
+      if (targetIds.length === 1) {
+        const [layerId] = targetIds;
+        if (!layerId) return;
+        setLayerOpacity(layerId, opacity);
         return;
       }
 
-      let lockedSkipped = 0;
-      let backgroundSkipped = 0;
-      let applied = 0;
-      for (const layerId of targetIds) {
-        const layer = layers.find((item) => item.id === layerId);
-        if (!layer) continue;
-        if (layer.locked) {
-          lockedSkipped += 1;
-          continue;
-        }
-        if (layer.isBackground) {
-          backgroundSkipped += 1;
-          continue;
-        }
+      applyProtectedBatchLayerOperation(targetIds, (layerId) => {
         setLayerOpacity(layerId, opacity);
-        applied += 1;
-      }
-      if (applied > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
-        pushToast(`Skipped ${lockedSkipped} locked + ${backgroundSkipped} background layer(s).`, {
-          variant: 'info',
-        });
-      }
+      });
     },
-    [activeLayerId, layers, pushToast, selectedLayerIds, setLayerOpacity]
+    [applyProtectedBatchLayerOperation, getBatchTargetLayerIds, setLayerOpacity]
   );
 
   const applyBatchLayerBlendMode = useCallback(
     (blendMode: BlendMode) => {
-      const targetIds =
-        selectedLayerIds.length > 1 ? selectedLayerIds : activeLayerId ? [activeLayerId] : [];
+      const targetIds = getBatchTargetLayerIds();
       if (targetIds.length === 0) return;
 
-      if (targetIds.length <= 1) {
-        if (activeLayerId) {
-          setLayerBlendMode(activeLayerId, blendMode);
-        }
+      if (targetIds.length === 1) {
+        const [layerId] = targetIds;
+        if (!layerId) return;
+        setLayerBlendMode(layerId, blendMode);
         return;
       }
 
-      let lockedSkipped = 0;
-      let backgroundSkipped = 0;
-      let applied = 0;
-      for (const layerId of targetIds) {
-        const layer = layers.find((item) => item.id === layerId);
-        if (!layer) continue;
-        if (layer.locked) {
-          lockedSkipped += 1;
-          continue;
-        }
-        if (layer.isBackground) {
-          backgroundSkipped += 1;
-          continue;
-        }
+      applyProtectedBatchLayerOperation(targetIds, (layerId) => {
         setLayerBlendMode(layerId, blendMode);
-        applied += 1;
-      }
-      if (applied > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
-        pushToast(`Skipped ${lockedSkipped} locked + ${backgroundSkipped} background layer(s).`, {
-          variant: 'info',
-        });
-      }
+      });
     },
-    [activeLayerId, layers, pushToast, selectedLayerIds, setLayerBlendMode]
+    [applyProtectedBatchLayerOperation, getBatchTargetLayerIds, setLayerBlendMode]
   );
 
   function handleClearLayer(): void {
@@ -637,12 +641,12 @@ export function LayerPanel(): JSX.Element {
   }
 
   function handleAddLayer(): void {
-    addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' });
+    addLayer({ name: getNextLayerName('Layer', layers.length), type: 'raster' });
   }
 
   function handleAddGroup(): void {
     // TODO: Implement group/folder layer type
-    addLayer({ name: `Group ${layers.length + 1}`, type: 'raster' });
+    addLayer({ name: getNextLayerName('Group', layers.length), type: 'raster' });
   }
 
   // Handle rename completion
