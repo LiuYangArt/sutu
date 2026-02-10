@@ -35,7 +35,12 @@
   height: 26px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
-  background-color: #000;
+  background-size:
+    100% 100%,
+    10px 10px;
+  background-position:
+    0 0,
+    0 0;
 }
 
 .gradient-stop-track {
@@ -193,7 +198,12 @@
   height: 24px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background-color: #111;
+  background-size:
+    100% 100%,
+    10px 10px;
+  background-position:
+    0 0,
+    0 0;
 }
 
 .gradient-preset-meta {

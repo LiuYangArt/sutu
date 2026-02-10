@@ -36,8 +36,10 @@ export function PresetGrid({
           const active = preset.id === activePresetId;
           const preview = buildGradientPreviewCss(
             preset.colorStops,
+            preset.opacityStops,
             foregroundColor,
-            backgroundColor
+            backgroundColor,
+            true
           );
           return (
             <div key={preset.id} className={`gradient-preset-card ${active ? 'active' : ''}`}>

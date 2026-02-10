@@ -130,7 +130,12 @@
   width: 100%;
   height: 100%;
   border-radius: 4px;
-  background-color: #111;
+  background-size:
+    100% 100%,
+    10px 10px;
+  background-position:
+    0 0,
+    0 0;
 }
 
 .gradient-shape-group {
@@ -162,14 +167,34 @@
   min-width: 32px;
 }
 
-.gradient-select {
+.gradient-settings .gradient-blend-mode-select {
+  position: relative;
+  width: 100%;
+  min-width: 172px;
+}
+
+.gradient-settings .gradient-blend-mode-select .blend-mode-trigger {
   height: 28px;
-  min-width: 130px;
+  font-size: 11px;
+  padding: 0 8px;
+}
+
+.gradient-settings .gradient-blend-mode-select .gradient-blend-mode-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  bottom: auto;
+  z-index: var(--z-popover);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  padding: 0 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 3px 0;
+  contain: paint;
+  max-height: min(560px, calc(100vh - 72px));
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .gradient-toggle-group {

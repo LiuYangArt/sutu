@@ -5,6 +5,7 @@ import { buildGradientPreviewCss, clamp01, resolveStopDisplayColor } from './uti
 interface GradientBarProps {
   colorStops: ColorStop[];
   opacityStops: OpacityStop[];
+  transparencyEnabled: boolean;
   selectedColorStopId: string | null;
   selectedOpacityStopId: string | null;
   foregroundColor: string;
@@ -31,6 +32,7 @@ function readPositionFromEvent(track: HTMLElement, event: PointerEvent): number 
 export function GradientBar({
   colorStops,
   opacityStops,
+  transparencyEnabled,
   selectedColorStopId,
   selectedOpacityStopId,
   foregroundColor,
@@ -49,8 +51,15 @@ export function GradientBar({
   const dragRef = useRef<DragState>(null);
 
   const previewCss = useMemo(
-    () => buildGradientPreviewCss(colorStops, foregroundColor, backgroundColor),
-    [backgroundColor, colorStops, foregroundColor]
+    () =>
+      buildGradientPreviewCss(
+        colorStops,
+        opacityStops,
+        foregroundColor,
+        backgroundColor,
+        transparencyEnabled
+      ),
+    [backgroundColor, colorStops, foregroundColor, opacityStops, transparencyEnabled]
   );
 
   const handlePointerMove = useCallback(

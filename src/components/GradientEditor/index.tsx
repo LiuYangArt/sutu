@@ -69,6 +69,7 @@ export function GradientEditor() {
         <GradientBar
           colorStops={settings.customGradient.colorStops}
           opacityStops={settings.customGradient.opacityStops}
+          transparencyEnabled={settings.transparency}
           selectedColorStopId={selectedColorStopId}
           selectedOpacityStopId={selectedOpacityStopId}
           foregroundColor={foregroundColor}

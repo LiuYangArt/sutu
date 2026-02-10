@@ -328,6 +328,10 @@ function resolvePresetOrFallback(
   return presets.find((item) => item.id === presetId) ?? fallback;
 }
 
+function presetUsesTransparencyStops(preset: GradientPreset): boolean {
+  return preset.opacityStops.some((stop) => stop.opacity < 0.999);
+}
+
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useGradientStore = create<GradientState>()(
@@ -401,6 +405,9 @@ export const useGradientStore = create<GradientState>()(
           const preset = resolvePresetOrFallback(state.presets, presetId, fallback);
           state.settings.activePresetId = preset.id;
           state.settings.customGradient = clonePreset(preset);
+          if (presetUsesTransparencyStops(preset)) {
+            state.settings.transparency = true;
+          }
           state.selectedColorStopId = preset.colorStops[0]?.id ?? null;
           state.selectedOpacityStopId = preset.opacityStops[0]?.id ?? null;
         });
@@ -412,6 +419,9 @@ export const useGradientStore = create<GradientState>()(
           const fallback = state.presets[0] ?? defaultPreset;
           const preset = resolvePresetOrFallback(state.presets, presetId, fallback);
           state.settings.customGradient = clonePreset(preset);
+          if (presetUsesTransparencyStops(preset)) {
+            state.settings.transparency = true;
+          }
           state.selectedColorStopId = state.settings.customGradient.colorStops[0]?.id ?? null;
           state.selectedOpacityStopId = state.settings.customGradient.opacityStops[0]?.id ?? null;
         });
