@@ -51,6 +51,27 @@ interface SaveStrokeHistoryOptions {
   selectionAfter?: SelectionSnapshot;
 }
 
+interface ImportAnchorPoint {
+  x: number;
+  y: number;
+}
+
+interface ImportImageOptions {
+  anchorPoint?: ImportAnchorPoint | null;
+}
+
+interface PasteImageOptions extends ImportImageOptions {
+  clipboardData?: DataTransfer | null;
+  allowSystemClipboardRead?: boolean;
+}
+
+interface DecodedImageSource {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  cleanup: () => void;
+}
+
 function createCanvasContext2D(
   width: number,
   height: number
@@ -277,11 +298,6 @@ function isImageFile(file: File): boolean {
   return /\.(png|jpe?g|webp|bmp|gif|tiff?|svg)$/i.test(file.name);
 }
 
-interface ImportAnchorPoint {
-  x: number;
-  y: number;
-}
-
 function clampNumber(value: number, min: number, max: number): number {
   if (value < min) return min;
   if (value > max) return max;
@@ -330,9 +346,7 @@ function nextAnimationFrame(): Promise<void> {
   });
 }
 
-async function decodeImageBlob(
-  blob: Blob
-): Promise<{ source: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+async function decodeImageBlob(blob: Blob): Promise<DecodedImageSource> {
   if (typeof createImageBitmap === 'function') {
     const bitmap = await createImageBitmap(blob);
     return {
@@ -1049,7 +1063,7 @@ export function useLayerOperations({
       sourceWidth: number,
       sourceHeight: number,
       requestedName: string,
-      options?: { anchorPoint?: ImportAnchorPoint | null }
+      options?: ImportImageOptions
     ): Promise<string | null> => {
       const docState = useDocumentStore.getState();
       const layerName = getUniqueLayerName(requestedName, docState.layers);
@@ -1208,11 +1222,7 @@ export function useLayerOperations({
   }, [activeLayerId, height, layerRendererRef, pushToast, width]);
 
   const handlePasteImageAsNewLayer = useCallback(
-    async (options?: {
-      clipboardData?: DataTransfer | null;
-      anchorPoint?: ImportAnchorPoint | null;
-      allowSystemClipboardRead?: boolean;
-    }): Promise<void> => {
+    async (options?: PasteImageOptions): Promise<void> => {
       const fromPasteEvent = readImageBlobFromDataTransfer(options?.clipboardData);
       const allowSystemClipboardRead = options?.allowSystemClipboardRead ?? !fromPasteEvent;
       const fromSystemClipboard = allowSystemClipboardRead
@@ -1224,12 +1234,8 @@ export function useLayerOperations({
         return;
       }
 
-      let decoded: {
-        source: CanvasImageSource;
-        width: number;
-        height: number;
-        cleanup: () => void;
-      } | null = null;
+      const anchorPoint = options?.anchorPoint ?? null;
+      let decoded: DecodedImageSource | null = null;
       try {
         decoded = await decodeImageBlob(imageBlob);
         const layerName = getNextPastedLayerName(useDocumentStore.getState().layers);
@@ -1238,7 +1244,7 @@ export function useLayerOperations({
           decoded.width,
           decoded.height,
           layerName,
-          { anchorPoint: options?.anchorPoint ?? null }
+          { anchorPoint }
         );
         if (!inserted) {
           pushToast('Paste failed: could not create target layer.', { variant: 'error' });
@@ -1253,9 +1259,10 @@ export function useLayerOperations({
   );
 
   const handleImportImageFiles = useCallback(
-    async (files: File[], options?: { anchorPoint?: ImportAnchorPoint | null }): Promise<void> => {
+    async (files: File[], options?: ImportImageOptions): Promise<void> => {
       if (files.length === 0) return;
 
+      const anchorPoint = options?.anchorPoint ?? null;
       let imported = 0;
       let skipped = 0;
 
@@ -1265,12 +1272,7 @@ export function useLayerOperations({
           continue;
         }
 
-        let decoded: {
-          source: CanvasImageSource;
-          width: number;
-          height: number;
-          cleanup: () => void;
-        } | null = null;
+        let decoded: DecodedImageSource | null = null;
         try {
           decoded = await decodeImageBlob(file);
           const layerName = getUniqueLayerName(
@@ -1282,7 +1284,7 @@ export function useLayerOperations({
             decoded.width,
             decoded.height,
             layerName,
-            { anchorPoint: options?.anchorPoint ?? null }
+            { anchorPoint }
           );
           if (inserted) {
             imported += 1;

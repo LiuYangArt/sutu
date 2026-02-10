@@ -195,6 +195,12 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.isContentEditable;
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1700,9 +1706,11 @@ export function Canvas() {
       }
 
       const point = clientToCanvasPoint(canvas, clientX, clientY);
+      const maxX = Math.max(0, width - 1);
+      const maxY = Math.max(0, height - 1);
       return {
-        x: Math.max(0, Math.min(Math.max(0, width - 1), Math.round(point.x))),
-        y: Math.max(0, Math.min(Math.max(0, height - 1), Math.round(point.y))),
+        x: clampNumber(Math.round(point.x), 0, maxX),
+        y: clampNumber(Math.round(point.y), 0, maxY),
       };
     },
     [height, width]
