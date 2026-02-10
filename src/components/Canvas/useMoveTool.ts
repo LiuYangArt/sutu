@@ -16,14 +16,20 @@ interface CanvasRect {
   bottom: number;
 }
 
+interface MovePreviewPayload {
+  layerId: string;
+  canvas: HTMLCanvasElement;
+  dirtyRect?: CanvasRect | null;
+}
+
 interface MoveCompositeRenderOptions {
   clipRect?: CanvasRect | null;
   forceCpu?: boolean;
+  movePreview?: MovePreviewPayload | null;
 }
 
 interface UseMoveToolParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
-  movePreviewCanvasRef?: RefObject<HTMLCanvasElement | null>;
   currentTool: ToolType;
   layers: Layer[];
   activeLayerId: string | null;
@@ -37,7 +43,6 @@ interface UseMoveToolParams {
   compositeAndRender: (options?: MoveCompositeRenderOptions) => void;
   updateThumbnail: (layerId: string) => void;
   getVisibleCanvasRect?: () => CanvasRect | null;
-  getLayerRevision?: (layerId: string) => number;
 }
 
 interface MoveDownEventLike {
@@ -50,31 +55,17 @@ interface MovePointerEventLike {
 }
 
 type MoveMode = 'full' | 'selection';
-type SelectionPreviewMode = 'overlay' | 'legacy';
 
-interface PreservedLayerState {
-  sourceCanvas: HTMLCanvasElement;
-  offsetX: number;
-  offsetY: number;
-  revision: number;
-}
-
-interface FloatingSelectionSession {
-  layerId: string;
-  anchorBaseCanvas: HTMLCanvasElement;
-  floatingSourceCanvas: HTMLCanvasElement;
-  anchorOffsetX: number;
-  anchorOffsetY: number;
-  floatingOffsetX: number;
-  floatingOffsetY: number;
-  anchorLayerRevision: number;
-  previewProxyCanvas: HTMLCanvasElement | null;
-  previewProxyScale: number;
+interface SelectionPreviewData {
+  bounds: CanvasRect;
+  maskCanvas: HTMLCanvasElement;
+  floatingCanvas: HTMLCanvasElement;
 }
 
 interface MoveSession {
   pointerId: number;
   layerId: string;
+  mode: MoveMode;
   startX: number;
   startY: number;
   latestX: number;
@@ -84,20 +75,23 @@ interface MoveSession {
   renderedDeltaX: number;
   renderedDeltaY: number;
   moved: boolean;
-  ready: boolean;
   cancelled: boolean;
-  mode: MoveMode;
-  baseOffsetX: number;
-  baseOffsetY: number;
+  sourceCanvas: HTMLCanvasElement;
   layerCtx: CanvasRenderingContext2D;
-  sourceCanvas: HTMLCanvasElement | null;
+  previewCanvas: HTMLCanvasElement;
+  previewCtx: CanvasRenderingContext2D;
+  selectionData: SelectionPreviewData | null;
   selectionBefore?: SelectionSnapshot;
-  selectionPreviewMode: SelectionPreviewMode;
-  floatingSession: FloatingSelectionSession | null;
+  historyPromise: Promise<void>;
 }
 
-const PREVIEW_DOWNSAMPLE_THRESHOLD_PIXELS = 8 * 1024 * 1024;
-const PREVIEW_PROXY_SCALE = 0.5;
+// Selection mask rasterization uses a small edge expansion (see selection.ts/pathToMask).
+// Keep move preview bounds aligned with that expansion to avoid edge clipping during drag.
+const SELECTION_MASK_EDGE_PAD_LEFT = 1;
+const SELECTION_MASK_EDGE_PAD_TOP = 1;
+const SELECTION_MASK_EDGE_PAD_RIGHT = 2;
+const SELECTION_MASK_EDGE_PAD_BOTTOM = 2;
+const MOVE_PREVIEW_DIRTY_PAD = 4;
 
 function roundDelta(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -111,21 +105,14 @@ function createCanvasWithContext(
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let ctx: CanvasRenderingContext2D | null = null;
+  try {
+    ctx = canvas.getContext('2d', { willReadFrequently: true });
+  } catch {
+    ctx = null;
+  }
   if (!ctx) return null;
   return { canvas, ctx };
-}
-
-function cloneCanvas(
-  source: HTMLCanvasElement,
-  width: number,
-  height: number
-): HTMLCanvasElement | null {
-  const target = createCanvasWithContext(width, height);
-  if (!target) return null;
-  target.ctx.clearRect(0, 0, width, height);
-  target.ctx.drawImage(source, 0, 0);
-  return target.canvas;
 }
 
 function normalizeClipRect(
@@ -142,6 +129,55 @@ function normalizeClipRect(
   return { left, top, right, bottom };
 }
 
+function intersectRect(a: CanvasRect | null, b: CanvasRect | null): CanvasRect | null {
+  if (!a || !b) return null;
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.right, b.right);
+  const bottom = Math.min(a.bottom, b.bottom);
+  if (left >= right || top >= bottom) return null;
+  return { left, top, right, bottom };
+}
+
+function unionRect(a: CanvasRect | null, b: CanvasRect | null): CanvasRect | null {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    left: Math.min(a.left, b.left),
+    top: Math.min(a.top, b.top),
+    right: Math.max(a.right, b.right),
+    bottom: Math.max(a.bottom, b.bottom),
+  };
+}
+
+function expandRect(
+  rect: CanvasRect | null,
+  padding: number,
+  width: number,
+  height: number
+): CanvasRect | null {
+  if (!rect) return null;
+  return normalizeClipRect(
+    {
+      left: rect.left - padding,
+      top: rect.top - padding,
+      right: rect.right + padding,
+      bottom: rect.bottom + padding,
+    },
+    width,
+    height
+  );
+}
+
+function shiftRect(rect: CanvasRect, offsetX: number, offsetY: number): CanvasRect {
+  return {
+    left: rect.left + offsetX,
+    top: rect.top + offsetY,
+    right: rect.right + offsetX,
+    bottom: rect.bottom + offsetY,
+  };
+}
+
 function clearCanvasWithOptionalClip(args: {
   ctx: CanvasRenderingContext2D;
   width: number;
@@ -154,13 +190,28 @@ function clearCanvasWithOptionalClip(args: {
     return;
   }
 
-  const padding = 2;
-  const x = Math.max(0, clipRect.left - padding);
-  const y = Math.max(0, clipRect.top - padding);
-  const w = Math.min(width - x, clipRect.right - clipRect.left + padding * 2);
-  const h = Math.min(height - y, clipRect.bottom - clipRect.top + padding * 2);
+  const w = clipRect.right - clipRect.left;
+  const h = clipRect.bottom - clipRect.top;
   if (w <= 0 || h <= 0) return;
-  ctx.clearRect(x, y, w, h);
+  ctx.clearRect(clipRect.left, clipRect.top, w, h);
+}
+
+function copyCanvasContent(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  clipRect: CanvasRect | null
+): void {
+  if (!clipRect) {
+    ctx.clearRect(0, 0, source.width, source.height);
+    ctx.drawImage(source, 0, 0);
+    return;
+  }
+
+  const sw = clipRect.right - clipRect.left;
+  const sh = clipRect.bottom - clipRect.top;
+  if (sw <= 0 || sh <= 0) return;
+  ctx.clearRect(clipRect.left, clipRect.top, sw, sh);
+  ctx.drawImage(source, clipRect.left, clipRect.top, sw, sh, clipRect.left, clipRect.top, sw, sh);
 }
 
 function drawCanvasAtOffset(
@@ -193,43 +244,6 @@ function drawCanvasAtOffset(
   ctx.drawImage(source, sx, sy, sw, sh, dx, dy, sw, sh);
 }
 
-function drawScaledCanvasAtOffset(
-  ctx: CanvasRenderingContext2D,
-  source: HTMLCanvasElement,
-  offsetX: number,
-  offsetY: number,
-  drawWidth: number,
-  drawHeight: number,
-  clipRect: CanvasRect | null
-): void {
-  if (!clipRect) {
-    ctx.drawImage(source, offsetX, offsetY, drawWidth, drawHeight);
-    return;
-  }
-
-  const sourceScaleX = source.width / Math.max(1, drawWidth);
-  const sourceScaleY = source.height / Math.max(1, drawHeight);
-  const sourceLeft = (clipRect.left - offsetX) * sourceScaleX;
-  const sourceTop = (clipRect.top - offsetY) * sourceScaleY;
-  const sourceRight = (clipRect.right - offsetX) * sourceScaleX;
-  const sourceBottom = (clipRect.bottom - offsetY) * sourceScaleY;
-
-  const sx = Math.max(0, sourceLeft);
-  const sy = Math.max(0, sourceTop);
-  const ex = Math.min(source.width, sourceRight);
-  const ey = Math.min(source.height, sourceBottom);
-  const sw = ex - sx;
-  const sh = ey - sy;
-  if (sw <= 0 || sh <= 0) return;
-
-  const dx = offsetX + sx / sourceScaleX;
-  const dy = offsetY + sy / sourceScaleY;
-  const dw = sw / sourceScaleX;
-  const dh = sh / sourceScaleY;
-  if (dw <= 0 || dh <= 0) return;
-  ctx.drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh);
-}
-
 function calculateBounds(
   paths: Array<Array<{ x: number; y: number }>>
 ): SelectionSnapshot['bounds'] {
@@ -254,89 +268,209 @@ function calculateBounds(
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-function buildSelectionSourceParts(args: {
+function buildSelectionPreviewData(args: {
   sourceCanvas: HTMLCanvasElement;
-  baseOffsetX: number;
-  baseOffsetY: number;
   selectionMask: ImageData;
+  bounds: SelectionSnapshot['bounds'];
   width: number;
   height: number;
-}): { anchorBaseCanvas: HTMLCanvasElement; floatingSourceCanvas: HTMLCanvasElement } | null {
-  const { sourceCanvas, baseOffsetX, baseOffsetY, selectionMask, width, height } = args;
-  const mask = createCanvasWithContext(width, height);
-  const anchorBase = createCanvasWithContext(sourceCanvas.width, sourceCanvas.height);
-  const floatingSource = createCanvasWithContext(sourceCanvas.width, sourceCanvas.height);
-  if (!mask || !anchorBase || !floatingSource) return null;
+}): SelectionPreviewData | null {
+  const { sourceCanvas, selectionMask, bounds, width, height } = args;
+  const fallbackBounds: CanvasRect = { left: 0, top: 0, right: width, bottom: height };
+  const targetBounds = bounds
+    ? normalizeClipRect(
+        {
+          left: bounds.x - SELECTION_MASK_EDGE_PAD_LEFT,
+          top: bounds.y - SELECTION_MASK_EDGE_PAD_TOP,
+          right: bounds.x + bounds.width + SELECTION_MASK_EDGE_PAD_RIGHT,
+          bottom: bounds.y + bounds.height + SELECTION_MASK_EDGE_PAD_BOTTOM,
+        },
+        width,
+        height
+      )
+    : fallbackBounds;
+  if (!targetBounds) return null;
 
-  mask.ctx.putImageData(selectionMask, 0, 0);
+  const localWidth = Math.max(1, targetBounds.right - targetBounds.left);
+  const localHeight = Math.max(1, targetBounds.bottom - targetBounds.top);
+  const mask = createCanvasWithContext(localWidth, localHeight);
+  const floating = createCanvasWithContext(localWidth, localHeight);
+  if (!mask || !floating) return null;
 
-  anchorBase.ctx.clearRect(0, 0, anchorBase.canvas.width, anchorBase.canvas.height);
-  anchorBase.ctx.drawImage(sourceCanvas, 0, 0);
-  anchorBase.ctx.globalCompositeOperation = 'destination-out';
-  anchorBase.ctx.drawImage(mask.canvas, -baseOffsetX, -baseOffsetY);
-  anchorBase.ctx.globalCompositeOperation = 'source-over';
+  const localMask = new ImageData(localWidth, localHeight);
+  let hasMaskPixel = false;
+  for (let y = 0; y < localHeight; y += 1) {
+    for (let x = 0; x < localWidth; x += 1) {
+      const srcX = targetBounds.left + x;
+      const srcY = targetBounds.top + y;
+      const srcIdx = (srcY * selectionMask.width + srcX) * 4 + 3;
+      const dstIdx = (y * localWidth + x) * 4;
+      const alpha = selectionMask.data[srcIdx] ?? 0;
+      localMask.data[dstIdx] = 255;
+      localMask.data[dstIdx + 1] = 255;
+      localMask.data[dstIdx + 2] = 255;
+      localMask.data[dstIdx + 3] = alpha;
+      if (alpha > 0) {
+        hasMaskPixel = true;
+      }
+    }
+  }
 
-  floatingSource.ctx.clearRect(0, 0, floatingSource.canvas.width, floatingSource.canvas.height);
-  floatingSource.ctx.drawImage(sourceCanvas, 0, 0);
-  floatingSource.ctx.globalCompositeOperation = 'destination-in';
-  floatingSource.ctx.drawImage(mask.canvas, -baseOffsetX, -baseOffsetY);
-  floatingSource.ctx.globalCompositeOperation = 'source-over';
+  if (!hasMaskPixel) return null;
+
+  mask.ctx.putImageData(localMask, 0, 0);
+
+  floating.ctx.clearRect(0, 0, localWidth, localHeight);
+  floating.ctx.drawImage(sourceCanvas, -targetBounds.left, -targetBounds.top);
+  floating.ctx.globalCompositeOperation = 'destination-in';
+  floating.ctx.drawImage(mask.canvas, 0, 0);
+  floating.ctx.globalCompositeOperation = 'source-over';
 
   return {
-    anchorBaseCanvas: anchorBase.canvas,
-    floatingSourceCanvas: floatingSource.canvas,
+    bounds: targetBounds,
+    maskCanvas: mask.canvas,
+    floatingCanvas: floating.canvas,
   };
 }
 
-function buildPreviewProxyCanvas(source: HTMLCanvasElement): {
-  proxy: HTMLCanvasElement | null;
-  scale: number;
-} {
-  const pixels = source.width * source.height;
-  if (pixels <= PREVIEW_DOWNSAMPLE_THRESHOLD_PIXELS) {
-    return { proxy: null, scale: 1 };
-  }
+function renderSelectionPreview(args: {
+  ctx: CanvasRenderingContext2D;
+  sourceCanvas: HTMLCanvasElement;
+  selection: SelectionPreviewData;
+  deltaX: number;
+  deltaY: number;
+  width: number;
+  height: number;
+  clipRect: CanvasRect | null;
+}): void {
+  const { ctx, sourceCanvas, selection, deltaX, deltaY, width, height, clipRect } = args;
+  clearCanvasWithOptionalClip({ ctx, width, height, clipRect });
+  drawCanvasAtOffset(ctx, sourceCanvas, 0, 0, clipRect);
 
-  const proxyW = Math.max(1, Math.floor(source.width * PREVIEW_PROXY_SCALE));
-  const proxyH = Math.max(1, Math.floor(source.height * PREVIEW_PROXY_SCALE));
-  const proxy = createCanvasWithContext(proxyW, proxyH);
-  if (!proxy) {
-    return { proxy: null, scale: 1 };
-  }
+  ctx.globalCompositeOperation = 'destination-out';
+  drawCanvasAtOffset(
+    ctx,
+    selection.maskCanvas,
+    selection.bounds.left,
+    selection.bounds.top,
+    clipRect
+  );
 
-  proxy.ctx.clearRect(0, 0, proxyW, proxyH);
-  proxy.ctx.imageSmoothingEnabled = true;
-  proxy.ctx.imageSmoothingQuality = 'medium';
-  proxy.ctx.drawImage(source, 0, 0, proxyW, proxyH);
-  return { proxy: proxy.canvas, scale: PREVIEW_PROXY_SCALE };
+  ctx.globalCompositeOperation = 'source-over';
+  drawCanvasAtOffset(
+    ctx,
+    selection.floatingCanvas,
+    selection.bounds.left + deltaX,
+    selection.bounds.top + deltaY,
+    clipRect
+  );
 }
 
-function renderFloatingCompositionToLayer(
-  layerCtx: CanvasRenderingContext2D,
-  floating: FloatingSelectionSession,
-  floatingOffsetX: number,
-  floatingOffsetY: number,
-  width: number,
-  height: number
-): void {
+function commitFullLayerMove(args: {
+  layerCtx: CanvasRenderingContext2D;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+}): void {
+  const { layerCtx, offsetX, offsetY, width, height } = args;
+  const snapshot = createCanvasWithContext(width, height);
+  if (!snapshot) return;
+  snapshot.ctx.drawImage(layerCtx.canvas, 0, 0);
   layerCtx.clearRect(0, 0, width, height);
-  layerCtx.drawImage(floating.anchorBaseCanvas, floating.anchorOffsetX, floating.anchorOffsetY);
-  layerCtx.drawImage(floating.floatingSourceCanvas, floatingOffsetX, floatingOffsetY);
+  layerCtx.drawImage(snapshot.canvas, offsetX, offsetY);
 }
 
-function renderFloatingAnchorToLayer(
-  layerCtx: CanvasRenderingContext2D,
-  floating: FloatingSelectionSession,
-  width: number,
-  height: number
-): void {
+function commitSelectionMove(args: {
+  layerCtx: CanvasRenderingContext2D;
+  selection: SelectionPreviewData;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+}): void {
+  const { layerCtx, selection, offsetX, offsetY, width, height } = args;
+  const snapshot = createCanvasWithContext(width, height);
+  if (!snapshot) return;
+  snapshot.ctx.drawImage(layerCtx.canvas, 0, 0);
+
   layerCtx.clearRect(0, 0, width, height);
-  layerCtx.drawImage(floating.anchorBaseCanvas, floating.anchorOffsetX, floating.anchorOffsetY);
+  layerCtx.drawImage(snapshot.canvas, 0, 0);
+
+  layerCtx.save();
+  layerCtx.globalCompositeOperation = 'destination-out';
+  layerCtx.drawImage(selection.maskCanvas, selection.bounds.left, selection.bounds.top);
+  layerCtx.restore();
+
+  layerCtx.drawImage(
+    selection.floatingCanvas,
+    selection.bounds.left + offsetX,
+    selection.bounds.top + offsetY
+  );
+}
+
+function computeFullMoveDirtyRect(args: {
+  prevOffsetX: number;
+  prevOffsetY: number;
+  nextOffsetX: number;
+  nextOffsetY: number;
+  width: number;
+  height: number;
+  clipRect: CanvasRect | null;
+}): CanvasRect | null {
+  const { prevOffsetX, prevOffsetY, nextOffsetX, nextOffsetY, width, height, clipRect } = args;
+  const canvasRect: CanvasRect = { left: 0, top: 0, right: width, bottom: height };
+  const prevRect = intersectRect(
+    {
+      left: prevOffsetX,
+      top: prevOffsetY,
+      right: prevOffsetX + width,
+      bottom: prevOffsetY + height,
+    },
+    canvasRect
+  );
+  const nextRect = intersectRect(
+    {
+      left: nextOffsetX,
+      top: nextOffsetY,
+      right: nextOffsetX + width,
+      bottom: nextOffsetY + height,
+    },
+    canvasRect
+  );
+
+  const dirty = expandRect(unionRect(prevRect, nextRect), 2, width, height);
+  return clipRect ? intersectRect(dirty, clipRect) : dirty;
+}
+
+function computeSelectionMoveDirtyRect(args: {
+  bounds: CanvasRect;
+  prevOffsetX: number;
+  prevOffsetY: number;
+  nextOffsetX: number;
+  nextOffsetY: number;
+  width: number;
+  height: number;
+  clipRect: CanvasRect | null;
+}): CanvasRect | null {
+  const { bounds, prevOffsetX, prevOffsetY, nextOffsetX, nextOffsetY, width, height, clipRect } =
+    args;
+  const canvasRect: CanvasRect = { left: 0, top: 0, right: width, bottom: height };
+  const prevFloating = intersectRect(shiftRect(bounds, prevOffsetX, prevOffsetY), canvasRect);
+  const nextFloating = intersectRect(shiftRect(bounds, nextOffsetX, nextOffsetY), canvasRect);
+  const baseRect = intersectRect(bounds, canvasRect);
+
+  const dirty = expandRect(
+    unionRect(baseRect, unionRect(prevFloating, nextFloating)),
+    MOVE_PREVIEW_DIRTY_PAD,
+    width,
+    height
+  );
+  return clipRect ? intersectRect(dirty, clipRect) : dirty;
 }
 
 export function useMoveTool({
   layerRendererRef,
-  movePreviewCanvasRef,
   currentTool,
   layers,
   activeLayerId,
@@ -350,12 +484,9 @@ export function useMoveTool({
   compositeAndRender,
   updateThumbnail,
   getVisibleCanvasRect,
-  getLayerRevision,
 }: UseMoveToolParams) {
   const moveSessionRef = useRef<MoveSession | null>(null);
   const movePreviewRafRef = useRef<number | null>(null);
-  const preservedLayerStateRef = useRef<Map<string, PreservedLayerState>>(new Map());
-  const floatingSelectionSessionRef = useRef<FloatingSelectionSession | null>(null);
 
   const clearPreviewRaf = useCallback(() => {
     if (movePreviewRafRef.current !== null) {
@@ -369,46 +500,37 @@ export function useMoveTool({
     return normalizeClipRect(getVisibleCanvasRect(), width, height);
   }, [getVisibleCanvasRect, height, width]);
 
-  const clearMovePreviewLayer = useCallback(
-    (clipRect: CanvasRect | null = null) => {
-      const previewCanvas = movePreviewCanvasRef?.current;
-      if (!previewCanvas) return;
-      const previewCtx = previewCanvas.getContext('2d', { willReadFrequently: true });
-      if (!previewCtx) return;
-      clearCanvasWithOptionalClip({
-        ctx: previewCtx,
-        width,
-        height,
-        clipRect,
-      });
-    },
-    [height, movePreviewCanvasRef, width]
-  );
-
   useEffect(() => {
     return () => {
       clearPreviewRaf();
-      clearMovePreviewLayer();
     };
-  }, [clearMovePreviewLayer, clearPreviewRaf]);
+  }, [clearPreviewRaf]);
+
+  const resetSessionToBase = useCallback(
+    (session: MoveSession) => {
+      clearCanvasWithOptionalClip({
+        ctx: session.previewCtx,
+        width,
+        height,
+        clipRect: null,
+      });
+      if (session.mode === 'selection') {
+        useSelectionStore.getState().cancelMove();
+      }
+      compositeAndRender();
+    },
+    [compositeAndRender, height, width]
+  );
 
   useEffect(() => {
     if (currentTool === 'move') return;
     const session = moveSessionRef.current;
     if (!session) return;
-    session.cancelled = true;
     moveSessionRef.current = null;
+    session.cancelled = true;
     clearPreviewRaf();
-    clearMovePreviewLayer();
-  }, [clearMovePreviewLayer, clearPreviewRaf, currentTool]);
-
-  const resolveNextLayerRevision = useCallback(
-    (layerId: string): number => {
-      if (!getLayerRevision) return 0;
-      return getLayerRevision(layerId) + 1;
-    },
-    [getLayerRevision]
-  );
+    resetSessionToBase(session);
+  }, [clearPreviewRaf, currentTool, resetSessionToBase]);
 
   const applySelectionPreviewPath = useCallback((deltaX: number, deltaY: number) => {
     const state = useSelectionStore.getState();
@@ -427,237 +549,6 @@ export function useMoveTool({
       bounds: calculateBounds(newPath),
     });
   }, []);
-
-  const renderFullLayerMoveLegacy = useCallback(
-    (session: MoveSession, deltaX: number, deltaY: number, clipRect: CanvasRect | null): void => {
-      if (!session.sourceCanvas) return;
-      clearCanvasWithOptionalClip({
-        ctx: session.layerCtx,
-        width,
-        height,
-        clipRect,
-      });
-      drawCanvasAtOffset(session.layerCtx, session.sourceCanvas, deltaX, deltaY, clipRect);
-    },
-    [height, width]
-  );
-
-  const renderSelectionMoveLegacy = useCallback(
-    (
-      session: MoveSession,
-      floating: FloatingSelectionSession,
-      floatingOffsetX: number,
-      floatingOffsetY: number,
-      clipRect: CanvasRect | null
-    ): void => {
-      clearCanvasWithOptionalClip({
-        ctx: session.layerCtx,
-        width,
-        height,
-        clipRect,
-      });
-      drawCanvasAtOffset(
-        session.layerCtx,
-        floating.anchorBaseCanvas,
-        floating.anchorOffsetX,
-        floating.anchorOffsetY,
-        clipRect
-      );
-      drawCanvasAtOffset(
-        session.layerCtx,
-        floating.floatingSourceCanvas,
-        floatingOffsetX,
-        floatingOffsetY,
-        clipRect
-      );
-    },
-    [height, width]
-  );
-
-  const renderSelectionMoveOverlay = useCallback(
-    (
-      floating: FloatingSelectionSession,
-      floatingOffsetX: number,
-      floatingOffsetY: number,
-      clipRect: CanvasRect | null
-    ): void => {
-      const previewCanvas = movePreviewCanvasRef?.current;
-      if (!previewCanvas) return;
-      const previewCtx = previewCanvas.getContext('2d', { willReadFrequently: true });
-      if (!previewCtx) return;
-
-      clearCanvasWithOptionalClip({
-        ctx: previewCtx,
-        width,
-        height,
-        clipRect,
-      });
-
-      const previewSource = floating.previewProxyCanvas ?? floating.floatingSourceCanvas;
-      const drawW = floating.floatingSourceCanvas.width;
-      const drawH = floating.floatingSourceCanvas.height;
-      drawScaledCanvasAtOffset(
-        previewCtx,
-        previewSource,
-        floatingOffsetX,
-        floatingOffsetY,
-        drawW,
-        drawH,
-        clipRect
-      );
-    },
-    [height, movePreviewCanvasRef, width]
-  );
-
-  const renderFloatingSessionToLayer = useCallback(
-    (
-      layerId: string,
-      floatingOffsetX: number,
-      floatingOffsetY: number
-    ): { rendered: boolean; floating: FloatingSelectionSession | null } => {
-      const floating = floatingSelectionSessionRef.current;
-      const renderer = layerRendererRef.current;
-      if (!floating || !renderer || floating.layerId !== layerId) {
-        return { rendered: false, floating: null };
-      }
-
-      const layer = renderer.getLayer(layerId);
-      if (!layer) return { rendered: false, floating: null };
-      renderFloatingCompositionToLayer(
-        layer.ctx,
-        floating,
-        floatingOffsetX,
-        floatingOffsetY,
-        width,
-        height
-      );
-      return { rendered: true, floating };
-    },
-    [height, layerRendererRef, width]
-  );
-
-  const finalizeFloatingSelectionSession = useCallback(
-    (reason = 'external'): void => {
-      void reason;
-      const activeMove = moveSessionRef.current;
-      let shouldRender = false;
-
-      if (
-        activeMove &&
-        activeMove.mode === 'selection' &&
-        activeMove.ready &&
-        activeMove.floatingSession
-      ) {
-        const floatingOffsetX = activeMove.baseOffsetX + activeMove.deltaX;
-        const floatingOffsetY = activeMove.baseOffsetY + activeMove.deltaY;
-        const rendered = renderFloatingSessionToLayer(
-          activeMove.layerId,
-          floatingOffsetX,
-          floatingOffsetY
-        );
-        if (rendered.rendered) {
-          rendered.floating!.floatingOffsetX = floatingOffsetX;
-          rendered.floating!.floatingOffsetY = floatingOffsetY;
-          shouldRender = true;
-        }
-        useSelectionStore.getState().cancelMove();
-      }
-
-      moveSessionRef.current = null;
-      clearPreviewRaf();
-      clearMovePreviewLayer();
-      floatingSelectionSessionRef.current = null;
-      if (shouldRender) {
-        compositeAndRender({ forceCpu: true });
-      }
-    },
-    [clearMovePreviewLayer, clearPreviewRaf, compositeAndRender, renderFloatingSessionToLayer]
-  );
-
-  const hasFloatingSelectionSession = useCallback((): boolean => {
-    return !!floatingSelectionSessionRef.current;
-  }, []);
-
-  const applyMovePreview = useCallback(
-    (session: MoveSession, canvasX: number, canvasY: number, previewOnly: boolean): void => {
-      const clipRect = previewOnly ? getPreviewClipRect() : null;
-      if (session.mode === 'selection') {
-        const floating = session.floatingSession;
-        if (!floating) return;
-
-        const moveDeltaX = roundDelta(canvasX - session.startX);
-        const moveDeltaY = roundDelta(canvasY - session.startY);
-        const nextOffsetX = session.baseOffsetX + moveDeltaX;
-        const nextOffsetY = session.baseOffsetY + moveDeltaY;
-        if (session.renderedDeltaX === nextOffsetX && session.renderedDeltaY === nextOffsetY) {
-          return;
-        }
-
-        session.deltaX = moveDeltaX;
-        session.deltaY = moveDeltaY;
-        session.renderedDeltaX = nextOffsetX;
-        session.renderedDeltaY = nextOffsetY;
-        applySelectionPreviewPath(moveDeltaX, moveDeltaY);
-
-        if (session.selectionPreviewMode === 'overlay') {
-          renderSelectionMoveOverlay(floating, nextOffsetX, nextOffsetY, clipRect);
-        } else {
-          renderSelectionMoveLegacy(session, floating, nextOffsetX, nextOffsetY, clipRect);
-          if (previewOnly) {
-            compositeAndRender({ clipRect, forceCpu: true });
-          } else {
-            compositeAndRender({ forceCpu: true });
-          }
-        }
-
-        if (moveDeltaX !== 0 || moveDeltaY !== 0) {
-          session.moved = true;
-        }
-        return;
-      }
-
-      const nextOffsetX = session.baseOffsetX + roundDelta(canvasX - session.startX);
-      const nextOffsetY = session.baseOffsetY + roundDelta(canvasY - session.startY);
-      if (session.renderedDeltaX === nextOffsetX && session.renderedDeltaY === nextOffsetY) {
-        return;
-      }
-
-      session.deltaX = nextOffsetX;
-      session.deltaY = nextOffsetY;
-      session.renderedDeltaX = nextOffsetX;
-      session.renderedDeltaY = nextOffsetY;
-      renderFullLayerMoveLegacy(session, nextOffsetX, nextOffsetY, clipRect);
-
-      if (nextOffsetX !== session.baseOffsetX || nextOffsetY !== session.baseOffsetY) {
-        session.moved = true;
-      }
-      markLayerDirty(session.layerId);
-      if (previewOnly) {
-        compositeAndRender({ clipRect, forceCpu: true });
-      } else {
-        compositeAndRender({ forceCpu: true });
-      }
-    },
-    [
-      applySelectionPreviewPath,
-      compositeAndRender,
-      getPreviewClipRect,
-      markLayerDirty,
-      renderFullLayerMoveLegacy,
-      renderSelectionMoveLegacy,
-      renderSelectionMoveOverlay,
-    ]
-  );
-
-  const scheduleMovePreview = useCallback(() => {
-    if (movePreviewRafRef.current !== null) return;
-    movePreviewRafRef.current = requestAnimationFrame(() => {
-      movePreviewRafRef.current = null;
-      const session = moveSessionRef.current;
-      if (!session || !session.ready) return;
-      applyMovePreview(session, session.latestX, session.latestY, true);
-    });
-  }, [applyMovePreview]);
 
   const pickLayerByPixel = useCallback(
     async (canvasX: number, canvasY: number): Promise<void> => {
@@ -684,6 +575,174 @@ export function useMoveTool({
     [height, layerRendererRef, layers, setActiveLayer, syncAllPendingGpuLayersToCpu, width]
   );
 
+  const applyMovePreview = useCallback(
+    (session: MoveSession, canvasX: number, canvasY: number, previewOnly: boolean): void => {
+      const nextOffsetX = roundDelta(canvasX - session.startX);
+      const nextOffsetY = roundDelta(canvasY - session.startY);
+      if (session.renderedDeltaX === nextOffsetX && session.renderedDeltaY === nextOffsetY) {
+        return;
+      }
+
+      const prevOffsetX = session.deltaX;
+      const prevOffsetY = session.deltaY;
+      session.deltaX = nextOffsetX;
+      session.deltaY = nextOffsetY;
+      session.renderedDeltaX = nextOffsetX;
+      session.renderedDeltaY = nextOffsetY;
+      if (nextOffsetX !== 0 || nextOffsetY !== 0) {
+        session.moved = true;
+      }
+
+      if (session.mode === 'selection') {
+        applySelectionPreviewPath(nextOffsetX, nextOffsetY);
+      }
+
+      const visibleClip = previewOnly ? getPreviewClipRect() : null;
+      const dirtyRect =
+        session.mode === 'selection' && session.selectionData
+          ? computeSelectionMoveDirtyRect({
+              bounds: session.selectionData.bounds,
+              prevOffsetX,
+              prevOffsetY,
+              nextOffsetX,
+              nextOffsetY,
+              width,
+              height,
+              clipRect: visibleClip,
+            })
+          : computeFullMoveDirtyRect({
+              prevOffsetX,
+              prevOffsetY,
+              nextOffsetX,
+              nextOffsetY,
+              width,
+              height,
+              clipRect: visibleClip,
+            });
+
+      if (session.mode === 'selection' && session.selectionData) {
+        renderSelectionPreview({
+          ctx: session.previewCtx,
+          sourceCanvas: session.sourceCanvas,
+          selection: session.selectionData,
+          deltaX: nextOffsetX,
+          deltaY: nextOffsetY,
+          width,
+          height,
+          clipRect: dirtyRect,
+        });
+      } else {
+        clearCanvasWithOptionalClip({
+          ctx: session.previewCtx,
+          width,
+          height,
+          clipRect: dirtyRect,
+        });
+        drawCanvasAtOffset(
+          session.previewCtx,
+          session.sourceCanvas,
+          nextOffsetX,
+          nextOffsetY,
+          dirtyRect
+        );
+      }
+
+      compositeAndRender({
+        clipRect: dirtyRect,
+        movePreview: {
+          layerId: session.layerId,
+          canvas: session.previewCanvas,
+          dirtyRect,
+        },
+      });
+    },
+    [applySelectionPreviewPath, compositeAndRender, getPreviewClipRect, height, width]
+  );
+
+  const scheduleMovePreview = useCallback(() => {
+    if (movePreviewRafRef.current !== null) return;
+    movePreviewRafRef.current = requestAnimationFrame(() => {
+      movePreviewRafRef.current = null;
+      const session = moveSessionRef.current;
+      if (!session || session.cancelled) return;
+      applyMovePreview(session, session.latestX, session.latestY, true);
+    });
+  }, [applyMovePreview]);
+
+  const finalizeMoveSession = useCallback(
+    (session: MoveSession, canvasX: number, canvasY: number) => {
+      void (async () => {
+        if (session.cancelled) return;
+
+        applyMovePreview(session, canvasX, canvasY, false);
+
+        if (!session.moved) {
+          if (session.mode === 'selection') {
+            useSelectionStore.getState().cancelMove();
+          }
+          resetSessionToBase(session);
+          session.cancelled = true;
+          return;
+        }
+
+        await session.historyPromise;
+
+        if (session.mode === 'selection' && session.selectionData) {
+          const selectionStore = useSelectionStore.getState();
+          selectionStore.commitMove(width, height);
+          commitSelectionMove({
+            layerCtx: session.layerCtx,
+            selection: session.selectionData,
+            offsetX: session.deltaX,
+            offsetY: session.deltaY,
+            width,
+            height,
+          });
+
+          if (session.selectionBefore) {
+            const selectionAfter = useSelectionStore.getState().createSnapshot();
+            saveStrokeToHistory({
+              selectionBefore: session.selectionBefore,
+              selectionAfter,
+            });
+          } else {
+            saveStrokeToHistory();
+          }
+        } else {
+          commitFullLayerMove({
+            layerCtx: session.layerCtx,
+            offsetX: session.deltaX,
+            offsetY: session.deltaY,
+            width,
+            height,
+          });
+          saveStrokeToHistory();
+        }
+
+        markLayerDirty(session.layerId);
+        compositeAndRender();
+        updateThumbnail(session.layerId);
+        clearCanvasWithOptionalClip({
+          ctx: session.previewCtx,
+          width,
+          height,
+          clipRect: null,
+        });
+        session.cancelled = true;
+      })().catch(() => undefined);
+    },
+    [
+      applyMovePreview,
+      compositeAndRender,
+      height,
+      markLayerDirty,
+      resetSessionToBase,
+      saveStrokeToHistory,
+      updateThumbnail,
+      width,
+    ]
+  );
+
   const handleMovePointerDown = useCallback(
     (canvasX: number, canvasY: number, event: MoveDownEventLike): boolean => {
       if (event.ctrlKey) {
@@ -701,9 +760,18 @@ export function useMoveTool({
       const layer = renderer?.getLayer(activeLayerId);
       if (!renderer || !layer) return true;
 
+      const preview = createCanvasWithContext(width, height);
+      if (!preview) return true;
+
+      const historyPromise = (async () => {
+        await syncAllPendingGpuLayersToCpu();
+        await captureBeforeImage(false);
+      })().catch(() => undefined);
+
       const session: MoveSession = {
         pointerId: event.pointerId,
         layerId: activeLayerId,
+        mode: 'full',
         startX: canvasX,
         startY: canvasY,
         latestX: canvasX,
@@ -713,137 +781,46 @@ export function useMoveTool({
         renderedDeltaX: Number.NaN,
         renderedDeltaY: Number.NaN,
         moved: false,
-        ready: false,
         cancelled: false,
-        mode: 'full',
-        baseOffsetX: 0,
-        baseOffsetY: 0,
+        sourceCanvas: layer.canvas,
         layerCtx: layer.ctx,
-        sourceCanvas: null,
-        selectionPreviewMode: movePreviewCanvasRef?.current ? 'overlay' : 'legacy',
-        floatingSession: null,
+        previewCanvas: preview.canvas,
+        previewCtx: preview.ctx,
+        selectionData: null,
+        historyPromise,
       };
+
+      const selectionStore = useSelectionStore.getState();
+      const selectionMask = selectionStore.hasSelection ? selectionStore.selectionMask : null;
+      if (selectionMask) {
+        const selectionData = buildSelectionPreviewData({
+          sourceCanvas: layer.canvas,
+          selectionMask,
+          bounds: selectionStore.bounds,
+          width,
+          height,
+        });
+        if (!selectionData) return true;
+
+        session.mode = 'selection';
+        session.selectionData = selectionData;
+        session.selectionBefore = selectionStore.createSnapshot();
+        selectionStore.beginMove({ x: canvasX, y: canvasY, type: 'freehand' });
+      }
+
       moveSessionRef.current = session;
-
-      void (async () => {
-        await syncAllPendingGpuLayersToCpu();
-        if (moveSessionRef.current !== session || session.cancelled) return;
-
-        await captureBeforeImage(false);
-        if (moveSessionRef.current !== session || session.cancelled) return;
-
-        const selectionStore = useSelectionStore.getState();
-        const selectionMask = selectionStore.hasSelection ? selectionStore.selectionMask : null;
-        if (selectionMask) {
-          let floating = floatingSelectionSessionRef.current;
-          const layerRevision = getLayerRevision ? getLayerRevision(activeLayerId) : 0;
-          const canReuse =
-            !!floating &&
-            floating.layerId === activeLayerId &&
-            selectionStore.hasSelection &&
-            (!getLayerRevision || floating.anchorLayerRevision === layerRevision);
-
-          if (!canReuse) {
-            floatingSelectionSessionRef.current = null;
-            const preserved = preservedLayerStateRef.current.get(activeLayerId);
-            const currentRevision = getLayerRevision ? getLayerRevision(activeLayerId) : null;
-            if (preserved && (currentRevision === null || preserved.revision === currentRevision)) {
-              session.sourceCanvas = preserved.sourceCanvas;
-              session.baseOffsetX = preserved.offsetX;
-              session.baseOffsetY = preserved.offsetY;
-            } else {
-              preservedLayerStateRef.current.delete(activeLayerId);
-              session.sourceCanvas = cloneCanvas(layer.canvas, width, height);
-            }
-            if (!session.sourceCanvas) {
-              moveSessionRef.current = null;
-              return;
-            }
-
-            const parts = buildSelectionSourceParts({
-              sourceCanvas: session.sourceCanvas,
-              baseOffsetX: session.baseOffsetX,
-              baseOffsetY: session.baseOffsetY,
-              selectionMask,
-              width,
-              height,
-            });
-            if (!parts) {
-              moveSessionRef.current = null;
-              return;
-            }
-            const proxy = buildPreviewProxyCanvas(parts.floatingSourceCanvas);
-            floating = {
-              layerId: activeLayerId,
-              anchorBaseCanvas: parts.anchorBaseCanvas,
-              floatingSourceCanvas: parts.floatingSourceCanvas,
-              anchorOffsetX: session.baseOffsetX,
-              anchorOffsetY: session.baseOffsetY,
-              floatingOffsetX: session.baseOffsetX,
-              floatingOffsetY: session.baseOffsetY,
-              anchorLayerRevision: layerRevision,
-              previewProxyCanvas: proxy.proxy,
-              previewProxyScale: proxy.scale,
-            };
-            floatingSelectionSessionRef.current = floating;
-          }
-
-          session.mode = 'selection';
-          session.floatingSession = floating ?? null;
-          session.baseOffsetX = floating?.floatingOffsetX ?? 0;
-          session.baseOffsetY = floating?.floatingOffsetY ?? 0;
-          session.selectionBefore = selectionStore.createSnapshot();
-          selectionStore.beginMove({ x: canvasX, y: canvasY, type: 'freehand' });
-
-          if (session.selectionPreviewMode === 'overlay' && floating) {
-            const previewClipRect = getPreviewClipRect();
-            renderFloatingAnchorToLayer(session.layerCtx, floating, width, height);
-            compositeAndRender({ forceCpu: true });
-            renderSelectionMoveOverlay(
-              floating,
-              floating.floatingOffsetX,
-              floating.floatingOffsetY,
-              previewClipRect
-            );
-          }
-        } else {
-          const preserved = preservedLayerStateRef.current.get(activeLayerId);
-          const currentRevision = getLayerRevision ? getLayerRevision(activeLayerId) : null;
-          if (preserved && (currentRevision === null || preserved.revision === currentRevision)) {
-            session.sourceCanvas = preserved.sourceCanvas;
-            session.baseOffsetX = preserved.offsetX;
-            session.baseOffsetY = preserved.offsetY;
-          } else {
-            preservedLayerStateRef.current.delete(activeLayerId);
-            session.sourceCanvas = cloneCanvas(layer.canvas, width, height);
-          }
-          if (!session.sourceCanvas) {
-            moveSessionRef.current = null;
-            return;
-          }
-        }
-
-        session.ready = true;
-        scheduleMovePreview();
-      })();
-
+      copyCanvasContent(session.previewCtx, session.sourceCanvas, null);
       return true;
     },
     [
       activeLayerId,
       captureBeforeImage,
-      compositeAndRender,
-      getLayerRevision,
-      getPreviewClipRect,
+      height,
       layerRendererRef,
       layers,
-      movePreviewCanvasRef,
       pickLayerByPixel,
-      renderSelectionMoveOverlay,
-      scheduleMovePreview,
       syncAllPendingGpuLayersToCpu,
       width,
-      height,
     ]
   );
 
@@ -854,7 +831,7 @@ export function useMoveTool({
 
       session.latestX = canvasX;
       session.latestY = canvasY;
-      if (!session.ready) return true;
+      if (session.cancelled) return true;
 
       scheduleMovePreview();
       return true;
@@ -868,106 +845,37 @@ export function useMoveTool({
       if (!session || session.pointerId !== event.pointerId) return false;
 
       moveSessionRef.current = null;
-      session.cancelled = true;
       clearPreviewRaf();
-
-      if (!session.ready) {
-        clearMovePreviewLayer();
-        return true;
-      }
-
-      applyMovePreview(session, canvasX, canvasY, false);
-
-      if (!session.moved) {
-        if (session.mode === 'selection') {
-          useSelectionStore.getState().cancelMove();
-          if (session.floatingSession) {
-            renderFloatingCompositionToLayer(
-              session.layerCtx,
-              session.floatingSession,
-              session.floatingSession.floatingOffsetX,
-              session.floatingSession.floatingOffsetY,
-              width,
-              height
-            );
-          }
-          clearMovePreviewLayer();
-          compositeAndRender({ forceCpu: true, clipRect: getPreviewClipRect() });
-          return true;
-        }
-
-        renderFullLayerMoveLegacy(session, session.baseOffsetX, session.baseOffsetY, null);
-        markLayerDirty(session.layerId);
-        compositeAndRender({ forceCpu: true });
-        return true;
-      }
-
-      if (session.mode === 'selection' && session.floatingSession) {
-        const floating = session.floatingSession;
-        const selectionStore = useSelectionStore.getState();
-        selectionStore.commitMove(width, height);
-
-        const finalOffsetX = session.baseOffsetX + session.deltaX;
-        const finalOffsetY = session.baseOffsetY + session.deltaY;
-        renderFloatingCompositionToLayer(
-          session.layerCtx,
-          floating,
-          finalOffsetX,
-          finalOffsetY,
-          width,
-          height
-        );
-        floating.floatingOffsetX = finalOffsetX;
-        floating.floatingOffsetY = finalOffsetY;
-        floating.anchorLayerRevision = resolveNextLayerRevision(session.layerId);
-
-        if (session.selectionBefore) {
-          const selectionAfter = useSelectionStore.getState().createSnapshot();
-          saveStrokeToHistory({
-            selectionBefore: session.selectionBefore,
-            selectionAfter,
-          });
-        } else {
-          saveStrokeToHistory();
-        }
-        clearMovePreviewLayer();
-        markLayerDirty(session.layerId);
-        compositeAndRender({ forceCpu: true });
-        updateThumbnail(session.layerId);
-        return true;
-      }
-
-      if (session.sourceCanvas) {
-        preservedLayerStateRef.current.set(session.layerId, {
-          sourceCanvas: session.sourceCanvas,
-          offsetX: session.deltaX,
-          offsetY: session.deltaY,
-          revision: resolveNextLayerRevision(session.layerId),
-        });
-      }
-      renderFullLayerMoveLegacy(session, session.deltaX, session.deltaY, null);
-      saveStrokeToHistory();
-      markLayerDirty(session.layerId);
-      compositeAndRender({ forceCpu: true });
-      updateThumbnail(session.layerId);
-      clearMovePreviewLayer();
+      session.latestX = canvasX;
+      session.latestY = canvasY;
+      finalizeMoveSession(session, canvasX, canvasY);
       return true;
     },
-    [
-      applyMovePreview,
-      clearMovePreviewLayer,
-      clearPreviewRaf,
-      compositeAndRender,
-      getPreviewClipRect,
-      markLayerDirty,
-      renderFullLayerMoveLegacy,
-      resolveNextLayerRevision,
-      saveStrokeToHistory,
-      updateThumbnail,
-      width,
-      height,
-    ]
+    [clearPreviewRaf, finalizeMoveSession]
   );
+
+  const finalizeFloatingSelectionSession = useCallback(
+    (reason = 'external'): void => {
+      void reason;
+      const session = moveSessionRef.current;
+      if (!session || session.mode !== 'selection') {
+        compositeAndRender();
+        return;
+      }
+
+      moveSessionRef.current = null;
+      clearPreviewRaf();
+      session.cancelled = true;
+      useSelectionStore.getState().cancelMove();
+      resetSessionToBase(session);
+    },
+    [clearPreviewRaf, compositeAndRender, resetSessionToBase]
+  );
+
+  const hasFloatingSelectionSession = useCallback((): boolean => {
+    const session = moveSessionRef.current;
+    return !!session && session.mode === 'selection';
+  }, []);
 
   return {
     handleMovePointerDown,
