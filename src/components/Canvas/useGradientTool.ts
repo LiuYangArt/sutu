@@ -37,6 +37,21 @@ interface GradientSession {
   previewCanvas: HTMLCanvasElement;
 }
 
+function canRenderSelectionPreview(
+  selectionState: ReturnType<typeof useSelectionStore.getState>
+): boolean {
+  if (selectionState.selectionMaskPending) return false;
+  if (selectionState.hasSelection && !selectionState.selectionMask) return false;
+  return true;
+}
+
+function createPreviewCanvas(width: number, height: number): HTMLCanvasElement {
+  const previewCanvas = document.createElement('canvas');
+  previewCanvas.width = width;
+  previewCanvas.height = height;
+  return previewCanvas;
+}
+
 function constrain45Degree(start: GradientPoint, point: GradientPoint): GradientPoint {
   const dx = point.x - start.x;
   const dy = point.y - start.y;
@@ -86,7 +101,24 @@ export function useGradientTool({
   applyGradientToActiveLayer,
   renderPreview,
   clearPreview,
-}: UseGradientToolParams) {
+}: UseGradientToolParams): {
+  handleGradientPointerDown: (
+    canvasX: number,
+    canvasY: number,
+    event: Pick<PointerEvent, 'button' | 'shiftKey'>
+  ) => boolean;
+  handleGradientPointerMove: (
+    canvasX: number,
+    canvasY: number,
+    event: Pick<PointerEvent, 'shiftKey'>
+  ) => void;
+  handleGradientPointerUp: (
+    canvasX: number,
+    canvasY: number,
+    event: Pick<PointerEvent, 'shiftKey'>
+  ) => void;
+  cancelGradientSession: () => void;
+} {
   const sessionRef = useRef<GradientSession | null>(null);
   const rafRef = useRef<number | null>(null);
 
@@ -110,11 +142,7 @@ export function useGradientTool({
     if (!session) return;
 
     const selectionState = useSelectionStore.getState();
-    if (selectionState.selectionMaskPending) {
-      clearPreview();
-      return;
-    }
-    if (selectionState.hasSelection && !selectionState.selectionMask) {
+    if (!canRenderSelectionPreview(selectionState)) {
       clearPreview();
       return;
     }
@@ -175,18 +203,13 @@ export function useGradientTool({
       if (!baseImageData) return false;
 
       const start = { x: canvasX, y: canvasY };
-      const end = event.shiftKey ? constrain45Degree(start, start) : start;
-
-      const previewCanvas = document.createElement('canvas');
-      previewCanvas.width = width;
-      previewCanvas.height = height;
 
       sessionRef.current = {
         layerId: activeLayerId,
         start,
-        end,
+        end: start,
         baseImageData,
-        previewCanvas,
+        previewCanvas: createPreviewCanvas(width, height),
       };
 
       schedulePreview();
@@ -208,27 +231,23 @@ export function useGradientTool({
       const session = sessionRef.current;
       if (!session) return;
 
-      updateSessionEnd(canvasX, canvasY, event.shiftKey);
+      session.end = event.shiftKey
+        ? constrain45Degree(session.start, { x: canvasX, y: canvasY })
+        : { x: canvasX, y: canvasY };
       cancelScheduledPreview();
 
-      const finalSession = sessionRef.current;
-      if (!finalSession) {
-        clearPreview();
-        return;
-      }
-
-      if (isZeroLengthGradient(finalSession.start, finalSession.end)) {
+      if (isZeroLengthGradient(session.start, session.end)) {
         sessionRef.current = null;
         clearPreview();
         return;
       }
 
-      const params = buildGradientParams(finalSession.start, finalSession.end);
+      const params = buildGradientParams(session.start, session.end);
       sessionRef.current = null;
       clearPreview();
       void applyGradientToActiveLayer(params);
     },
-    [applyGradientToActiveLayer, cancelScheduledPreview, clearPreview, updateSessionEnd]
+    [applyGradientToActiveLayer, cancelScheduledPreview, clearPreview]
   );
 
   useEffect(() => {

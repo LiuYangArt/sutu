@@ -332,6 +332,35 @@ function presetUsesTransparencyStops(preset: GradientPreset): boolean {
   return preset.opacityStops.some((stop) => stop.opacity < 0.999);
 }
 
+function sortByPosition<T extends { position: number }>(items: T[]): T[] {
+  return [...items].sort((a, b) => a.position - b.position);
+}
+
+type GradientSelectionState = Pick<
+  GradientState,
+  'settings' | 'selectedColorStopId' | 'selectedOpacityStopId'
+>;
+
+function syncSelectedStopsWithCustomGradient(state: GradientSelectionState): void {
+  state.selectedColorStopId = state.settings.customGradient.colorStops[0]?.id ?? null;
+  state.selectedOpacityStopId = state.settings.customGradient.opacityStops[0]?.id ?? null;
+}
+
+function applyPresetToCustomGradient(
+  state: GradientSelectionState,
+  preset: GradientPreset,
+  options?: { setActivePresetId?: boolean }
+): void {
+  if (options?.setActivePresetId === true) {
+    state.settings.activePresetId = preset.id;
+  }
+  state.settings.customGradient = clonePreset(preset);
+  if (presetUsesTransparencyStops(preset)) {
+    state.settings.transparency = true;
+  }
+  syncSelectedStopsWithCustomGradient(state);
+}
+
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useGradientStore = create<GradientState>()(
@@ -350,6 +379,11 @@ export const useGradientStore = create<GradientState>()(
       }, 120);
     };
 
+    const updateAndPersist = (updater: (state: GradientState) => void): void => {
+      set(updater);
+      schedulePersist();
+    };
+
     return {
       isLoaded: false,
       presets: defaults,
@@ -358,82 +392,62 @@ export const useGradientStore = create<GradientState>()(
       selectedOpacityStopId: defaultSettings.customGradient.opacityStops[0]?.id ?? null,
 
       setShape: (shape) => {
-        set((state) => {
+        updateAndPersist((state) => {
           state.settings.shape = normalizeShape(shape);
         });
-        schedulePersist();
       },
 
       setBlendMode: (blendMode) => {
-        set((state) => {
+        updateAndPersist((state) => {
           state.settings.blendMode = BLEND_MODES.has(blendMode) ? blendMode : 'normal';
         });
-        schedulePersist();
       },
 
       setOpacity: (opacity) => {
-        set((state) => {
+        updateAndPersist((state) => {
           state.settings.opacity = clamp01(opacity);
         });
-        schedulePersist();
       },
 
       setReverse: (reverse) => {
-        set((state) => {
+        updateAndPersist((state) => {
           state.settings.reverse = reverse;
         });
-        schedulePersist();
       },
 
       setDither: (dither) => {
-        set((state) => {
+        updateAndPersist((state) => {
           state.settings.dither = dither;
         });
-        schedulePersist();
       },
 
       setTransparency: (enabled) => {
-        set((state) => {
+        updateAndPersist((state) => {
           state.settings.transparency = enabled;
         });
-        schedulePersist();
       },
 
       setActivePreset: (presetId) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const fallback = state.presets[0] ?? defaultPreset;
           const preset = resolvePresetOrFallback(state.presets, presetId, fallback);
-          state.settings.activePresetId = preset.id;
-          state.settings.customGradient = clonePreset(preset);
-          if (presetUsesTransparencyStops(preset)) {
-            state.settings.transparency = true;
-          }
-          state.selectedColorStopId = preset.colorStops[0]?.id ?? null;
-          state.selectedOpacityStopId = preset.opacityStops[0]?.id ?? null;
+          applyPresetToCustomGradient(state, preset, { setActivePresetId: true });
         });
-        schedulePersist();
       },
 
       copyPresetToCustom: (presetId) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const fallback = state.presets[0] ?? defaultPreset;
           const preset = resolvePresetOrFallback(state.presets, presetId, fallback);
-          state.settings.customGradient = clonePreset(preset);
-          if (presetUsesTransparencyStops(preset)) {
-            state.settings.transparency = true;
-          }
-          state.selectedColorStopId = state.settings.customGradient.colorStops[0]?.id ?? null;
-          state.selectedOpacityStopId = state.settings.customGradient.opacityStops[0]?.id ?? null;
+          applyPresetToCustomGradient(state, preset);
         });
-        schedulePersist();
       },
 
       setCustomGradientName: (name) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const trimmed = name.trim();
           state.settings.customGradient.name = trimmed.length > 0 ? trimmed : 'Untitled Gradient';
         });
-        schedulePersist();
       },
 
       selectColorStop: (id) => {
@@ -450,25 +464,24 @@ export const useGradientStore = create<GradientState>()(
 
       addColorStop: (position) => {
         const id = createId('color');
-        set((state) => {
+        updateAndPersist((state) => {
           const nextStop: ColorStop = {
             id,
             position: clampPosition(position),
             source: 'fixed',
             color: '#ffffff',
           };
-          const merged = [...state.settings.customGradient.colorStops, nextStop].sort(
-            (a, b) => a.position - b.position
-          );
-          state.settings.customGradient.colorStops = merged;
+          state.settings.customGradient.colorStops = sortByPosition([
+            ...state.settings.customGradient.colorStops,
+            nextStop,
+          ]);
           state.selectedColorStopId = id;
         });
-        schedulePersist();
         return id;
       },
 
       updateColorStop: (id, patch) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const nextStops = state.settings.customGradient.colorStops.map((stop) => {
             if (stop.id !== id) return stop;
             const source: ColorStopSource =
@@ -485,14 +498,12 @@ export const useGradientStore = create<GradientState>()(
                 typeof patch.position === 'number' ? clampPosition(patch.position) : stop.position,
             };
           });
-          nextStops.sort((a, b) => a.position - b.position);
-          state.settings.customGradient.colorStops = nextStops;
+          state.settings.customGradient.colorStops = sortByPosition(nextStops);
         });
-        schedulePersist();
       },
 
       removeColorStop: (id) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const filtered = state.settings.customGradient.colorStops.filter(
             (stop) => stop.id !== id
           );
@@ -501,29 +512,27 @@ export const useGradientStore = create<GradientState>()(
             state.selectedColorStopId = state.settings.customGradient.colorStops[0]?.id ?? null;
           }
         });
-        schedulePersist();
       },
 
       addOpacityStop: (position) => {
         const id = createId('opacity');
-        set((state) => {
+        updateAndPersist((state) => {
           const nextStop: OpacityStop = {
             id,
             position: clampPosition(position),
             opacity: 1,
           };
-          const merged = [...state.settings.customGradient.opacityStops, nextStop].sort(
-            (a, b) => a.position - b.position
-          );
-          state.settings.customGradient.opacityStops = merged;
+          state.settings.customGradient.opacityStops = sortByPosition([
+            ...state.settings.customGradient.opacityStops,
+            nextStop,
+          ]);
           state.selectedOpacityStopId = id;
         });
-        schedulePersist();
         return id;
       },
 
       updateOpacityStop: (id, patch) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const nextStops = state.settings.customGradient.opacityStops.map((stop) => {
             if (stop.id !== id) return stop;
             return {
@@ -533,14 +542,12 @@ export const useGradientStore = create<GradientState>()(
               opacity: typeof patch.opacity === 'number' ? clamp01(patch.opacity) : stop.opacity,
             };
           });
-          nextStops.sort((a, b) => a.position - b.position);
-          state.settings.customGradient.opacityStops = nextStops;
+          state.settings.customGradient.opacityStops = sortByPosition(nextStops);
         });
-        schedulePersist();
       },
 
       removeOpacityStop: (id) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const filtered = state.settings.customGradient.opacityStops.filter(
             (stop) => stop.id !== id
           );
@@ -549,12 +556,11 @@ export const useGradientStore = create<GradientState>()(
             state.selectedOpacityStopId = state.settings.customGradient.opacityStops[0]?.id ?? null;
           }
         });
-        schedulePersist();
       },
 
       saveCustomAsPreset: (name) => {
         const presetId = createId('preset');
-        set((state) => {
+        updateAndPersist((state) => {
           const preset = normalizePreset({
             ...clonePreset(state.settings.customGradient),
             id: presetId,
@@ -564,12 +570,11 @@ export const useGradientStore = create<GradientState>()(
           state.settings.activePresetId = preset.id;
           state.settings.customGradient = clonePreset(preset);
         });
-        schedulePersist();
         return presetId;
       },
 
       renamePreset: (id, name) => {
-        set((state) => {
+        updateAndPersist((state) => {
           const target = state.presets.find((preset) => preset.id === id);
           if (!target) return;
           const trimmed = name.trim();
@@ -579,11 +584,10 @@ export const useGradientStore = create<GradientState>()(
             state.settings.customGradient.name = trimmed;
           }
         });
-        schedulePersist();
       },
 
       deletePreset: (id) => {
-        set((state) => {
+        updateAndPersist((state) => {
           state.presets = state.presets.filter((preset) => preset.id !== id);
           if (state.presets.length === 0) {
             state.presets = createDefaultPresets();
@@ -591,13 +595,9 @@ export const useGradientStore = create<GradientState>()(
 
           if (state.settings.activePresetId === id) {
             const fallback = state.presets[0]!;
-            state.settings.activePresetId = fallback.id;
-            state.settings.customGradient = clonePreset(fallback);
-            state.selectedColorStopId = fallback.colorStops[0]?.id ?? null;
-            state.selectedOpacityStopId = fallback.opacityStops[0]?.id ?? null;
+            applyPresetToCustomGradient(state, fallback, { setActivePresetId: true });
           }
         });
-        schedulePersist();
       },
 
       loadFromDisk: async () => {
@@ -627,8 +627,7 @@ export const useGradientStore = create<GradientState>()(
               activePresetId: activePreset.id,
               customGradient: normalizePreset(settings.customGradient),
             };
-            state.selectedColorStopId = state.settings.customGradient.colorStops[0]?.id ?? null;
-            state.selectedOpacityStopId = state.settings.customGradient.opacityStops[0]?.id ?? null;
+            syncSelectedStopsWithCustomGradient(state);
             state.isLoaded = true;
           });
 

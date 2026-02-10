@@ -14,96 +14,10 @@ import {
   Pencil,
   Layers,
 } from 'lucide-react';
-import { useDocumentStore, BlendMode } from '@/stores/document';
+import { useDocumentStore, type BlendMode } from '@/stores/document';
 import { useToastStore } from '@/stores/toast';
+import { BLEND_MODE_MENU_ITEMS, getBlendModeLabel } from '@/utils/blendModeMenu';
 import './LayerPanel.css';
-
-interface BlendModeOption {
-  value: BlendMode;
-  label: string;
-}
-
-const BLEND_MODE_GROUPS: ReadonlyArray<ReadonlyArray<BlendModeOption>> = [
-  [
-    { value: 'normal', label: 'Normal' },
-    { value: 'dissolve', label: 'Dissolve' },
-  ],
-  [
-    { value: 'darken', label: 'Darken' },
-    { value: 'multiply', label: 'Multiply' },
-    { value: 'color-burn', label: 'Color Burn' },
-    { value: 'linear-burn', label: 'Linear Burn' },
-    { value: 'darker-color', label: 'Darker Color' },
-  ],
-  [
-    { value: 'lighten', label: 'Lighten' },
-    { value: 'screen', label: 'Screen' },
-    { value: 'color-dodge', label: 'Color Dodge' },
-    { value: 'linear-dodge', label: 'Linear Dodge (Add)' },
-    { value: 'lighter-color', label: 'Lighter Color' },
-  ],
-  [
-    { value: 'overlay', label: 'Overlay' },
-    { value: 'soft-light', label: 'Soft Light' },
-    { value: 'hard-light', label: 'Hard Light' },
-    { value: 'vivid-light', label: 'Vivid Light' },
-    { value: 'linear-light', label: 'Linear Light' },
-    { value: 'pin-light', label: 'Pin Light' },
-    { value: 'hard-mix', label: 'Hard Mix' },
-  ],
-  [
-    { value: 'difference', label: 'Difference' },
-    { value: 'exclusion', label: 'Exclusion' },
-    { value: 'subtract', label: 'Subtract' },
-    { value: 'divide', label: 'Divide' },
-  ],
-  [
-    { value: 'hue', label: 'Hue' },
-    { value: 'saturation', label: 'Saturation' },
-    { value: 'color', label: 'Color' },
-    { value: 'luminosity', label: 'Luminosity' },
-  ],
-];
-
-type BlendModeMenuItem =
-  | { kind: 'mode'; value: BlendMode; label: string }
-  | { kind: 'separator'; key: string };
-
-function buildBlendModeMenuItems(
-  groups: ReadonlyArray<ReadonlyArray<BlendModeOption>>
-): BlendModeMenuItem[] {
-  const items: BlendModeMenuItem[] = [];
-  for (let i = 0; i < groups.length; i += 1) {
-    const group = groups[i];
-    if (!group) continue;
-    for (const mode of group) {
-      items.push({ kind: 'mode', ...mode });
-    }
-    if (i < groups.length - 1) {
-      items.push({ kind: 'separator', key: `sep-${i}` });
-    }
-  }
-  return items;
-}
-
-function buildBlendModeLabelMap(
-  groups: ReadonlyArray<ReadonlyArray<BlendModeOption>>
-): Map<BlendMode, string> {
-  const map = new Map<BlendMode, string>();
-  for (const group of groups) {
-    for (const mode of group) {
-      map.set(mode.value, mode.label);
-    }
-  }
-  return map;
-}
-
-function getBlendModeLabel(mode: BlendMode): string {
-  return BLEND_MODE_LABEL_MAP.get(mode) ?? 'Normal';
-}
-
-const BLEND_MODE_MENU_ITEMS: BlendModeMenuItem[] = buildBlendModeMenuItems(BLEND_MODE_GROUPS);
-const BLEND_MODE_LABEL_MAP = buildBlendModeLabelMap(BLEND_MODE_GROUPS);
 const CONTEXT_MENU_ESTIMATED_WIDTH = 240;
 const CONTEXT_MENU_ESTIMATED_HEIGHT = 280;
 const CONTEXT_MENU_GUTTER = 8;

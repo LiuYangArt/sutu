@@ -13,7 +13,14 @@ function askName(message: string, initialValue: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function GradientEditor() {
+function resolveSelectedStop<T extends { id: string }>(
+  stops: T[],
+  selectedId: string | null
+): T | null {
+  return stops.find((stop) => stop.id === selectedId) ?? stops[0] ?? null;
+}
+
+export function GradientEditor(): JSX.Element {
   const presets = useGradientStore((s) => s.presets);
   const settings = useGradientStore((s) => s.settings);
   const selectedColorStopId = useGradientStore((s) => s.selectedColorStopId);
@@ -39,18 +46,12 @@ export function GradientEditor() {
   const backgroundColor = useToolStore((s) => s.backgroundColor);
 
   const selectedColorStop = useMemo(
-    () =>
-      settings.customGradient.colorStops.find((stop) => stop.id === selectedColorStopId) ??
-      settings.customGradient.colorStops[0] ??
-      null,
+    () => resolveSelectedStop(settings.customGradient.colorStops, selectedColorStopId),
     [selectedColorStopId, settings.customGradient.colorStops]
   );
 
   const selectedOpacityStop = useMemo(
-    () =>
-      settings.customGradient.opacityStops.find((stop) => stop.id === selectedOpacityStopId) ??
-      settings.customGradient.opacityStops[0] ??
-      null,
+    () => resolveSelectedStop(settings.customGradient.opacityStops, selectedOpacityStopId),
     [selectedOpacityStopId, settings.customGradient.opacityStops]
   );
 

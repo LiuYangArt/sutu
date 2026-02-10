@@ -158,6 +158,19 @@ function sampleNumberAt<T extends { position: number }>(
   return picker(stops[stops.length - 1]!);
 }
 
+function sampleRgbAt(stops: ResolvedColorStop[], t: number): readonly [number, number, number] {
+  return [
+    sampleNumberAt(stops, t, (stop) => stop.rgb[0]),
+    sampleNumberAt(stops, t, (stop) => stop.rgb[1]),
+    sampleNumberAt(stops, t, (stop) => stop.rgb[2]),
+  ];
+}
+
+function sampleAlphaAt(stops: OpacityStop[], t: number, transparency: boolean): number {
+  if (!transparency) return 1;
+  return sampleNumberAt(stops, t, (stop) => stop.opacity);
+}
+
 export function sampleGradientAt(
   t: number,
   colorStops: ColorStop[],
@@ -173,14 +186,8 @@ export function sampleGradientAt(
     colors.backgroundColor
   );
   const resolvedOpacityStops = normalizeOpacityStops(opacityStops);
-
-  const r = sampleNumberAt(resolvedColorStops, effectiveT, (stop) => stop.rgb[0]);
-  const g = sampleNumberAt(resolvedColorStops, effectiveT, (stop) => stop.rgb[1]);
-  const b = sampleNumberAt(resolvedColorStops, effectiveT, (stop) => stop.rgb[2]);
-  const alpha =
-    options?.transparency === false
-      ? 1
-      : sampleNumberAt(resolvedOpacityStops, effectiveT, (stop) => stop.opacity);
+  const [r, g, b] = sampleRgbAt(resolvedColorStops, effectiveT);
+  const alpha = sampleAlphaAt(resolvedOpacityStops, effectiveT, options?.transparency !== false);
 
   return {
     rgb: [r, g, b],
@@ -279,9 +286,7 @@ export function renderGradientToImageData(input: GradientRenderInput): ImageData
       const t = computeGradientT(shape, { x: x + 0.5, y: y + 0.5 }, start, end);
       const effectiveT = reverse ? 1 - t : t;
 
-      let srcR = sampleNumberAt(normalizedColorStops, effectiveT, (stop) => stop.rgb[0]);
-      let srcG = sampleNumberAt(normalizedColorStops, effectiveT, (stop) => stop.rgb[1]);
-      let srcB = sampleNumberAt(normalizedColorStops, effectiveT, (stop) => stop.rgb[2]);
+      let [srcR, srcG, srcB] = sampleRgbAt(normalizedColorStops, effectiveT);
 
       if (dither) {
         const n = ((hashNoise01(x, y) - 0.5) * 2) / 255;
@@ -290,9 +295,7 @@ export function renderGradientToImageData(input: GradientRenderInput): ImageData
         srcB = clamp01(srcB + n);
       }
 
-      const stopAlpha = transparency
-        ? sampleNumberAt(normalizedOpacityStops, effectiveT, (stop) => stop.opacity)
-        : 1;
+      const stopAlpha = sampleAlphaAt(normalizedOpacityStops, effectiveT, transparency);
       const srcAlpha = clamp01(stopAlpha * effectiveOpacity * maskAlpha);
       if (srcAlpha <= 0) continue;
 

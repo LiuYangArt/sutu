@@ -1,96 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { BlendMode } from '@/stores/document';
 import { useGradientStore, type GradientShape } from '@/stores/gradient';
 import { usePanelStore } from '@/stores/panel';
 import { useToolStore } from '@/stores/tool';
 import { buildGradientPreviewCss } from '@/components/GradientEditor/utils';
-
-interface BlendModeOption {
-  value: BlendMode;
-  label: string;
-}
-
-const BLEND_MODE_GROUPS: ReadonlyArray<ReadonlyArray<BlendModeOption>> = [
-  [
-    { value: 'normal', label: 'Normal' },
-    { value: 'dissolve', label: 'Dissolve' },
-  ],
-  [
-    { value: 'darken', label: 'Darken' },
-    { value: 'multiply', label: 'Multiply' },
-    { value: 'color-burn', label: 'Color Burn' },
-    { value: 'linear-burn', label: 'Linear Burn' },
-    { value: 'darker-color', label: 'Darker Color' },
-  ],
-  [
-    { value: 'lighten', label: 'Lighten' },
-    { value: 'screen', label: 'Screen' },
-    { value: 'color-dodge', label: 'Color Dodge' },
-    { value: 'linear-dodge', label: 'Linear Dodge (Add)' },
-    { value: 'lighter-color', label: 'Lighter Color' },
-  ],
-  [
-    { value: 'overlay', label: 'Overlay' },
-    { value: 'soft-light', label: 'Soft Light' },
-    { value: 'hard-light', label: 'Hard Light' },
-    { value: 'vivid-light', label: 'Vivid Light' },
-    { value: 'linear-light', label: 'Linear Light' },
-    { value: 'pin-light', label: 'Pin Light' },
-    { value: 'hard-mix', label: 'Hard Mix' },
-  ],
-  [
-    { value: 'difference', label: 'Difference' },
-    { value: 'exclusion', label: 'Exclusion' },
-    { value: 'subtract', label: 'Subtract' },
-    { value: 'divide', label: 'Divide' },
-  ],
-  [
-    { value: 'hue', label: 'Hue' },
-    { value: 'saturation', label: 'Saturation' },
-    { value: 'color', label: 'Color' },
-    { value: 'luminosity', label: 'Luminosity' },
-  ],
-];
-
-type BlendModeMenuItem =
-  | { kind: 'mode'; value: BlendMode; label: string }
-  | { kind: 'separator'; key: string };
-
-function buildBlendModeMenuItems(
-  groups: ReadonlyArray<ReadonlyArray<BlendModeOption>>
-): BlendModeMenuItem[] {
-  const items: BlendModeMenuItem[] = [];
-  for (let i = 0; i < groups.length; i += 1) {
-    const group = groups[i];
-    if (!group) continue;
-    for (const mode of group) {
-      items.push({ kind: 'mode', ...mode });
-    }
-    if (i < groups.length - 1) {
-      items.push({ kind: 'separator', key: `sep-${i}` });
-    }
-  }
-  return items;
-}
-
-function buildBlendModeLabelMap(
-  groups: ReadonlyArray<ReadonlyArray<BlendModeOption>>
-): Map<BlendMode, string> {
-  const map = new Map<BlendMode, string>();
-  for (const group of groups) {
-    for (const mode of group) {
-      map.set(mode.value, mode.label);
-    }
-  }
-  return map;
-}
-
-const BLEND_MODE_MENU_ITEMS: BlendModeMenuItem[] = buildBlendModeMenuItems(BLEND_MODE_GROUPS);
-const BLEND_MODE_LABEL_MAP = buildBlendModeLabelMap(BLEND_MODE_GROUPS);
-
-function getBlendModeLabel(mode: BlendMode): string {
-  return BLEND_MODE_LABEL_MAP.get(mode) ?? 'Normal';
-}
+import { BLEND_MODE_MENU_ITEMS, getBlendModeLabel } from '@/utils/blendModeMenu';
 
 const SHAPE_OPTIONS: Array<{ value: GradientShape; label: string }> = [
   { value: 'linear', label: 'Linear' },
@@ -100,7 +13,7 @@ const SHAPE_OPTIONS: Array<{ value: GradientShape; label: string }> = [
   { value: 'diamond', label: 'Diamond' },
 ];
 
-export function GradientToolbar() {
+export function GradientToolbar(): JSX.Element {
   const [blendMenuOpen, setBlendMenuOpen] = useState(false);
   const blendMenuRef = useRef<HTMLDivElement | null>(null);
 
