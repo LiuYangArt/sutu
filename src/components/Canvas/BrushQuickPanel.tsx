@@ -52,6 +52,13 @@ interface PanelDragState {
   startTop: number;
 }
 
+interface HsvaColor {
+  h: number;
+  s: number;
+  v: number;
+  a: number;
+}
+
 const DEFAULT_PANEL_SIZE: PanelSize = {
   width: 560,
   height: 434,
@@ -172,11 +179,12 @@ function isSamePanelPosition(a: PanelPosition, b: PanelPosition): boolean {
   return a.left === b.left && a.top === b.top;
 }
 
-function isSameHsva(
-  a: { h: number; s: number; v: number; a: number },
-  b: { h: number; s: number; v: number; a: number }
-): boolean {
+function isSameHsva(a: HsvaColor, b: HsvaColor): boolean {
   return a.h === b.h && a.s === b.s && a.v === b.v && a.a === b.a;
+}
+
+function isSameColorToken(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
 }
 
 function isPanelInteractiveTarget(target: EventTarget | null): boolean {
@@ -287,9 +295,11 @@ export function BrushQuickPanel({
     [presets, groups, searchQuery]
   );
 
-  const [hsva, setHsva] = useState(() => hexToHsva(brushColor));
-  const hsvaRef = useRef(hsva);
+  const [hsva, setHsva] = useState<HsvaColor>(() => hexToHsva(brushColor));
+  const hsvaRef = useRef<HsvaColor>(hsva);
+  hsvaRef.current = hsva;
   const brushColorRef = useRef(brushColor);
+  brushColorRef.current = brushColor;
   const queuedBrushColorRef = useRef<string | null>(null);
   const brushColorRafRef = useRef<number | null>(null);
 
@@ -326,20 +336,12 @@ export function BrushQuickPanel({
     setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
   }, [brushColor]);
 
-  useEffect(() => {
-    hsvaRef.current = hsva;
-  }, [hsva]);
-
-  useEffect(() => {
-    brushColorRef.current = brushColor;
-  }, [brushColor]);
-
   const flushQueuedBrushColor = useCallback(() => {
     brushColorRafRef.current = null;
     const nextColor = queuedBrushColorRef.current;
     queuedBrushColorRef.current = null;
     if (!nextColor) return;
-    if (brushColorRef.current.toLowerCase() === nextColor.toLowerCase()) return;
+    if (isSameColorToken(brushColorRef.current, nextColor)) return;
     setBrushColor(nextColor);
   }, [setBrushColor]);
 
@@ -483,7 +485,7 @@ export function BrushQuickPanel({
   }, [isOpen, updatePanelLayout]);
 
   const handleSaturationChange = useCallback(
-    (nextHsva: { h: number; s: number; v: number; a: number }) => {
+    (nextHsva: HsvaColor) => {
       const hex = hsvaToHex(nextHsva);
       queueBrushColorUpdate(hex);
     },

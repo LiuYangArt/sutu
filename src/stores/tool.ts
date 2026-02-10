@@ -355,6 +355,10 @@ function toBrushProfileTool(tool: ToolType): BrushProfileTool | null {
   return null;
 }
 
+function isSameCaseInsensitiveText(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 function cloneCursorBounds(
   bounds: BrushTexture['cursorBounds'] | undefined
 ): BrushTexture['cursorBounds'] | undefined {
@@ -899,7 +903,7 @@ export const useToolStore = create<ToolState>()(
 
         setBrushColor: (color) =>
           set((state) => {
-            if (state.brushColor.toLowerCase() === color.toLowerCase()) {
+            if (isSameCaseInsensitiveText(state.brushColor, color)) {
               return state;
             }
             return { brushColor: color };

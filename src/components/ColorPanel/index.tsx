@@ -6,18 +6,26 @@ import { VerticalHueSlider } from './VerticalHueSlider';
 import { ArrowLeftRight, RotateCcw } from 'lucide-react';
 import './ColorPanel.css';
 
-function isSameHsva(
-  a: { h: number; s: number; v: number; a: number },
-  b: { h: number; s: number; v: number; a: number }
-): boolean {
+interface HsvaColor {
+  h: number;
+  s: number;
+  v: number;
+  a: number;
+}
+
+function isSameHsva(a: HsvaColor, b: HsvaColor): boolean {
   return a.h === b.h && a.s === b.s && a.v === b.v && a.a === b.a;
+}
+
+function isSameColorToken(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
 }
 
 export function ColorPanel() {
   const { brushColor, backgroundColor, setBrushColor, swapColors, resetColors } = useToolStore();
 
   // Use HSVA locally to control Saturation and Hue separately
-  const [hsva, setHsva] = useState(() => hexToHsva(brushColor));
+  const [hsva, setHsva] = useState<HsvaColor>(() => hexToHsva(brushColor));
 
   // Also keep hex input synced
   const [hexInput, setHexInput] = useState(brushColor.replace('#', ''));
@@ -32,11 +40,11 @@ export function ColorPanel() {
 
   // Handler for Saturation change
   const handleSaturationChange = useCallback(
-    (newColor: { h: number; s: number; v: number; a: number }) => {
+    (newColor: HsvaColor) => {
       // newColor contains updated s,v. h,a are passed from props?
       // react-colorful Saturation calls onChange with { h, s, v, a } merged.
       const hex = hsvaToHex(newColor);
-      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
+      if (!isSameColorToken(brushColor, hex)) {
         setBrushColor(hex);
       }
     },
@@ -48,7 +56,7 @@ export function ColorPanel() {
     (newHue: number) => {
       const newHsva = { ...hsva, h: newHue };
       const hex = hsvaToHex(newHsva);
-      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
+      if (!isSameColorToken(brushColor, hex)) {
         setBrushColor(hex);
       }
     },
