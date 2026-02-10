@@ -7,7 +7,15 @@ import {
 } from '@/components/BrushPanel/types';
 import { patternManager } from '@/utils/patternManager';
 
-export type ToolType = 'brush' | 'eraser' | 'eyedropper' | 'move' | 'select' | 'lasso' | 'zoom';
+export type ToolType =
+  | 'brush'
+  | 'eraser'
+  | 'eyedropper'
+  | 'gradient'
+  | 'move'
+  | 'select'
+  | 'lasso'
+  | 'zoom';
 
 export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 

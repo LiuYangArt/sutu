@@ -81,6 +81,7 @@ const TOOL_TYPES = new Set<ToolType>([
   'brush',
   'eraser',
   'eyedropper',
+  'gradient',
   'move',
   'select',
   'lasso',

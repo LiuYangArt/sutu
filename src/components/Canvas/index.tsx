@@ -18,6 +18,7 @@ import { useGlobalExports } from './useGlobalExports';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { usePointerHandlers } from './usePointerHandlers';
 import { useStrokeProcessor } from './useStrokeProcessor';
+import { useGradientTool } from './useGradientTool';
 import { SelectionOverlay } from './SelectionOverlay';
 import { BrushQuickPanel } from './BrushQuickPanel';
 import { clientToCanvasPoint, getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
@@ -204,6 +205,7 @@ function clampNumber(value: number, min: number, max: number): number {
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
+  const gradientPreviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
   const brushCursorRef = useRef<HTMLDivElement>(null);
@@ -1104,6 +1106,7 @@ export function Canvas() {
     captureBeforeImage,
     saveStrokeToHistory,
     fillActiveLayer,
+    applyGradientToActiveLayer,
     handleClearSelection,
     handleUndo,
     handleRedo,
@@ -1819,6 +1822,56 @@ export function Canvas() {
     canvasRef,
   });
 
+  const clearGradientPreview = useCallback(() => {
+    const overlay = gradientPreviewCanvasRef.current;
+    if (!overlay) return;
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, width, height);
+  }, [height, width]);
+
+  const renderGradientPreview = useCallback(
+    (payload: { layerId: string; previewLayerCanvas: HTMLCanvasElement }) => {
+      const overlay = gradientPreviewCanvasRef.current;
+      const renderer = layerRendererRef.current;
+      if (!overlay || !renderer) return;
+
+      const ctx = overlay.getContext('2d');
+      if (!ctx) return;
+
+      const compositePreview = renderer.composite(
+        undefined,
+        undefined,
+        payload
+          ? {
+              activeLayerId: payload.layerId,
+              canvas: payload.previewLayerCanvas,
+            }
+          : undefined
+      );
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(compositePreview, 0, 0);
+    },
+    [height, width]
+  );
+
+  const {
+    handleGradientPointerDown,
+    handleGradientPointerMove,
+    handleGradientPointerUp,
+    cancelGradientSession,
+  } = useGradientTool({
+    currentTool,
+    activeLayerId,
+    layers,
+    width,
+    height,
+    layerRendererRef,
+    applyGradientToActiveLayer,
+    renderPreview: renderGradientPreview,
+    clearPreview: clearGradientPreview,
+  });
+
   const { handlePointerDown, handlePointerMove, handlePointerUp } = usePointerHandlers({
     containerRef,
     canvasRef,
@@ -1850,6 +1903,9 @@ export function Canvas() {
     handleMovePointerDown,
     handleMovePointerMove,
     handleMovePointerUp,
+    handleGradientPointerDown,
+    handleGradientPointerMove,
+    handleGradientPointerUp,
     updateShiftLineCursor,
     lockShiftLine,
     constrainShiftLinePoint,
@@ -1864,6 +1920,12 @@ export function Canvas() {
     latencyProfilerRef,
     onBeforeCanvasMutation,
   });
+
+  useEffect(() => {
+    return () => {
+      cancelGradientSession();
+    };
+  }, [cancelGradientSession]);
 
   const closeBrushQuickPanel = useCallback(() => {
     setBrushQuickPanelOpen(false);
@@ -1954,6 +2016,13 @@ export function Canvas() {
           height={height}
           className="main-canvas"
           data-testid="main-canvas"
+        />
+        <canvas
+          ref={gradientPreviewCanvasRef}
+          width={width}
+          height={height}
+          className="gradient-preview-canvas"
+          data-testid="gradient-preview-canvas"
         />
       </div>
       {showDomCursor && !brushQuickPanelHovering && (

@@ -76,6 +76,21 @@ interface UsePointerHandlersParams {
     canvasY: number,
     e: PointerEvent | React.PointerEvent
   ) => boolean;
+  handleGradientPointerDown?: (
+    canvasX: number,
+    canvasY: number,
+    e: PointerEvent | React.PointerEvent
+  ) => boolean;
+  handleGradientPointerMove?: (
+    canvasX: number,
+    canvasY: number,
+    e: PointerEvent | React.PointerEvent
+  ) => void;
+  handleGradientPointerUp?: (
+    canvasX: number,
+    canvasY: number,
+    e: PointerEvent | React.PointerEvent
+  ) => void;
   updateShiftLineCursor: (x: number, y: number) => void;
   lockShiftLine: (point: { x: number; y: number }) => void;
   constrainShiftLinePoint: (x: number, y: number) => { x: number; y: number };
@@ -138,6 +153,9 @@ export function usePointerHandlers({
   handleMovePointerDown,
   handleMovePointerMove,
   handleMovePointerUp,
+  handleGradientPointerDown,
+  handleGradientPointerMove,
+  handleGradientPointerUp,
   updateShiftLineCursor,
   lockShiftLine,
   constrainShiftLinePoint,
@@ -327,6 +345,14 @@ export function usePointerHandlers({
         }
       }
 
+      if (currentTool === 'gradient') {
+        const handled = handleGradientPointerDown?.(canvasX, canvasY, e.nativeEvent) ?? false;
+        if (handled) {
+          trySetPointerCapture(canvas, e);
+        }
+        return;
+      }
+
       // Check Layer Validation
       const activeLayer = layers.find((l) => l.id === activeLayerId);
       if (!activeLayerId || !activeLayer?.visible) return;
@@ -388,6 +414,7 @@ export function usePointerHandlers({
       isSelectionToolActive,
       handleSelectionPointerDown,
       handleMovePointerDown,
+      handleGradientPointerDown,
       updateShiftLineCursor,
       lockShiftLine,
       constrainShiftLinePoint,
@@ -472,6 +499,15 @@ export function usePointerHandlers({
             return;
           }
         }
+        return;
+      }
+
+      if (currentTool === 'gradient') {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+        const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, lastEvent);
+        handleGradientPointerMove?.(canvasX, canvasY, lastEvent);
         return;
       }
 
@@ -562,6 +598,7 @@ export function usePointerHandlers({
       isSelectionToolActive,
       handleSelectionPointerMove,
       handleMovePointerMove,
+      handleGradientPointerMove,
       updateShiftLineCursor,
       containerRef,
       canvasRef,
@@ -618,6 +655,16 @@ export function usePointerHandlers({
         return;
       }
 
+      if (currentTool === 'gradient') {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
+          handleGradientPointerUp?.(canvasX, canvasY, e.nativeEvent);
+          tryReleasePointerCapture(canvas, e);
+        }
+        return;
+      }
+
       // 结束绘画
       const canvas = canvasRef.current;
       if (canvas) {
@@ -636,6 +683,7 @@ export function usePointerHandlers({
       handleSelectionPointerUp,
       currentTool,
       handleMovePointerUp,
+      handleGradientPointerUp,
       containerRef,
       canvasRef,
       panStartRef,

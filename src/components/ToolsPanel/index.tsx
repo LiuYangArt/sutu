@@ -6,18 +6,21 @@ import {
   SquareDashed,
   Lasso,
   ZoomIn as ZoomIcon,
-  LucideIcon,
+  type LucideProps,
 } from 'lucide-react';
+import type { ComponentType } from 'react';
 import { useToolStore, ToolType } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
+import { GradientToolIcon } from '@/components/common/GradientToolIcon';
 import './ToolsPanel.css';
 
 const ICON_PROPS = { size: 24, strokeWidth: 1.5 } as const;
 
-const TOOLS: { id: ToolType; label: string; icon: LucideIcon }[] = [
+const TOOLS: { id: ToolType; label: string; icon: ComponentType<LucideProps> }[] = [
   { id: 'brush', label: 'Brush (B)', icon: Brush },
   { id: 'eraser', label: 'Eraser (E)', icon: Eraser },
   { id: 'eyedropper', label: 'Eyedropper (Alt)', icon: Pipette },
+  { id: 'gradient', label: 'Gradient (G)', icon: GradientToolIcon },
   { id: 'move', label: 'Move (V)', icon: Move },
   { id: 'select', label: 'Rectangular Select (M)', icon: SquareDashed },
   { id: 'lasso', label: 'Lasso (S)', icon: Lasso },

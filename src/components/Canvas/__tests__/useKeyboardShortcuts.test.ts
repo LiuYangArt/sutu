@@ -290,6 +290,7 @@ describe('useKeyboardShortcuts', () => {
       dispatchWindowKeyDown({ code: 'KeyB' });
       dispatchWindowKeyDown({ code: 'KeyE' });
       dispatchWindowKeyDown({ code: 'KeyM' });
+      dispatchWindowKeyDown({ code: 'KeyG' });
       dispatchWindowKeyDown({ code: 'KeyS' });
       dispatchWindowKeyDown({ code: 'KeyV' });
       dispatchWindowKeyDown({ code: 'KeyZ' });
@@ -299,10 +300,11 @@ describe('useKeyboardShortcuts', () => {
     expect(setTool).toHaveBeenCalledWith('brush');
     expect(setTool).toHaveBeenCalledWith('eraser');
     expect(setTool).toHaveBeenCalledWith('select');
+    expect(setTool).toHaveBeenCalledWith('gradient');
     expect(setTool).toHaveBeenCalledWith('lasso');
     expect(setTool).toHaveBeenCalledWith('move');
     expect(setTool).toHaveBeenCalledWith('zoom');
-    expect(setTool).toHaveBeenCalledTimes(6);
+    expect(setTool).toHaveBeenCalledTimes(7);
 
     setTool.mockClear();
     setCurrentSize.mockClear();

@@ -25,6 +25,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { useFileStore } from '@/stores/file';
 import { useDocumentStore } from '@/stores/document';
 import { BrushToolbar } from './BrushToolbar';
+import { GradientToolbar } from './GradientToolbar';
 import { SelectionToolbar } from './SelectionToolbar';
 import { ZoomToolOptions } from './ZoomToolOptions';
 import './Toolbar.css';
@@ -44,8 +45,9 @@ function AppMenu() {
   const [activeSubmenu, setActiveSubmenu] = useState<AppMenuSubmenu>('none');
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Only show Brush panel in menu (Tools, Color, Layers are now fixed)
+  // Floating panels shown in menu.
   const brushPanel = usePanelStore((s) => s.panels['brush-panel']);
+  const gradientPanel = usePanelStore((s) => s.panels['gradient-panel']);
   const openPanel = usePanelStore((s) => s.openPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
 
@@ -82,6 +84,14 @@ function AppMenu() {
       closePanel('brush-panel');
     } else {
       openPanel('brush-panel');
+    }
+  };
+
+  const handleToggleGradientPanel = () => {
+    if (gradientPanel?.isOpen) {
+      closePanel('gradient-panel');
+    } else {
+      openPanel('gradient-panel');
     }
   };
 
@@ -228,6 +238,10 @@ function AppMenu() {
                   <span>Brush Settings</span>
                   <span className="shortcut">F5</span>
                 </button>
+                <button className="menu-item" onClick={handleToggleGradientPanel}>
+                  <Paintbrush size={14} />
+                  <span>Gradient Editor</span>
+                </button>
                 <button
                   className="menu-item"
                   onClick={() => {
@@ -305,6 +319,7 @@ export function Toolbar() {
 
       <div className="toolbar-section tool-options">
         {(currentTool === 'brush' || currentTool === 'eraser') && <BrushToolbar />}
+        {currentTool === 'gradient' && <GradientToolbar />}
         {(currentTool === 'select' || currentTool === 'lasso') && <SelectionToolbar />}
         {(currentTool === 'zoom' || currentTool === 'move') && <ZoomToolOptions />}
       </div>

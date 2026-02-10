@@ -29,6 +29,7 @@ const TOOL_CURSORS: Record<ToolType, string> = {
   brush: 'none',
   eraser: 'none',
   eyedropper: 'none', // Custom SVG cursor is generated dynamically
+  gradient: 'crosshair',
   move: MOVE_TOOL_CURSOR,
   select: 'crosshair',
   lasso: 'crosshair',

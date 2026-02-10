@@ -22,6 +22,7 @@ import { usePanelStore } from './stores/panel';
 import { useHistoryStore } from './stores/history';
 import { useViewportStore } from './stores/viewport';
 import { useToastStore } from './stores/toast';
+import { initializeGradientStore } from './stores/gradient';
 
 // Lazy load DebugPanel (only used in dev mode)
 const DebugPanel = lazy(() => import('./components/DebugPanel'));
@@ -328,6 +329,7 @@ function App() {
     const initialize = async () => {
       // Initialize settings first (load from file, apply CSS variables)
       await initializeSettings();
+      await initializeGradientStore();
 
       // Restore brush preset selection from settings file and re-apply active tool preset.
       const brushLibraryStore = useBrushLibraryStore.getState();
@@ -529,12 +531,12 @@ function App() {
     };
   }, [requestAppExit]);
 
-  // Register floating panels (only Brush panel now uses FloatingPanel)
+  // Register floating panels.
   const registerPanel = usePanelStore((s) => s.registerPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
 
   useEffect(() => {
-    // Only Brush Panel uses FloatingPanel now
+    // Brush and Gradient editors use FloatingPanel.
     registerPanel({
       id: 'brush-panel',
       title: 'Brush Settings',
@@ -544,9 +546,18 @@ function App() {
       minHeight: 350,
       minimizable: false,
     });
+    registerPanel({
+      id: 'gradient-panel',
+      title: 'Gradient Editor',
+      defaultGeometry: { x: window.innerWidth - 360, y: 120, width: 340, height: 460 },
+      defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 80 },
+      minWidth: 300,
+      minHeight: 360,
+    });
 
-    // Ensure brush panel is closed by default
+    // Ensure panels are closed by default
     closePanel('brush-panel');
+    closePanel('gradient-panel');
   }, [registerPanel, closePanel]);
 
   if (!isReady) {
@@ -599,7 +610,7 @@ function App() {
       {/* Fixed side panels */}
       <LeftToolbar />
       <RightPanel />
-      {/* Floating panels (only Brush panel now) */}
+      {/* Floating panels */}
       <PanelLayer />
       {/* Toast notifications */}
       <ToastLayer />

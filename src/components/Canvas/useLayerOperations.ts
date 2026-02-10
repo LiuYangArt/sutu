@@ -11,6 +11,12 @@ import {
 } from '@/stores/history';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
+import {
+  isZeroLengthGradient,
+  renderGradientToImageData,
+  type GradientPoint,
+  type GradientRenderConfig,
+} from '@/utils/gradientRenderer';
 import { useToastStore } from '@/stores/toast';
 
 interface UseLayerOperationsParams {
@@ -63,6 +69,11 @@ type PendingStrokeHistory =
 interface SaveStrokeHistoryOptions {
   selectionBefore?: SelectionSnapshot;
   selectionAfter?: SelectionSnapshot;
+}
+
+export interface ApplyGradientToActiveLayerParams extends GradientRenderConfig {
+  start: GradientPoint;
+  end: GradientPoint;
 }
 
 interface ImportAnchorPoint {
@@ -699,6 +710,68 @@ export function useLayerOperations({
       layerRendererRef,
       onBeforeCanvasMutation,
       setDocumentDirty,
+    ]
+  );
+
+  const applyGradientToActiveLayer = useCallback(
+    async (params: ApplyGradientToActiveLayerParams): Promise<boolean> => {
+      if (!activeLayerId) return false;
+      if (isZeroLengthGradient(params.start, params.end)) return false;
+
+      await syncGpuLayerForHistory?.(activeLayerId);
+
+      const renderer = layerRendererRef.current;
+      if (!renderer) return false;
+
+      const layerState = layers.find((layer) => layer.id === activeLayerId);
+      if (!layerState || layerState.locked || !layerState.visible) return false;
+
+      const selectionState = useSelectionStore.getState();
+      if (selectionState.selectionMaskPending) return false;
+
+      const layer = renderer.getLayer(activeLayerId);
+      if (!layer) return false;
+
+      const beforeImage = renderer.getLayerImageData(activeLayerId);
+      if (!beforeImage) return false;
+
+      const hasSelection = selectionState.hasSelection;
+      const selectionMask = hasSelection ? selectionState.selectionMask : null;
+      if (hasSelection && !selectionMask) return false;
+
+      onBeforeCanvasMutation?.();
+
+      const nextImage = renderGradientToImageData({
+        ...params,
+        width,
+        height,
+        dstImageData: beforeImage,
+        selectionMask,
+      });
+
+      renderer.setLayerImageData(activeLayerId, nextImage);
+
+      pushCpuStrokeHistory(activeLayerId, beforeImage);
+      setDocumentDirty(true);
+
+      markLayerDirty(activeLayerId);
+      updateThumbnail(activeLayerId);
+      compositeAndRender();
+      return true;
+    },
+    [
+      activeLayerId,
+      compositeAndRender,
+      height,
+      layerRendererRef,
+      layers,
+      markLayerDirty,
+      onBeforeCanvasMutation,
+      pushCpuStrokeHistory,
+      setDocumentDirty,
+      syncGpuLayerForHistory,
+      updateThumbnail,
+      width,
     ]
   );
 
@@ -1935,6 +2008,7 @@ export function useLayerOperations({
     captureBeforeImage,
     saveStrokeToHistory,
     fillActiveLayer,
+    applyGradientToActiveLayer,
     handleClearSelection,
     handleUndo,
     handleRedo,

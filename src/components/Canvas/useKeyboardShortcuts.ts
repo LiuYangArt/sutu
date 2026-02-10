@@ -241,6 +241,13 @@ export function useKeyboardShortcuts({
           }
           break;
 
+        case 'KeyG':
+          if (!e.altKey && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            setTool('gradient');
+          }
+          break;
+
         case 'KeyS':
           if (!e.altKey && !e.ctrlKey) {
             e.preventDefault();

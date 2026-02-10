@@ -2,6 +2,33 @@
 
 复刻 Photoshop 渐变工具，支持 5 种渐变形状、多停靠点编辑、透明度独立控制、预设管理，交互为实时预览拖拽。
 
+## 实施结果（2026-02-10）
+
+- 已接入工具与快捷键：`ToolType` 新增 `gradient`，键盘 `G` 切换生效，左侧工具栏图标为渐变条图标。
+- 已完成渐变状态与持久化：`src/stores/gradient.ts`，默认预设含前景/背景动态绑定，持久化到 `AppConfig/gradients.json`。
+- 已完成 CPU 渐变渲染内核：`src/utils/gradientRenderer.ts`，支持 `linear/radial/angle/reflected/diamond`、颜色/透明度双轨 stop、`reverse/dither/transparency`、27 种 blend 合成。
+- 已完成图层提交链路：`useLayerOperations.applyGradientToActiveLayer`，复用历史、脏标记、缩略图、合成流程，并处理选区与 `selectionMaskPending`。
+- 已完成实时预览交互：`useGradientTool + usePointerHandlers + Canvas overlay`，支持拖拽预览、`Shift` 45°约束、抬笔提交。
+- 已完成 UI：`GradientToolbar` 与独立浮动 `GradientEditor` 面板（`gradient-panel`），包含 stop 编辑与预设保存/重命名/删除。
+
+### 核心文件清单
+
+- `src/stores/gradient.ts`
+- `src/utils/gradientRenderer.ts`
+- `src/components/Canvas/useGradientTool.ts`
+- `src/components/Canvas/useLayerOperations.ts`
+- `src/components/Canvas/usePointerHandlers.ts`
+- `src/components/Canvas/index.tsx`
+- `src/components/Canvas/Canvas.css`
+- `src/components/Toolbar/GradientToolbar.tsx`
+- `src/components/GradientEditor/index.tsx`
+- `src/components/GradientEditor/GradientBar.tsx`
+- `src/components/GradientEditor/StopEditor.tsx`
+- `src/components/GradientEditor/PresetGrid.tsx`
+- `src/components/GradientEditor/GradientEditor.css`
+- `src/components/UI/PanelLayer.tsx`
+- `src/App.tsx`
+
 ---
 
 ## 功能概览
