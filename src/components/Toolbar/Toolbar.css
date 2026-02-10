@@ -388,6 +388,22 @@
   padding: 6px 10px;
 }
 
+.submenu .menu-item.submenu-empty {
+  color: var(--text-muted);
+  cursor: default;
+  pointer-events: none;
+}
+
+.submenu .menu-item.recent-file-item {
+  max-width: 260px;
+}
+
+.recent-file-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .menu-item .shortcut {
   margin-left: auto;
   color: var(--text-muted);

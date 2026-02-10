@@ -69,6 +69,7 @@ interface OpenPathOptions {
   rememberAsLastSaved?: boolean;
   clearUnsavedTemp?: boolean;
   suppressErrorLog?: boolean;
+  trackRecent?: boolean;
 }
 
 interface SaveTargetOptions {
@@ -105,6 +106,7 @@ interface FileState {
   save: (saveAs?: boolean) => Promise<boolean>;
   open: () => Promise<boolean>;
   openPath: (path: string, options?: OpenPathOptions) => Promise<boolean>;
+  pruneMissingRecentFiles: () => Promise<void>;
   runAutoSaveTick: () => Promise<void>;
   restoreOnStartup: () => Promise<boolean>;
   reset: () => void;
@@ -170,8 +172,16 @@ function normalizeOpenPathOptions(options?: OpenPathOptions): OpenPathOptions {
     rememberAsLastSaved: false,
     clearUnsavedTemp: false,
     suppressErrorLog: false,
+    trackRecent: true,
     ...options,
   };
+}
+
+function hasSamePathOrder(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
 }
 
 function parseSessionData(raw: string): AutosaveSessionData {
@@ -358,6 +368,10 @@ async function loadProjectIntoDocument(
       await updateSessionData((prev) => ({ ...prev, hasUnsavedTemp: false }));
     }
 
+    if (!options.asUntitled && options.trackRecent) {
+      useSettingsStore.getState().addRecentFile(filePath);
+    }
+
     return true;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -365,6 +379,18 @@ async function loadProjectIntoDocument(
     if (!options.suppressErrorLog) {
       console.error('Open failed:', error);
     }
+
+    if (options.trackRecent) {
+      try {
+        const stillExists = await exists(filePath);
+        if (!stillExists) {
+          useSettingsStore.getState().removeRecentFile(filePath);
+        }
+      } catch {
+        // Keep recent entry when file existence cannot be verified.
+      }
+    }
+
     return false;
   }
 }
@@ -508,6 +534,32 @@ export const useFileStore = create<FileState>((set, get) => ({
     return loadProjectIntoDocument(path, openOptions, set);
   },
 
+  pruneMissingRecentFiles: async () => {
+    const { recentFiles } = useSettingsStore.getState().general;
+    if (recentFiles.length === 0) {
+      return;
+    }
+
+    const checked = await Promise.all(
+      recentFiles.map(async (recentPath) => {
+        try {
+          const fileExists = await exists(recentPath);
+          return fileExists ? recentPath : null;
+        } catch {
+          // Keep entry when filesystem check is unavailable.
+          return recentPath;
+        }
+      })
+    );
+
+    const nextRecentFiles = checked.filter((value): value is string => value !== null);
+    if (hasSamePathOrder(nextRecentFiles, recentFiles)) {
+      return;
+    }
+
+    useSettingsStore.getState().setRecentFiles(nextRecentFiles);
+  },
+
   runAutoSaveTick: async () => {
     const fileState = get();
     if (fileState.isSaving || fileState.isLoading) return;
@@ -567,6 +619,8 @@ export const useFileStore = create<FileState>((set, get) => ({
   },
 
   restoreOnStartup: async () => {
+    await get().pruneMissingRecentFiles();
+
     const { openLastFileOnStartup } = useSettingsStore.getState().general;
     if (!openLastFileOnStartup) {
       return false;

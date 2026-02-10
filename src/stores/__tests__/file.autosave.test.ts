@@ -144,6 +144,7 @@ describe('file store autosave and startup restore', () => {
       general: {
         autosaveIntervalMinutes: 10,
         openLastFileOnStartup: true,
+        recentFiles: [],
       },
     }));
   });
@@ -339,6 +340,37 @@ describe('file store autosave and startup restore', () => {
 
     const loadCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
     expect(loadCalls.length).toBe(0);
+  });
+
+  it('tracks opened file into recent list', async () => {
+    await useFileStore.getState().openPath('C:/work/recent-test.ora', {
+      asUntitled: false,
+      rememberAsLastSaved: true,
+      clearUnsavedTemp: true,
+      trackRecent: true,
+    });
+
+    expect(useSettingsStore.getState().general.recentFiles).toEqual(['C:/work/recent-test.ora']);
+  });
+
+  it('prunes missing recent files on startup', async () => {
+    useSettingsStore.setState((state) => ({
+      ...state,
+      general: {
+        ...state.general,
+        openLastFileOnStartup: false,
+        recentFiles: ['C:/work/exists-a.psd', 'C:/work/missing.ora', 'C:/work/exists-b.ora'],
+      },
+    }));
+
+    fsMocks.exists.mockImplementation(async (path: string) => path !== 'C:/work/missing.ora');
+
+    const restored = await useFileStore.getState().restoreOnStartup();
+    expect(restored).toBe(false);
+    expect(useSettingsStore.getState().general.recentFiles).toEqual([
+      'C:/work/exists-a.psd',
+      'C:/work/exists-b.ora',
+    ]);
   });
 
   it('clears temp autosave after first manual save', async () => {

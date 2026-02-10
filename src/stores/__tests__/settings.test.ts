@@ -51,6 +51,7 @@ describe('settings store newFile persistence', () => {
       general: {
         autosaveIntervalMinutes: 10,
         openLastFileOnStartup: true,
+        recentFiles: [],
       },
       newFile: {
         customSizePresets: [],
@@ -101,11 +102,56 @@ describe('settings store newFile persistence', () => {
     expect('colorBlendMode' in (state.brush as unknown as Record<string, unknown>)).toBe(false);
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
+    expect(state.general.recentFiles).toEqual([]);
     expect(state.quickExport).toEqual(DEFAULT_QUICK_EXPORT_SETTINGS);
     expect(state.brushLibrary.selectedPresetByTool).toEqual({
       brush: null,
       eraser: null,
     });
+  });
+
+  it('normalizes loaded recent files and keeps max 10', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        general: {
+          autosaveIntervalMinutes: 8,
+          openLastFileOnStartup: true,
+          recentFiles: [
+            'C:\\A.psd',
+            'C:\\B.ora',
+            '  ',
+            'C:\\A.PSD',
+            null,
+            'C:\\C.psd',
+            'C:\\D.psd',
+            'C:\\E.psd',
+            'C:\\F.psd',
+            'C:\\G.psd',
+            'C:\\H.psd',
+            'C:\\I.psd',
+            'C:\\J.psd',
+            'C:\\K.psd',
+          ],
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    const state = useSettingsStore.getState();
+
+    expect(state.general.recentFiles).toEqual([
+      'C:\\A.psd',
+      'C:\\B.ora',
+      'C:\\C.psd',
+      'C:\\D.psd',
+      'C:\\E.psd',
+      'C:\\F.psd',
+      'C:\\G.psd',
+      'C:\\H.psd',
+      'C:\\I.psd',
+      'C:\\J.psd',
+    ]);
   });
 
   it('persists general settings fields', async () => {
@@ -124,6 +170,9 @@ describe('settings store newFile persistence', () => {
       transparentBackground: false,
       backgroundPreset: 'black',
     });
+    useSettingsStore.getState().addRecentFile('C:\\projects\\alpha.psd');
+    useSettingsStore.getState().addRecentFile('C:\\projects\\beta.ora');
+    useSettingsStore.getState().addRecentFile('C:\\projects\\ALPHA.psd');
     useSettingsStore.getState().setBrushLibrarySelectedPreset('brush', 'preset-soft-round');
     useSettingsStore.getState().setBrushLibrarySelectedPreset('eraser', 'preset-hard-eraser');
 
@@ -134,7 +183,11 @@ describe('settings store newFile persistence', () => {
     expect(lastCall).toBeDefined();
     const content = String(lastCall?.[1] ?? '{}');
     const parsed = JSON.parse(content) as {
-      general?: { autosaveIntervalMinutes?: number; openLastFileOnStartup?: boolean };
+      general?: {
+        autosaveIntervalMinutes?: number;
+        openLastFileOnStartup?: boolean;
+        recentFiles?: string[];
+      };
       quickExport?: {
         lastPath?: string;
         lastFormat?: string;
@@ -152,6 +205,10 @@ describe('settings store newFile persistence', () => {
     };
     expect(parsed.general?.autosaveIntervalMinutes).toBe(15);
     expect(parsed.general?.openLastFileOnStartup).toBe(false);
+    expect(parsed.general?.recentFiles).toEqual([
+      'C:\\projects\\ALPHA.psd',
+      'C:\\projects\\beta.ora',
+    ]);
     expect(parsed.quickExport?.lastPath).toBe('D:\\exports\\sample.png');
     expect(parsed.quickExport?.lastFormat).toBe('png');
     expect(parsed.quickExport?.lastWidth).toBe(1000);

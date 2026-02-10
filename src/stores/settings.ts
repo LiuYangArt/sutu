@@ -112,6 +112,7 @@ export interface NewFileSettings {
 export interface GeneralSettings {
   autosaveIntervalMinutes: number;
   openLastFileOnStartup: boolean;
+  recentFiles: string[];
 }
 
 export type BrushPresetSelectionTool = 'brush' | 'eraser';
@@ -173,6 +174,9 @@ interface SettingsState extends PersistedSettings {
   // General actions
   setAutosaveIntervalMinutes: (minutes: number) => void;
   setOpenLastFileOnStartup: (enabled: boolean) => void;
+  addRecentFile: (path: string) => void;
+  setRecentFiles: (paths: string[]) => void;
+  removeRecentFile: (path: string) => void;
 
   // Quick export actions
   setQuickExport: (patch: Partial<QuickExportSettings>) => void;
@@ -297,6 +301,52 @@ function clampAutosaveIntervalMinutes(value: number): number {
   return Math.max(1, Math.floor(value));
 }
 
+const MAX_RECENT_FILES = 10;
+
+function normalizeRecentFilePath(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed;
+}
+
+function normalizeRecentFiles(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const sanitized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of value) {
+    const normalized = normalizeRecentFilePath(item);
+    if (!normalized) continue;
+    const dedupeKey = normalized.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    sanitized.push(normalized);
+    if (sanitized.length >= MAX_RECENT_FILES) break;
+  }
+
+  return sanitized;
+}
+
+function buildRecentFilesWith(path: string, current: string[]): string[] {
+  const normalizedPath = normalizeRecentFilePath(path);
+  if (!normalizedPath) {
+    return normalizeRecentFiles(current);
+  }
+  const next = [normalizedPath, ...current];
+  return normalizeRecentFiles(next);
+}
+
+function buildRecentFilesWithout(path: string, current: string[]): string[] {
+  const normalizedPath = normalizeRecentFilePath(path);
+  if (!normalizedPath) {
+    return normalizeRecentFiles(current);
+  }
+  const removeKey = normalizedPath.toLowerCase();
+  const filtered = current.filter((item) => item.toLowerCase() !== removeKey);
+  return normalizeRecentFiles(filtered);
+}
+
 // Default settings
 const defaultSettings: PersistedSettings = {
   appearance: {
@@ -320,6 +370,7 @@ const defaultSettings: PersistedSettings = {
   general: {
     autosaveIntervalMinutes: 10,
     openLastFileOnStartup: true,
+    recentFiles: [],
   },
   quickExport: { ...DEFAULT_QUICK_EXPORT_SETTINGS },
   brushLibrary: {
@@ -544,6 +595,28 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    addRecentFile: (path) => {
+      set((state) => {
+        state.general.recentFiles = buildRecentFilesWith(path, state.general.recentFiles);
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setRecentFiles: (paths) => {
+      const normalized = normalizeRecentFiles(paths);
+      set((state) => {
+        state.general.recentFiles = normalized;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    removeRecentFile: (path) => {
+      set((state) => {
+        state.general.recentFiles = buildRecentFilesWithout(path, state.general.recentFiles);
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     setQuickExport: (patch) => {
       set((state) => {
         state.quickExport = { ...state.quickExport, ...patch };
@@ -601,6 +674,7 @@ export const useSettingsStore = create<SettingsState>()(
                   loaded.general.autosaveIntervalMinutes ??
                     defaultSettings.general.autosaveIntervalMinutes
                 ),
+                recentFiles: normalizeRecentFiles(loaded.general.recentFiles),
               };
             } else {
               state.general = { ...defaultSettings.general };

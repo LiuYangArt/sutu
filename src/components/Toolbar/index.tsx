@@ -31,11 +31,17 @@ import './Toolbar.css';
 
 /** Common icon props for toolbar icons */
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
+type AppMenuSubmenu = 'none' | 'openRecent' | 'panels';
+
+function getFileNameFromPath(path: string): string {
+  const fileName = path.split(/[\\/]/).pop()?.trim();
+  return fileName && fileName.length > 0 ? fileName : path;
+}
 
 /** App Menu component */
 function AppMenu() {
   const [isOpen, setIsOpen] = useState(false);
-  const [panelsSubmenuOpen, setPanelsSubmenuOpen] = useState(false);
+  const [activeSubmenu, setActiveSubmenu] = useState<AppMenuSubmenu>('none');
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Only show Brush panel in menu (Tools, Color, Layers are now fixed)
@@ -45,10 +51,12 @@ function AppMenu() {
 
   // Settings
   const openSettings = useSettingsStore((s) => s.openSettings);
+  const recentFiles = useSettingsStore((s) => s.general.recentFiles);
 
   // File operations
   const fileSave = useFileStore((s) => s.save);
   const fileOpen = useFileStore((s) => s.open);
+  const fileOpenPath = useFileStore((s) => s.openPath);
   const isSaving = useFileStore((s) => s.isSaving);
   const isLoading = useFileStore((s) => s.isLoading);
   const isDirty = useDocumentStore((s) => s.isDirty);
@@ -60,7 +68,7 @@ function AppMenu() {
     function handleClickOutside(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setIsOpen(false);
-        setPanelsSubmenuOpen(false);
+        setActiveSubmenu('none');
       }
     }
     if (isOpen) {
@@ -87,6 +95,15 @@ function AppMenu() {
     await fileOpen();
   };
 
+  const handleOpenRecentPath = async (path: string) => {
+    setIsOpen(false);
+    setActiveSubmenu('none');
+    await fileOpenPath(path, {
+      rememberAsLastSaved: true,
+      clearUnsavedTemp: true,
+    });
+  };
+
   function handleNew(): void {
     setIsOpen(false);
     const win = window as Window & { __requestNewFile?: () => void };
@@ -109,6 +126,11 @@ function AppMenu() {
     win.__openQuickExportPanel?.();
   };
 
+  const handleToggleMenu = () => {
+    setActiveSubmenu('none');
+    setIsOpen((prev) => !prev);
+  };
+
   function handleExit(): void {
     setIsOpen(false);
     const win = window as Window & { __requestAppExit?: () => void };
@@ -117,7 +139,7 @@ function AppMenu() {
 
   return (
     <div className="app-menu" ref={menuRef}>
-      <button className="menu-btn" onClick={() => setIsOpen(!isOpen)} title="Menu">
+      <button className="menu-btn" onClick={handleToggleMenu} title="Menu">
         <Menu size={20} strokeWidth={1.5} />
       </button>
 
@@ -134,6 +156,37 @@ function AppMenu() {
             <span>Open</span>
             <span className="shortcut">Ctrl+O</span>
           </button>
+
+          <div
+            className="menu-item has-submenu"
+            onMouseEnter={() => setActiveSubmenu('openRecent')}
+            onMouseLeave={() => setActiveSubmenu('none')}
+          >
+            <FolderOpen size={16} />
+            <span>Open Recent</span>
+            <ChevronRight size={14} className="submenu-arrow" />
+
+            {activeSubmenu === 'openRecent' && (
+              <div className="submenu">
+                {recentFiles.length === 0 ? (
+                  <div className="menu-item submenu-empty">No recent files</div>
+                ) : (
+                  recentFiles.map((path) => (
+                    <button
+                      key={path}
+                      className="menu-item recent-file-item"
+                      onClick={() => void handleOpenRecentPath(path)}
+                      disabled={isLoading}
+                      title={path}
+                    >
+                      <FolderOpen size={14} />
+                      <span className="recent-file-label">{getFileNameFromPath(path)}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
 
           <button className="menu-item" onClick={handleSave} disabled={isSaving}>
             <Save size={16} />
@@ -161,14 +214,14 @@ function AppMenu() {
 
           <div
             className="menu-item has-submenu"
-            onMouseEnter={() => setPanelsSubmenuOpen(true)}
-            onMouseLeave={() => setPanelsSubmenuOpen(false)}
+            onMouseEnter={() => setActiveSubmenu('panels')}
+            onMouseLeave={() => setActiveSubmenu('none')}
           >
             <LayoutGrid size={16} />
             <span>Panels</span>
             <ChevronRight size={14} className="submenu-arrow" />
 
-            {panelsSubmenuOpen && (
+            {activeSubmenu === 'panels' && (
               <div className="submenu">
                 <button className="menu-item" onClick={handleToggleBrushPanel}>
                   <Paintbrush size={14} />
