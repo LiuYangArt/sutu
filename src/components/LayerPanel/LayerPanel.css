@@ -402,11 +402,138 @@
   transition: background-color 0.15s ease;
 }
 
+.context-menu-shortcut {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .context-menu-item:hover {
   background: var(--surface-hover);
+}
+
+.context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.context-menu-item:disabled:hover {
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .context-menu-item.danger:hover {
   background: var(--danger-bg);
   color: var(--danger);
+}
+
+.context-menu-item.danger:disabled:hover {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.context-menu-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-subtle);
+}
+
+.layer-rename-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: calc(var(--z-modal) + 1);
+}
+
+.layer-rename-panel {
+  width: min(92vw, 520px);
+  overflow: hidden;
+}
+
+.layer-rename-header {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.layer-rename-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.layer-rename-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.layer-rename-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.layer-rename-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.layer-rename-tip {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.layer-rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.layer-rename-btn {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.layer-rename-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
+}
+
+.layer-rename-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.layer-rename-btn:disabled:hover {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+
+.layer-rename-btn.primary {
+  background: var(--primary-bg);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
+.layer-rename-btn.primary:hover:not(:disabled) {
+  background: var(--primary-border);
 }

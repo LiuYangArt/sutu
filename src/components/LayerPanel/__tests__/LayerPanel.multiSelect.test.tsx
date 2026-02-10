@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, fireEvent, screen } from '@testing-library/react';
+import { render, fireEvent, screen, within } from '@testing-library/react';
 import { LayerPanel } from '../index';
 import { useDocumentStore, type Layer } from '@/stores/document';
 import { useToastStore } from '@/stores/toast';
@@ -58,22 +58,67 @@ describe('LayerPanel multi selection', () => {
     expect(useDocumentStore.getState().selectedLayerIds).toEqual(['layer_d', 'layer_b', 'layer_a']);
   });
 
-  it('batch renames selected layers with F2 prompt from top to bottom', () => {
-    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('newname');
-
+  it('batch renames selected layers with F2 dialog from top to bottom', () => {
     render(<LayerPanel />);
     const items = screen.getAllByTestId('layer-item');
 
     fireEvent.click(items[0]!);
     fireEvent.click(items[1]!, { ctrlKey: true });
     fireEvent.keyDown(document, { key: 'F2' });
+    expect(screen.getByRole('dialog', { name: /batch rename layers/i })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/base name/i), { target: { value: 'newname' } });
+    fireEvent.click(screen.getByRole('button', { name: /apply/i }));
 
     const state = useDocumentStore.getState();
     const top = state.layers.find((layer) => layer.id === 'layer_d');
     const next = state.layers.find((layer) => layer.id === 'layer_c');
     expect(top?.name).toBe('newname');
     expect(next?.name).toBe('newname_001');
-    expect(promptSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog', { name: /batch rename layers/i })).not.toBeInTheDocument();
+  });
+
+  it('shows key layer operations in context menu', () => {
+    const mergeAllSpy = vi.fn(() => 1);
+    const win = window as Window & { __canvasMergeAllLayers?: () => number };
+    win.__canvasMergeAllLayers = mergeAllSpy;
+
+    render(<LayerPanel />);
+    const items = screen.getAllByTestId('layer-item');
+
+    fireEvent.click(items[0]!);
+    fireEvent.click(items[1]!, { ctrlKey: true });
+    fireEvent.contextMenu(items[0]!);
+
+    const contextMenu = document.querySelector('.layer-context-menu') as HTMLElement | null;
+    expect(contextMenu).toBeTruthy();
+    if (!contextMenu) return;
+    const menu = within(contextMenu);
+    expect(menu.getByRole('button', { name: /new layer/i })).toBeInTheDocument();
+    expect(menu.getByRole('button', { name: /batch rename/i })).toBeInTheDocument();
+    expect(menu.getByRole('button', { name: /merge selected layers/i })).toBeEnabled();
+    expect(menu.getByRole('button', { name: /merge all layers/i })).toBeEnabled();
+
+    fireEvent.click(menu.getByRole('button', { name: /merge all layers/i }));
+    expect(mergeAllSpy).toHaveBeenCalledTimes(1);
+
+    delete win.__canvasMergeAllLayers;
+  });
+
+  it('opens context menu on layer list empty area', () => {
+    render(<LayerPanel />);
+    const layerList = document.querySelector('.layer-list') as HTMLElement | null;
+    expect(layerList).toBeTruthy();
+    if (!layerList) return;
+
+    fireEvent.contextMenu(layerList);
+
+    const contextMenu = document.querySelector('.layer-context-menu') as HTMLElement | null;
+    expect(contextMenu).toBeTruthy();
+    if (!contextMenu) return;
+
+    const menu = within(contextMenu);
+    expect(menu.getByRole('button', { name: /new layer/i })).toBeInTheDocument();
   });
 
   it('applies batch opacity/blend and skips locked/background layers', () => {

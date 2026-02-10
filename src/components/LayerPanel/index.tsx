@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, memo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Eye,
   EyeOff,
@@ -10,6 +11,8 @@ import {
   Eraser,
   Copy,
   FolderPlus,
+  Pencil,
+  Layers,
 } from 'lucide-react';
 import { useDocumentStore, BlendMode } from '@/stores/document';
 import { useToastStore } from '@/stores/toast';
@@ -109,6 +112,13 @@ interface ContextMenuState {
   layerId: string | null;
 }
 
+interface RenameDialogState {
+  visible: boolean;
+  mode: 'single' | 'batch';
+  targetIds: string[];
+  value: string;
+}
+
 export function LayerPanel(): JSX.Element {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [draggedIds, setDraggedIds] = useState<string[]>([]);
@@ -121,7 +131,14 @@ export function LayerPanel(): JSX.Element {
     y: 0,
     layerId: null,
   });
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState>({
+    visible: false,
+    mode: 'single',
+    targetIds: [],
+    value: '',
+  });
   const blendMenuRef = useRef<HTMLDivElement | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   const {
     layers,
@@ -178,6 +195,63 @@ export function LayerPanel(): JSX.Element {
     [setLayerSelection]
   );
 
+  const closeContextMenu = useCallback(() => {
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, []);
+
+  const getDisplayOrderedSelectionIds = useCallback(
+    (ids: string[]): string[] => {
+      const idSet = new Set(ids);
+      return displayLayers.filter((layer) => idSet.has(layer.id)).map((layer) => layer.id);
+    },
+    [displayLayers]
+  );
+
+  const closeRenameDialog = useCallback(() => {
+    setRenameDialog((prev) => ({ ...prev, visible: false }));
+  }, []);
+
+  const openRenameDialog = useCallback(
+    (targetIds: string[], mode: 'single' | 'batch') => {
+      const orderedIds = getDisplayOrderedSelectionIds(targetIds);
+      if (orderedIds.length === 0) return;
+
+      const firstTarget = layers.find((layer) => layer.id === orderedIds[0]);
+      setRenameDialog({
+        visible: true,
+        mode,
+        targetIds: orderedIds,
+        value: mode === 'batch' ? 'newname' : (firstTarget?.name ?? ''),
+      });
+      setEditingLayerId(null);
+      closeContextMenu();
+    },
+    [closeContextMenu, getDisplayOrderedSelectionIds, layers]
+  );
+
+  const handleRenameDialogChange = useCallback((value: string) => {
+    setRenameDialog((prev) => ({ ...prev, value }));
+  }, []);
+
+  const applyRenameDialog = useCallback(() => {
+    const baseName = renameDialog.value.trim();
+    if (!baseName) {
+      pushToast('Layer name cannot be empty.', { variant: 'error' });
+      return;
+    }
+
+    renameDialog.targetIds.forEach((id, index) => {
+      if (renameDialog.mode === 'batch') {
+        const nextName = index === 0 ? baseName : `${baseName}_${String(index).padStart(3, '0')}`;
+        renameLayer(id, nextName);
+        return;
+      }
+      renameLayer(id, baseName);
+    });
+
+    closeRenameDialog();
+  }, [closeRenameDialog, pushToast, renameDialog, renameLayer]);
+
   // Close context menu when clicking outside
   useEffect(() => {
     if (!contextMenu.visible) return;
@@ -209,6 +283,15 @@ export function LayerPanel(): JSX.Element {
     };
   }, [blendMenuOpen]);
 
+  useEffect(() => {
+    if (!renameDialog.visible) return;
+    const frame = window.requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [renameDialog.visible]);
+
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, layerId: string) => {
       e.preventDefault();
@@ -226,9 +309,24 @@ export function LayerPanel(): JSX.Element {
     [applyLayerSelection, selectedLayerIdSet]
   );
 
-  const closeContextMenu = useCallback(() => {
-    setContextMenu((prev) => ({ ...prev, visible: false }));
-  }, []);
+  const handleLayerListContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const preferredSelectionId =
+        selectedLayerIds.find((id) => id === activeLayerId) ?? selectedLayerIds[0] ?? null;
+      const fallbackLayerId = preferredSelectionId ?? activeLayerId ?? null;
+
+      setContextMenu({
+        visible: true,
+        x: e.clientX,
+        y: e.clientY,
+        layerId: fallbackLayerId,
+      });
+    },
+    [activeLayerId, selectedLayerIds]
+  );
 
   const handleDuplicateLayer = useCallback(() => {
     if (contextMenu.layerId) {
@@ -286,32 +384,68 @@ export function LayerPanel(): JSX.Element {
     win.__canvasMergeSelectedLayers?.(uniqueIds);
   }, []);
 
-  const handleDeleteLayer = useCallback(() => {
-    if (!contextMenu.layerId) {
+  const safeMergeAllLayers = useCallback(() => {
+    const win = window as Window & {
+      __canvasMergeAllLayers?: () => number;
+    };
+    if (win.__canvasMergeAllLayers) {
+      win.__canvasMergeAllLayers();
+      return;
+    }
+    safeMergeSelectedLayers(layers.map((layer) => layer.id));
+  }, [layers, safeMergeSelectedLayers]);
+
+  const getContextSelectionIds = useCallback((): string[] => {
+    if (!contextMenu.layerId) return [];
+    if (selectedLayerIds.length > 1 && selectedLayerIds.includes(contextMenu.layerId)) {
+      return selectedLayerIds;
+    }
+    return [contextMenu.layerId];
+  }, [contextMenu.layerId, selectedLayerIds]);
+
+  const handleOpenRenameFromContextMenu = useCallback(() => {
+    const targetIds = getContextSelectionIds();
+    if (targetIds.length === 0) {
       closeContextMenu();
       return;
     }
-    if (selectedLayerIdSet.has(contextMenu.layerId) && selectedLayerIds.length > 1) {
-      safeRemoveLayers(selectedLayerIds);
+    openRenameDialog(targetIds, targetIds.length > 1 ? 'batch' : 'single');
+  }, [closeContextMenu, getContextSelectionIds, openRenameDialog]);
+
+  const handleCreateLayerFromContextMenu = useCallback(() => {
+    addLayer({ name: `Layer ${layers.length + 1}`, type: 'raster' });
+    closeContextMenu();
+  }, [addLayer, closeContextMenu, layers.length]);
+
+  const handleDeleteLayer = useCallback(() => {
+    const targetIds = getContextSelectionIds();
+    if (targetIds.length === 0) {
+      closeContextMenu();
+      return;
+    }
+    if (targetIds.length > 1) {
+      safeRemoveLayers(targetIds);
     } else {
-      safeRemoveLayer(contextMenu.layerId);
+      const [targetId] = targetIds;
+      if (targetId) {
+        safeRemoveLayer(targetId);
+      }
     }
     closeContextMenu();
-  }, [
-    closeContextMenu,
-    contextMenu.layerId,
-    safeRemoveLayer,
-    safeRemoveLayers,
-    selectedLayerIdSet,
-    selectedLayerIds,
-  ]);
+  }, [closeContextMenu, getContextSelectionIds, safeRemoveLayer, safeRemoveLayers]);
 
   const handleMergeLayerSelection = useCallback(() => {
-    if (selectedLayerIds.length > 1) {
-      safeMergeSelectedLayers(selectedLayerIds);
+    const targetIds = getContextSelectionIds();
+    if (targetIds.length > 1) {
+      safeMergeSelectedLayers(targetIds);
     }
     closeContextMenu();
-  }, [closeContextMenu, safeMergeSelectedLayers, selectedLayerIds]);
+  }, [closeContextMenu, getContextSelectionIds, safeMergeSelectedLayers]);
+
+  const handleMergeAllLayersFromContextMenu = useCallback(() => {
+    safeMergeAllLayers();
+    closeContextMenu();
+  }, [closeContextMenu, safeMergeAllLayers]);
 
   function handleDragStart(e: React.DragEvent, layerId: string): void {
     const idsToDrag =
@@ -540,22 +674,11 @@ export function LayerPanel(): JSX.Element {
   // F2 shortcut to rename active layer
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'F2' || editingLayerId) return;
+      if (e.key !== 'F2' || editingLayerId || renameDialog.visible) return;
+      if (isEditableTarget(e.target)) return;
       if (selectedLayerIds.length > 1) {
         e.preventDefault();
-        const base = window.prompt('输入批量重命名基名', 'newname');
-        const trimmedBase = base?.trim() ?? '';
-        if (!trimmedBase) return;
-        const orderedIds = displayLayers
-          .filter((layer) => selectedLayerIdSet.has(layer.id))
-          .map((layer) => layer.id);
-        orderedIds.forEach((id, index) => {
-          if (index === 0) {
-            renameLayer(id, trimmedBase);
-            return;
-          }
-          renameLayer(id, `${trimmedBase}_${String(index).padStart(3, '0')}`);
-        });
+        openRenameDialog(selectedLayerIds, 'batch');
         return;
       }
       if (activeLayerId) {
@@ -565,14 +688,17 @@ export function LayerPanel(): JSX.Element {
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [
-    activeLayerId,
-    displayLayers,
-    editingLayerId,
-    renameLayer,
-    selectedLayerIdSet,
-    selectedLayerIds.length,
-  ]);
+  }, [activeLayerId, editingLayerId, openRenameDialog, renameDialog.visible, selectedLayerIds]);
+
+  const contextSelectionIds = getContextSelectionIds();
+  const contextSelectionCount = contextSelectionIds.length;
+  const contextHasLayer = contextMenu.layerId !== null;
+  const canMergeContextSelection = contextSelectionCount > 1;
+  const canDeleteContextSelection = contextSelectionCount > 0 && layers.length > 1;
+  const contextDeleteLabel =
+    contextSelectionCount > 1 ? `Delete ${contextSelectionCount} Layers` : 'Delete Layer';
+  const renameDialogTitle = renameDialog.mode === 'batch' ? 'Batch Rename Layers' : 'Rename Layer';
+  const renameDialogInputLabel = renameDialog.mode === 'batch' ? 'Base Name' : 'Layer Name';
 
   return (
     <aside className="layer-panel">
@@ -582,6 +708,7 @@ export function LayerPanel(): JSX.Element {
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
         }}
+        onContextMenu={handleLayerListContextMenu}
       >
         {layers.length === 0 ? (
           <div className="layer-empty">No layers</div>
@@ -716,23 +843,129 @@ export function LayerPanel(): JSX.Element {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button className="context-menu-item" onClick={handleDuplicateLayer}>
+          <button className="context-menu-item" onClick={handleCreateLayerFromContextMenu}>
+            <Plus size={14} />
+            <span>New Layer</span>
+            <span className="context-menu-shortcut">N</span>
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={handleOpenRenameFromContextMenu}
+            disabled={contextSelectionCount === 0}
+          >
+            <Pencil size={14} />
+            <span>{contextSelectionCount > 1 ? 'Batch Rename...' : 'Rename...'}</span>
+            <span className="context-menu-shortcut">F2</span>
+          </button>
+          <div className="context-menu-divider" />
+          <button
+            className="context-menu-item"
+            onClick={handleDuplicateLayer}
+            disabled={!contextHasLayer}
+          >
             <Copy size={14} />
             <span>Duplicate Layer</span>
           </button>
-          {selectedLayerIds.length > 1 && (
-            <button className="context-menu-item" onClick={handleMergeLayerSelection}>
-              <FolderPlus size={14} />
-              <span>Merge Selected Layers</span>
-            </button>
-          )}
-          <button className="context-menu-item danger" onClick={handleDeleteLayer}>
+          <button
+            className="context-menu-item"
+            onClick={handleMergeLayerSelection}
+            disabled={!canMergeContextSelection}
+          >
+            <FolderPlus size={14} />
+            <span>Merge Selected Layers</span>
+            <span className="context-menu-shortcut">Ctrl+E</span>
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={handleMergeAllLayersFromContextMenu}
+            disabled={layers.length < 2}
+          >
+            <Layers size={14} />
+            <span>Merge All Layers</span>
+            <span className="context-menu-shortcut">Ctrl+Shift+E</span>
+          </button>
+          <div className="context-menu-divider" />
+          <button
+            className="context-menu-item danger"
+            onClick={handleDeleteLayer}
+            disabled={!canDeleteContextSelection}
+          >
             <Trash2 size={14} />
-            <span>Delete Layer</span>
+            <span>{contextDeleteLabel}</span>
+            <span className="context-menu-shortcut">Delete</span>
           </button>
         </div>
       )}
+
+      {renameDialog.visible &&
+        createPortal(
+          <div className="layer-rename-overlay" onMouseDown={closeRenameDialog}>
+            <div
+              className="layer-rename-panel mica-panel"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="layer-rename-title"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="mica-panel-header layer-rename-header">
+                <h2 id="layer-rename-title">{renameDialogTitle}</h2>
+              </div>
+              <div className="layer-rename-body">
+                <label className="layer-rename-label" htmlFor="layer-rename-input">
+                  {renameDialogInputLabel}
+                </label>
+                <input
+                  id="layer-rename-input"
+                  ref={renameInputRef}
+                  className="layer-rename-input"
+                  type="text"
+                  value={renameDialog.value}
+                  data-testid="layer-rename-input"
+                  onChange={(e) => handleRenameDialogChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      applyRenameDialog();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      closeRenameDialog();
+                    }
+                  }}
+                />
+                {renameDialog.mode === 'batch' && (
+                  <p className="layer-rename-tip">
+                    Naming order is top to bottom: name, name_001, name_002...
+                  </p>
+                )}
+                <div className="layer-rename-actions">
+                  <button type="button" className="layer-rename-btn" onClick={closeRenameDialog}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-rename-btn primary"
+                    onClick={applyRenameDialog}
+                    disabled={!renameDialog.value.trim()}
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </aside>
+  );
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
   );
 }
 
