@@ -20,7 +20,7 @@ import { usePointerHandlers } from './usePointerHandlers';
 import { useStrokeProcessor } from './useStrokeProcessor';
 import { SelectionOverlay } from './SelectionOverlay';
 import { BrushQuickPanel } from './BrushQuickPanel';
-import { getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
+import { clientToCanvasPoint, getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer, type LayerMovePreview } from '@/utils/layerRenderer';
 import {
@@ -189,6 +189,12 @@ function parseTrackedTileCoordKeys(tileKeys: Set<string>): Array<{ x: number; y:
   return tiles;
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!target) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -225,6 +231,7 @@ export function Canvas() {
     layerId: string;
     dirtyRect: CompositeClipRect | null;
   } | null>(null);
+  const lastPointerClientPosRef = useRef<{ x: number; y: number } | null>(null);
   const finalizeFloatingSelectionSessionRef = useRef<(reason?: string) => void>(() => undefined);
   const hasFloatingSelectionSessionRef = useRef<() => boolean>(() => false);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
@@ -1676,8 +1683,43 @@ export function Canvas() {
     onBeforeSelectionMutation,
     handleDuplicateActiveLayer,
     handleCopyImage: handleCopyActiveLayerImage,
-    handlePasteImage: handlePasteImageAsNewLayer,
   });
+
+  const resolveImportAnchorPoint = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      if (
+        clientX < rect.left ||
+        clientX > rect.right ||
+        clientY < rect.top ||
+        clientY > rect.bottom
+      ) {
+        return null;
+      }
+
+      const point = clientToCanvasPoint(canvas, clientX, clientY);
+      return {
+        x: Math.max(0, Math.min(Math.max(0, width - 1), Math.round(point.x))),
+        y: Math.max(0, Math.min(Math.max(0, height - 1), Math.round(point.y))),
+      };
+    },
+    [height, width]
+  );
+
+  useEffect(() => {
+    const handlePointerTracking = (event: PointerEvent): void => {
+      lastPointerClientPosRef.current = { x: event.clientX, y: event.clientY };
+    };
+
+    window.addEventListener('pointermove', handlePointerTracking, { passive: true });
+    window.addEventListener('pointerdown', handlePointerTracking, { passive: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerTracking);
+      window.removeEventListener('pointerdown', handlePointerTracking);
+    };
+  }, []);
 
   useEffect(() => {
     const hasFilePayload = (event: DragEvent): boolean => {
@@ -1696,16 +1738,34 @@ export function Canvas() {
       event.preventDefault();
       const droppedFiles = Array.from(event.dataTransfer?.files ?? []);
       if (droppedFiles.length === 0) return;
-      void handleImportImageFiles(droppedFiles);
+      const anchorPoint = resolveImportAnchorPoint(event.clientX, event.clientY);
+      void handleImportImageFiles(droppedFiles, { anchorPoint });
+    };
+
+    const handleWindowPaste = (event: ClipboardEvent): void => {
+      if (isEditableTarget(event.target)) return;
+
+      event.preventDefault();
+      const lastPointer = lastPointerClientPosRef.current;
+      const anchorPoint = lastPointer
+        ? resolveImportAnchorPoint(lastPointer.x, lastPointer.y)
+        : null;
+      void handlePasteImageAsNewLayer({
+        clipboardData: event.clipboardData,
+        anchorPoint,
+        allowSystemClipboardRead: false,
+      });
     };
 
     window.addEventListener('dragover', handleWindowDragOver);
     window.addEventListener('drop', handleWindowDrop);
+    window.addEventListener('paste', handleWindowPaste);
     return () => {
       window.removeEventListener('dragover', handleWindowDragOver);
       window.removeEventListener('drop', handleWindowDrop);
+      window.removeEventListener('paste', handleWindowPaste);
     };
-  }, [handleImportImageFiles]);
+  }, [handleImportImageFiles, handlePasteImageAsNewLayer, resolveImportAnchorPoint]);
 
   const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
     currentTool,

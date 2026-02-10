@@ -277,19 +277,44 @@ function isImageFile(file: File): boolean {
   return /\.(png|jpe?g|webp|bmp|gif|tiff?|svg)$/i.test(file.name);
 }
 
+interface ImportAnchorPoint {
+  x: number;
+  y: number;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
 function getImportedPlacement(
   docWidth: number,
   docHeight: number,
   imageWidth: number,
-  imageHeight: number
+  imageHeight: number,
+  anchorPoint?: ImportAnchorPoint | null
 ): { x: number; y: number; width: number; height: number } {
   const safeImageWidth = Math.max(1, imageWidth);
   const safeImageHeight = Math.max(1, imageHeight);
   const scale = Math.min(1, docWidth / safeImageWidth, docHeight / safeImageHeight);
   const width = Math.max(1, Math.round(safeImageWidth * scale));
   const height = Math.max(1, Math.round(safeImageHeight * scale));
-  const x = Math.round((docWidth - width) / 2);
-  const y = Math.round((docHeight - height) / 2);
+  const maxX = Math.max(0, docWidth - width);
+  const maxY = Math.max(0, docHeight - height);
+
+  let x: number;
+  let y: number;
+  if (anchorPoint) {
+    x = Math.round(anchorPoint.x - width / 2);
+    y = Math.round(anchorPoint.y - height / 2);
+    x = clampNumber(x, 0, maxX);
+    y = clampNumber(y, 0, maxY);
+  } else {
+    x = Math.round((docWidth - width) / 2);
+    y = Math.round((docHeight - height) / 2);
+  }
+
   return { x, y, width, height };
 }
 
@@ -364,6 +389,22 @@ async function readImageBlobFromClipboard(): Promise<Blob | null> {
     }
   } catch {
     return null;
+  }
+
+  return null;
+}
+
+function readImageBlobFromDataTransfer(dataTransfer?: DataTransfer | null): Blob | null {
+  if (!dataTransfer) return null;
+
+  for (const item of Array.from(dataTransfer.items ?? [])) {
+    if (item.kind !== 'file' || !item.type.toLowerCase().startsWith('image/')) continue;
+    const file = item.getAsFile();
+    if (file) return file;
+  }
+
+  for (const file of Array.from(dataTransfer.files ?? [])) {
+    if (isImageFile(file)) return file;
   }
 
   return null;
@@ -1007,7 +1048,8 @@ export function useLayerOperations({
       source: CanvasImageSource,
       sourceWidth: number,
       sourceHeight: number,
-      requestedName: string
+      requestedName: string,
+      options?: { anchorPoint?: ImportAnchorPoint | null }
     ): Promise<string | null> => {
       const docState = useDocumentStore.getState();
       const layerName = getUniqueLayerName(requestedName, docState.layers);
@@ -1018,7 +1060,13 @@ export function useLayerOperations({
       const newLayerId = useDocumentStore.getState().activeLayerId;
       if (!newLayerId) return null;
 
-      const placement = getImportedPlacement(width, height, sourceWidth, sourceHeight);
+      const placement = getImportedPlacement(
+        width,
+        height,
+        sourceWidth,
+        sourceHeight,
+        options?.anchorPoint ?? null
+      );
 
       for (let attempt = 0; attempt < 4; attempt += 1) {
         const renderer = layerRendererRef.current;
@@ -1159,41 +1207,53 @@ export function useLayerOperations({
     await writeImageBlobToClipboard(blob);
   }, [activeLayerId, height, layerRendererRef, pushToast, width]);
 
-  const handlePasteImageAsNewLayer = useCallback(async (): Promise<void> => {
-    const fromSystemClipboard = await readImageBlobFromClipboard();
-    const imageBlob = fromSystemClipboard ?? copiedImageBlobRef.current;
-    if (!imageBlob) {
-      pushToast('Clipboard has no image data.', { variant: 'error' });
-      return;
-    }
-
-    let decoded: {
-      source: CanvasImageSource;
-      width: number;
-      height: number;
-      cleanup: () => void;
-    } | null = null;
-    try {
-      decoded = await decodeImageBlob(imageBlob);
-      const layerName = getNextPastedLayerName(useDocumentStore.getState().layers);
-      const inserted = await insertImageAsNewLayer(
-        decoded.source,
-        decoded.width,
-        decoded.height,
-        layerName
-      );
-      if (!inserted) {
-        pushToast('Paste failed: could not create target layer.', { variant: 'error' });
+  const handlePasteImageAsNewLayer = useCallback(
+    async (options?: {
+      clipboardData?: DataTransfer | null;
+      anchorPoint?: ImportAnchorPoint | null;
+      allowSystemClipboardRead?: boolean;
+    }): Promise<void> => {
+      const fromPasteEvent = readImageBlobFromDataTransfer(options?.clipboardData);
+      const allowSystemClipboardRead = options?.allowSystemClipboardRead ?? !fromPasteEvent;
+      const fromSystemClipboard = allowSystemClipboardRead
+        ? await readImageBlobFromClipboard()
+        : null;
+      const imageBlob = fromPasteEvent ?? fromSystemClipboard ?? copiedImageBlobRef.current;
+      if (!imageBlob) {
+        pushToast('Clipboard has no image data.', { variant: 'error' });
+        return;
       }
-    } catch {
-      pushToast('Paste failed: unsupported clipboard image.', { variant: 'error' });
-    } finally {
-      decoded?.cleanup();
-    }
-  }, [insertImageAsNewLayer, pushToast]);
+
+      let decoded: {
+        source: CanvasImageSource;
+        width: number;
+        height: number;
+        cleanup: () => void;
+      } | null = null;
+      try {
+        decoded = await decodeImageBlob(imageBlob);
+        const layerName = getNextPastedLayerName(useDocumentStore.getState().layers);
+        const inserted = await insertImageAsNewLayer(
+          decoded.source,
+          decoded.width,
+          decoded.height,
+          layerName,
+          { anchorPoint: options?.anchorPoint ?? null }
+        );
+        if (!inserted) {
+          pushToast('Paste failed: could not create target layer.', { variant: 'error' });
+        }
+      } catch {
+        pushToast('Paste failed: unsupported clipboard image.', { variant: 'error' });
+      } finally {
+        decoded?.cleanup();
+      }
+    },
+    [insertImageAsNewLayer, pushToast]
+  );
 
   const handleImportImageFiles = useCallback(
-    async (files: File[]): Promise<void> => {
+    async (files: File[], options?: { anchorPoint?: ImportAnchorPoint | null }): Promise<void> => {
       if (files.length === 0) return;
 
       let imported = 0;
@@ -1221,7 +1281,8 @@ export function useLayerOperations({
             decoded.source,
             decoded.width,
             decoded.height,
-            layerName
+            layerName,
+            { anchorPoint: options?.anchorPoint ?? null }
           );
           if (inserted) {
             imported += 1;

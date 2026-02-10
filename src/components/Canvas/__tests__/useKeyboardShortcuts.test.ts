@@ -118,9 +118,8 @@ describe('useKeyboardShortcuts', () => {
     expect(handleDuplicateActiveLayer).toHaveBeenCalledTimes(1);
   });
 
-  it('handles Ctrl/Meta + C/V for image copy and paste', () => {
+  it('handles Ctrl/Meta + C and lets Ctrl/Meta + V flow to native paste event', () => {
     const handleCopyImage = vi.fn();
-    const handlePasteImage = vi.fn();
 
     renderHook(() =>
       useKeyboardShortcuts({
@@ -138,7 +137,6 @@ describe('useKeyboardShortcuts', () => {
         setIsPanning: vi.fn(),
         panStartRef: { current: null },
         handleCopyImage,
-        handlePasteImage,
       })
     );
 
@@ -175,11 +173,10 @@ describe('useKeyboardShortcuts', () => {
     });
 
     expect(ctrlC.defaultPrevented).toBe(true);
-    expect(ctrlV.defaultPrevented).toBe(true);
+    expect(ctrlV.defaultPrevented).toBe(false);
     expect(metaC.defaultPrevented).toBe(true);
-    expect(metaV.defaultPrevented).toBe(true);
+    expect(metaV.defaultPrevented).toBe(false);
     expect(handleCopyImage).toHaveBeenCalledTimes(2);
-    expect(handlePasteImage).toHaveBeenCalledTimes(2);
   });
 
   it('handles tool switching keys and ignores repeats (except brackets)', () => {

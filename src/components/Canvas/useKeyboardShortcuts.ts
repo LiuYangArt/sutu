@@ -41,7 +41,6 @@ interface UseKeyboardShortcutsParams {
   onBeforeSelectionMutation?: () => void;
   handleDuplicateActiveLayer?: () => void;
   handleCopyImage?: () => void | Promise<void>;
-  handlePasteImage?: () => void | Promise<void>;
 }
 
 export function useKeyboardShortcuts({
@@ -61,7 +60,6 @@ export function useKeyboardShortcuts({
   onBeforeSelectionMutation,
   handleDuplicateActiveLayer,
   handleCopyImage,
-  handlePasteImage,
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
   const pushSelection = useHistoryStore((s) => s.pushSelection);
@@ -129,8 +127,8 @@ export function useKeyboardShortcuts({
             return;
           }
           case 'KeyV': {
-            e.preventDefault();
-            void handlePasteImage?.();
+            // Let native paste event flow through so clipboard image reading can
+            // use event.clipboardData without triggering permission prompts.
             return;
           }
           default:
@@ -257,7 +255,6 @@ export function useKeyboardShortcuts({
     onBeforeSelectionMutation,
     handleDuplicateActiveLayer,
     handleCopyImage,
-    handlePasteImage,
   ]);
 
   return { spacePressed };
