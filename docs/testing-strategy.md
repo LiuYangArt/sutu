@@ -1,6 +1,6 @@
 # 测试与验证策略
 
-> 版本: 0.2.0 | 最后更新: 2026-02-07
+> 版本: 0.2.1 | 最后更新: 2026-02-10
 
 > [!IMPORTANT]
 > 当前绘画主链路是 GPU-First。测试策略以 `docs/design/done/2026-02-05-gpu-first-brush-design.md`（GPU-first 改造归档）为准：
@@ -776,7 +776,30 @@ pnpm test:e2e
 
 ---
 
-## 10. 总结：Vibe Coding 的测试平衡
+## 10. Move Tool V 专项回归矩阵（2026-02-10）
+
+### 10.1 覆盖目标
+
+| 目标 | 自动化用例 | 关注点 |
+|------|-----------|--------|
+| 拖动首帧反馈不被历史快照阻塞 | `src/components/Canvas/__tests__/useMoveTool.test.ts` | `pointerdown -> preview` 可立即触发；`saveStrokeToHistory` 必须等待 `captureBeforeImage` 完成 |
+| 混合模式下拖动预览与落盘一致 | `src/utils/__tests__/layerRenderer.movePreviewBlend.test.ts` | `normal/multiply/screen/overlay` 下，move preview 像素结果与真实提交后结果一致 |
+| GPU movePreview 主路径调用顺序正确 | `src/components/Canvas/__tests__/movePreviewGpuSync.test.ts` | `syncLayerTilesFromCanvas -> render` 顺序稳定；结束拖动后可恢复 authoritative tiles |
+| 端到端交互稳定性 | `e2e/move-tool.spec.ts` | 首帧可见位移、混合预览与提交一致、undo/redo 与切工具取消无残影 |
+
+### 10.2 推荐回归命令
+
+```bash
+# 逻辑与渲染专项
+pnpm -s vitest src/components/Canvas/__tests__/useMoveTool.test.ts src/components/Canvas/__tests__/movePreviewGpuSync.test.ts src/utils/__tests__/layerRenderer.movePreviewBlend.test.ts --run
+
+# 端到端专项
+pnpm -s playwright test e2e/move-tool.spec.ts
+```
+
+---
+
+## 11. 总结：Vibe Coding 的测试平衡
 
 **核心原则**：测试应该帮助你更快地 Vibe，而不是成为负担。
 

@@ -15,6 +15,11 @@ export interface LayerCanvas {
   isBackground: boolean; // Background layer cannot be erased to transparency
 }
 
+export interface LayerMovePreview {
+  activeLayerId: string;
+  canvas: HTMLCanvasElement;
+}
+
 interface CompositeRegion {
   x: number;
   y: number;
@@ -358,7 +363,8 @@ export class LayerRenderer {
       opacity: number;
       compositeMode?: StrokeCompositeMode;
     },
-    region?: CompositeRegion
+    region?: CompositeRegion,
+    movePreview?: LayerMovePreview
   ): HTMLCanvasElement {
     const normalizedRegion = normalizeCompositeRegion(region, this.width, this.height);
 
@@ -379,9 +385,12 @@ export class LayerRenderer {
       if (!layer || !layer.visible) continue;
 
       let sourceCanvas = layer.canvas;
+      if (movePreview && id === movePreview.activeLayerId) {
+        sourceCanvas = movePreview.canvas;
+      }
       if (preview && id === preview.activeLayerId && preview.opacity > 0) {
         sourceCanvas = this.composeLayerWithPreview(
-          layer.canvas,
+          sourceCanvas,
           preview.canvas,
           preview.opacity,
           preview.compositeMode ?? 'paint',

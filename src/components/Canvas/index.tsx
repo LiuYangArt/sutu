@@ -22,7 +22,7 @@ import { SelectionOverlay } from './SelectionOverlay';
 import { BrushQuickPanel } from './BrushQuickPanel';
 import { getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
-import { LayerRenderer } from '@/utils/layerRenderer';
+import { LayerRenderer, type LayerMovePreview } from '@/utils/layerRenderer';
 import {
   StrokeCaptureController,
   type FixedStrokeCaptureLoadResult,
@@ -47,6 +47,7 @@ import {
   isGpuLayerStackPathAvailable,
   reconcileLayerRevisionMap,
 } from './gpuLayerStackPolicy';
+import { runGpuMovePreviewFrame } from './movePreviewGpuSync';
 
 import './Canvas.css';
 
@@ -141,6 +142,13 @@ interface CompositeClipRect {
 interface CompositeRenderOptions {
   clipRect?: CompositeClipRect | null;
   forceCpu?: boolean;
+  movePreview?: CompositeMovePreview | null;
+}
+
+interface CompositeMovePreview {
+  layerId: string;
+  canvas: HTMLCanvasElement;
+  dirtyRect?: CompositeClipRect | null;
 }
 
 function isLineTool(tool: ToolType | null): boolean {
@@ -214,6 +222,10 @@ export function Canvas() {
   const pendingGpuCpuSyncLayerRef = useRef<string | null>(null);
   const pendingGpuCpuSyncRafRef = useRef<number | null>(null);
   const gpuCanvasClearedForCpuRef = useRef(false);
+  const pendingMovePreviewRestoreRef = useRef<{
+    layerId: string;
+    dirtyRect: CompositeClipRect | null;
+  } | null>(null);
   const finalizeFloatingSelectionSessionRef = useRef<(reason?: string) => void>(() => undefined);
   const hasFloatingSelectionSessionRef = useRef<() => boolean>(() => false);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
@@ -903,6 +915,7 @@ export function Canvas() {
       }
 
       const clipRect = options?.clipRect ?? null;
+      const movePreview = options?.movePreview ?? null;
       const normalizedRegion = clipRect
         ? (() => {
             const x = Math.max(0, Math.floor(clipRect.left));
@@ -915,29 +928,51 @@ export function Canvas() {
             return { x, y, width, height };
           })()
         : null;
+      const normalizedMovePreviewRect = movePreview?.dirtyRect
+        ? (() => {
+            const x = Math.max(0, Math.floor(movePreview.dirtyRect.left));
+            const y = Math.max(0, Math.floor(movePreview.dirtyRect.top));
+            const right = Math.min(docWidth, Math.ceil(movePreview.dirtyRect.right));
+            const bottom = Math.min(docHeight, Math.ceil(movePreview.dirtyRect.bottom));
+            if (right <= x || bottom <= y) return null;
+            return { left: x, top: y, right, bottom };
+          })()
+        : null;
 
       const useGpuPath =
         gpuDisplayActive &&
         !!gpuRendererRef.current &&
         !options?.forceCpu &&
-        normalizedRegion === null;
+        (normalizedRegion === null || !!movePreview);
       if (useGpuPath) {
         const gpuRenderer = gpuRendererRef.current;
         if (!gpuRenderer) return;
         const visibleGpuLayers = getVisibleGpuRenderableLayers();
-        for (const visibleLayer of visibleGpuLayers) {
-          const layer = renderer.getLayer(visibleLayer.id);
-          if (!layer) continue;
-          gpuRenderer.syncLayerFromCanvas(visibleLayer.id, layer.canvas, visibleLayer.revision);
-        }
-
-        gpuRenderer.renderLayerStackFrame({
-          layers: visibleGpuLayers,
-          activeLayerId,
-          scratchTexture: null,
-          strokeOpacity: 1,
-          compositeMode: 'paint',
-          renderScale: getGpuRenderScale(),
+        pendingMovePreviewRestoreRef.current = runGpuMovePreviewFrame({
+          gpuRenderer,
+          visibleLayers: visibleGpuLayers,
+          movePreview: movePreview
+            ? {
+                layerId: movePreview.layerId,
+                canvas: movePreview.canvas,
+                dirtyRect: normalizedMovePreviewRect,
+              }
+            : null,
+          pendingRestore: pendingMovePreviewRestoreRef.current,
+          getLayerCanvas: (layerId: string) => renderer.getLayer(layerId)?.canvas ?? null,
+          width: docWidth,
+          height: docHeight,
+          tileSize: GPU_TILE_SIZE,
+          onRender: (layers) => {
+            gpuRenderer.renderLayerStackFrame({
+              layers,
+              activeLayerId,
+              scratchTexture: null,
+              strokeOpacity: 1,
+              compositeMode: 'paint',
+              renderScale: getGpuRenderScale(),
+            });
+          },
         });
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.clearRect(0, 0, docWidth, docHeight);
@@ -960,7 +995,17 @@ export function Canvas() {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const compositeCanvas = renderer.composite(undefined, normalizedRegion ?? undefined);
+      const movePreviewSource: LayerMovePreview | undefined = movePreview
+        ? {
+            activeLayerId: movePreview.layerId,
+            canvas: movePreview.canvas,
+          }
+        : undefined;
+      const compositeCanvas = renderer.composite(
+        undefined,
+        normalizedRegion ?? undefined,
+        movePreviewSource
+      );
       if (normalizedRegion) {
         ctx.clearRect(
           normalizedRegion.x,
