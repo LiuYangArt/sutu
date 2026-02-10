@@ -1325,12 +1325,14 @@ export function useLayerOperations({
       const renderer = layerRendererRef.current;
       if (!renderer) return;
 
-      // Get layer info before removing
-      const layerState = layers.find((l) => l.id === layerId);
-      const layerIndex = layers.findIndex((l) => l.id === layerId);
+      const documentLayers = useDocumentStore.getState().layers;
+
+      const layerIndex = documentLayers.findIndex((l) => l.id === layerId);
+      if (layerIndex === -1) return;
+      const layerState = documentLayers[layerIndex];
       const imageData = renderer.getLayerImageData(layerId);
 
-      if (!layerState || layerIndex === -1 || !imageData) return;
+      if (!layerState || !imageData) return;
 
       onBeforeCanvasMutation?.();
 
@@ -1345,14 +1347,7 @@ export function useLayerOperations({
       compositeAndRender();
       markLayerDirty(layerId);
     },
-    [
-      layers,
-      pushRemoveLayer,
-      compositeAndRender,
-      markLayerDirty,
-      layerRendererRef,
-      onBeforeCanvasMutation,
-    ]
+    [pushRemoveLayer, compositeAndRender, markLayerDirty, layerRendererRef, onBeforeCanvasMutation]
   );
 
   return {
