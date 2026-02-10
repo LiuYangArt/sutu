@@ -380,6 +380,46 @@ describe('useKeyboardShortcuts', () => {
     input.remove();
   });
 
+  it('intercepts Ctrl+Z on range input and routes to canvas undo', () => {
+    const handleUndo = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo,
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+      })
+    );
+
+    const rangeInput = document.createElement('input');
+    rangeInput.type = 'range';
+    document.body.appendChild(rangeInput);
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyZ',
+      ctrlKey: true,
+    });
+    act(() => {
+      rangeInput.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(handleUndo).toHaveBeenCalledTimes(1);
+    rangeInput.remove();
+  });
+
   it('handles Ctrl+A on window: selectAll + preventDefault', () => {
     const selectAll = vi.fn();
 

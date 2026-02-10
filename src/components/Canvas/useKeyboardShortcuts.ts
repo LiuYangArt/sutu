@@ -14,9 +14,23 @@ const TEXT_EDITING_COMMAND_CODES = new Set([
   'KeyJ',
 ]);
 
+const TEXT_EDITABLE_INPUT_TYPES = new Set([
+  'text',
+  'search',
+  'url',
+  'tel',
+  'email',
+  'password',
+  'number',
+]);
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!target) return false;
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) {
+    const inputType = target.type?.toLowerCase() ?? 'text';
+    return TEXT_EDITABLE_INPUT_TYPES.has(inputType);
+  }
   return target instanceof HTMLElement && target.isContentEditable;
 }
 

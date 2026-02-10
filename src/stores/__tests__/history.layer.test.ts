@@ -158,4 +158,77 @@ describe('HistoryStore - addLayer image patch', () => {
       afterBlendMode: 'multiply',
     });
   });
+
+  it('pushLayerProps merges continuous opacity changes into one entry', () => {
+    const store = useHistoryStore.getState();
+    store.pushLayerProps([
+      {
+        layerId: 'layer_a',
+        beforeOpacity: 100,
+        beforeBlendMode: 'normal',
+        afterOpacity: 90,
+        afterBlendMode: 'normal',
+      },
+    ]);
+    store.pushLayerProps([
+      {
+        layerId: 'layer_a',
+        beforeOpacity: 90,
+        beforeBlendMode: 'normal',
+        afterOpacity: 80,
+        afterBlendMode: 'normal',
+      },
+    ]);
+    store.pushLayerProps([
+      {
+        layerId: 'layer_a',
+        beforeOpacity: 80,
+        beforeBlendMode: 'normal',
+        afterOpacity: 60,
+        afterBlendMode: 'normal',
+      },
+    ]);
+
+    const undoStack = useHistoryStore.getState().undoStack;
+    expect(undoStack).toHaveLength(1);
+    const entry = undoStack[0];
+    expect(entry?.type).toBe('layerProps');
+    if (!entry || entry.type !== 'layerProps') return;
+    expect(entry.changes).toEqual([
+      {
+        layerId: 'layer_a',
+        beforeOpacity: 100,
+        beforeBlendMode: 'normal',
+        afterOpacity: 60,
+        afterBlendMode: 'normal',
+      },
+    ]);
+  });
+
+  it('pushLayerProps keeps blend-mode change as a separate history entry', () => {
+    const store = useHistoryStore.getState();
+    store.pushLayerProps([
+      {
+        layerId: 'layer_a',
+        beforeOpacity: 100,
+        beforeBlendMode: 'normal',
+        afterOpacity: 70,
+        afterBlendMode: 'normal',
+      },
+    ]);
+    store.pushLayerProps([
+      {
+        layerId: 'layer_a',
+        beforeOpacity: 70,
+        beforeBlendMode: 'normal',
+        afterOpacity: 70,
+        afterBlendMode: 'multiply',
+      },
+    ]);
+
+    const undoStack = useHistoryStore.getState().undoStack;
+    expect(undoStack).toHaveLength(2);
+    expect(undoStack[0]?.type).toBe('layerProps');
+    expect(undoStack[1]?.type).toBe('layerProps');
+  });
 });
