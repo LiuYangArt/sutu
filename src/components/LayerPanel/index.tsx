@@ -368,9 +368,13 @@ export function LayerPanel(): JSX.Element {
     [removeLayer]
   );
 
+  const getUniqueLayerIds = useCallback((ids: string[]): string[] => {
+    return Array.from(new Set(ids));
+  }, []);
+
   const safeRemoveLayers = useCallback(
     (ids: string[]) => {
-      const uniqueIds = Array.from(new Set(ids));
+      const uniqueIds = getUniqueLayerIds(ids);
       if (uniqueIds.length === 0) return;
       const win = window as Window & {
         __canvasRemoveLayers?: (layerIds: string[]) => number;
@@ -383,17 +387,20 @@ export function LayerPanel(): JSX.Element {
         safeRemoveLayer(id);
       }
     },
-    [safeRemoveLayer]
+    [getUniqueLayerIds, safeRemoveLayer]
   );
 
-  const safeMergeSelectedLayers = useCallback((ids: string[]) => {
-    const uniqueIds = Array.from(new Set(ids));
-    if (uniqueIds.length < 2) return;
-    const win = window as Window & {
-      __canvasMergeSelectedLayers?: (layerIds?: string[]) => number;
-    };
-    win.__canvasMergeSelectedLayers?.(uniqueIds);
-  }, []);
+  const safeMergeSelectedLayers = useCallback(
+    (ids: string[]) => {
+      const uniqueIds = getUniqueLayerIds(ids);
+      if (uniqueIds.length < 2) return;
+      const win = window as Window & {
+        __canvasMergeSelectedLayers?: (layerIds?: string[]) => number;
+      };
+      win.__canvasMergeSelectedLayers?.(uniqueIds);
+    },
+    [getUniqueLayerIds]
+  );
 
   const safeMergeAllLayers = useCallback(() => {
     const win = window as Window & {
@@ -408,7 +415,7 @@ export function LayerPanel(): JSX.Element {
 
   const safeSetLayerOpacity = useCallback(
     (ids: string[], opacity: number) => {
-      const uniqueIds = Array.from(new Set(ids));
+      const uniqueIds = getUniqueLayerIds(ids);
       if (uniqueIds.length === 0) return;
       const win = window as Window & {
         __canvasSetLayerOpacity?: (layerIds: string[], value: number) => number;
@@ -421,12 +428,12 @@ export function LayerPanel(): JSX.Element {
         setLayerOpacity(layerId, opacity);
       }
     },
-    [setLayerOpacity]
+    [getUniqueLayerIds, setLayerOpacity]
   );
 
   const safeSetLayerBlendMode = useCallback(
     (ids: string[], blendMode: BlendMode) => {
-      const uniqueIds = Array.from(new Set(ids));
+      const uniqueIds = getUniqueLayerIds(ids);
       if (uniqueIds.length === 0) return;
       const win = window as Window & {
         __canvasSetLayerBlendMode?: (layerIds: string[], value: BlendMode) => number;
@@ -439,7 +446,7 @@ export function LayerPanel(): JSX.Element {
         setLayerBlendMode(layerId, blendMode);
       }
     },
-    [setLayerBlendMode]
+    [getUniqueLayerIds, setLayerBlendMode]
   );
 
   const getContextSelectionIds = useCallback((): string[] => {

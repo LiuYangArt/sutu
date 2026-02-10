@@ -224,9 +224,9 @@ function cloneLayerPropsChange(change: LayerPropsChange): LayerPropsChange {
 
 function hasSameLayerPropsTargets(a: LayerPropsChange[], b: LayerPropsChange[]): boolean {
   if (a.length !== b.length) return false;
-  const targetMap = new Map<string, true>();
+  const targetMap = new Set<string>();
   for (const change of a) {
-    targetMap.set(change.layerId, true);
+    targetMap.add(change.layerId);
   }
   for (const change of b) {
     if (!targetMap.has(change.layerId)) return false;
@@ -254,6 +254,25 @@ function mergeOpacityOnlyLayerPropsChanges(
       afterBlendMode: nextChange.afterBlendMode,
     };
   });
+}
+
+function canMergeLayerPropsEntry(
+  previousEntry: LayerPropsEntry,
+  nextChanges: LayerPropsChange[]
+): boolean {
+  return (
+    isOpacityOnlyLayerProps(previousEntry.changes) &&
+    isOpacityOnlyLayerProps(nextChanges) &&
+    hasSameLayerPropsTargets(previousEntry.changes, nextChanges)
+  );
+}
+
+function createLayerPropsEntry(changes: LayerPropsChange[], timestamp: number): LayerPropsEntry {
+  return {
+    type: 'layerProps',
+    changes,
+    timestamp,
+  };
 }
 
 export function createHistoryEntryId(prefix: string = 'stroke'): string {
@@ -386,17 +405,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
       const now = Date.now();
       set((state) => {
         const lastEntry = state.undoStack[state.undoStack.length - 1];
-        if (
-          lastEntry?.type === 'layerProps' &&
-          isOpacityOnlyLayerProps(lastEntry.changes) &&
-          isOpacityOnlyLayerProps(nextChanges) &&
-          hasSameLayerPropsTargets(lastEntry.changes, nextChanges)
-        ) {
-          const mergedEntry: LayerPropsEntry = {
-            ...lastEntry,
-            changes: mergeOpacityOnlyLayerPropsChanges(lastEntry.changes, nextChanges),
-            timestamp: now,
-          };
+        if (lastEntry?.type === 'layerProps' && canMergeLayerPropsEntry(lastEntry, nextChanges)) {
+          const mergedEntry = createLayerPropsEntry(
+            mergeOpacityOnlyLayerPropsChanges(lastEntry.changes, nextChanges),
+            now
+          );
           const newUndoStack = [...state.undoStack];
           newUndoStack[newUndoStack.length - 1] = mergedEntry;
           return {
@@ -405,14 +418,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
           };
         }
 
-        const newUndoStack = [
-          ...state.undoStack,
-          {
-            type: 'layerProps' as const,
-            changes: nextChanges,
-            timestamp: now,
-          },
-        ];
+        const newUndoStack = [...state.undoStack, createLayerPropsEntry(nextChanges, now)];
         if (newUndoStack.length > state.maxHistorySize) {
           newUndoStack.shift();
         }
