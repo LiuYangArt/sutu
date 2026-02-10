@@ -32,6 +32,8 @@ describe('DocumentStore', () => {
       expect(firstLayer!.name).toBe('Background');
       expect(firstLayer!.type).toBe('raster');
       expect(state.activeLayerId).toBe(firstLayer!.id);
+      expect(state.selectedLayerIds).toEqual([firstLayer!.id]);
+      expect(state.layerSelectionAnchorId).toBe(firstLayer!.id);
     });
 
     it('should support transparent background (no Background layer)', () => {
@@ -296,6 +298,54 @@ describe('DocumentStore', () => {
 
       const newOrder = useDocumentStore.getState().layers.map((l) => l.id);
       expect(newOrder).toEqual(originalOrder);
+    });
+  });
+
+  describe('layer selection', () => {
+    beforeEach(() => {
+      const store = useDocumentStore.getState();
+      store.initDocument({ width: 800, height: 600, dpi: 72 });
+      store.addLayer({ name: 'Layer 1', type: 'raster' });
+      store.addLayer({ name: 'Layer 2', type: 'raster' });
+    });
+
+    it('setLayerSelection should update selected ids, active and anchor', () => {
+      const store = useDocumentStore.getState();
+      const ids = store.layers.map((layer) => layer.id);
+      const first = ids[0];
+      const third = ids[2];
+      expect(first).toBeDefined();
+      expect(third).toBeDefined();
+
+      store.setLayerSelection([first!, third!], third!, first!);
+
+      const state = useDocumentStore.getState();
+      expect(state.selectedLayerIds).toEqual([first!, third!]);
+      expect(state.activeLayerId).toBe(third!);
+      expect(state.layerSelectionAnchorId).toBe(first!);
+    });
+  });
+
+  describe('moveLayers', () => {
+    beforeEach(() => {
+      const store = useDocumentStore.getState();
+      store.initDocument({ width: 800, height: 600, dpi: 72 });
+      store.addLayer({ name: 'Layer 1', type: 'raster' });
+      store.addLayer({ name: 'Layer 2', type: 'raster' });
+      store.addLayer({ name: 'Layer 3', type: 'raster' });
+    });
+
+    it('moves selected layers as a block while keeping their relative order', () => {
+      const store = useDocumentStore.getState();
+      const orderBefore = store.layers.map((layer) => layer.id);
+      const movingIds = [orderBefore[1], orderBefore[2]].filter(Boolean) as string[];
+      expect(movingIds).toHaveLength(2);
+
+      store.moveLayers(movingIds, 0);
+
+      const orderAfter = useDocumentStore.getState().layers.map((layer) => layer.id);
+      expect(orderAfter.slice(0, 2)).toEqual(movingIds);
+      expect(orderAfter).toHaveLength(orderBefore.length);
     });
   });
 });

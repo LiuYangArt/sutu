@@ -38,6 +38,7 @@ declare global {
     __canvasFillLayer?: (color: string) => void;
     __canvasClearSelection?: () => void;
     __canvasRemoveLayer?: (id: string) => void;
+    __canvasRemoveLayers?: (ids: string[]) => void;
     __canvasResize?: (options: ResizeCanvasOptions) => void;
   }
 }
@@ -225,7 +226,11 @@ function App() {
           return;
         }
 
-        const { activeLayerId, layers } = useDocumentStore.getState();
+        const { activeLayerId, layers, selectedLayerIds } = useDocumentStore.getState();
+        if (selectedLayerIds.length > 1) {
+          window.__canvasRemoveLayers?.(selectedLayerIds);
+          return;
+        }
         if (!activeLayerId) return;
 
         const activeLayer = layers.find((l) => l.id === activeLayerId);

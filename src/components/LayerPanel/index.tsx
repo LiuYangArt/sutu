@@ -12,6 +12,7 @@ import {
   FolderPlus,
 } from 'lucide-react';
 import { useDocumentStore, BlendMode } from '@/stores/document';
+import { useToastStore } from '@/stores/toast';
 import './LayerPanel.css';
 
 interface BlendModeOption {
@@ -110,6 +111,7 @@ interface ContextMenuState {
 
 export function LayerPanel(): JSX.Element {
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [draggedIds, setDraggedIds] = useState<string[]>([]);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [blendMenuOpen, setBlendMenuOpen] = useState(false);
@@ -124,7 +126,10 @@ export function LayerPanel(): JSX.Element {
   const {
     layers,
     activeLayerId,
+    selectedLayerIds,
+    layerSelectionAnchorId,
     setActiveLayer,
+    setLayerSelection,
     addLayer,
     removeLayer,
     duplicateLayer,
@@ -134,12 +139,16 @@ export function LayerPanel(): JSX.Element {
     toggleLayerLock,
     renameLayer,
     moveLayer,
+    moveLayers,
     width,
     height,
   } = useDocumentStore((s) => ({
     layers: s.layers,
     activeLayerId: s.activeLayerId,
+    selectedLayerIds: s.selectedLayerIds,
+    layerSelectionAnchorId: s.layerSelectionAnchorId,
     setActiveLayer: s.setActiveLayer,
+    setLayerSelection: s.setLayerSelection,
     addLayer: s.addLayer,
     removeLayer: s.removeLayer,
     duplicateLayer: s.duplicateLayer,
@@ -149,9 +158,25 @@ export function LayerPanel(): JSX.Element {
     toggleLayerLock: s.toggleLayerLock,
     renameLayer: s.renameLayer,
     moveLayer: s.moveLayer,
+    moveLayers: s.moveLayers,
     width: s.width,
     height: s.height,
   }));
+  const pushToast = useToastStore((s) => s.pushToast);
+  const selectedLayerIdSet = new Set(selectedLayerIds);
+  const activeLayer = layers.find((l) => l.id === activeLayerId);
+  const activeBlendMode = activeLayer?.blendMode ?? 'normal';
+  const activeBlendModeLabel = getBlendModeLabel(activeBlendMode);
+  const displayLayers = [...layers].reverse();
+  const displayLayerIds = displayLayers.map((layer) => layer.id);
+  const { width: thumbWidth, height: thumbHeight } = calculateThumbnailDimensions(width, height);
+
+  const applyLayerSelection = useCallback(
+    (nextSelectedIds: string[], nextActiveId?: string | null, nextAnchorId?: string | null) => {
+      setLayerSelection(nextSelectedIds, nextActiveId, nextAnchorId);
+    },
+    [setLayerSelection]
+  );
 
   // Close context menu when clicking outside
   useEffect(() => {
@@ -184,16 +209,22 @@ export function LayerPanel(): JSX.Element {
     };
   }, [blendMenuOpen]);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, layerId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({
-      visible: true,
-      x: e.clientX,
-      y: e.clientY,
-      layerId,
-    });
-  }, []);
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, layerId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!selectedLayerIdSet.has(layerId)) {
+        applyLayerSelection([layerId], layerId, layerId);
+      }
+      setContextMenu({
+        visible: true,
+        x: e.clientX,
+        y: e.clientY,
+        layerId,
+      });
+    },
+    [applyLayerSelection, selectedLayerIdSet]
+  );
 
   const closeContextMenu = useCallback(() => {
     setContextMenu((prev) => ({ ...prev, visible: false }));
@@ -228,21 +259,69 @@ export function LayerPanel(): JSX.Element {
     [removeLayer]
   );
 
-  const handleDeleteLayer = useCallback(() => {
-    if (contextMenu.layerId) safeRemoveLayer(contextMenu.layerId);
-    closeContextMenu();
-  }, [contextMenu.layerId, safeRemoveLayer, closeContextMenu]);
+  const safeRemoveLayers = useCallback(
+    (ids: string[]) => {
+      const uniqueIds = Array.from(new Set(ids));
+      if (uniqueIds.length === 0) return;
+      const win = window as Window & {
+        __canvasRemoveLayers?: (layerIds: string[]) => number;
+      };
+      if (win.__canvasRemoveLayers) {
+        win.__canvasRemoveLayers(uniqueIds);
+        return;
+      }
+      for (const id of uniqueIds) {
+        safeRemoveLayer(id);
+      }
+    },
+    [safeRemoveLayer]
+  );
 
-  const activeLayer = layers.find((l) => l.id === activeLayerId);
-  const activeBlendMode = activeLayer?.blendMode ?? 'normal';
-  const activeBlendModeLabel = getBlendModeLabel(activeBlendMode);
-  const displayLayers = [...layers].reverse();
-  const { width: thumbWidth, height: thumbHeight } = calculateThumbnailDimensions(width, height);
+  const safeMergeSelectedLayers = useCallback((ids: string[]) => {
+    const uniqueIds = Array.from(new Set(ids));
+    if (uniqueIds.length < 2) return;
+    const win = window as Window & {
+      __canvasMergeSelectedLayers?: (layerIds?: string[]) => number;
+    };
+    win.__canvasMergeSelectedLayers?.(uniqueIds);
+  }, []);
+
+  const handleDeleteLayer = useCallback(() => {
+    if (!contextMenu.layerId) {
+      closeContextMenu();
+      return;
+    }
+    if (selectedLayerIdSet.has(contextMenu.layerId) && selectedLayerIds.length > 1) {
+      safeRemoveLayers(selectedLayerIds);
+    } else {
+      safeRemoveLayer(contextMenu.layerId);
+    }
+    closeContextMenu();
+  }, [
+    closeContextMenu,
+    contextMenu.layerId,
+    safeRemoveLayer,
+    safeRemoveLayers,
+    selectedLayerIdSet,
+    selectedLayerIds,
+  ]);
+
+  const handleMergeLayerSelection = useCallback(() => {
+    if (selectedLayerIds.length > 1) {
+      safeMergeSelectedLayers(selectedLayerIds);
+    }
+    closeContextMenu();
+  }, [closeContextMenu, safeMergeSelectedLayers, selectedLayerIds]);
 
   function handleDragStart(e: React.DragEvent, layerId: string): void {
+    const idsToDrag =
+      selectedLayerIdSet.has(layerId) && selectedLayerIds.length > 1
+        ? layers.filter((layer) => selectedLayerIdSet.has(layer.id)).map((layer) => layer.id)
+        : [layerId];
     setDraggedId(layerId);
+    setDraggedIds(idsToDrag);
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', layerId);
+    e.dataTransfer.setData('text/plain', JSON.stringify(idsToDrag));
   }
 
   function handleDragOver(e: React.DragEvent, layerId: string): void {
@@ -260,22 +339,158 @@ export function LayerPanel(): JSX.Element {
   function handleDrop(e: React.DragEvent, targetLayerId: string): void {
     e.preventDefault();
     setDropTargetId(null);
+    const draggedIdsSnapshot = draggedIds.length > 0 ? draggedIds : draggedId ? [draggedId] : [];
     setDraggedId(null);
+    setDraggedIds([]);
 
-    if (!draggedId || draggedId === targetLayerId) return;
+    if (draggedIdsSnapshot.length === 0) return;
+    if (draggedIdsSnapshot.includes(targetLayerId) && draggedIdsSnapshot.length > 1) return;
 
-    const fromIndex = layers.findIndex((l) => l.id === draggedId);
+    const primaryDraggedId = draggedIdsSnapshot[0];
+    if (!primaryDraggedId) return;
+    const fromIndex = layers.findIndex((l) => l.id === primaryDraggedId);
     const toIndex = layers.findIndex((l) => l.id === targetLayerId);
 
     if (fromIndex !== -1 && toIndex !== -1) {
-      moveLayer(draggedId, toIndex);
+      if (draggedIdsSnapshot.length > 1) {
+        moveLayers(draggedIdsSnapshot, toIndex);
+      } else {
+        moveLayer(primaryDraggedId, toIndex);
+      }
     }
   }
 
   function handleDragEnd(): void {
     setDraggedId(null);
+    setDraggedIds([]);
     setDropTargetId(null);
   }
+
+  const handleLayerActivate = useCallback(
+    (layerId: string, e: React.MouseEvent) => {
+      const withShift = e.shiftKey;
+      const withCtrl = e.ctrlKey || e.metaKey;
+
+      if (withShift) {
+        const anchorId = layerSelectionAnchorId ?? activeLayerId ?? layerId;
+        const anchorIndex = displayLayerIds.indexOf(anchorId);
+        const targetIndex = displayLayerIds.indexOf(layerId);
+        if (anchorIndex >= 0 && targetIndex >= 0) {
+          const start = Math.min(anchorIndex, targetIndex);
+          const end = Math.max(anchorIndex, targetIndex);
+          const rangeIds = displayLayerIds.slice(start, end + 1);
+          applyLayerSelection(rangeIds, layerId, anchorId);
+          return;
+        }
+      }
+
+      if (withCtrl) {
+        const next = new Set(selectedLayerIds);
+        if (next.has(layerId)) {
+          next.delete(layerId);
+        } else {
+          next.add(layerId);
+        }
+        const nextIds = Array.from(next);
+        const nextActive =
+          nextIds.includes(activeLayerId ?? '') || nextIds.length === 0 ? activeLayerId : layerId;
+        const nextAnchor =
+          layerSelectionAnchorId && nextIds.includes(layerSelectionAnchorId)
+            ? layerSelectionAnchorId
+            : layerId;
+        applyLayerSelection(nextIds, nextActive, nextAnchor);
+        return;
+      }
+
+      setActiveLayer(layerId);
+    },
+    [
+      activeLayerId,
+      applyLayerSelection,
+      displayLayerIds,
+      layerSelectionAnchorId,
+      selectedLayerIds,
+      setActiveLayer,
+    ]
+  );
+
+  const applyBatchLayerOpacity = useCallback(
+    (opacity: number) => {
+      const targetIds =
+        selectedLayerIds.length > 1 ? selectedLayerIds : activeLayerId ? [activeLayerId] : [];
+      if (targetIds.length === 0) return;
+
+      if (targetIds.length <= 1) {
+        if (activeLayerId) {
+          setLayerOpacity(activeLayerId, opacity);
+        }
+        return;
+      }
+
+      let lockedSkipped = 0;
+      let backgroundSkipped = 0;
+      let applied = 0;
+      for (const layerId of targetIds) {
+        const layer = layers.find((item) => item.id === layerId);
+        if (!layer) continue;
+        if (layer.locked) {
+          lockedSkipped += 1;
+          continue;
+        }
+        if (layer.isBackground) {
+          backgroundSkipped += 1;
+          continue;
+        }
+        setLayerOpacity(layerId, opacity);
+        applied += 1;
+      }
+      if (applied > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
+        pushToast(`Skipped ${lockedSkipped} locked + ${backgroundSkipped} background layer(s).`, {
+          variant: 'info',
+        });
+      }
+    },
+    [activeLayerId, layers, pushToast, selectedLayerIds, setLayerOpacity]
+  );
+
+  const applyBatchLayerBlendMode = useCallback(
+    (blendMode: BlendMode) => {
+      const targetIds =
+        selectedLayerIds.length > 1 ? selectedLayerIds : activeLayerId ? [activeLayerId] : [];
+      if (targetIds.length === 0) return;
+
+      if (targetIds.length <= 1) {
+        if (activeLayerId) {
+          setLayerBlendMode(activeLayerId, blendMode);
+        }
+        return;
+      }
+
+      let lockedSkipped = 0;
+      let backgroundSkipped = 0;
+      let applied = 0;
+      for (const layerId of targetIds) {
+        const layer = layers.find((item) => item.id === layerId);
+        if (!layer) continue;
+        if (layer.locked) {
+          lockedSkipped += 1;
+          continue;
+        }
+        if (layer.isBackground) {
+          backgroundSkipped += 1;
+          continue;
+        }
+        setLayerBlendMode(layerId, blendMode);
+        applied += 1;
+      }
+      if (applied > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
+        pushToast(`Skipped ${lockedSkipped} locked + ${backgroundSkipped} background layer(s).`, {
+          variant: 'info',
+        });
+      }
+    },
+    [activeLayerId, layers, pushToast, selectedLayerIds, setLayerBlendMode]
+  );
 
   function handleClearLayer(): void {
     const win = window as Window & { __canvasClearLayer?: () => void };
@@ -306,10 +521,14 @@ export function LayerPanel(): JSX.Element {
 
   // Delete active layer from toolbar
   const handleDeleteActiveLayer = useCallback(() => {
+    if (selectedLayerIds.length > 1) {
+      safeRemoveLayers(selectedLayerIds);
+      return;
+    }
     if (activeLayerId) {
       safeRemoveLayer(activeLayerId);
     }
-  }, [activeLayerId, safeRemoveLayer]);
+  }, [activeLayerId, safeRemoveLayer, safeRemoveLayers, selectedLayerIds]);
 
   // Toggle lock on active layer
   const handleToggleActiveLock = useCallback(() => {
@@ -321,14 +540,39 @@ export function LayerPanel(): JSX.Element {
   // F2 shortcut to rename active layer
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'F2' && activeLayerId && !editingLayerId) {
+      if (e.key !== 'F2' || editingLayerId) return;
+      if (selectedLayerIds.length > 1) {
+        e.preventDefault();
+        const base = window.prompt('输入批量重命名基名', 'newname');
+        const trimmedBase = base?.trim() ?? '';
+        if (!trimmedBase) return;
+        const orderedIds = displayLayers
+          .filter((layer) => selectedLayerIdSet.has(layer.id))
+          .map((layer) => layer.id);
+        orderedIds.forEach((id, index) => {
+          if (index === 0) {
+            renameLayer(id, trimmedBase);
+            return;
+          }
+          renameLayer(id, `${trimmedBase}_${String(index).padStart(3, '0')}`);
+        });
+        return;
+      }
+      if (activeLayerId) {
         e.preventDefault();
         setEditingLayerId(activeLayerId);
       }
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [activeLayerId, editingLayerId]);
+  }, [
+    activeLayerId,
+    displayLayers,
+    editingLayerId,
+    renameLayer,
+    selectedLayerIdSet,
+    selectedLayerIds.length,
+  ]);
 
   return (
     <aside className="layer-panel">
@@ -347,11 +591,12 @@ export function LayerPanel(): JSX.Element {
               key={layer.id}
               layer={layer}
               isActive={activeLayerId === layer.id}
+              isSelected={selectedLayerIdSet.has(layer.id)}
               isEditing={editingLayerId === layer.id}
-              isDragging={draggedId === layer.id}
+              isDragging={draggedIds.includes(layer.id)}
               isDropTarget={dropTargetId === layer.id}
               thumbDimensions={{ width: thumbWidth, height: thumbHeight }}
-              onActivate={setActiveLayer}
+              onActivate={handleLayerActivate}
               onToggleVisibility={toggleLayerVisibility}
               onContextMenu={handleContextMenu}
               onDragStart={handleDragStart}
@@ -399,9 +644,7 @@ export function LayerPanel(): JSX.Element {
                     aria-selected={isActive}
                     className={`blend-mode-option ${isActive ? 'active' : ''}`}
                     onClick={() => {
-                      if (activeLayerId) {
-                        setLayerBlendMode(activeLayerId, item.value);
-                      }
+                      applyBatchLayerBlendMode(item.value);
                       setBlendMenuOpen(false);
                     }}
                   >
@@ -421,9 +664,7 @@ export function LayerPanel(): JSX.Element {
             max="100"
             value={activeLayer?.opacity ?? 100}
             onChange={(e) => {
-              if (activeLayerId) {
-                setLayerOpacity(activeLayerId, Number(e.target.value));
-              }
+              applyBatchLayerOpacity(Number(e.target.value));
             }}
             disabled={!activeLayer}
           />
@@ -479,6 +720,12 @@ export function LayerPanel(): JSX.Element {
             <Copy size={14} />
             <span>Duplicate Layer</span>
           </button>
+          {selectedLayerIds.length > 1 && (
+            <button className="context-menu-item" onClick={handleMergeLayerSelection}>
+              <FolderPlus size={14} />
+              <span>Merge Selected Layers</span>
+            </button>
+          )}
           <button className="context-menu-item danger" onClick={handleDeleteLayer}>
             <Trash2 size={14} />
             <span>Delete Layer</span>
@@ -498,11 +745,12 @@ interface LayerItemProps {
     thumbnail?: string;
   };
   isActive: boolean;
+  isSelected: boolean;
   isEditing: boolean;
   isDragging: boolean;
   isDropTarget: boolean;
   thumbDimensions: { width: number; height: number };
-  onActivate: (id: string) => void;
+  onActivate: (id: string, e: React.MouseEvent) => void;
   onToggleVisibility: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   onDragStart: (e: React.DragEvent, id: string) => void;
@@ -518,6 +766,7 @@ interface LayerItemProps {
 const LayerItem = memo(function LayerItem({
   layer,
   isActive,
+  isSelected,
   isEditing,
   isDragging,
   isDropTarget,
@@ -564,7 +813,7 @@ const LayerItem = memo(function LayerItem({
 
   return (
     <div
-      className={`layer-item ${isActive ? 'active' : ''} ${
+      className={`layer-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''} ${
         isDragging ? 'dragging' : ''
       } ${isDropTarget ? 'drop-target' : ''} ${layer.locked ? 'locked' : ''}`}
       data-testid="layer-item"
@@ -586,7 +835,7 @@ const LayerItem = memo(function LayerItem({
       onDragLeave={onDragLeave}
       onDrop={(e) => onDrop(e, layer.id)}
       onDragEnd={onDragEnd}
-      onClick={() => onActivate(layer.id)}
+      onClick={(e) => onActivate(layer.id, e)}
       onDoubleClick={(e) => {
         e.stopPropagation();
         onStartEditing(layer.id);

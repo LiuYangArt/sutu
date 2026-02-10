@@ -1114,6 +1114,9 @@ export function Canvas() {
     handleImportImageFiles,
     handleDuplicateActiveLayer,
     handleRemoveLayer,
+    handleRemoveLayers,
+    handleMergeSelectedLayers,
+    handleMergeAllLayers,
     handleResizeCanvas,
   } = useLayerOperations({
     layerRendererRef,
@@ -1362,6 +1365,13 @@ export function Canvas() {
     handleClearLayer,
     handleDuplicateLayer,
     handleRemoveLayer,
+    handleRemoveLayers,
+    handleMergeSelectedLayers: (ids?: string[]) => {
+      const selectedIds =
+        ids && ids.length > 0 ? ids : useDocumentStore.getState().selectedLayerIds;
+      return handleMergeSelectedLayers(selectedIds);
+    },
+    handleMergeAllLayers,
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
@@ -1689,6 +1699,15 @@ export function Canvas() {
     onBeforeSelectionMutation,
     handleDuplicateActiveLayer,
     handleCopyImage: handleCopyActiveLayerImage,
+    handleCreateLayer: () => {
+      const doc = useDocumentStore.getState();
+      doc.addLayer({ name: `Layer ${doc.layers.length + 1}`, type: 'raster' });
+    },
+    handleMergeSelectedLayers: () => {
+      const selectedIds = useDocumentStore.getState().selectedLayerIds;
+      handleMergeSelectedLayers(selectedIds);
+    },
+    handleMergeAllLayers,
   });
 
   const resolveImportAnchorPoint = useCallback(

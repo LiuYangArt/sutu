@@ -9,6 +9,8 @@ export type HistoryEntry =
   | StrokeEntry
   | AddLayerEntry
   | RemoveLayerEntry
+  | RemoveLayersEntry
+  | MergeLayersEntry
   | ResizeCanvasEntry
   | SelectionEntry;
 
@@ -53,6 +55,42 @@ interface RemoveLayerEntry {
   timestamp: number;
 }
 
+interface LayerSelectionStateSnapshot {
+  activeLayerId: string | null;
+  selectedLayerIds: string[];
+  layerSelectionAnchorId: string | null;
+}
+
+interface RemovedLayerSnapshot {
+  layerId: string;
+  layerMeta: Layer;
+  layerIndex: number;
+  imageData: ImageData;
+}
+
+interface RemoveLayersEntry {
+  type: 'removeLayers';
+  layers: RemovedLayerSnapshot[];
+  beforeSelection: LayerSelectionStateSnapshot;
+  afterSelection: LayerSelectionStateSnapshot;
+  timestamp: number;
+}
+
+interface MergeLayersEntry {
+  type: 'mergeLayers';
+  targetLayerId: string;
+  targetBeforeMeta: Layer;
+  targetAfterMeta: Layer;
+  targetBeforeImage: ImageData;
+  targetAfterImage: ImageData;
+  removedLayers: RemovedLayerSnapshot[];
+  beforeOrder: string[];
+  afterOrder: string[];
+  beforeSelection: LayerSelectionStateSnapshot;
+  afterSelection: LayerSelectionStateSnapshot;
+  timestamp: number;
+}
+
 interface ResizeCanvasLayerSnapshot {
   layerId: string;
   imageData: ImageData;
@@ -93,6 +131,24 @@ interface HistoryState {
     layerIndex: number,
     imageData: ImageData
   ) => void;
+  pushRemoveLayers: (
+    layers: RemovedLayerSnapshot[],
+    beforeSelection: LayerSelectionStateSnapshot,
+    afterSelection: LayerSelectionStateSnapshot
+  ) => void;
+
+  pushMergeLayers: (params: {
+    targetLayerId: string;
+    targetBeforeMeta: Layer;
+    targetAfterMeta: Layer;
+    targetBeforeImage: ImageData;
+    targetAfterImage: ImageData;
+    removedLayers: RemovedLayerSnapshot[];
+    beforeOrder: string[];
+    afterOrder: string[];
+    beforeSelection: LayerSelectionStateSnapshot;
+    afterSelection: LayerSelectionStateSnapshot;
+  }) => void;
 
   // Push canvas resize operation (with full layer snapshots)
   pushResizeCanvas: (
@@ -119,6 +175,25 @@ function cloneImageData(imageData: ImageData): ImageData {
 
 function cloneLayerSnapshots(layers: ResizeCanvasLayerSnapshot[]): ResizeCanvasLayerSnapshot[] {
   return layers.map((l) => ({ layerId: l.layerId, imageData: cloneImageData(l.imageData) }));
+}
+
+function cloneRemovedLayerSnapshot(layer: RemovedLayerSnapshot): RemovedLayerSnapshot {
+  return {
+    layerId: layer.layerId,
+    layerMeta: { ...layer.layerMeta },
+    layerIndex: layer.layerIndex,
+    imageData: cloneImageData(layer.imageData),
+  };
+}
+
+function cloneLayerSelectionState(
+  selection: LayerSelectionStateSnapshot
+): LayerSelectionStateSnapshot {
+  return {
+    activeLayerId: selection.activeLayerId,
+    selectedLayerIds: [...selection.selectedLayerIds],
+    layerSelectionAnchorId: selection.layerSelectionAnchorId,
+  };
 }
 
 export function createHistoryEntryId(prefix: string = 'stroke'): string {
@@ -202,6 +277,45 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         layerMeta: { ...layerMeta },
         layerIndex,
         imageData: cloneImageData(imageData),
+        timestamp: Date.now(),
+      });
+    },
+
+    pushRemoveLayers: (layers, beforeSelection, afterSelection) => {
+      if (layers.length === 0) return;
+      pushEntry({
+        type: 'removeLayers',
+        layers: layers.map(cloneRemovedLayerSnapshot),
+        beforeSelection: cloneLayerSelectionState(beforeSelection),
+        afterSelection: cloneLayerSelectionState(afterSelection),
+        timestamp: Date.now(),
+      });
+    },
+
+    pushMergeLayers: ({
+      targetLayerId,
+      targetBeforeMeta,
+      targetAfterMeta,
+      targetBeforeImage,
+      targetAfterImage,
+      removedLayers,
+      beforeOrder,
+      afterOrder,
+      beforeSelection,
+      afterSelection,
+    }) => {
+      pushEntry({
+        type: 'mergeLayers',
+        targetLayerId,
+        targetBeforeMeta: { ...targetBeforeMeta },
+        targetAfterMeta: { ...targetAfterMeta },
+        targetBeforeImage: cloneImageData(targetBeforeImage),
+        targetAfterImage: cloneImageData(targetAfterImage),
+        removedLayers: removedLayers.map(cloneRemovedLayerSnapshot),
+        beforeOrder: [...beforeOrder],
+        afterOrder: [...afterOrder],
+        beforeSelection: cloneLayerSelectionState(beforeSelection),
+        afterSelection: cloneLayerSelectionState(afterSelection),
         timestamp: Date.now(),
       });
     },

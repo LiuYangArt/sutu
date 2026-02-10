@@ -118,6 +118,91 @@ describe('useKeyboardShortcuts', () => {
     expect(handleDuplicateActiveLayer).toHaveBeenCalledTimes(1);
   });
 
+  it('handles Ctrl+E / Ctrl+Shift+E for merge shortcuts', () => {
+    const handleMergeSelectedLayers = vi.fn();
+    const handleMergeAllLayers = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleMergeSelectedLayers,
+        handleMergeAllLayers,
+      })
+    );
+
+    const ctrlE = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyE',
+      ctrlKey: true,
+    });
+    const ctrlShiftE = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyE',
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    act(() => {
+      window.dispatchEvent(ctrlE);
+      window.dispatchEvent(ctrlShiftE);
+    });
+
+    expect(ctrlE.defaultPrevented).toBe(true);
+    expect(ctrlShiftE.defaultPrevented).toBe(true);
+    expect(handleMergeSelectedLayers).toHaveBeenCalledTimes(1);
+    expect(handleMergeAllLayers).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles N: create layer', () => {
+    const handleCreateLayer = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleCreateLayer,
+      })
+    );
+
+    const keyN = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyN',
+    });
+
+    act(() => {
+      window.dispatchEvent(keyN);
+    });
+
+    expect(keyN.defaultPrevented).toBe(true);
+    expect(handleCreateLayer).toHaveBeenCalledTimes(1);
+  });
+
   it('handles Ctrl/Meta + C and lets Ctrl/Meta + V flow to native paste event', () => {
     const handleCopyImage = vi.fn();
 
@@ -279,6 +364,7 @@ describe('useKeyboardShortcuts', () => {
         dispatchInputKeyDown(input, { code: 'KeyV', ctrlKey: true }),
         dispatchInputKeyDown(input, { code: 'KeyX', ctrlKey: true }),
         dispatchInputKeyDown(input, { code: 'KeyJ', ctrlKey: true }),
+        dispatchInputKeyDown(input, { code: 'KeyE', ctrlKey: true }),
       ];
     });
 

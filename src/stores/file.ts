@@ -324,6 +324,8 @@ async function loadProjectIntoDocument(
       dpi: projectData.dpi,
       layers: loadedLayers,
       activeLayerId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
+      selectedLayerIds: loadedLayers.length > 0 ? [loadedLayers[loadedLayers.length - 1]!.id] : [],
+      layerSelectionAnchorId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
       filePath: options.asUntitled ? null : filePath,
       fileFormat: options.asUntitled ? null : detectedFormat,
       isDirty: false,

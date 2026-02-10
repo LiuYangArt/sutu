@@ -41,6 +41,9 @@ interface UseKeyboardShortcutsParams {
   onBeforeSelectionMutation?: () => void;
   handleDuplicateActiveLayer?: () => void;
   handleCopyImage?: () => void | Promise<void>;
+  handleCreateLayer?: () => void;
+  handleMergeSelectedLayers?: () => void;
+  handleMergeAllLayers?: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -60,6 +63,9 @@ export function useKeyboardShortcuts({
   onBeforeSelectionMutation,
   handleDuplicateActiveLayer,
   handleCopyImage,
+  handleCreateLayer,
+  handleMergeSelectedLayers,
+  handleMergeAllLayers,
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
   const pushSelection = useHistoryStore((s) => s.pushSelection);
@@ -85,7 +91,7 @@ export function useKeyboardShortcuts({
 
       // 优先处理修饰键组合 (Undo/Redo/Selection)
       if (e.ctrlKey || e.metaKey) {
-        if (isEditableTarget(e.target) && isTextEditingCommand(e.code)) {
+        if (isEditableTarget(e.target) && (isTextEditingCommand(e.code) || e.code === 'KeyE')) {
           return;
         }
 
@@ -124,6 +130,15 @@ export function useKeyboardShortcuts({
           case 'KeyC': {
             e.preventDefault();
             void handleCopyImage?.();
+            return;
+          }
+          case 'KeyE': {
+            e.preventDefault();
+            if (e.shiftKey) {
+              handleMergeAllLayers?.();
+            } else {
+              handleMergeSelectedLayers?.();
+            }
             return;
           }
           case 'KeyV': {
@@ -191,6 +206,13 @@ export function useKeyboardShortcuts({
           }
           break;
 
+        case 'KeyN':
+          if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            e.preventDefault();
+            handleCreateLayer?.();
+          }
+          break;
+
         case 'KeyE':
           if (!e.altKey) {
             e.preventDefault();
@@ -255,6 +277,9 @@ export function useKeyboardShortcuts({
     onBeforeSelectionMutation,
     handleDuplicateActiveLayer,
     handleCopyImage,
+    handleCreateLayer,
+    handleMergeSelectedLayers,
+    handleMergeAllLayers,
   ]);
 
   return { spacePressed };

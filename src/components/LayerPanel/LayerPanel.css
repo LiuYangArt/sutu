@@ -43,6 +43,11 @@
   border-color: var(--primary-border);
 }
 
+.layer-item.selected:not(.active) {
+  background: var(--bg-tertiary);
+  border-color: var(--primary-border);
+}
+
 .layer-item.locked {
   opacity: 0.7;
 }

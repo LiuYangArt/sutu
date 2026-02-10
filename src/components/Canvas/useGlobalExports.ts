@@ -47,6 +47,9 @@ interface UseGlobalExportsParams {
   handleClearLayer: () => void;
   handleDuplicateLayer: (from: string, to: string) => void;
   handleRemoveLayer: (id: string) => void;
+  handleRemoveLayers?: (ids: string[]) => number;
+  handleMergeSelectedLayers?: (ids?: string[]) => number;
+  handleMergeAllLayers?: () => number;
   handleResizeCanvas: (options: ResizeCanvasOptions) => void;
   getGpuDiagnosticsSnapshot?: () => unknown;
   resetGpuDiagnostics?: () => boolean;
@@ -165,6 +168,9 @@ export function useGlobalExports({
   handleClearLayer,
   handleDuplicateLayer,
   handleRemoveLayer,
+  handleRemoveLayers,
+  handleMergeSelectedLayers,
+  handleMergeAllLayers,
   handleResizeCanvas,
   getGpuDiagnosticsSnapshot,
   resetGpuDiagnostics,
@@ -202,6 +208,9 @@ export function useGlobalExports({
       __canvasClearLayer?: () => void;
       __canvasDuplicateLayer?: (from: string, to: string) => void;
       __canvasRemoveLayer?: (id: string) => void;
+      __canvasRemoveLayers?: (ids: string[]) => number;
+      __canvasMergeSelectedLayers?: (ids?: string[]) => number;
+      __canvasMergeAllLayers?: () => number;
       __canvasResize?: (options: ResizeCanvasOptions) => void;
       __gpuM0Baseline?: () => Promise<void>;
       __gpuFormatCompare?: (options?: {
@@ -258,6 +267,15 @@ export function useGlobalExports({
     win.__canvasClearLayer = handleClearLayer;
     win.__canvasDuplicateLayer = handleDuplicateLayer;
     win.__canvasRemoveLayer = handleRemoveLayer;
+    if (handleRemoveLayers) {
+      win.__canvasRemoveLayers = handleRemoveLayers;
+    }
+    if (handleMergeSelectedLayers) {
+      win.__canvasMergeSelectedLayers = handleMergeSelectedLayers;
+    }
+    if (handleMergeAllLayers) {
+      win.__canvasMergeAllLayers = handleMergeAllLayers;
+    }
     win.__canvasResize = handleResizeCanvas;
     win.__gpuM0Baseline = async () => {
       const device = GPUContext.getInstance().device;
@@ -971,6 +989,9 @@ export function useGlobalExports({
       delete win.__canvasClearLayer;
       delete win.__canvasDuplicateLayer;
       delete win.__canvasRemoveLayer;
+      delete win.__canvasRemoveLayers;
+      delete win.__canvasMergeSelectedLayers;
+      delete win.__canvasMergeAllLayers;
       delete win.__canvasResize;
       delete win.__gpuM0Baseline;
       delete win.__gpuFormatCompare;
@@ -1003,6 +1024,9 @@ export function useGlobalExports({
     handleClearLayer,
     handleDuplicateLayer,
     handleRemoveLayer,
+    handleRemoveLayers,
+    handleMergeSelectedLayers,
+    handleMergeAllLayers,
     handleResizeCanvas,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
