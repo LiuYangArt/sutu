@@ -288,7 +288,10 @@ export function BrushQuickPanel({
   );
 
   const [hsva, setHsva] = useState(() => hexToHsva(brushColor));
-  const lastInitiatedHex = useRef<string | null>(null);
+  const hsvaRef = useRef(hsva);
+  const brushColorRef = useRef(brushColor);
+  const queuedBrushColorRef = useRef<string | null>(null);
+  const brushColorRafRef = useRef<number | null>(null);
 
   const updatePanelLayout = useCallback((nextSize: PanelSize, viewport: ViewportSize): void => {
     setPanelSize((prev) => (isSamePanelSize(prev, nextSize) ? prev : nextSize));
@@ -319,16 +322,43 @@ export function BrushQuickPanel({
   }, [updatePanelLayout]);
 
   useEffect(() => {
-    const currentHex = brushColor.toLowerCase();
-    const initiatedHex = lastInitiatedHex.current?.toLowerCase();
-    if (initiatedHex && initiatedHex === currentHex) {
-      lastInitiatedHex.current = null;
-      return;
-    }
-    lastInitiatedHex.current = null;
     const nextHsva = hexToHsva(brushColor);
     setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
   }, [brushColor]);
+
+  useEffect(() => {
+    hsvaRef.current = hsva;
+  }, [hsva]);
+
+  useEffect(() => {
+    brushColorRef.current = brushColor;
+  }, [brushColor]);
+
+  const flushQueuedBrushColor = useCallback(() => {
+    brushColorRafRef.current = null;
+    const nextColor = queuedBrushColorRef.current;
+    queuedBrushColorRef.current = null;
+    if (!nextColor) return;
+    if (brushColorRef.current.toLowerCase() === nextColor.toLowerCase()) return;
+    setBrushColor(nextColor);
+  }, [setBrushColor]);
+
+  const queueBrushColorUpdate = useCallback(
+    (nextColor: string) => {
+      queuedBrushColorRef.current = nextColor;
+      if (brushColorRafRef.current !== null) return;
+      brushColorRafRef.current = window.requestAnimationFrame(flushQueuedBrushColor);
+    },
+    [flushQueuedBrushColor]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (brushColorRafRef.current !== null) {
+        window.cancelAnimationFrame(brushColorRafRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -455,26 +485,18 @@ export function BrushQuickPanel({
   const handleSaturationChange = useCallback(
     (nextHsva: { h: number; s: number; v: number; a: number }) => {
       const hex = hsvaToHex(nextHsva);
-      lastInitiatedHex.current = hex;
-      setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
-      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
-        setBrushColor(hex);
-      }
+      queueBrushColorUpdate(hex);
     },
-    [brushColor, setBrushColor]
+    [queueBrushColorUpdate]
   );
 
   const handleHueChange = useCallback(
     (nextHue: number) => {
-      const nextHsva = { ...hsva, h: nextHue };
+      const nextHsva = { ...hsvaRef.current, h: nextHue };
       const hex = hsvaToHex(nextHsva);
-      lastInitiatedHex.current = hex;
-      setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
-      if (brushColor.toLowerCase() !== hex.toLowerCase()) {
-        setBrushColor(hex);
-      }
+      queueBrushColorUpdate(hex);
     },
-    [hsva, brushColor, setBrushColor]
+    [queueBrushColorUpdate]
   );
 
   const handlePanelPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {

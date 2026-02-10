@@ -43,6 +43,8 @@ export function usePointerDrag(
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
+
       // Prevent defaults to avoid text selection/scrolling
       e.preventDefault();
 
