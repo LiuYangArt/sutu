@@ -1096,6 +1096,9 @@ export function Canvas() {
     handleRedo,
     handleClearLayer,
     handleDuplicateLayer,
+    handleCopyActiveLayerImage,
+    handlePasteImageAsNewLayer,
+    handleImportImageFiles,
     handleDuplicateActiveLayer,
     handleRemoveLayer,
     handleResizeCanvas,
@@ -1672,7 +1675,37 @@ export function Canvas() {
     panStartRef,
     onBeforeSelectionMutation,
     handleDuplicateActiveLayer,
+    handleCopyImage: handleCopyActiveLayerImage,
+    handlePasteImage: handlePasteImageAsNewLayer,
   });
+
+  useEffect(() => {
+    const hasFilePayload = (event: DragEvent): boolean => {
+      const types = event.dataTransfer?.types;
+      if (!types) return false;
+      return Array.from(types).includes('Files');
+    };
+
+    const handleWindowDragOver = (event: DragEvent): void => {
+      if (!hasFilePayload(event)) return;
+      event.preventDefault();
+    };
+
+    const handleWindowDrop = (event: DragEvent): void => {
+      if (!hasFilePayload(event)) return;
+      event.preventDefault();
+      const droppedFiles = Array.from(event.dataTransfer?.files ?? []);
+      if (droppedFiles.length === 0) return;
+      void handleImportImageFiles(droppedFiles);
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    window.addEventListener('drop', handleWindowDrop);
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver);
+      window.removeEventListener('drop', handleWindowDrop);
+    };
+  }, [handleImportImageFiles]);
 
   const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
     currentTool,

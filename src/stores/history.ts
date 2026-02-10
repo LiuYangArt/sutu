@@ -40,6 +40,7 @@ interface AddLayerEntry {
   layerId: string;
   layerMeta: Layer;
   layerIndex: number;
+  imageData?: ImageData;
   timestamp: number;
 }
 
@@ -83,6 +84,7 @@ interface HistoryState {
 
   // Push layer add operation
   pushAddLayer: (layerId: string, layerMeta: Layer, layerIndex: number) => void;
+  patchAddLayerImage: (layerId: string, imageData: ImageData) => void;
 
   // Push layer remove operation
   pushRemoveLayer: (
@@ -173,6 +175,24 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         layerIndex,
         timestamp: Date.now(),
       });
+    },
+
+    patchAddLayerImage: (layerId, imageData) => {
+      const cloned = cloneImageData(imageData);
+      const patchEntry = (entry: HistoryEntry): HistoryEntry => {
+        if (entry.type !== 'addLayer' || entry.layerId !== layerId) {
+          return entry;
+        }
+        return {
+          ...entry,
+          imageData: cloneImageData(cloned),
+        };
+      };
+
+      set((state) => ({
+        undoStack: state.undoStack.map(patchEntry),
+        redoStack: state.redoStack.map(patchEntry),
+      }));
     },
 
     pushRemoveLayer: (layerId, layerMeta, layerIndex, imageData) => {

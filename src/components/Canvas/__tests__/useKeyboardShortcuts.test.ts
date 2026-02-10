@@ -118,6 +118,70 @@ describe('useKeyboardShortcuts', () => {
     expect(handleDuplicateActiveLayer).toHaveBeenCalledTimes(1);
   });
 
+  it('handles Ctrl/Meta + C/V for image copy and paste', () => {
+    const handleCopyImage = vi.fn();
+    const handlePasteImage = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleCopyImage,
+        handlePasteImage,
+      })
+    );
+
+    const ctrlC = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyC',
+      ctrlKey: true,
+    });
+    const ctrlV = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyV',
+      ctrlKey: true,
+    });
+    const metaC = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyC',
+      metaKey: true,
+    });
+    const metaV = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyV',
+      metaKey: true,
+    });
+
+    act(() => {
+      window.dispatchEvent(ctrlC);
+      window.dispatchEvent(ctrlV);
+      window.dispatchEvent(metaC);
+      window.dispatchEvent(metaV);
+    });
+
+    expect(ctrlC.defaultPrevented).toBe(true);
+    expect(ctrlV.defaultPrevented).toBe(true);
+    expect(metaC.defaultPrevented).toBe(true);
+    expect(metaV.defaultPrevented).toBe(true);
+    expect(handleCopyImage).toHaveBeenCalledTimes(2);
+    expect(handlePasteImage).toHaveBeenCalledTimes(2);
+  });
+
   it('handles tool switching keys and ignores repeats (except brackets)', () => {
     const setTool = vi.fn<[ToolType], void>();
     const setCurrentSize = vi.fn<[number], void>();

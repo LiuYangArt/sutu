@@ -10,6 +10,7 @@ import {
 } from '@/stores/history';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
+import { useToastStore } from '@/stores/toast';
 
 interface UseLayerOperationsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -192,6 +193,204 @@ function snapshotLayers(
   return snapshots;
 }
 
+function clampToCanvasBounds(
+  bounds: { x: number; y: number; width: number; height: number },
+  canvasWidth: number,
+  canvasHeight: number
+): { x: number; y: number; width: number; height: number } | null {
+  const x = Math.max(0, Math.floor(bounds.x));
+  const y = Math.max(0, Math.floor(bounds.y));
+  const right = Math.min(canvasWidth, Math.ceil(bounds.x + bounds.width));
+  const bottom = Math.min(canvasHeight, Math.ceil(bounds.y + bounds.height));
+  const width = right - x;
+  const height = bottom - y;
+  if (width <= 0 || height <= 0) return null;
+  return { x, y, width, height };
+}
+
+function getMaskBounds(
+  mask: ImageData
+): { x: number; y: number; width: number; height: number } | null {
+  const { data, width, height } = mask;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = data[(y * width + x) * 4 + 3] ?? 0;
+      if (alpha <= 0) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+function getNextPastedLayerName(layers: Layer[]): string {
+  let maxIndex = 0;
+  for (const layer of layers) {
+    const matched = /^Pasted Image (\d+)$/.exec(layer.name);
+    if (!matched) continue;
+    const value = Number.parseInt(matched[1] ?? '0', 10);
+    if (Number.isFinite(value) && value > maxIndex) {
+      maxIndex = value;
+    }
+  }
+  return `Pasted Image ${maxIndex + 1}`;
+}
+
+function sanitizeLayerName(baseName: string): string {
+  const trimmed = baseName.trim();
+  return trimmed.length > 0 ? trimmed : 'Layer';
+}
+
+function getUniqueLayerName(baseName: string, layers: Layer[]): string {
+  const normalizedBase = sanitizeLayerName(baseName);
+  const existing = new Set(layers.map((layer) => layer.name));
+  if (!existing.has(normalizedBase)) return normalizedBase;
+
+  let nextIndex = 2;
+  while (existing.has(`${normalizedBase} ${nextIndex}`)) {
+    nextIndex += 1;
+  }
+  return `${normalizedBase} ${nextIndex}`;
+}
+
+function getFileLayerBaseName(fileName: string): string {
+  const normalized = fileName.replace(/\.[^/.]+$/, '').trim();
+  return normalized.length > 0 ? normalized : 'Image';
+}
+
+function isImageFile(file: File): boolean {
+  if (file.type.toLowerCase().startsWith('image/')) return true;
+  return /\.(png|jpe?g|webp|bmp|gif|tiff?|svg)$/i.test(file.name);
+}
+
+function getImportedPlacement(
+  docWidth: number,
+  docHeight: number,
+  imageWidth: number,
+  imageHeight: number
+): { x: number; y: number; width: number; height: number } {
+  const safeImageWidth = Math.max(1, imageWidth);
+  const safeImageHeight = Math.max(1, imageHeight);
+  const scale = Math.min(1, docWidth / safeImageWidth, docHeight / safeImageHeight);
+  const width = Math.max(1, Math.round(safeImageWidth * scale));
+  const height = Math.max(1, Math.round(safeImageHeight * scale));
+  const x = Math.round((docWidth - width) / 2);
+  const y = Math.round((docHeight - height) / 2);
+  return { x, y, width, height };
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type = 'image/png'): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), type);
+  });
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function decodeImageBlob(
+  blob: Blob
+): Promise<{ source: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+  if (typeof createImageBitmap === 'function') {
+    const bitmap = await createImageBitmap(blob);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => bitmap.close(),
+    };
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  let revokeOnError = true;
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to decode image'));
+      img.src = objectUrl;
+    });
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    revokeOnError = false;
+    return {
+      source: image,
+      width,
+      height,
+      cleanup: () => URL.revokeObjectURL(objectUrl),
+    };
+  } finally {
+    if (revokeOnError) {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+}
+
+async function readImageBlobFromClipboard(): Promise<Blob | null> {
+  const clipboardApi = (
+    navigator as Navigator & {
+      clipboard?: {
+        read?: () => Promise<Array<{ types: string[]; getType: (type: string) => Promise<Blob> }>>;
+      };
+    }
+  ).clipboard;
+
+  if (!clipboardApi?.read) return null;
+
+  try {
+    const items = await clipboardApi.read();
+    for (const item of items) {
+      for (const type of item.types) {
+        if (!type.toLowerCase().startsWith('image/')) continue;
+        return item.getType(type);
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+async function writeImageBlobToClipboard(blob: Blob): Promise<boolean> {
+  const clipboardApi = (
+    navigator as Navigator & {
+      clipboard?: {
+        write?: (data: ClipboardItem[]) => Promise<void>;
+      };
+    }
+  ).clipboard;
+
+  if (!clipboardApi?.write || typeof ClipboardItem === 'undefined') {
+    return false;
+  }
+
+  const mimeType = blob.type && blob.type.length > 0 ? blob.type : 'image/png';
+  try {
+    await clipboardApi.write([new ClipboardItem({ [mimeType]: blob })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function useLayerOperations({
   layerRendererRef,
   activeLayerId,
@@ -206,12 +405,15 @@ export function useLayerOperations({
   applyGpuStrokeHistory,
   onBeforeCanvasMutation,
 }: UseLayerOperationsParams) {
+  const pushToast = useToastStore((s) => s.pushToast);
   const updateLayerThumbnail = useDocumentStore((s) => s.updateLayerThumbnail);
   const setDocumentDirty = useDocumentStore((s) => s.setDirty);
-  const { pushStroke, pushRemoveLayer, pushResizeCanvas, undo, redo } = useHistoryStore();
+  const { pushStroke, pushRemoveLayer, pushResizeCanvas, patchAddLayerImage, undo, redo } =
+    useHistoryStore();
 
   // Store beforeImage when stroke starts
   const beforeImageRef = useRef<PendingStrokeHistory | null>(null);
+  const copiedImageBlobRef = useRef<Blob | null>(null);
 
   const pushCpuStrokeHistory = useCallback(
     (layerId: string, beforeImage: ImageData, entryId: string = createHistoryEntryId()) => {
@@ -682,6 +884,9 @@ export function useLayerOperations({
             blendMode: entry.layerMeta.blendMode,
             isBackground: entry.layerMeta.isBackground,
           });
+          if (entry.imageData) {
+            renderer.setLayerImageData(entry.layerId, entry.imageData);
+          }
           renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
           compositeAndRender();
           markLayerDirty(entry.layerId);
@@ -770,6 +975,10 @@ export function useLayerOperations({
         compositeAndRender();
         markLayerDirty(toId);
         updateThumbnail(toId);
+        const duplicatedImage = renderer.getLayerImageData(toId);
+        if (duplicatedImage) {
+          patchAddLayerImage(toId, duplicatedImage);
+        }
         return true;
       };
 
@@ -788,8 +997,253 @@ export function useLayerOperations({
       width,
       layerRendererRef,
       onBeforeCanvasMutation,
+      patchAddLayerImage,
       setDocumentDirty,
     ]
+  );
+
+  const insertImageAsNewLayer = useCallback(
+    async (
+      source: CanvasImageSource,
+      sourceWidth: number,
+      sourceHeight: number,
+      requestedName: string
+    ): Promise<string | null> => {
+      const docState = useDocumentStore.getState();
+      const layerName = getUniqueLayerName(requestedName, docState.layers);
+
+      onBeforeCanvasMutation?.();
+      docState.addLayer({ name: layerName, type: 'raster' });
+
+      const newLayerId = useDocumentStore.getState().activeLayerId;
+      if (!newLayerId) return null;
+
+      const placement = getImportedPlacement(width, height, sourceWidth, sourceHeight);
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const renderer = layerRendererRef.current;
+        const targetLayer = renderer?.getLayer(newLayerId);
+        if (!renderer || !targetLayer) {
+          await nextAnimationFrame();
+          continue;
+        }
+
+        targetLayer.ctx.clearRect(0, 0, width, height);
+        targetLayer.ctx.drawImage(
+          source,
+          placement.x,
+          placement.y,
+          placement.width,
+          placement.height
+        );
+
+        setDocumentDirty(true);
+        compositeAndRender();
+        markLayerDirty(newLayerId);
+        updateThumbnail(newLayerId);
+
+        const imageData = renderer.getLayerImageData(newLayerId);
+        if (imageData) {
+          patchAddLayerImage(newLayerId, imageData);
+        }
+
+        return newLayerId;
+      }
+
+      return null;
+    },
+    [
+      compositeAndRender,
+      height,
+      markLayerDirty,
+      onBeforeCanvasMutation,
+      patchAddLayerImage,
+      setDocumentDirty,
+      updateThumbnail,
+      width,
+      layerRendererRef,
+    ]
+  );
+
+  const handleCopyActiveLayerImage = useCallback(async (): Promise<void> => {
+    const renderer = layerRendererRef.current;
+    if (!renderer || !activeLayerId) {
+      pushToast('No active layer to copy.', { variant: 'error' });
+      return;
+    }
+
+    const sourceLayer = renderer.getLayer(activeLayerId);
+    if (!sourceLayer) {
+      pushToast('No active layer to copy.', { variant: 'error' });
+      return;
+    }
+
+    let copyCanvas: HTMLCanvasElement | null = null;
+    const selectionState = useSelectionStore.getState();
+    if (selectionState.hasSelection) {
+      if (selectionState.selectionMaskPending) {
+        pushToast('Selection is still building. Try again in a moment.', { variant: 'error' });
+        return;
+      }
+
+      const selectionMask = getDuplicateSelectionMask(true, width, height);
+      if (!selectionMask) {
+        pushToast('No selected pixels to copy.', { variant: 'error' });
+        return;
+      }
+
+      const fallbackBounds = getMaskBounds(selectionMask);
+      const boundedSelection = clampToCanvasBounds(
+        selectionState.bounds ?? fallbackBounds ?? { x: 0, y: 0, width: 0, height: 0 },
+        width,
+        height
+      );
+      if (!boundedSelection) {
+        pushToast('No selected pixels to copy.', { variant: 'error' });
+        return;
+      }
+
+      copyCanvas = document.createElement('canvas');
+      copyCanvas.width = boundedSelection.width;
+      copyCanvas.height = boundedSelection.height;
+      const copyCtx = copyCanvas.getContext('2d');
+      if (!copyCtx) {
+        pushToast('Copy failed: cannot access canvas context.', { variant: 'error' });
+        return;
+      }
+
+      copyCtx.drawImage(
+        sourceLayer.canvas,
+        boundedSelection.x,
+        boundedSelection.y,
+        boundedSelection.width,
+        boundedSelection.height,
+        0,
+        0,
+        boundedSelection.width,
+        boundedSelection.height
+      );
+
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = boundedSelection.width;
+      maskCanvas.height = boundedSelection.height;
+      const maskCtx = maskCanvas.getContext('2d');
+      if (!maskCtx) {
+        pushToast('Copy failed: cannot access selection mask.', { variant: 'error' });
+        return;
+      }
+      maskCtx.putImageData(selectionMask, -boundedSelection.x, -boundedSelection.y);
+      copyCtx.save();
+      copyCtx.globalCompositeOperation = 'destination-in';
+      copyCtx.drawImage(maskCanvas, 0, 0);
+      copyCtx.restore();
+    } else {
+      copyCanvas = document.createElement('canvas');
+      copyCanvas.width = width;
+      copyCanvas.height = height;
+      const copyCtx = copyCanvas.getContext('2d');
+      if (!copyCtx) {
+        pushToast('Copy failed: cannot access canvas context.', { variant: 'error' });
+        return;
+      }
+      copyCtx.drawImage(sourceLayer.canvas, 0, 0);
+    }
+
+    const blob = await canvasToBlob(copyCanvas, 'image/png');
+    if (!blob) {
+      pushToast('Copy failed: unable to encode image.', { variant: 'error' });
+      return;
+    }
+
+    copiedImageBlobRef.current = blob;
+    await writeImageBlobToClipboard(blob);
+  }, [activeLayerId, height, layerRendererRef, pushToast, width]);
+
+  const handlePasteImageAsNewLayer = useCallback(async (): Promise<void> => {
+    const fromSystemClipboard = await readImageBlobFromClipboard();
+    const imageBlob = fromSystemClipboard ?? copiedImageBlobRef.current;
+    if (!imageBlob) {
+      pushToast('Clipboard has no image data.', { variant: 'error' });
+      return;
+    }
+
+    let decoded: {
+      source: CanvasImageSource;
+      width: number;
+      height: number;
+      cleanup: () => void;
+    } | null = null;
+    try {
+      decoded = await decodeImageBlob(imageBlob);
+      const layerName = getNextPastedLayerName(useDocumentStore.getState().layers);
+      const inserted = await insertImageAsNewLayer(
+        decoded.source,
+        decoded.width,
+        decoded.height,
+        layerName
+      );
+      if (!inserted) {
+        pushToast('Paste failed: could not create target layer.', { variant: 'error' });
+      }
+    } catch {
+      pushToast('Paste failed: unsupported clipboard image.', { variant: 'error' });
+    } finally {
+      decoded?.cleanup();
+    }
+  }, [insertImageAsNewLayer, pushToast]);
+
+  const handleImportImageFiles = useCallback(
+    async (files: File[]): Promise<void> => {
+      if (files.length === 0) return;
+
+      let imported = 0;
+      let skipped = 0;
+
+      for (const file of files) {
+        if (!isImageFile(file)) {
+          skipped += 1;
+          continue;
+        }
+
+        let decoded: {
+          source: CanvasImageSource;
+          width: number;
+          height: number;
+          cleanup: () => void;
+        } | null = null;
+        try {
+          decoded = await decodeImageBlob(file);
+          const layerName = getUniqueLayerName(
+            getFileLayerBaseName(file.name),
+            useDocumentStore.getState().layers
+          );
+          const inserted = await insertImageAsNewLayer(
+            decoded.source,
+            decoded.width,
+            decoded.height,
+            layerName
+          );
+          if (inserted) {
+            imported += 1;
+          } else {
+            skipped += 1;
+          }
+        } catch {
+          skipped += 1;
+        } finally {
+          decoded?.cleanup();
+        }
+      }
+
+      if (imported === 0) {
+        pushToast('No image files were imported.', { variant: 'error' });
+        return;
+      }
+      if (skipped > 0) {
+        pushToast(`Imported ${imported} image layer(s), skipped ${skipped}.`, { variant: 'info' });
+      }
+    },
+    [insertImageAsNewLayer, pushToast]
   );
 
   const handleDuplicateActiveLayer = useCallback(() => {
@@ -848,6 +1302,9 @@ export function useLayerOperations({
     handleRedo,
     handleClearLayer,
     handleDuplicateLayer,
+    handleCopyActiveLayerImage,
+    handlePasteImageAsNewLayer,
+    handleImportImageFiles,
     handleDuplicateActiveLayer,
     handleRemoveLayer,
     handleResizeCanvas,

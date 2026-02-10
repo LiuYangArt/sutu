@@ -40,6 +40,8 @@ interface UseKeyboardShortcutsParams {
   panStartRef: MutableRefObject<{ x: number; y: number } | null>;
   onBeforeSelectionMutation?: () => void;
   handleDuplicateActiveLayer?: () => void;
+  handleCopyImage?: () => void | Promise<void>;
+  handlePasteImage?: () => void | Promise<void>;
 }
 
 export function useKeyboardShortcuts({
@@ -58,6 +60,8 @@ export function useKeyboardShortcuts({
   panStartRef,
   onBeforeSelectionMutation,
   handleDuplicateActiveLayer,
+  handleCopyImage,
+  handlePasteImage,
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
   const pushSelection = useHistoryStore((s) => s.pushSelection);
@@ -117,6 +121,16 @@ export function useKeyboardShortcuts({
           case 'KeyJ': {
             e.preventDefault();
             handleDuplicateActiveLayer?.();
+            return;
+          }
+          case 'KeyC': {
+            e.preventDefault();
+            void handleCopyImage?.();
+            return;
+          }
+          case 'KeyV': {
+            e.preventDefault();
+            void handlePasteImage?.();
             return;
           }
           default:
@@ -242,6 +256,8 @@ export function useKeyboardShortcuts({
     recordSelectionChange,
     onBeforeSelectionMutation,
     handleDuplicateActiveLayer,
+    handleCopyImage,
+    handlePasteImage,
   ]);
 
   return { spacePressed };
