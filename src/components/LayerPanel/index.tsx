@@ -104,6 +104,9 @@ function getBlendModeLabel(mode: BlendMode): string {
 
 const BLEND_MODE_MENU_ITEMS: BlendModeMenuItem[] = buildBlendModeMenuItems(BLEND_MODE_GROUPS);
 const BLEND_MODE_LABEL_MAP = buildBlendModeLabelMap(BLEND_MODE_GROUPS);
+const CONTEXT_MENU_ESTIMATED_WIDTH = 240;
+const CONTEXT_MENU_ESTIMATED_HEIGHT = 280;
+const CONTEXT_MENU_GUTTER = 8;
 
 interface ContextMenuState {
   visible: boolean;
@@ -699,6 +702,7 @@ export function LayerPanel(): JSX.Element {
     contextSelectionCount > 1 ? `Delete ${contextSelectionCount} Layers` : 'Delete Layer';
   const renameDialogTitle = renameDialog.mode === 'batch' ? 'Batch Rename Layers' : 'Rename Layer';
   const renameDialogInputLabel = renameDialog.mode === 'batch' ? 'Base Name' : 'Layer Name';
+  const contextMenuPosition = clampContextMenuPosition(contextMenu.x, contextMenu.y);
 
   return (
     <aside className="layer-panel">
@@ -833,69 +837,71 @@ export function LayerPanel(): JSX.Element {
       </footer>
 
       {/* Context Menu */}
-      {contextMenu.visible && (
-        <div
-          className="layer-context-menu"
-          style={{
-            position: 'fixed',
-            left: contextMenu.x,
-            top: contextMenu.y,
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button className="context-menu-item" onClick={handleCreateLayerFromContextMenu}>
-            <Plus size={14} />
-            <span>New Layer</span>
-            <span className="context-menu-shortcut">N</span>
-          </button>
-          <button
-            className="context-menu-item"
-            onClick={handleOpenRenameFromContextMenu}
-            disabled={contextSelectionCount === 0}
+      {contextMenu.visible &&
+        createPortal(
+          <div
+            className="layer-context-menu"
+            style={{
+              position: 'fixed',
+              left: contextMenuPosition.left,
+              top: contextMenuPosition.top,
+            }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <Pencil size={14} />
-            <span>{contextSelectionCount > 1 ? 'Batch Rename...' : 'Rename...'}</span>
-            <span className="context-menu-shortcut">F2</span>
-          </button>
-          <div className="context-menu-divider" />
-          <button
-            className="context-menu-item"
-            onClick={handleDuplicateLayer}
-            disabled={!contextHasLayer}
-          >
-            <Copy size={14} />
-            <span>Duplicate Layer</span>
-          </button>
-          <button
-            className="context-menu-item"
-            onClick={handleMergeLayerSelection}
-            disabled={!canMergeContextSelection}
-          >
-            <FolderPlus size={14} />
-            <span>Merge Selected Layers</span>
-            <span className="context-menu-shortcut">Ctrl+E</span>
-          </button>
-          <button
-            className="context-menu-item"
-            onClick={handleMergeAllLayersFromContextMenu}
-            disabled={layers.length < 2}
-          >
-            <Layers size={14} />
-            <span>Merge All Layers</span>
-            <span className="context-menu-shortcut">Ctrl+Shift+E</span>
-          </button>
-          <div className="context-menu-divider" />
-          <button
-            className="context-menu-item danger"
-            onClick={handleDeleteLayer}
-            disabled={!canDeleteContextSelection}
-          >
-            <Trash2 size={14} />
-            <span>{contextDeleteLabel}</span>
-            <span className="context-menu-shortcut">Delete</span>
-          </button>
-        </div>
-      )}
+            <button className="context-menu-item" onClick={handleCreateLayerFromContextMenu}>
+              <Plus size={14} />
+              <span>New Layer</span>
+              <span className="context-menu-shortcut">N</span>
+            </button>
+            <button
+              className="context-menu-item"
+              onClick={handleOpenRenameFromContextMenu}
+              disabled={contextSelectionCount === 0}
+            >
+              <Pencil size={14} />
+              <span>{contextSelectionCount > 1 ? 'Batch Rename...' : 'Rename...'}</span>
+              <span className="context-menu-shortcut">F2</span>
+            </button>
+            <div className="context-menu-divider" />
+            <button
+              className="context-menu-item"
+              onClick={handleDuplicateLayer}
+              disabled={!contextHasLayer}
+            >
+              <Copy size={14} />
+              <span>Duplicate Layer</span>
+            </button>
+            <button
+              className="context-menu-item"
+              onClick={handleMergeLayerSelection}
+              disabled={!canMergeContextSelection}
+            >
+              <FolderPlus size={14} />
+              <span>Merge Selected Layers</span>
+              <span className="context-menu-shortcut">Ctrl+E</span>
+            </button>
+            <button
+              className="context-menu-item"
+              onClick={handleMergeAllLayersFromContextMenu}
+              disabled={layers.length < 2}
+            >
+              <Layers size={14} />
+              <span>Merge All Layers</span>
+              <span className="context-menu-shortcut">Ctrl+Shift+E</span>
+            </button>
+            <div className="context-menu-divider" />
+            <button
+              className="context-menu-item danger"
+              onClick={handleDeleteLayer}
+              disabled={!canDeleteContextSelection}
+            >
+              <Trash2 size={14} />
+              <span>{contextDeleteLabel}</span>
+              <span className="context-menu-shortcut">Delete</span>
+            </button>
+          </div>,
+          document.body
+        )}
 
       {renameDialog.visible &&
         createPortal(
@@ -967,6 +973,21 @@ function isEditableTarget(target: EventTarget | null): boolean {
     target.tagName === 'TEXTAREA' ||
     target.tagName === 'SELECT'
   );
+}
+
+function clampContextMenuPosition(x: number, y: number): { left: number; top: number } {
+  const maxLeft = Math.max(
+    CONTEXT_MENU_GUTTER,
+    window.innerWidth - CONTEXT_MENU_ESTIMATED_WIDTH - CONTEXT_MENU_GUTTER
+  );
+  const maxTop = Math.max(
+    CONTEXT_MENU_GUTTER,
+    window.innerHeight - CONTEXT_MENU_ESTIMATED_HEIGHT - CONTEXT_MENU_GUTTER
+  );
+  return {
+    left: Math.min(Math.max(x, CONTEXT_MENU_GUTTER), maxLeft),
+    top: Math.min(Math.max(y, CONTEXT_MENU_GUTTER), maxTop),
+  };
 }
 
 interface LayerItemProps {
