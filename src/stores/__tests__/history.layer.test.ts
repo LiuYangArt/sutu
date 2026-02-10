@@ -130,4 +130,32 @@ describe('HistoryStore - addLayer image patch', () => {
     expect(entry.afterOrder).toEqual(['layer_top']);
     expect(entry.removedLayers[0]?.layerId).toBe('layer_bottom');
   });
+
+  it('pushLayerProps stores cloned before/after layer properties', () => {
+    const store = useHistoryStore.getState();
+    const changes = [
+      {
+        layerId: 'layer_a',
+        beforeOpacity: 100,
+        beforeBlendMode: 'normal' as Layer['blendMode'],
+        afterOpacity: 42,
+        afterBlendMode: 'multiply' as Layer['blendMode'],
+      },
+    ];
+
+    store.pushLayerProps(changes);
+    changes[0]!.afterOpacity = 99;
+    changes[0]!.afterBlendMode = 'screen';
+
+    const entry = useHistoryStore.getState().undoStack[0];
+    expect(entry?.type).toBe('layerProps');
+    if (!entry || entry.type !== 'layerProps') return;
+    expect(entry.changes[0]).toEqual({
+      layerId: 'layer_a',
+      beforeOpacity: 100,
+      beforeBlendMode: 'normal',
+      afterOpacity: 42,
+      afterBlendMode: 'multiply',
+    });
+  });
 });

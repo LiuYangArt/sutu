@@ -4,6 +4,7 @@ import type { SelectionPoint, SelectionSnapshot } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
 import {
   createHistoryEntryId,
+  type LayerPropsChange,
   type PushStrokeParams,
   type StrokeSnapshotMode,
   useHistoryStore,
@@ -500,6 +501,7 @@ export function useLayerOperations({
     pushRemoveLayer,
     pushRemoveLayers,
     pushMergeLayers,
+    pushLayerProps,
     pushResizeCanvas,
     patchAddLayerImage,
     undo,
@@ -831,6 +833,30 @@ export function useLayerOperations({
           updateThumbnail(entry.layerId);
           break;
         }
+        case 'layerProps': {
+          const changeMap = new Map(entry.changes.map((change) => [change.layerId, change]));
+          useDocumentStore.setState((state) => ({
+            layers: state.layers.map((layer) => {
+              const change = changeMap.get(layer.id);
+              if (!change) return layer;
+              return {
+                ...layer,
+                opacity: change.beforeOpacity,
+                blendMode: change.beforeBlendMode,
+              };
+            }),
+            isDirty: true,
+          }));
+          for (const change of entry.changes) {
+            renderer.updateLayer(change.layerId, {
+              opacity: change.beforeOpacity,
+              blendMode: change.beforeBlendMode,
+            });
+          }
+          compositeAndRender();
+          markLayerDirty(entry.changes.map((change) => change.layerId));
+          break;
+        }
         case 'resizeCanvas': {
           const docState = useDocumentStore.getState();
           const afterWidth = docState.width;
@@ -1039,6 +1065,30 @@ export function useLayerOperations({
           compositeAndRender();
           markLayerDirty(entry.layerId);
           updateThumbnail(entry.layerId);
+          break;
+        }
+        case 'layerProps': {
+          const changeMap = new Map(entry.changes.map((change) => [change.layerId, change]));
+          useDocumentStore.setState((state) => ({
+            layers: state.layers.map((layer) => {
+              const change = changeMap.get(layer.id);
+              if (!change) return layer;
+              return {
+                ...layer,
+                opacity: change.afterOpacity,
+                blendMode: change.afterBlendMode,
+              };
+            }),
+            isDirty: true,
+          }));
+          for (const change of entry.changes) {
+            renderer.updateLayer(change.layerId, {
+              opacity: change.afterOpacity,
+              blendMode: change.afterBlendMode,
+            });
+          }
+          compositeAndRender();
+          markLayerDirty(entry.changes.map((change) => change.layerId));
           break;
         }
         case 'resizeCanvas': {
@@ -1801,6 +1851,85 @@ export function useLayerOperations({
     );
   }, [handleMergeSelectedLayers]);
 
+  const applyLayerProps = useCallback(
+    (
+      layerIds: string[],
+      next: { opacity?: number; blendMode?: Layer['blendMode'] }
+    ): LayerPropsChange[] => {
+      const uniqueIds = Array.from(new Set(layerIds));
+      if (uniqueIds.length === 0) return [];
+
+      const changes: LayerPropsChange[] = [];
+      const currentLayers = useDocumentStore.getState().layers;
+
+      for (const layerId of uniqueIds) {
+        const layer = currentLayers.find((item) => item.id === layerId);
+        if (!layer) continue;
+        const nextOpacity =
+          next.opacity === undefined ? layer.opacity : clampNumber(next.opacity, 0, 100);
+        const nextBlendMode = next.blendMode ?? layer.blendMode;
+
+        if (nextOpacity === layer.opacity && nextBlendMode === layer.blendMode) continue;
+
+        changes.push({
+          layerId,
+          beforeOpacity: layer.opacity,
+          beforeBlendMode: layer.blendMode,
+          afterOpacity: nextOpacity,
+          afterBlendMode: nextBlendMode,
+        });
+      }
+
+      if (changes.length === 0) return [];
+
+      onBeforeCanvasMutation?.();
+
+      const changeMap = new Map(changes.map((change) => [change.layerId, change]));
+      useDocumentStore.setState((state) => ({
+        layers: state.layers.map((layer) => {
+          const change = changeMap.get(layer.id);
+          if (!change) return layer;
+          return {
+            ...layer,
+            opacity: change.afterOpacity,
+            blendMode: change.afterBlendMode,
+          };
+        }),
+        isDirty: true,
+      }));
+
+      const renderer = layerRendererRef.current;
+      if (renderer) {
+        for (const change of changes) {
+          renderer.updateLayer(change.layerId, {
+            opacity: change.afterOpacity,
+            blendMode: change.afterBlendMode,
+          });
+        }
+      }
+
+      pushLayerProps(changes);
+      compositeAndRender();
+      markLayerDirty(changes.map((change) => change.layerId));
+      return changes;
+    },
+    [compositeAndRender, layerRendererRef, markLayerDirty, onBeforeCanvasMutation, pushLayerProps]
+  );
+
+  const handleSetLayerOpacity = useCallback(
+    (layerIds: string[], opacity: number): number => {
+      return applyLayerProps(layerIds, { opacity }).length;
+    },
+    [applyLayerProps]
+  );
+
+  const handleSetLayerBlendMode = useCallback(
+    (layerIds: string[], blendMode: Layer['blendMode']): number => {
+      return applyLayerProps(layerIds, { blendMode }).length;
+    },
+    [applyLayerProps]
+  );
+
   return {
     updateThumbnail,
     captureBeforeImage,
@@ -1814,6 +1943,8 @@ export function useLayerOperations({
     handleCopyActiveLayerImage,
     handlePasteImageAsNewLayer,
     handleImportImageFiles,
+    handleSetLayerOpacity,
+    handleSetLayerBlendMode,
     handleDuplicateActiveLayer,
     handleRemoveLayer,
     handleRemoveLayers,

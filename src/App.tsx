@@ -307,6 +307,17 @@ function App() {
     };
   }, [handleDebugShortcut, handleDrawingShortcuts]);
 
+  useEffect(() => {
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
+    window.addEventListener('contextmenu', handleContextMenu);
+    return () => {
+      window.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, []);
+
   // Get canvas ref for debug panel
   const getCanvasElement = useCallback((): HTMLCanvasElement | null => {
     return document.querySelector('canvas[data-testid="main-canvas"]');

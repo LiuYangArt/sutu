@@ -18,6 +18,8 @@ function cleanupGlobals(): void {
   delete win.__canvasRedo;
   delete win.__canvasClearLayer;
   delete win.__canvasDuplicateLayer;
+  delete win.__canvasSetLayerOpacity;
+  delete win.__canvasSetLayerBlendMode;
   delete win.__canvasRemoveLayer;
   delete win.__canvasRemoveLayers;
   delete win.__canvasMergeSelectedLayers;
@@ -136,6 +138,8 @@ describe('useGlobalExports', () => {
     const handleRedo = vi.fn();
     const handleClearLayer = vi.fn();
     const handleDuplicateLayer = vi.fn();
+    const handleSetLayerOpacity = vi.fn(() => 1);
+    const handleSetLayerBlendMode = vi.fn(() => 1);
     const handleRemoveLayer = vi.fn();
     const handleRemoveLayers = vi.fn(() => 2);
     const handleMergeSelectedLayers = vi.fn(() => 2);
@@ -191,6 +195,8 @@ describe('useGlobalExports', () => {
         handleRedo,
         handleClearLayer,
         handleDuplicateLayer,
+        handleSetLayerOpacity,
+        handleSetLayerBlendMode,
         handleRemoveLayer,
         handleRemoveLayers,
         handleMergeSelectedLayers,
@@ -221,6 +227,8 @@ describe('useGlobalExports', () => {
     expect(typeof win.__canvasRedo).toBe('function');
     expect(typeof win.__canvasClearLayer).toBe('function');
     expect(typeof win.__canvasDuplicateLayer).toBe('function');
+    expect(typeof win.__canvasSetLayerOpacity).toBe('function');
+    expect(typeof win.__canvasSetLayerBlendMode).toBe('function');
     expect(typeof win.__canvasRemoveLayer).toBe('function');
     expect(typeof win.__canvasRemoveLayers).toBe('function');
     expect(typeof win.__canvasMergeSelectedLayers).toBe('function');
@@ -254,6 +262,8 @@ describe('useGlobalExports', () => {
       win.__canvasRedo();
       win.__canvasClearLayer();
       win.__canvasDuplicateLayer('from', 'to');
+      win.__canvasSetLayerOpacity(['id'], 66);
+      win.__canvasSetLayerBlendMode(['id'], 'multiply');
       win.__canvasRemoveLayer('id');
       win.__canvasRemoveLayers(['a', 'b']);
       win.__canvasMergeSelectedLayers(['a', 'b']);
@@ -290,6 +300,8 @@ describe('useGlobalExports', () => {
     expect(handleRedo).toHaveBeenCalledTimes(1);
     expect(handleClearLayer).toHaveBeenCalledTimes(1);
     expect(handleDuplicateLayer).toHaveBeenCalledWith('from', 'to');
+    expect(handleSetLayerOpacity).toHaveBeenCalledWith(['id'], 66);
+    expect(handleSetLayerBlendMode).toHaveBeenCalledWith(['id'], 'multiply');
     expect(handleRemoveLayer).toHaveBeenCalledWith('id');
     expect(handleRemoveLayers).toHaveBeenCalledWith(['a', 'b']);
     expect(handleMergeSelectedLayers).toHaveBeenCalledWith(['a', 'b']);
@@ -336,6 +348,8 @@ describe('useGlobalExports', () => {
     expect(win.__canvasRedo).toBeUndefined();
     expect(win.__canvasClearLayer).toBeUndefined();
     expect(win.__canvasDuplicateLayer).toBeUndefined();
+    expect(win.__canvasSetLayerOpacity).toBeUndefined();
+    expect(win.__canvasSetLayerBlendMode).toBeUndefined();
     expect(win.__canvasRemoveLayer).toBeUndefined();
     expect(win.__canvasRemoveLayers).toBeUndefined();
     expect(win.__canvasMergeSelectedLayers).toBeUndefined();

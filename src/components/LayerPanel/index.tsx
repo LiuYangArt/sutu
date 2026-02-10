@@ -406,6 +406,42 @@ export function LayerPanel(): JSX.Element {
     safeMergeSelectedLayers(layers.map((layer) => layer.id));
   }, [layers, safeMergeSelectedLayers]);
 
+  const safeSetLayerOpacity = useCallback(
+    (ids: string[], opacity: number) => {
+      const uniqueIds = Array.from(new Set(ids));
+      if (uniqueIds.length === 0) return;
+      const win = window as Window & {
+        __canvasSetLayerOpacity?: (layerIds: string[], value: number) => number;
+      };
+      if (win.__canvasSetLayerOpacity) {
+        win.__canvasSetLayerOpacity(uniqueIds, opacity);
+        return;
+      }
+      for (const layerId of uniqueIds) {
+        setLayerOpacity(layerId, opacity);
+      }
+    },
+    [setLayerOpacity]
+  );
+
+  const safeSetLayerBlendMode = useCallback(
+    (ids: string[], blendMode: BlendMode) => {
+      const uniqueIds = Array.from(new Set(ids));
+      if (uniqueIds.length === 0) return;
+      const win = window as Window & {
+        __canvasSetLayerBlendMode?: (layerIds: string[], value: BlendMode) => number;
+      };
+      if (win.__canvasSetLayerBlendMode) {
+        win.__canvasSetLayerBlendMode(uniqueIds, blendMode);
+        return;
+      }
+      for (const layerId of uniqueIds) {
+        setLayerBlendMode(layerId, blendMode);
+      }
+    },
+    [setLayerBlendMode]
+  );
+
   const getContextSelectionIds = useCallback((): string[] => {
     if (!contextMenu.layerId) return [];
     if (selectedLayerIds.length > 1 && selectedLayerIds.includes(contextMenu.layerId)) {
@@ -464,11 +500,11 @@ export function LayerPanel(): JSX.Element {
     return [];
   }, [activeLayerId, selectedLayerIds]);
 
-  const applyProtectedBatchLayerOperation = useCallback(
-    (targetIds: string[], apply: (layerId: string) => void): void => {
+  const collectEditableBatchLayerIds = useCallback(
+    (targetIds: string[]): string[] => {
       let lockedSkipped = 0;
       let backgroundSkipped = 0;
-      let applied = 0;
+      const editableLayerIds: string[] = [];
 
       for (const layerId of targetIds) {
         const layer = layers.find((item) => item.id === layerId);
@@ -481,15 +517,16 @@ export function LayerPanel(): JSX.Element {
           backgroundSkipped += 1;
           continue;
         }
-        apply(layerId);
-        applied += 1;
+        editableLayerIds.push(layerId);
       }
 
-      if (applied > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
+      if (editableLayerIds.length > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
         pushToast(`Skipped ${lockedSkipped} locked + ${backgroundSkipped} background layer(s).`, {
           variant: 'info',
         });
       }
+
+      return editableLayerIds;
     },
     [layers, pushToast]
   );
@@ -601,17 +638,14 @@ export function LayerPanel(): JSX.Element {
       if (targetIds.length === 0) return;
 
       if (targetIds.length === 1) {
-        const [layerId] = targetIds;
-        if (!layerId) return;
-        setLayerOpacity(layerId, opacity);
+        safeSetLayerOpacity(targetIds, opacity);
         return;
       }
 
-      applyProtectedBatchLayerOperation(targetIds, (layerId) => {
-        setLayerOpacity(layerId, opacity);
-      });
+      const editableLayerIds = collectEditableBatchLayerIds(targetIds);
+      safeSetLayerOpacity(editableLayerIds, opacity);
     },
-    [applyProtectedBatchLayerOperation, getBatchTargetLayerIds, setLayerOpacity]
+    [collectEditableBatchLayerIds, getBatchTargetLayerIds, safeSetLayerOpacity]
   );
 
   const applyBatchLayerBlendMode = useCallback(
@@ -620,17 +654,14 @@ export function LayerPanel(): JSX.Element {
       if (targetIds.length === 0) return;
 
       if (targetIds.length === 1) {
-        const [layerId] = targetIds;
-        if (!layerId) return;
-        setLayerBlendMode(layerId, blendMode);
+        safeSetLayerBlendMode(targetIds, blendMode);
         return;
       }
 
-      applyProtectedBatchLayerOperation(targetIds, (layerId) => {
-        setLayerBlendMode(layerId, blendMode);
-      });
+      const editableLayerIds = collectEditableBatchLayerIds(targetIds);
+      safeSetLayerBlendMode(editableLayerIds, blendMode);
     },
-    [applyProtectedBatchLayerOperation, getBatchTargetLayerIds, setLayerBlendMode]
+    [collectEditableBatchLayerIds, getBatchTargetLayerIds, safeSetLayerBlendMode]
   );
 
   function handleClearLayer(): void {

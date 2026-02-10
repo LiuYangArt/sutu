@@ -1112,6 +1112,8 @@ export function Canvas() {
     handleCopyActiveLayerImage,
     handlePasteImageAsNewLayer,
     handleImportImageFiles,
+    handleSetLayerOpacity,
+    handleSetLayerBlendMode,
     handleDuplicateActiveLayer,
     handleRemoveLayer,
     handleRemoveLayers,
@@ -1364,6 +1366,8 @@ export function Canvas() {
     handleRedo,
     handleClearLayer,
     handleDuplicateLayer,
+    handleSetLayerOpacity,
+    handleSetLayerBlendMode,
     handleRemoveLayer,
     handleRemoveLayers,
     handleMergeSelectedLayers: (ids?: string[]) => {

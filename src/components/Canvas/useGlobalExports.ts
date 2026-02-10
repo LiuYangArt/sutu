@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from 'react';
-import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
+import { useDocumentStore, type BlendMode, type ResizeCanvasOptions } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { useSettingsStore } from '@/stores/settings';
 import { useToolStore, type ToolType, type PressureCurve } from '@/stores/tool';
@@ -46,6 +46,8 @@ interface UseGlobalExportsParams {
   handleRedo: () => void;
   handleClearLayer: () => void;
   handleDuplicateLayer: (from: string, to: string) => void;
+  handleSetLayerOpacity?: (ids: string[], opacity: number) => number;
+  handleSetLayerBlendMode?: (ids: string[], blendMode: BlendMode) => number;
   handleRemoveLayer: (id: string) => void;
   handleRemoveLayers?: (ids: string[]) => number;
   handleMergeSelectedLayers?: (ids?: string[]) => number;
@@ -167,6 +169,8 @@ export function useGlobalExports({
   handleRedo,
   handleClearLayer,
   handleDuplicateLayer,
+  handleSetLayerOpacity,
+  handleSetLayerBlendMode,
   handleRemoveLayer,
   handleRemoveLayers,
   handleMergeSelectedLayers,
@@ -207,6 +211,8 @@ export function useGlobalExports({
       __canvasRedo?: () => void;
       __canvasClearLayer?: () => void;
       __canvasDuplicateLayer?: (from: string, to: string) => void;
+      __canvasSetLayerOpacity?: (ids: string[], opacity: number) => number;
+      __canvasSetLayerBlendMode?: (ids: string[], blendMode: BlendMode) => number;
       __canvasRemoveLayer?: (id: string) => void;
       __canvasRemoveLayers?: (ids: string[]) => number;
       __canvasMergeSelectedLayers?: (ids?: string[]) => number;
@@ -266,6 +272,12 @@ export function useGlobalExports({
     win.__canvasRedo = handleRedo;
     win.__canvasClearLayer = handleClearLayer;
     win.__canvasDuplicateLayer = handleDuplicateLayer;
+    if (handleSetLayerOpacity) {
+      win.__canvasSetLayerOpacity = handleSetLayerOpacity;
+    }
+    if (handleSetLayerBlendMode) {
+      win.__canvasSetLayerBlendMode = handleSetLayerBlendMode;
+    }
     win.__canvasRemoveLayer = handleRemoveLayer;
     if (handleRemoveLayers) {
       win.__canvasRemoveLayers = handleRemoveLayers;
@@ -988,6 +1000,8 @@ export function useGlobalExports({
       delete win.__canvasRedo;
       delete win.__canvasClearLayer;
       delete win.__canvasDuplicateLayer;
+      delete win.__canvasSetLayerOpacity;
+      delete win.__canvasSetLayerBlendMode;
       delete win.__canvasRemoveLayer;
       delete win.__canvasRemoveLayers;
       delete win.__canvasMergeSelectedLayers;

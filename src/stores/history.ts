@@ -11,6 +11,7 @@ export type HistoryEntry =
   | RemoveLayerEntry
   | RemoveLayersEntry
   | MergeLayersEntry
+  | LayerPropsEntry
   | ResizeCanvasEntry
   | SelectionEntry;
 
@@ -91,6 +92,20 @@ interface MergeLayersEntry {
   timestamp: number;
 }
 
+export interface LayerPropsChange {
+  layerId: string;
+  beforeOpacity: number;
+  beforeBlendMode: Layer['blendMode'];
+  afterOpacity: number;
+  afterBlendMode: Layer['blendMode'];
+}
+
+interface LayerPropsEntry {
+  type: 'layerProps';
+  changes: LayerPropsChange[];
+  timestamp: number;
+}
+
 interface ResizeCanvasLayerSnapshot {
   layerId: string;
   imageData: ImageData;
@@ -149,6 +164,7 @@ interface HistoryState {
     beforeSelection: LayerSelectionStateSnapshot;
     afterSelection: LayerSelectionStateSnapshot;
   }) => void;
+  pushLayerProps: (changes: LayerPropsChange[]) => void;
 
   // Push canvas resize operation (with full layer snapshots)
   pushResizeCanvas: (
@@ -193,6 +209,16 @@ function cloneLayerSelectionState(
     activeLayerId: selection.activeLayerId,
     selectedLayerIds: [...selection.selectedLayerIds],
     layerSelectionAnchorId: selection.layerSelectionAnchorId,
+  };
+}
+
+function cloneLayerPropsChange(change: LayerPropsChange): LayerPropsChange {
+  return {
+    layerId: change.layerId,
+    beforeOpacity: change.beforeOpacity,
+    beforeBlendMode: change.beforeBlendMode,
+    afterOpacity: change.afterOpacity,
+    afterBlendMode: change.afterBlendMode,
   };
 }
 
@@ -316,6 +342,15 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         afterOrder: [...afterOrder],
         beforeSelection: cloneLayerSelectionState(beforeSelection),
         afterSelection: cloneLayerSelectionState(afterSelection),
+        timestamp: Date.now(),
+      });
+    },
+
+    pushLayerProps: (changes) => {
+      if (changes.length === 0) return;
+      pushEntry({
+        type: 'layerProps',
+        changes: changes.map(cloneLayerPropsChange),
         timestamp: Date.now(),
       });
     },
