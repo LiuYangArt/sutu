@@ -17,10 +17,16 @@ type TestWindow = Window & {
 
 const sessionId = 'curves-session-test';
 const GRAPH_LEFT = -128;
+const GRAPH_TOP = -128;
 const GRAPH_WIDTH = 256;
+const GRAPH_HEIGHT = 256;
 
 function clientXFromCurveInput(input: number): number {
   return GRAPH_LEFT + (input / 255) * GRAPH_WIDTH;
+}
+
+function clientYFromCurveOutput(output: number): number {
+  return GRAPH_TOP + ((255 - output) / 255) * GRAPH_HEIGHT;
 }
 
 describe('CurvesPanel', () => {
@@ -148,6 +154,26 @@ describe('CurvesPanel', () => {
     expect(optionTexts).toEqual(['RGB', 'Red', 'Green', 'Blue']);
   });
 
+  it('Input / Output 使用数字输入框并可精确修改选中控制点', () => {
+    render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    fireEvent.pointerDown(graph, { button: 0, clientX: 0, clientY: 0 });
+
+    const inputField = screen.getByRole('spinbutton', { name: 'Input value' });
+    const outputField = screen.getByRole('spinbutton', { name: 'Output value' });
+    expect(inputField).toHaveValue(128);
+    expect(outputField).toHaveValue(128);
+
+    fireEvent.change(inputField, { target: { value: '150' } });
+    fireEvent.blur(inputField);
+    expect(inputField).toHaveValue(150);
+
+    fireEvent.change(outputField, { target: { value: '210' } });
+    fireEvent.blur(outputField);
+    expect(outputField).toHaveValue(210);
+  });
+
   it('拖动控制点到曲线框外并松手会删除该点', () => {
     const { container } = render(<CurvesPanel />);
     const graph = screen.getByLabelText('Curves graph');
@@ -226,5 +252,64 @@ describe('CurvesPanel', () => {
     });
 
     expect(container.querySelectorAll('circle').length).toBe(4);
+  });
+
+  it('RGB 视图会叠加显示已调整的单通道曲线', () => {
+    const { container } = render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+    const channelSelect = screen.getByRole('combobox');
+
+    fireEvent.change(channelSelect, { target: { value: 'green' } });
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(96),
+      clientY: -32,
+    });
+
+    fireEvent.change(channelSelect, { target: { value: 'rgb' } });
+
+    expect(container.querySelector('path.curves-panel__curve--rgb')).toBeTruthy();
+    expect(
+      container.querySelector('path.curves-panel__curve--overlay.curves-panel__curve--green')
+    ).toBeTruthy();
+    expect(
+      container.querySelector('path.curves-panel__curve--overlay.curves-panel__curve--red')
+    ).toBeNull();
+    expect(
+      container.querySelector('path.curves-panel__curve--overlay.curves-panel__curve--blue')
+    ).toBeNull();
+  });
+
+  it('RGB 曲线变化不应改变单通道叠加曲线形态', () => {
+    const { container } = render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+    const channelSelect = screen.getByRole('combobox');
+
+    fireEvent.change(channelSelect, { target: { value: 'red' } });
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(176),
+      clientY: clientYFromCurveOutput(96),
+    });
+
+    fireEvent.change(channelSelect, { target: { value: 'rgb' } });
+    const redOverlay = container.querySelector(
+      'path.curves-panel__curve--overlay.curves-panel__curve--red'
+    ) as SVGPathElement | null;
+    expect(redOverlay).toBeTruthy();
+    const beforeRgbEditPath = redOverlay?.getAttribute('d');
+    expect(beforeRgbEditPath).toBeTruthy();
+
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(102),
+      clientY: clientYFromCurveOutput(158),
+    });
+
+    const redOverlayAfterRgbEdit = container.querySelector(
+      'path.curves-panel__curve--overlay.curves-panel__curve--red'
+    ) as SVGPathElement | null;
+    expect(redOverlayAfterRgbEdit).toBeTruthy();
+    expect(redOverlayAfterRgbEdit?.getAttribute('d')).toBe(beforeRgbEditPath);
   });
 });

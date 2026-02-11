@@ -16,6 +16,8 @@ const POINT_HIT_RADIUS_PX = 8;
 const GRID_DIVISIONS = 4;
 const CURVE_RENDER_SAMPLES = 2048;
 const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 16;
+const CHANNEL_MIN = 0;
+const CHANNEL_MAX = 255;
 
 type CurvesBridgeWindow = Window & {
   __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
@@ -47,6 +49,8 @@ interface DragRange {
   maxY: number;
 }
 
+type SingleChannel = Exclude<CurvesChannel, 'rgb'>;
+
 const CHANNEL_OPTIONS: Array<{ value: CurvesChannel; label: string }> = [
   { value: 'rgb', label: 'RGB' },
   { value: 'red', label: 'Red' },
@@ -59,6 +63,18 @@ function clamp(value: number, min: number, max: number): number {
   if (value < min) return min;
   if (value > max) return max;
   return value;
+}
+
+function isIdentityLut(lut: Uint8Array): boolean {
+  for (let i = 0; i <= CHANNEL_MAX; i += 1) {
+    if ((lut[i] ?? i) !== i) return false;
+  }
+  return true;
+}
+
+function getCurveClassName(channel: CurvesChannel, isOverlay = false): string {
+  const overlayClass = isOverlay ? ' curves-panel__curve--overlay' : '';
+  return `curves-panel__curve curves-panel__curve--${channel}${overlayClass}`;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -233,6 +249,8 @@ export function CurvesPanel(): JSX.Element {
   );
   const [sessionInfo, setSessionInfo] = useState<CurvesSessionInfo | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [inputValueDraft, setInputValueDraft] = useState('');
+  const [outputValueDraft, setOutputValueDraft] = useState('');
   const [, setHistoryVersion] = useState(0);
 
   const activePoints = pointsByChannel[selectedChannel];
@@ -251,6 +269,25 @@ export function CurvesPanel(): JSX.Element {
 
   const histogram = sessionInfo?.histogram ?? [];
   const histogramMax = histogram.reduce((max, value) => Math.max(max, value), 0);
+
+  const evaluators = useMemo(
+    () => ({
+      rgb: buildCurveEvaluator(pointsByChannel.rgb),
+      red: buildCurveEvaluator(pointsByChannel.red),
+      green: buildCurveEvaluator(pointsByChannel.green),
+      blue: buildCurveEvaluator(pointsByChannel.blue),
+    }),
+    [pointsByChannel]
+  );
+
+  const adjustedChannels = useMemo(
+    () => ({
+      red: !isIdentityLut(luts.red),
+      green: !isIdentityLut(luts.green),
+      blue: !isIdentityLut(luts.blue),
+    }),
+    [luts.blue, luts.green, luts.red]
+  );
 
   const curvesPayload = useMemo<CurvesPreviewPayload>(
     () => ({
@@ -364,6 +401,16 @@ export function CurvesPanel(): JSX.Element {
       pointsByChannel: clonePointsByChannel(pointsByChannel),
     };
   }, [pointsByChannel, previewEnabled, selectedChannel, selectedPointId]);
+
+  useEffect(() => {
+    if (!selectedPoint) {
+      setInputValueDraft('');
+      setOutputValueDraft('');
+      return;
+    }
+    setInputValueDraft(String(selectedPoint.x));
+    setOutputValueDraft(String(selectedPoint.y));
+  }, [selectedPoint]);
 
   useEffect(() => {
     latestPayloadRef.current = curvesPayload;
@@ -597,6 +644,80 @@ export function CurvesPanel(): JSX.Element {
     [captureSnapshot, getNextPointId, pointsByChannel, pushUndoSnapshot, selectedChannel]
   );
 
+  const applySelectedPointInput = useCallback(
+    (axis: 'x' | 'y', rawValue: string) => {
+      if (!selectedPointId) return;
+      const parsed = Number.parseInt(rawValue, 10);
+      if (!Number.isFinite(parsed)) {
+        const currentPoint = currentSnapshotRef.current.pointsByChannel[selectedChannel].find(
+          (point) => point.id === selectedPointId
+        );
+        if (!currentPoint) return;
+        setInputValueDraft(String(currentPoint.x));
+        setOutputValueDraft(String(currentPoint.y));
+        return;
+      }
+
+      const nextValue = clamp(Math.round(parsed), CHANNEL_MIN, CHANNEL_MAX);
+      const livePoints = currentSnapshotRef.current.pointsByChannel[selectedChannel];
+      const index = livePoints.findIndex((point) => point.id === selectedPointId);
+      if (index < 0) return;
+      const current = livePoints[index];
+      if (!current) return;
+
+      const dragRange = getPointDragRange(livePoints, index);
+      const nextPoint: CurvePoint = {
+        ...current,
+        x: axis === 'x' ? clamp(nextValue, dragRange.minX, dragRange.maxX) : current.x,
+        y: axis === 'y' ? clamp(nextValue, dragRange.minY, dragRange.maxY) : current.y,
+      };
+      setInputValueDraft(String(nextPoint.x));
+      setOutputValueDraft(String(nextPoint.y));
+
+      if (nextPoint.x === current.x && nextPoint.y === current.y) return;
+
+      const beforeSnapshot = captureSnapshot();
+      setPointsByChannel((prev) => {
+        const channelPoints = prev[selectedChannel];
+        const nextIndex = channelPoints.findIndex((point) => point.id === selectedPointId);
+        if (nextIndex < 0) return prev;
+        const existing = channelPoints[nextIndex];
+        if (!existing) return prev;
+
+        const nextPoints = [...channelPoints];
+        nextPoints[nextIndex] = {
+          ...existing,
+          x: nextPoint.x,
+          y: nextPoint.y,
+        };
+        return {
+          ...prev,
+          [selectedChannel]: nextPoints,
+        };
+      });
+      pushUndoSnapshot(beforeSnapshot);
+    },
+    [captureSnapshot, pushUndoSnapshot, selectedChannel, selectedPointId]
+  );
+
+  const handleIoInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.blur();
+        return;
+      }
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (selectedPoint) {
+        setInputValueDraft(String(selectedPoint.x));
+        setOutputValueDraft(String(selectedPoint.y));
+      }
+      event.currentTarget.blur();
+    },
+    [selectedPoint]
+  );
+
   const handleReset = useCallback(() => {
     pushUndoSnapshot(captureSnapshot());
     setPointsByChannel(createDefaultPoints(getNextPointId));
@@ -622,10 +743,24 @@ export function CurvesPanel(): JSX.Element {
     closePanel('curves-panel');
   }, [closePanel, curvesPayload, endSession]);
 
-  const activeCurvePath = useMemo(() => {
-    const evaluator = buildCurveEvaluator(activePoints);
-    return buildPathFromEvaluator(evaluator);
-  }, [activePoints]);
+  const activeCurvePath = useMemo(
+    () => buildPathFromEvaluator(evaluators[selectedChannel]),
+    [evaluators, selectedChannel]
+  );
+
+  const rgbOverlayCurves = useMemo(() => {
+    if (selectedChannel !== 'rgb') return [];
+    const singleChannels: SingleChannel[] = ['red', 'green', 'blue'];
+    const activeOverlays: Array<{ channel: SingleChannel; path: string }> = [];
+
+    for (const channel of singleChannels) {
+      if (!adjustedChannels[channel]) continue;
+      const path = buildPathFromEvaluator(evaluators[channel]);
+      activeOverlays.push({ channel, path });
+    }
+
+    return activeOverlays;
+  }, [adjustedChannels, evaluators, selectedChannel]);
 
   return (
     <div className="curves-panel">
@@ -698,9 +833,17 @@ export function CurvesPanel(): JSX.Element {
             />
           )}
           <line x1={0} y1={GRAPH_SIZE} x2={GRAPH_SIZE} y2={0} className="curves-panel__baseline" />
+          {rgbOverlayCurves.map((curve) => (
+            <path
+              key={`overlay-${curve.channel}`}
+              d={curve.path}
+              className={getCurveClassName(curve.channel, true)}
+              shapeRendering="geometricPrecision"
+            />
+          ))}
           <path
             d={activeCurvePath}
-            className="curves-panel__curve"
+            className={getCurveClassName(selectedChannel)}
             shapeRendering="geometricPrecision"
           />
           {activePoints.map((point) => (
@@ -720,8 +863,40 @@ export function CurvesPanel(): JSX.Element {
       </div>
 
       <div className="curves-panel__io">
-        <span>Input: {selectedPoint?.x ?? '-'}</span>
-        <span>Output: {selectedPoint?.y ?? '-'}</span>
+        <label className="curves-panel__io-field">
+          <span>Input:</span>
+          <input
+            type="number"
+            min={0}
+            max={255}
+            step={1}
+            className="curves-panel__io-input"
+            aria-label="Input value"
+            value={selectedPoint ? inputValueDraft : ''}
+            placeholder="-"
+            disabled={!selectedPoint}
+            onChange={(event) => setInputValueDraft(event.target.value)}
+            onBlur={() => applySelectedPointInput('x', inputValueDraft)}
+            onKeyDown={handleIoInputKeyDown}
+          />
+        </label>
+        <label className="curves-panel__io-field">
+          <span>Output:</span>
+          <input
+            type="number"
+            min={0}
+            max={255}
+            step={1}
+            className="curves-panel__io-input"
+            aria-label="Output value"
+            value={selectedPoint ? outputValueDraft : ''}
+            placeholder="-"
+            disabled={!selectedPoint}
+            onChange={(event) => setOutputValueDraft(event.target.value)}
+            onBlur={() => applySelectedPointInput('y', outputValueDraft)}
+            onKeyDown={handleIoInputKeyDown}
+          />
+        </label>
       </div>
 
       {errorText && <div className="curves-panel__error">{errorText}</div>}
