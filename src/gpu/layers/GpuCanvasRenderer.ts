@@ -8,6 +8,7 @@ import { GradientRampLut, type GradientRampLutUpdateInput } from './GradientRamp
 import type { GpuStrokeHistoryStore, GpuStrokeHistoryTileApplyItem } from './GpuStrokeHistoryStore';
 import { buildBelowCacheSignature } from './layerStackCache';
 import { computeTileDrawRegion, type TileDrawRegion } from './dirtyTileClip';
+import { computeClampedDisplayViewport } from './displayViewport';
 import {
   buildExportChunkRects,
   computeReadbackBytesPerRow,
@@ -97,13 +98,6 @@ export interface GpuLayerStackCacheStats {
   belowCacheMisses: number;
   belowCacheTileCount: number;
   lastInvalidationReason: string | null;
-}
-
-interface DisplayViewport {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 type TileSourceKind =
@@ -526,7 +520,7 @@ export class GpuCanvasRenderer {
     for (const coord of this.visibleTiles) {
       const rect = this.layerStore.getTileRect(coord);
       if (rect.width <= 0 || rect.height <= 0) continue;
-      const viewport = this.computeDisplayViewport(rect);
+      const viewport = computeClampedDisplayViewport(rect, this.canvas.width, this.canvas.height);
       if (!viewport) continue;
 
       const tile = this.layerStore.getTile(layerId, coord);
@@ -1331,7 +1325,7 @@ export class GpuCanvasRenderer {
     uniformIndex: number;
   }): boolean {
     const { pass, tileView, tileRect, uniformIndex } = args;
-    const viewport = this.computeDisplayViewport(tileRect);
+    const viewport = computeClampedDisplayViewport(tileRect, this.canvas.width, this.canvas.height);
     if (!viewport) return false;
     const uniformOffset = this.writeUniforms(uniformIndex, {
       canvasWidth: this.width,
@@ -1780,19 +1774,6 @@ export class GpuCanvasRenderer {
     const canvasHeight = this.canvas.height;
     if (canvasWidth === this.width && canvasHeight === this.height) return;
     this.resize(canvasWidth, canvasHeight);
-  }
-
-  private computeDisplayViewport(tileRect: TileRect): DisplayViewport | null {
-    const targetWidth = this.canvas.width;
-    const targetHeight = this.canvas.height;
-    const x = tileRect.originX;
-    const y = tileRect.originY;
-    const right = Math.min(targetWidth, tileRect.originX + tileRect.width);
-    const bottom = Math.min(targetHeight, tileRect.originY + tileRect.height);
-    const width = right - x;
-    const height = bottom - y;
-    if (width <= 0 || height <= 0) return null;
-    return { x, y, width, height };
   }
 
   private writeGradientUniforms(args: {

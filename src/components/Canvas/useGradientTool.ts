@@ -151,6 +151,30 @@ function buildGuidePreviewPayload(session: GradientSession): GradientPreviewPayl
   };
 }
 
+async function commitGradientWithFallback(args: {
+  session: GradientSession;
+  params: ApplyGradientToActiveLayerParams;
+  applyGradientToActiveLayer: (params: ApplyGradientToActiveLayerParams) => Promise<boolean>;
+  applyGpuGradientToActiveLayer?: (
+    params: ApplyGradientToActiveLayerParams & { layerId: string; dirtyRect: Rect | null }
+  ) => Promise<boolean>;
+}): Promise<void> {
+  const { session, params, applyGradientToActiveLayer, applyGpuGradientToActiveLayer } = args;
+  if (!session.useGpuPath || !applyGpuGradientToActiveLayer) {
+    await applyGradientToActiveLayer(params);
+    return;
+  }
+
+  const applied = await applyGpuGradientToActiveLayer({
+    ...params,
+    layerId: session.layerId,
+    dirtyRect: session.dirtyRect,
+  });
+  if (!applied) {
+    await applyGradientToActiveLayer(params);
+  }
+}
+
 export function useGradientTool({
   currentTool,
   activeLayerId,
@@ -354,20 +378,12 @@ export function useGradientTool({
       sessionRef.current = null;
       clearGpuPreview?.();
       clearPreview();
-      if (session.useGpuPath && applyGpuGradientToActiveLayer) {
-        void (async () => {
-          const applied = await applyGpuGradientToActiveLayer({
-            ...params,
-            layerId: session.layerId,
-            dirtyRect: session.dirtyRect,
-          });
-          if (!applied) {
-            await applyGradientToActiveLayer(params);
-          }
-        })();
-      } else {
-        void applyGradientToActiveLayer(params);
-      }
+      void commitGradientWithFallback({
+        session,
+        params,
+        applyGradientToActiveLayer,
+        applyGpuGradientToActiveLayer,
+      });
     },
     [
       applyGpuGradientToActiveLayer,

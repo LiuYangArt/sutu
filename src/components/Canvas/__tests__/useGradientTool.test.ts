@@ -225,6 +225,45 @@ describe('useGradientTool', () => {
     expect(clearGpuPreview).toHaveBeenCalled();
   });
 
+  it('falls back to cpu commit when gpu commit returns false', async () => {
+    const layer = createLayer('layer_gpu_fallback');
+    const renderer = createMockLayerRenderer();
+    const applyGradientToActiveLayer = vi.fn(async (_params: unknown) => true);
+    const applyGpuGradientToActiveLayer = vi.fn(async (_params: unknown) => false);
+
+    const { result } = renderHook(() =>
+      useGradientTool({
+        currentTool: 'gradient',
+        activeLayerId: layer.id,
+        layers: [layer],
+        width: 2,
+        height: 2,
+        layerRendererRef: { current: renderer },
+        applyGradientToActiveLayer,
+        applyGpuGradientToActiveLayer,
+        useGpuGradientPath: true,
+        renderGpuPreview: vi.fn(),
+        clearGpuPreview: vi.fn(),
+        renderPreview: vi.fn(),
+        clearPreview: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.handleGradientPointerDown(0, 0, {
+        button: 0,
+        shiftKey: false,
+      } as PointerEvent);
+    });
+
+    await act(async () => {
+      result.current.handleGradientPointerUp(2, 0, { shiftKey: false } as PointerEvent);
+    });
+
+    expect(applyGpuGradientToActiveLayer).toHaveBeenCalledTimes(1);
+    expect(applyGradientToActiveLayer).toHaveBeenCalledTimes(1);
+  });
+
   it('applies shift 45-degree constraint for end point', async () => {
     const layer = createLayer('layer_shift');
     const renderer = createMockLayerRenderer();
