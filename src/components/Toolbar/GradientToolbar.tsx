@@ -15,9 +15,13 @@ const SHAPE_OPTIONS: Array<{ value: GradientShape; label: string }> = [
 
 export function GradientToolbar(): JSX.Element {
   const [blendMenuOpen, setBlendMenuOpen] = useState(false);
+  const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const blendMenuRef = useRef<HTMLDivElement | null>(null);
+  const presetMenuRef = useRef<HTMLDivElement | null>(null);
 
+  const presets = useGradientStore((s) => s.presets);
   const settings = useGradientStore((s) => s.settings);
+  const setActivePreset = useGradientStore((s) => s.setActivePreset);
   const setShape = useGradientStore((s) => s.setShape);
   const setBlendMode = useGradientStore((s) => s.setBlendMode);
   const setOpacity = useGradientStore((s) => s.setOpacity);
@@ -43,34 +47,90 @@ export function GradientToolbar(): JSX.Element {
   );
 
   useEffect(() => {
-    if (!blendMenuOpen) return;
+    if (!blendMenuOpen && !presetMenuOpen) return;
     const handlePointerDown = (event: MouseEvent) => {
       const menu = blendMenuRef.current;
-      if (!menu) return;
-      if (menu.contains(event.target as Node)) return;
+      const presetMenu = presetMenuRef.current;
+      const target = event.target as Node;
+      if (menu?.contains(target) || presetMenu?.contains(target)) return;
       setBlendMenuOpen(false);
+      setPresetMenuOpen(false);
     };
     window.addEventListener('mousedown', handlePointerDown);
     return () => {
       window.removeEventListener('mousedown', handlePointerDown);
     };
-  }, [blendMenuOpen]);
+  }, [blendMenuOpen, presetMenuOpen]);
 
   return (
     <div className="toolbar-section gradient-settings">
-      <button
-        className={`gradient-preview-trigger ${isGradientPanelOpen ? 'active' : ''}`}
-        title="Open Gradient Editor"
-        onClick={() => {
-          if (isGradientPanelOpen) {
-            closePanel('gradient-panel');
-          } else {
-            openPanel('gradient-panel');
-          }
-        }}
-      >
-        <span className="gradient-preview-chip" style={{ backgroundImage: previewCss }} />
-      </button>
+      <div className="toolbar-gradient-preset-select" ref={presetMenuRef}>
+        <div className="toolbar-gradient-preview-group">
+          <button
+            className={`gradient-preview-trigger ${isGradientPanelOpen ? 'active' : ''}`}
+            title="Open Gradient Editor"
+            onClick={() => {
+              if (isGradientPanelOpen) {
+                closePanel('gradient-panel');
+              } else {
+                openPanel('gradient-panel');
+              }
+            }}
+          >
+            <span className="gradient-preview-chip" style={{ backgroundImage: previewCss }} />
+          </button>
+          <button
+            type="button"
+            className={`toolbar-gradient-preset-toggle ${presetMenuOpen ? 'active' : ''}`}
+            title="Quick Presets"
+            onClick={() => setPresetMenuOpen((open) => !open)}
+            aria-haspopup="listbox"
+            aria-expanded={presetMenuOpen}
+          >
+            ▾
+          </button>
+        </div>
+
+        {presetMenuOpen && (
+          <div
+            className="toolbar-gradient-preset-dropdown"
+            role="listbox"
+            aria-label="Gradient Presets"
+          >
+            {presets.map((preset) => {
+              const active = preset.id === settings.activePresetId;
+              const presetPreview = buildGradientPreviewCss(
+                preset.colorStops,
+                preset.opacityStops,
+                foregroundColor,
+                backgroundColor,
+                true
+              );
+
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  className={`toolbar-gradient-preset-option ${active ? 'active' : ''}`}
+                  onClick={() => {
+                    setActivePreset(preset.id);
+                    setPresetMenuOpen(false);
+                  }}
+                  title={preset.name}
+                >
+                  <span
+                    className="toolbar-gradient-preset-option-preview"
+                    style={{ backgroundImage: presetPreview }}
+                  />
+                  <span className="toolbar-gradient-preset-option-name">{preset.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div className="gradient-shape-group">
         {SHAPE_OPTIONS.map((shape) => (

@@ -161,6 +161,7 @@
   gap: 10px;
   padding: 12px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .gradient-name-field {
@@ -286,6 +287,8 @@
   display: grid;
   gap: 10px;
   align-content: start;
+  min-height: 0;
+  overflow: auto;
 }
 
 .gradient-stop-editor h4 {
@@ -295,9 +298,20 @@
 
 .stop-editor-grid {
   display: grid;
-  grid-template-columns: 64px minmax(0, 140px) 64px minmax(0, 140px) auto;
   gap: 8px;
   align-items: center;
+}
+
+.stop-editor-grid.opacity-grid {
+  grid-template-columns: 64px minmax(0, 1fr) 64px minmax(0, 1fr) minmax(88px, 120px);
+}
+
+.stop-editor-grid.color-grid {
+  grid-template-columns:
+    64px minmax(0, 1fr)
+    64px minmax(0, 1fr)
+    48px 44px
+    minmax(88px, 120px);
 }
 
 .stop-editor-label {
@@ -319,6 +333,9 @@
 
 .stop-editor-grid input[type='color'] {
   padding: 2px 4px;
+  width: 44px;
+  min-width: 44px;
+  justify-self: start;
 }
 
 .stop-delete-btn {

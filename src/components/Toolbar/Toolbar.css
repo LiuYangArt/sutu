@@ -112,6 +112,16 @@
   gap: 10px;
 }
 
+.toolbar-gradient-preset-select {
+  position: relative;
+}
+
+.toolbar-gradient-preview-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .gradient-preview-trigger {
   width: 74px;
   height: 28px;
@@ -123,6 +133,90 @@
 
 .gradient-preview-trigger.active {
   border-color: var(--primary);
+}
+
+.toolbar-gradient-preset-toggle {
+  width: 20px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.toolbar-gradient-preset-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.toolbar-gradient-preset-toggle.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-bg);
+}
+
+.toolbar-gradient-preset-dropdown {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  width: 240px;
+  max-height: 260px;
+  overflow: auto;
+  z-index: var(--z-popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 4px;
+}
+
+.toolbar-gradient-preset-option {
+  width: 100%;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  color: var(--text-primary);
+}
+
+.toolbar-gradient-preset-option:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-subtle);
+}
+
+.toolbar-gradient-preset-option.active {
+  background: var(--primary-bg);
+  border-color: var(--primary-border);
+}
+
+.toolbar-gradient-preset-option-preview {
+  display: block;
+  width: 92px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background-size:
+    100% 100%,
+    8px 8px;
+  background-position:
+    0 0,
+    0 0;
+}
+
+.toolbar-gradient-preset-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  text-align: left;
 }
 
 .gradient-preview-chip {

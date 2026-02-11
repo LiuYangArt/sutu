@@ -41,7 +41,7 @@ export function StopEditor({
       <h4>Stops</h4>
 
       {opacityStop && (
-        <div className="stop-editor-grid">
+        <div className="stop-editor-grid opacity-grid">
           <span className="stop-editor-label">Opacity</span>
           <input
             type="number"
@@ -80,7 +80,7 @@ export function StopEditor({
       )}
 
       {colorStop && (
-        <div className="stop-editor-grid">
+        <div className="stop-editor-grid color-grid">
           <span className="stop-editor-label">Source</span>
           <select
             value={colorStop.source}
