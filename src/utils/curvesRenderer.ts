@@ -36,6 +36,19 @@ function readLut(lut: Uint8Array, index: number): number {
   return lut[index] ?? index;
 }
 
+function mapChannelsThenRgb(
+  luts: CurvesLuts,
+  r: number,
+  g: number,
+  b: number
+): [number, number, number] {
+  const channelR = readLut(luts.red, r);
+  const channelG = readLut(luts.green, g);
+  const channelB = readLut(luts.blue, b);
+
+  return [readLut(luts.rgb, channelR), readLut(luts.rgb, channelG), readLut(luts.rgb, channelB)];
+}
+
 function sampleLutLinear(lut: Uint8Array, input: number): number {
   const clampedInput = clamp(input, CHANNEL_MIN, CHANNEL_MAX);
   const low = Math.floor(clampedInput);
@@ -371,13 +384,7 @@ export function applyCurvesToImageData(args: {
     const srcG = data[i + 1] ?? 0;
     const srcB = data[i + 2] ?? 0;
 
-    const rgbR = readLut(luts.rgb, srcR);
-    const rgbG = readLut(luts.rgb, srcG);
-    const rgbB = readLut(luts.rgb, srcB);
-
-    const mappedR = readLut(luts.red, rgbR);
-    const mappedG = readLut(luts.green, rgbG);
-    const mappedB = readLut(luts.blue, rgbB);
+    const [mappedR, mappedG, mappedB] = mapChannelsThenRgb(luts, srcR, srcG, srcB);
 
     if (maskWeight >= 1) {
       data[i] = mappedR;

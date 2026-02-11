@@ -5,11 +5,35 @@ function createImageDataFromRgba(width: number, height: number, rgba: number[]):
   return new ImageData(new Uint8ClampedArray(rgba), width, height);
 }
 
+function applyCurvesToSinglePixel(
+  color: [number, number, number],
+  luts: {
+    rgb: Uint8Array;
+    red: Uint8Array;
+    green: Uint8Array;
+    blue: Uint8Array;
+  }
+): [number, number, number] {
+  const result = applyCurvesToImageData({
+    baseImageData: createImageDataFromRgba(1, 1, [color[0], color[1], color[2], 255]),
+    luts,
+  });
+  return [result.data[0] ?? 0, result.data[1] ?? 0, result.data[2] ?? 0];
+}
+
 function createShiftLut(offset: number): Uint8Array {
   const lut = createIdentityLut();
   for (let i = 0; i < lut.length; i += 1) {
     const mapped = Math.max(0, Math.min(255, i + offset));
     lut[i] = mapped;
+  }
+  return lut;
+}
+
+function createInvertLut(): Uint8Array {
+  const lut = createIdentityLut();
+  for (let i = 0; i < lut.length; i += 1) {
+    lut[i] = 255 - i;
   }
   return lut;
 }
@@ -20,6 +44,16 @@ function hexToRgb(hex: string): [number, number, number] {
   const g = Number.parseInt(normalized.slice(2, 4), 16);
   const b = Number.parseInt(normalized.slice(4, 6), 16);
   return [r, g, b];
+}
+
+function expectRgbWithinTolerance(
+  actual: [number, number, number],
+  expected: [number, number, number],
+  tolerance: number
+): void {
+  expect(Math.abs(actual[0] - expected[0])).toBeLessThanOrEqual(tolerance);
+  expect(Math.abs(actual[1] - expected[1])).toBeLessThanOrEqual(tolerance);
+  expect(Math.abs(actual[2] - expected[2])).toBeLessThanOrEqual(tolerance);
 }
 
 describe('curvesRenderer', () => {
@@ -82,6 +116,50 @@ describe('curvesRenderer', () => {
     }
   });
 
+  it('matches sampled Photoshop stacked RGB + channel outputs', () => {
+    const identity = createIdentityLut();
+    const cases = [
+      {
+        before: '#cc7d7d',
+        after: '#a6c1c1',
+        tolerance: 0,
+        luts: {
+          rgb: buildCurveLut([{ x: 102, y: 168 }]),
+          red: buildCurveLut([{ x: 176, y: 34 }]),
+          green: identity,
+          blue: identity,
+        },
+      },
+      {
+        before: '#33322e',
+        after: '#0b440d',
+        tolerance: 2,
+        luts: {
+          rgb: buildCurveLut([{ x: 184, y: 121 }]),
+          red: identity,
+          green: buildCurveLut([{ x: 57, y: 156 }]),
+          blue: identity,
+        },
+      },
+      {
+        before: '#ee3d98',
+        after: '#fe716f',
+        tolerance: 0,
+        luts: {
+          rgb: buildCurveLut([{ x: 128, y: 206 }]),
+          red: identity,
+          green: identity,
+          blue: buildCurveLut([{ x: 150, y: 57 }]),
+        },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const mapped = applyCurvesToSinglePixel(hexToRgb(testCase.before), testCase.luts);
+      expectRgbWithinTolerance(mapped, hexToRgb(testCase.after), testCase.tolerance);
+    }
+  });
+
   it('identity LUT keeps pixels unchanged', () => {
     const base = createImageDataFromRgba(2, 1, [10, 20, 30, 255, 200, 120, 40, 128]);
     const identity = createIdentityLut();
@@ -98,10 +176,10 @@ describe('curvesRenderer', () => {
     expect(Array.from(result.data)).toEqual(Array.from(base.data));
   });
 
-  it('applies rgb LUT before per-channel LUT', () => {
+  it('applies per-channel LUT before rgb LUT', () => {
     const base = createImageDataFromRgba(1, 1, [10, 30, 40, 255]);
     const rgb = createShiftLut(10);
-    const red = createShiftLut(5);
+    const red = createInvertLut();
     const green = createIdentityLut();
     const blue = createIdentityLut();
 
@@ -110,8 +188,8 @@ describe('curvesRenderer', () => {
       luts: { rgb, red, green, blue },
     });
 
-    // red = redLut(rgbLut(10)) = 25
-    expect(result.data[0]).toBe(25);
+    // red = rgbLut(redLut(10)) = rgbLut(245) = 255
+    expect(result.data[0]).toBe(255);
     expect(result.data[1]).toBe(40);
     expect(result.data[2]).toBe(50);
     expect(result.data[3]).toBe(255);

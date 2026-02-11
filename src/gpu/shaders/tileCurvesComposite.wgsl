@@ -52,13 +52,13 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     return dst;
   }
 
-  let rgb_r = sample_lut(lut_rgb, dst.r);
-  let rgb_g = sample_lut(lut_rgb, dst.g);
-  let rgb_b = sample_lut(lut_rgb, dst.b);
+  let channel_r = sample_lut(lut_red, dst.r);
+  let channel_g = sample_lut(lut_green, dst.g);
+  let channel_b = sample_lut(lut_blue, dst.b);
   let mapped = vec3<f32>(
-    sample_lut(lut_red, rgb_r),
-    sample_lut(lut_green, rgb_g),
-    sample_lut(lut_blue, rgb_b)
+    sample_lut(lut_rgb, channel_r),
+    sample_lut(lut_rgb, channel_g),
+    sample_lut(lut_rgb, channel_b)
   );
 
   let mixed = mix(dst.rgb, mapped, clamp(selection, 0.0, 1.0));

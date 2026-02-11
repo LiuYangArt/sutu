@@ -82,3 +82,33 @@
 1. 为 GPU 曲线补充端到端回归（重点验证 commit 后 CPU 读回一致性）。  
 2. 在 Debug 面板暴露曲线渲染路径状态（gpu/cpu）与失败回退计数。  
 3. 若后续支持多层曲线，沿用“会话锁定 + 单条历史提交”的提交语义。
+
+## 补充复盘（RGB + 单通道叠加，2026-02-11）
+
+### 1. 现象
+
+在 RGB 与单通道（R/G/B）同时存在控制点时，单独看 RGB 或单通道都接近 PS，但叠加结果与 PS 偏差明显。
+
+### 2. 根因
+
+CPU 与 GPU 路径都采用了 `RGB -> 单通道` 的映射顺序，而 PS 实测更接近 `单通道 -> RGB`。  
+顺序不同会导致叠加曲线在中高斜率区域出现系统性偏差，且 GPU/CPU 会一致“错”。
+
+### 3. 修复
+
+1. CPU 曲线应用顺序改为 `red/green/blue LUT` 先作用，再应用 `rgb LUT`。  
+2. GPU `tileCurvesComposite.wgsl` 同步改为同一顺序，避免预览与提交不一致。  
+3. 新增叠加场景回归样本：`RGB+Red`、`RGB+Green`、`RGB+Blue` 三组（其中一组保留 ±2 容差）。  
+
+### 4. 新经验
+
+1. 仅验证 `RGB-only` 或 `Channel-only` 不能证明“叠加语义”正确。  
+2. 曲线对齐必须有“组合样本集”，至少覆盖：
+   - `RGB-only`
+   - `R-only / G-only / B-only`
+   - `RGB+R / RGB+G / RGB+B`
+3. 样本采集需同时记录：
+   - 通道名（避免误把 Blue 记成 Green）
+   - 控制点 Input/Output
+   - Before/After 颜色值（同一像素）
+   - Curves 模式（Light 0-255）
