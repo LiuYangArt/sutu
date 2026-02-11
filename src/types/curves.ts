@@ -30,6 +30,38 @@ export interface CurvesPreviewPayload {
   blueLut: number[];
 }
 
+export type CurvesRuntimeErrorCode =
+  | 'GPU_PREVIEW_FAILED'
+  | 'GPU_PREVIEW_HALTED'
+  | 'GPU_COMMIT_FAILED'
+  | 'CPU_COMMIT_FAILED'
+  | 'SESSION_INVALID';
+
+export interface CurvesRuntimeError {
+  code: CurvesRuntimeErrorCode;
+  stage: 'preview' | 'commit';
+  message: string;
+  detail?: string;
+}
+
+export interface CurvesPreviewResult {
+  ok: boolean;
+  renderMode: 'gpu' | 'cpu';
+  halted: boolean;
+  error?: CurvesRuntimeError;
+}
+
+export interface CurvesCommitRequest {
+  forceCpu?: boolean;
+}
+
+export interface CurvesCommitResult {
+  ok: boolean;
+  appliedMode?: 'gpu' | 'cpu';
+  error?: CurvesRuntimeError;
+  canForceCpuCommit: boolean;
+}
+
 export interface CurvesSessionInfo {
   sessionId: string;
   layerId: string;

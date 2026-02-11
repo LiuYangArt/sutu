@@ -3,9 +3,13 @@ import { Redo2, Undo2 } from 'lucide-react';
 import { usePanelStore } from '@/stores/panel';
 import type {
   CurvePoint,
+  CurvesCommitRequest,
+  CurvesCommitResult,
   CurvesChannel,
   CurvesPointsByChannel,
+  CurvesPreviewResult,
   CurvesPreviewPayload,
+  CurvesRuntimeError,
   CurvesSessionInfo,
 } from '@/types/curves';
 import { buildCurveEvaluator, buildCurveLut } from '@/utils/curvesRenderer';
@@ -21,8 +25,12 @@ const CHANNEL_MAX = 255;
 
 type CurvesBridgeWindow = Window & {
   __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
-  __canvasCurvesPreview?: (sessionId: string, payload: CurvesPreviewPayload) => boolean;
-  __canvasCurvesCommit?: (sessionId: string, payload: CurvesPreviewPayload) => Promise<boolean>;
+  __canvasCurvesPreview?: (sessionId: string, payload: CurvesPreviewPayload) => CurvesPreviewResult;
+  __canvasCurvesCommit?: (
+    sessionId: string,
+    payload: CurvesPreviewPayload,
+    request?: CurvesCommitRequest
+  ) => Promise<CurvesCommitResult>;
   __canvasCurvesCancel?: (sessionId: string) => void;
 };
 
@@ -213,6 +221,13 @@ function buildPathFromEvaluator(evaluator: (input: number) => number): string {
   return path;
 }
 
+function formatCurvesRuntimeError(error: CurvesRuntimeError | undefined, fallback: string): string {
+  if (!error) return fallback;
+  const phaseLabel = error.stage === 'preview' ? '预览' : '提交';
+  const detail = error.detail ? `；详情：${error.detail}` : '';
+  return `GPU 曲线失败（${phaseLabel}）：${error.message} [${error.code}]${detail}`;
+}
+
 export function CurvesPanel(): JSX.Element {
   const closePanel = usePanelStore((s) => s.closePanel);
   const pointIdRef = useRef(0);
@@ -249,6 +264,8 @@ export function CurvesPanel(): JSX.Element {
   );
   const [sessionInfo, setSessionInfo] = useState<CurvesSessionInfo | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [allowForceCpuCommit, setAllowForceCpuCommit] = useState(false);
+  const [confirmForceCpuCommit, setConfirmForceCpuCommit] = useState(false);
   const [inputValueDraft, setInputValueDraft] = useState('');
   const [outputValueDraft, setOutputValueDraft] = useState('');
   const [, setHistoryVersion] = useState(0);
@@ -351,7 +368,13 @@ export function CurvesPanel(): JSX.Element {
       const latestPayload = latestPayloadRef.current;
       if (!latestPayload) return;
       const win = window as CurvesBridgeWindow;
-      win.__canvasCurvesPreview?.(sessionId, latestPayload);
+      const result = win.__canvasCurvesPreview?.(sessionId, latestPayload);
+      if (!result) return;
+      if (!result.ok && result.error?.stage === 'preview') {
+        setErrorText(formatCurvesRuntimeError(result.error, 'GPU 曲线预览失败，预览已停止。'));
+        setAllowForceCpuCommit(false);
+        setConfirmForceCpuCommit(false);
+      }
     });
   }, []);
 
@@ -373,6 +396,8 @@ export function CurvesPanel(): JSX.Element {
       sessionIdRef.current = null;
       latestPayloadRef.current = null;
       setSessionInfo(null);
+      setAllowForceCpuCommit(false);
+      setConfirmForceCpuCommit(false);
     },
     [stopPreviewFrame]
   );
@@ -387,6 +412,8 @@ export function CurvesPanel(): JSX.Element {
     sessionIdRef.current = info.sessionId;
     setSessionInfo(info);
     setErrorText(null);
+    setAllowForceCpuCommit(false);
+    setConfirmForceCpuCommit(false);
     return () => {
       const shouldCancel = !committedRef.current;
       endSession(shouldCancel);
@@ -414,6 +441,7 @@ export function CurvesPanel(): JSX.Element {
 
   useEffect(() => {
     latestPayloadRef.current = curvesPayload;
+    setConfirmForceCpuCommit(false);
     requestPreviewFrame();
   }, [curvesPayload, requestPreviewFrame]);
 
@@ -733,15 +761,40 @@ export function CurvesPanel(): JSX.Element {
     const sessionId = sessionIdRef.current;
     if (!sessionId) return;
     const win = window as CurvesBridgeWindow;
-    const ok = (await win.__canvasCurvesCommit?.(sessionId, curvesPayload)) ?? false;
-    if (!ok) {
-      setErrorText('曲线提交失败，已保持当前图像不变。');
+    const result = await win.__canvasCurvesCommit?.(sessionId, curvesPayload);
+    if (!result?.ok) {
+      setAllowForceCpuCommit(Boolean(result?.canForceCpuCommit));
+      setConfirmForceCpuCommit(false);
+      setErrorText(formatCurvesRuntimeError(result?.error, '曲线提交失败，已保持当前图像不变。'));
       return;
     }
     committedRef.current = true;
     endSession(false);
     closePanel('curves-panel');
   }, [closePanel, curvesPayload, endSession]);
+
+  const handleForceCpuCommit = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || !allowForceCpuCommit) return;
+    if (!confirmForceCpuCommit) {
+      setConfirmForceCpuCommit(true);
+      setErrorText('GPU 提交已失败。再次点击“使用 CPU 提交”以确认执行应急提交。');
+      return;
+    }
+
+    const win = window as CurvesBridgeWindow;
+    const result = await win.__canvasCurvesCommit?.(sessionId, curvesPayload, { forceCpu: true });
+    if (!result?.ok) {
+      setAllowForceCpuCommit(Boolean(result?.canForceCpuCommit));
+      setConfirmForceCpuCommit(false);
+      setErrorText(formatCurvesRuntimeError(result?.error, 'CPU 曲线提交失败，图像未修改。'));
+      return;
+    }
+
+    committedRef.current = true;
+    endSession(false);
+    closePanel('curves-panel');
+  }, [allowForceCpuCommit, closePanel, confirmForceCpuCommit, curvesPayload, endSession]);
 
   const activeCurvePath = useMemo(
     () => buildPathFromEvaluator(evaluators[selectedChannel]),
@@ -939,6 +992,15 @@ export function CurvesPanel(): JSX.Element {
         >
           Cancel
         </button>
+        {allowForceCpuCommit && (
+          <button
+            type="button"
+            className="curves-panel__btn curves-panel__btn--ghost"
+            onClick={() => void handleForceCpuCommit()}
+          >
+            {confirmForceCpuCommit ? '确认使用 CPU 提交' : '使用 CPU 提交'}
+          </button>
+        )}
         <button
           type="button"
           className="curves-panel__btn curves-panel__btn--primary"

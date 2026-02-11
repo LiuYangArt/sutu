@@ -46,7 +46,14 @@ import {
   type GpuBrushCommitMetricsSnapshot,
   type GpuStrokeCommitResult,
 } from '@/gpu';
-import type { CurvesPreviewPayload, CurvesSessionInfo } from '@/types/curves';
+import type {
+  CurvesCommitRequest,
+  CurvesCommitResult,
+  CurvesPreviewPayload,
+  CurvesPreviewResult,
+  CurvesRuntimeError,
+  CurvesSessionInfo,
+} from '@/types/curves';
 import {
   applyCurvesToImageData,
   computeLumaHistogram,
@@ -54,6 +61,7 @@ import {
 } from '@/utils/curvesRenderer';
 import {
   bumpLayerRevisions,
+  isGpuCurvesPathAvailable,
   isGpuHistoryPathAvailable,
   isGpuLayerStackPathAvailable,
   reconcileLayerRevisionMap,
@@ -185,8 +193,15 @@ declare global {
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
     __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
-    __canvasCurvesPreview?: (sessionId: string, payload: CurvesPreviewPayload) => boolean;
-    __canvasCurvesCommit?: (sessionId: string, payload: CurvesPreviewPayload) => Promise<boolean>;
+    __canvasCurvesPreview?: (
+      sessionId: string,
+      payload: CurvesPreviewPayload
+    ) => CurvesPreviewResult;
+    __canvasCurvesCommit?: (
+      sessionId: string,
+      payload: CurvesPreviewPayload,
+      request?: CurvesCommitRequest
+    ) => Promise<CurvesCommitResult>;
     __canvasCurvesCancel?: (sessionId: string) => void;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
@@ -214,7 +229,7 @@ const GPU_LAYER_FORMAT: GPUTextureFormat = 'rgba8unorm';
 const MIN_GPU_HISTORY_BUDGET_BYTES = 256 * 1024 * 1024;
 const MAX_GPU_HISTORY_BUDGET_BYTES = 1024 * 1024 * 1024;
 const GPU_HISTORY_BUDGET_RATIO = 0.2;
-const ENABLE_GPU_CURVES = false;
+const ENABLE_GPU_CURVES = true;
 
 interface CompositeClipRect {
   left: number;
@@ -246,6 +261,9 @@ interface CurvesSessionState {
   previewCanvas: HTMLCanvasElement;
   previewRafId: number | null;
   pendingPayload: CurvesPreviewPayload | null;
+  gpuError: CurvesRuntimeError | null;
+  previewHalted: boolean;
+  lastPreviewResult: CurvesPreviewResult;
 }
 
 function isLineTool(tool: ToolType | null): boolean {
@@ -273,6 +291,55 @@ function resolveGpuHistoryBudgetBytes(residencyBudgetBytes: number): number {
       Math.floor(residencyBudgetBytes * GPU_HISTORY_BUDGET_RATIO)
     )
   );
+}
+
+function errorDetailText(error: unknown): string | undefined {
+  if (error instanceof Error) return error.stack ?? error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function createCurvesRuntimeError(args: {
+  code: CurvesRuntimeError['code'];
+  stage: CurvesRuntimeError['stage'];
+  message: string;
+  error?: unknown;
+}): CurvesRuntimeError {
+  return {
+    code: args.code,
+    stage: args.stage,
+    message: args.message,
+    detail: args.error === undefined ? undefined : errorDetailText(args.error),
+  };
+}
+
+function createCurvesSessionInvalidPreviewResult(): CurvesPreviewResult {
+  return {
+    ok: false,
+    renderMode: 'cpu',
+    halted: true,
+    error: {
+      code: 'SESSION_INVALID',
+      stage: 'preview',
+      message: '曲线会话不存在或已失效。',
+    },
+  };
+}
+
+function createCurvesSessionInvalidCommitResult(): CurvesCommitResult {
+  return {
+    ok: false,
+    canForceCpuCommit: false,
+    error: {
+      code: 'SESSION_INVALID',
+      stage: 'commit',
+      message: '曲线会话不存在或已失效。',
+    },
+  };
 }
 
 function parseTrackedTileCoordKeys(tileKeys: Set<string>): Array<{ x: number; y: number }> {
@@ -355,6 +422,7 @@ export function Canvas() {
   } | null>(null);
   const lastPointerClientPosRef = useRef<{ x: number; y: number } | null>(null);
   const curvesSessionRef = useRef<CurvesSessionState | null>(null);
+  const disposeCurvesSessionOnUnmountRef = useRef<() => void>(() => {});
   const finalizeFloatingSelectionSessionRef = useRef<(reason?: string) => void>(() => undefined);
   const hasFloatingSelectionSessionRef = useRef<() => boolean>(() => false);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
@@ -629,6 +697,15 @@ export function Canvas() {
         layers: layers.map((layer) => ({ visible: layer.visible, blendMode: layer.blendMode })),
       }),
     [brushBackend, gpuAvailable, currentTool, layers]
+  );
+
+  const gpuCurvesPathAvailable = useMemo(
+    () =>
+      isGpuCurvesPathAvailable({
+        gpuAvailable,
+        layers: layers.map((layer) => ({ visible: layer.visible, blendMode: layer.blendMode })),
+      }),
+    [gpuAvailable, layers]
   );
 
   const gpuDisplayActive = gpuLayerStackPathAvailable;
@@ -2182,10 +2259,14 @@ export function Canvas() {
         renderGpuFrame(false);
         return;
       }
-      if (!gpuDisplayActive) return;
+      if (!gpuDisplayActive) {
+        throw new Error('GPU display path inactive');
+      }
       const gpuRenderer = gpuRendererRef.current;
       const renderer = layerRendererRef.current;
-      if (!gpuRenderer || !renderer) return;
+      if (!gpuRenderer || !renderer) {
+        throw new Error('GPU renderer unavailable');
+      }
 
       const visibleGpuLayers = getVisibleGpuRenderableLayers();
       for (const visibleLayer of visibleGpuLayers) {
@@ -2232,20 +2313,53 @@ export function Canvas() {
     session.previewRafId = null;
     const payload = session.pendingPayload;
     if (!payload) return;
+    session.pendingPayload = null;
+
+    if (session.previewHalted) {
+      return;
+    }
 
     if (session.renderMode === 'gpu') {
-      renderCurvesPreviewGpu(session, payload);
+      try {
+        renderCurvesPreviewGpu(session, payload);
+        session.gpuError = null;
+        session.lastPreviewResult = {
+          ok: true,
+          renderMode: 'gpu',
+          halted: false,
+        };
+      } catch (error) {
+        const runtimeError = createCurvesRuntimeError({
+          code: 'GPU_PREVIEW_FAILED',
+          stage: 'preview',
+          message: 'GPU 曲线预览失败，预览已停止。',
+          error,
+        });
+        session.gpuError = runtimeError;
+        session.previewHalted = true;
+        session.lastPreviewResult = {
+          ok: false,
+          renderMode: 'gpu',
+          halted: true,
+          error: runtimeError,
+        };
+        console.error('[CurvesGpuFailFast]', {
+          sessionId: session.sessionId,
+          layerId: session.layerId,
+          stage: 'preview',
+          code: runtimeError.code,
+          error,
+        });
+      }
       return;
     }
     renderCurvesPreviewCpu(session, payload);
+    session.lastPreviewResult = {
+      ok: true,
+      renderMode: 'cpu',
+      halted: false,
+    };
   }, [renderCurvesPreviewCpu, renderCurvesPreviewGpu]);
-
-  const scheduleCurvesPreview = useCallback(() => {
-    const session = curvesSessionRef.current;
-    if (!session) return;
-    if (session.previewRafId !== null) return;
-    session.previewRafId = window.requestAnimationFrame(runCurvesPreviewFrame);
-  }, [runCurvesPreviewFrame]);
 
   const cancelCurvesPreviewSchedule = useCallback(() => {
     const session = curvesSessionRef.current;
@@ -2258,15 +2372,49 @@ export function Canvas() {
   }, []);
 
   const commitCurvesGpu = useCallback(
-    async (session: CurvesSessionState, payload: CurvesPreviewPayload): Promise<boolean> => {
+    async (
+      session: CurvesSessionState,
+      payload: CurvesPreviewPayload
+    ): Promise<CurvesCommitResult> => {
       const gpuRenderer = gpuRendererRef.current;
       const renderer = layerRendererRef.current;
-      if (!gpuRenderer || !renderer) return false;
+      if (!gpuRenderer || !renderer) {
+        return {
+          ok: false,
+          canForceCpuCommit: true,
+          error: createCurvesRuntimeError({
+            code: 'GPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: 'GPU 提交前置条件不满足。',
+          }),
+        };
+      }
+
       const layerState = layers.find((layer) => layer.id === session.layerId);
-      if (!layerState || layerState.locked || !layerState.visible) return false;
+      if (!layerState || layerState.locked || !layerState.visible) {
+        return {
+          ok: false,
+          canForceCpuCommit: false,
+          error: createCurvesRuntimeError({
+            code: 'GPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: '当前图层不可提交（锁定或不可见）。',
+          }),
+        };
+      }
 
       const layer = renderer.getLayer(session.layerId);
-      if (!layer) return false;
+      if (!layer) {
+        return {
+          ok: false,
+          canForceCpuCommit: false,
+          error: createCurvesRuntimeError({
+            code: 'GPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: '目标图层不存在。',
+          }),
+        };
+      }
 
       onBeforeCanvasMutation?.();
       await captureBeforeImage(true);
@@ -2318,7 +2466,15 @@ export function Canvas() {
 
         if (committedTiles.length === 0) {
           discardCapturedStrokeHistory();
-          return false;
+          return {
+            ok: false,
+            canForceCpuCommit: true,
+            error: createCurvesRuntimeError({
+              code: 'GPU_COMMIT_FAILED',
+              stage: 'commit',
+              message: 'GPU 曲线提交未生成有效 tile。',
+            }),
+          };
         }
 
         if (readbackMode === 'enabled') {
@@ -2335,14 +2491,30 @@ export function Canvas() {
         saveStrokeToHistory();
         updateThumbnail(session.layerId);
         compositeAndRender();
-        return true;
+        return {
+          ok: true,
+          appliedMode: 'gpu',
+          canForceCpuCommit: false,
+        };
       } catch (error) {
         discardCapturedStrokeHistory();
-        console.warn('[CurvesGpu] Failed to commit GPU curves', {
+        console.error('[CurvesGpuFailFast]', {
+          sessionId: session.sessionId,
           layerId: session.layerId,
+          stage: 'commit',
+          code: 'GPU_COMMIT_FAILED',
           error,
         });
-        return false;
+        return {
+          ok: false,
+          canForceCpuCommit: true,
+          error: createCurvesRuntimeError({
+            code: 'GPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: 'GPU 曲线提交失败。',
+            error,
+          }),
+        };
       } finally {
         finalizeHistory();
         clearPendingGpuHistoryEntry();
@@ -2413,7 +2585,7 @@ export function Canvas() {
     const previewCanvas = document.createElement('canvas');
     previewCanvas.width = width;
     previewCanvas.height = height;
-    const renderMode: 'gpu' | 'cpu' = ENABLE_GPU_CURVES && gpuDisplayActive ? 'gpu' : 'cpu';
+    const renderMode: 'gpu' | 'cpu' = ENABLE_GPU_CURVES && gpuCurvesPathAvailable ? 'gpu' : 'cpu';
     const sessionId = createHistoryEntryId('curves');
     const histogram = computeLumaHistogram(baseImageData, selectionMaskSnapshot);
 
@@ -2428,6 +2600,13 @@ export function Canvas() {
       previewCanvas,
       previewRafId: null,
       pendingPayload: null,
+      gpuError: null,
+      previewHalted: false,
+      lastPreviewResult: {
+        ok: true,
+        renderMode,
+        halted: false,
+      },
     };
 
     return {
@@ -2437,58 +2616,165 @@ export function Canvas() {
       histogram,
       renderMode,
     };
-  }, [activeLayerId, disposeCurvesSession, gpuDisplayActive, height, layers, width]);
+  }, [activeLayerId, disposeCurvesSession, gpuCurvesPathAvailable, height, layers, width]);
 
   const previewCurvesSession = useCallback(
-    (sessionId: string, payload: CurvesPreviewPayload): boolean => {
+    (sessionId: string, payload: CurvesPreviewPayload): CurvesPreviewResult => {
       const session = curvesSessionRef.current;
-      if (!session || session.sessionId !== sessionId) return false;
+      if (!session || session.sessionId !== sessionId) {
+        console.error('[CurvesGpuFailFast]', {
+          stage: 'preview',
+          code: 'SESSION_INVALID',
+          requestedSessionId: sessionId,
+          activeSessionId: session?.sessionId ?? null,
+        });
+        return createCurvesSessionInvalidPreviewResult();
+      }
+
+      if (session.previewHalted) {
+        const haltedError =
+          session.gpuError ??
+          createCurvesRuntimeError({
+            code: 'GPU_PREVIEW_HALTED',
+            stage: 'preview',
+            message: 'GPU 曲线预览已停止，请先处理错误。',
+          });
+        session.lastPreviewResult = {
+          ok: false,
+          renderMode: session.renderMode,
+          halted: true,
+          error: haltedError,
+        };
+        return session.lastPreviewResult;
+      }
+
       session.pendingPayload = payload;
-      scheduleCurvesPreview();
-      return true;
+      runCurvesPreviewFrame();
+      return session.lastPreviewResult;
     },
-    [scheduleCurvesPreview]
+    [runCurvesPreviewFrame]
   );
 
   const commitCurvesSession = useCallback(
-    async (sessionId: string, payload: CurvesPreviewPayload): Promise<boolean> => {
+    async (
+      sessionId: string,
+      payload: CurvesPreviewPayload,
+      request?: CurvesCommitRequest
+    ): Promise<CurvesCommitResult> => {
       const session = curvesSessionRef.current;
-      if (!session || session.sessionId !== sessionId) return false;
+      if (!session || session.sessionId !== sessionId) {
+        console.error('[CurvesGpuFailFast]', {
+          stage: 'commit',
+          code: 'SESSION_INVALID',
+          requestedSessionId: sessionId,
+          activeSessionId: session?.sessionId ?? null,
+        });
+        return createCurvesSessionInvalidCommitResult();
+      }
 
       cancelCurvesPreviewSchedule();
       clearCurvesPreviewVisual();
+      const forceCpu = request?.forceCpu === true;
 
-      if (session.renderMode === 'gpu') {
-        const gpuCommitted = await commitCurvesGpu(session, payload);
-        if (gpuCommitted) {
+      if (session.renderMode === 'gpu' && !forceCpu) {
+        let gpuResult: CurvesCommitResult;
+        try {
+          gpuResult = await commitCurvesGpu(session, payload);
+        } catch (error) {
+          console.error('[CurvesGpuFailFast]', {
+            sessionId: session.sessionId,
+            layerId: session.layerId,
+            stage: 'commit',
+            code: 'GPU_COMMIT_FAILED',
+            error,
+          });
+          gpuResult = {
+            ok: false,
+            canForceCpuCommit: true,
+            error: createCurvesRuntimeError({
+              code: 'GPU_COMMIT_FAILED',
+              stage: 'commit',
+              message: 'GPU 曲线提交失败。',
+              error,
+            }),
+          };
+        }
+        if (gpuResult.ok) {
           curvesSessionRef.current = null;
           restoreGpuSelectionMaskFromStore();
-          return true;
+          return gpuResult;
         }
+        session.gpuError = gpuResult.error ?? null;
+        session.previewHalted = true;
+        return gpuResult;
       }
 
       const renderer = layerRendererRef.current;
-      if (!renderer) return false;
+      if (!renderer) {
+        return {
+          ok: false,
+          canForceCpuCommit: false,
+          error: createCurvesRuntimeError({
+            code: 'CPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: 'CPU 提交前置条件不满足。',
+          }),
+        };
+      }
       const layerState = layers.find((layer) => layer.id === session.layerId);
-      if (!layerState || layerState.locked || !layerState.visible) return false;
+      if (!layerState || layerState.locked || !layerState.visible) {
+        return {
+          ok: false,
+          canForceCpuCommit: false,
+          error: createCurvesRuntimeError({
+            code: 'CPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: '当前图层不可提交（锁定或不可见）。',
+          }),
+        };
+      }
 
-      onBeforeCanvasMutation?.();
-      await captureBeforeImage(false);
-      const luts = curvesPayloadToLuts(payload);
-      const nextImage = applyCurvesToImageData({
-        baseImageData: session.baseImageData,
-        luts,
-        selectionMask: session.selectionMask,
-      });
-      renderer.setLayerImageData(session.layerId, nextImage);
-      saveStrokeToHistory();
-      markLayerDirty(session.layerId);
-      updateThumbnail(session.layerId);
-      compositeAndRender();
+      try {
+        onBeforeCanvasMutation?.();
+        await captureBeforeImage(false);
+        const luts = curvesPayloadToLuts(payload);
+        const nextImage = applyCurvesToImageData({
+          baseImageData: session.baseImageData,
+          luts,
+          selectionMask: session.selectionMask,
+        });
+        renderer.setLayerImageData(session.layerId, nextImage);
+        saveStrokeToHistory();
+        markLayerDirty(session.layerId);
+        updateThumbnail(session.layerId);
+        compositeAndRender();
+      } catch (error) {
+        console.error('[CurvesGpuFailFast]', {
+          sessionId: session.sessionId,
+          layerId: session.layerId,
+          stage: 'commit',
+          code: 'CPU_COMMIT_FAILED',
+          error,
+        });
+        return {
+          ok: false,
+          canForceCpuCommit: false,
+          error: createCurvesRuntimeError({
+            code: 'CPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: 'CPU 曲线提交失败。',
+            error,
+          }),
+        };
+      }
 
       curvesSessionRef.current = null;
       restoreGpuSelectionMaskFromStore();
-      return true;
+      return {
+        ok: true,
+        appliedMode: 'cpu',
+        canForceCpuCommit: false,
+      };
     },
     [
       cancelCurvesPreviewSchedule,
@@ -2515,6 +2801,10 @@ export function Canvas() {
   );
 
   useEffect(() => {
+    disposeCurvesSessionOnUnmountRef.current = disposeCurvesSession;
+  }, [disposeCurvesSession]);
+
+  useEffect(() => {
     window.__canvasCurvesBeginSession = beginCurvesSession;
     window.__canvasCurvesPreview = previewCurvesSession;
     window.__canvasCurvesCommit = commitCurvesSession;
@@ -2524,15 +2814,14 @@ export function Canvas() {
       delete window.__canvasCurvesPreview;
       delete window.__canvasCurvesCommit;
       delete window.__canvasCurvesCancel;
-      disposeCurvesSession();
     };
-  }, [
-    beginCurvesSession,
-    previewCurvesSession,
-    commitCurvesSession,
-    cancelCurvesSession,
-    disposeCurvesSession,
-  ]);
+  }, [beginCurvesSession, previewCurvesSession, commitCurvesSession, cancelCurvesSession]);
+
+  useEffect(() => {
+    return () => {
+      disposeCurvesSessionOnUnmountRef.current();
+    };
+  }, []);
 
   const {
     handleGradientPointerDown,

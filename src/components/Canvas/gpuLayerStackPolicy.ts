@@ -43,6 +43,14 @@ export function isGpuLayerBlendModeM3(blendMode: BlendMode): blendMode is GpuLay
   return GPU_LAYER_BLEND_MODE_M3_SET.has(blendMode);
 }
 
+function hasSupportedVisibleLayerStack(layers: GpuLayerStackGateLayer[]): boolean {
+  const visibleLayers = layers.filter((layer) => layer.visible);
+  if (visibleLayers.length === 0) {
+    return false;
+  }
+  return visibleLayers.every((layer) => isGpuLayerBlendModeM3(layer.blendMode));
+}
+
 export function isGpuLayerStackPathAvailable(args: {
   brushBackend: string;
   gpuAvailable: boolean;
@@ -54,12 +62,18 @@ export function isGpuLayerStackPathAvailable(args: {
     return false;
   }
 
-  const visibleLayers = layers.filter((layer) => layer.visible);
-  if (visibleLayers.length === 0) {
+  return hasSupportedVisibleLayerStack(layers);
+}
+
+export function isGpuCurvesPathAvailable(args: {
+  gpuAvailable: boolean;
+  layers: GpuLayerStackGateLayer[];
+}): boolean {
+  const { gpuAvailable, layers } = args;
+  if (!gpuAvailable) {
     return false;
   }
-
-  return visibleLayers.every((layer) => isGpuLayerBlendModeM3(layer.blendMode));
+  return hasSupportedVisibleLayerStack(layers);
 }
 
 export function isGpuHistoryPathAvailable(args: {

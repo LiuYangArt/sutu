@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { CurvesPanel } from '../index';
+import type { CurvesCommitResult, CurvesPreviewResult } from '@/types/curves';
 
 type TestWindow = Window & {
   __canvasCurvesBeginSession?: () => {
@@ -10,8 +11,12 @@ type TestWindow = Window & {
     histogram: number[];
     renderMode: 'gpu' | 'cpu';
   } | null;
-  __canvasCurvesPreview?: (sessionId: string, payload: unknown) => boolean;
-  __canvasCurvesCommit?: (sessionId: string, payload: unknown) => Promise<boolean>;
+  __canvasCurvesPreview?: (sessionId: string, payload: unknown) => CurvesPreviewResult;
+  __canvasCurvesCommit?: (
+    sessionId: string,
+    payload: unknown,
+    request?: { forceCpu?: boolean }
+  ) => Promise<CurvesCommitResult>;
   __canvasCurvesCancel?: (sessionId: string) => void;
 };
 
@@ -40,8 +45,11 @@ describe('CurvesPanel', () => {
       renderMode: 'gpu' | 'cpu';
     } | null
   >();
-  const previewSpy = vi.fn<[string, unknown], boolean>();
-  const commitSpy = vi.fn<[string, unknown], Promise<boolean>>();
+  const previewSpy = vi.fn<[string, unknown], CurvesPreviewResult>();
+  const commitSpy = vi.fn<
+    [string, unknown, { forceCpu?: boolean }?],
+    Promise<CurvesCommitResult>
+  >();
   const cancelSpy = vi.fn<[string], void>();
 
   beforeEach(() => {
@@ -57,8 +65,16 @@ describe('CurvesPanel', () => {
       histogram: new Array(256).fill(0),
       renderMode: 'cpu',
     });
-    previewSpy.mockReturnValue(true);
-    commitSpy.mockResolvedValue(true);
+    previewSpy.mockReturnValue({
+      ok: true,
+      renderMode: 'cpu',
+      halted: false,
+    });
+    commitSpy.mockResolvedValue({
+      ok: true,
+      appliedMode: 'cpu',
+      canForceCpuCommit: false,
+    });
 
     (window as TestWindow).__canvasCurvesBeginSession = beginSpy;
     (window as TestWindow).__canvasCurvesPreview = previewSpy;
@@ -119,6 +135,83 @@ describe('CurvesPanel', () => {
       expect(commitSpy).toHaveBeenCalledTimes(1);
     });
     expect(commitSpy.mock.calls[0]?.[0]).toBe(sessionId);
+  });
+
+  it('GPU 预览失败时显示详细错误并停止自动降级提示', async () => {
+    previewSpy.mockReturnValue({
+      ok: false,
+      renderMode: 'gpu',
+      halted: true,
+      error: {
+        code: 'GPU_PREVIEW_FAILED',
+        stage: 'preview',
+        message: 'GPU 曲线预览失败，预览已停止。',
+      },
+    });
+
+    render(<CurvesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/GPU 曲线失败（预览）/)).toBeInTheDocument();
+      expect(screen.getByText(/\[GPU_PREVIEW_FAILED\]/)).toBeInTheDocument();
+    });
+  });
+
+  it('GPU 提交失败时不自动降级，并显示手动 CPU 提交入口', async () => {
+    commitSpy.mockResolvedValueOnce({
+      ok: false,
+      canForceCpuCommit: true,
+      error: {
+        code: 'GPU_COMMIT_FAILED',
+        stage: 'commit',
+        message: 'GPU 曲线提交失败。',
+      },
+    });
+
+    render(<CurvesPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/GPU 曲线失败（提交）/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '使用 CPU 提交' })).toBeInTheDocument();
+    });
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    expect(commitSpy.mock.calls[0]?.[2]).toBeUndefined();
+  });
+
+  it('手动二次确认后才触发 CPU 提交', async () => {
+    commitSpy.mockResolvedValueOnce({
+      ok: false,
+      canForceCpuCommit: true,
+      error: {
+        code: 'GPU_COMMIT_FAILED',
+        stage: 'commit',
+        message: 'GPU 曲线提交失败。',
+      },
+    });
+    commitSpy.mockResolvedValueOnce({
+      ok: true,
+      appliedMode: 'cpu',
+      canForceCpuCommit: false,
+    });
+
+    render(<CurvesPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '使用 CPU 提交' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '使用 CPU 提交' }));
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+
+    const confirmBtn = await screen.findByRole('button', { name: '确认使用 CPU 提交' });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(commitSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(commitSpy.mock.calls[1]?.[2]).toEqual({ forceCpu: true });
   });
 
   it('点击 Cancel 调用 Cancel bridge', () => {

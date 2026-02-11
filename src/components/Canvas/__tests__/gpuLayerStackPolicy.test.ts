@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bumpLayerRevisions,
+  isGpuCurvesPathAvailable,
   isGpuHistoryPathAvailable,
   isGpuLayerBlendModeM3,
   isGpuLayerStackPathAvailable,
@@ -65,6 +66,36 @@ describe('gpuLayerStackPolicy', () => {
       brushBackend: 'gpu',
       gpuAvailable: true,
       currentTool: 'brush',
+      layers: [{ visible: false, blendMode: 'normal' }],
+    });
+    expect(allowed).toBe(false);
+  });
+
+  it('allows curves GPU path when GPU is available and visible blend modes are supported', () => {
+    const allowed = isGpuCurvesPathAvailable({
+      gpuAvailable: true,
+      layers: [
+        { visible: true, blendMode: 'normal' },
+        { visible: true, blendMode: 'multiply' },
+      ],
+    });
+    expect(allowed).toBe(true);
+  });
+
+  it('rejects curves GPU path when visible blend mode is unsupported', () => {
+    const allowed = isGpuCurvesPathAvailable({
+      gpuAvailable: true,
+      layers: [
+        { visible: true, blendMode: 'normal' },
+        { visible: true, blendMode: 'unsupported-mode' as never },
+      ],
+    });
+    expect(allowed).toBe(false);
+  });
+
+  it('rejects curves GPU path when no visible layer exists', () => {
+    const allowed = isGpuCurvesPathAvailable({
+      gpuAvailable: true,
       layers: [{ visible: false, blendMode: 'normal' }],
     });
     expect(allowed).toBe(false);
