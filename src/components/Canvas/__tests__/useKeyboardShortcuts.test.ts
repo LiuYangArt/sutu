@@ -81,6 +81,35 @@ describe('useKeyboardShortcuts', () => {
     expect(handleRedo).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores repeated Ctrl+Z keydown to avoid accidental multi-undo', () => {
+    const handleUndo = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo,
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+      })
+    );
+
+    act(() => {
+      dispatchWindowKeyDown({ code: 'KeyZ', ctrlKey: true, repeat: false });
+      dispatchWindowKeyDown({ code: 'KeyZ', ctrlKey: true, repeat: true });
+    });
+
+    expect(handleUndo).toHaveBeenCalledTimes(1);
+  });
+
   it('handles Ctrl+J: duplicate active layer', () => {
     const handleDuplicateActiveLayer = vi.fn();
 

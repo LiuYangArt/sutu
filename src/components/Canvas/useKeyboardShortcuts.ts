@@ -113,10 +113,14 @@ export function useKeyboardShortcuts({
         ) {
           return;
         }
+        if (e.repeat) {
+          return;
+        }
 
         switch (e.code) {
           case 'KeyZ': {
             e.preventDefault();
+            e.stopPropagation();
             if (e.shiftKey) {
               handleRedo();
             } else {
@@ -126,6 +130,7 @@ export function useKeyboardShortcuts({
           }
           case 'KeyY': {
             e.preventDefault();
+            e.stopPropagation();
             handleRedo();
             return;
           }

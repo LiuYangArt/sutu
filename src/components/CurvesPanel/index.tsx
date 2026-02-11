@@ -553,6 +553,7 @@ export function CurvesPanel(): JSX.Element {
 
   useEffect(() => {
     const handlePanelKeyDown = (event: KeyboardEvent): void => {
+      if (!sessionIdRef.current) return;
       const modifierPressed = event.ctrlKey || event.metaKey;
       if (modifierPressed && !event.altKey) {
         if (event.code === 'KeyZ') {

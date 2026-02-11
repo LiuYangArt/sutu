@@ -229,3 +229,72 @@ RGB 视图叠加线误用了复合评估（`channel -> rgb`）来绘制路径，
 
 1. 新增 `src/gpu/layers/GpuCanvasRenderer.previewSelection.test.ts`，锁定预览路径必须启用 `preserveOutsideDirtyRegion + loadExistingTarget`。  
 2. 保留 `src/gpu/layers/tileCurvesCompositeShader.test.ts`，继续覆盖 selection 采样坐标夹取。
+
+## 补充复盘（GPU 曲线历史错位与撤销跨步，2026-02-11）
+
+### 1. 现象
+
+1. 曲线提交后 `Ctrl+Z` 首次无效（需再次触发才回撤）。  
+2. 在“选区变更 + 再次曲线提交”场景中，单次撤销可能表现为跨步回退。  
+3. 曲线历史条目在时间线上表现不稳定，和选区历史交错异常。
+
+### 2. 根因
+
+曲线 GPU 提交路径直接读取 `pendingGpuHistoryEntryIdRef` 作为历史 entryId。  
+该 ref 的生命周期由笔刷/渐变链路维护；当曲线会话与当前工具状态不一致时，可能出现“读到 stale entryId 或读不到本次 entryId”的情况，导致 GPU 历史快照与 `pushStroke` 入栈条目不一致。
+
+### 3. 修复
+
+1. 在 `useLayerOperations` 新增 `getCapturedStrokeHistoryMeta()`，统一从 `captureBeforeImage` 的捕获结果读取 `entryId/snapshotMode/layerId`。  
+2. `commitCurvesGpu` 与 `commitGradientGpu` 改为使用该元数据决定是否附加 GPU history capture，不再直接依赖 `pendingGpuHistoryEntryIdRef`。  
+3. 曲线 CPU 提交失败分支补 `discardCapturedStrokeHistory()`，避免残留捕获基线污染后续入栈。
+
+### 4. 回归
+
+新增 `src/components/Canvas/__tests__/curvesHistoryWiring.test.ts`，锁定曲线/渐变 GPU 提交均通过 `getCapturedStrokeHistoryMeta()` 取历史元数据。
+
+## 补充复盘（曲线撤销不稳定与快捷键重复触发，2026-02-11）
+
+### 1. 现象
+
+1. 曲线提交后，`Ctrl+Z` 偶发“第一次没反应”或一次回撤多步。  
+2. 有选区时更容易出现“看起来历史位置错乱、撤销跨步”。
+
+### 2. 根因
+
+1. GPU 历史链路在个别情况下会出现 `GPU history apply` 失败；原实现里 GPU 条目默认不带 CPU `beforeImage`，失败后只能告警，无法回退。  
+2. 全局快捷键对 `Ctrl/Meta` 组合没有过滤 `keydown.repeat`，在卡顿场景下可能把一次长按识别为多次撤销。  
+3. Curves 面板会话结束到卸载之间存在极短窗口，面板级键盘拦截仍可能吞掉一次全局撤销。
+
+### 3. 修复
+
+1. `captureBeforeImage(true, true)`：GPU 提交时同时保留 CPU `beforeImage` 备份（仅提交阶段），确保 GPU 历史 apply 失败时仍可 CPU 回撤。  
+2. `useKeyboardShortcuts` 对 `Ctrl/Meta` 组合新增 `e.repeat` 过滤，并在 `Ctrl+Z/Ctrl+Y` 添加 `stopPropagation`，避免重复触发。  
+3. Curves 面板键盘处理增加 `sessionId` 有效性门禁，会话结束后不再拦截 `Ctrl+Z/Ctrl+Y`。
+
+### 4. 回归
+
+1. `src/components/Canvas/__tests__/useKeyboardShortcuts.test.ts` 新增 repeated `Ctrl+Z` 用例。  
+2. `src/components/Canvas/__tests__/curvesHistoryWiring.test.ts` 新增断言：曲线/渐变 GPU 提交路径必须走 `captureBeforeImage(true, true)`。
+
+## 状态更新（曲线历史问题仍未解决，2026-02-11）
+
+### 1. 最新用户反馈
+
+1. 曲线历史在真实交互里“仍然不行”，撤销行为依然混乱。  
+2. 当前现象与前述问题一致：撤销有时生效、有时不生效，历史位置不稳定。  
+3. 其他工具历史正常，异常集中在曲线链路。
+
+### 2. 经验与教训
+
+1. 仅靠 wiring 级单测（entryId 绑定、快捷键 repeat 过滤）不足以覆盖“多轮选区 + 曲线 + 撤销”的真实时序。  
+2. 曲线历史问题高度依赖交互顺序与异步时机，必须补端到端的历史时间线验证，而不能只看局部函数逻辑。  
+3. Postmortem 必须区分“代码改动已提交”和“问题已真正关闭”，避免把“部分缓解”误记为“已修复”。
+
+### 3. 下一轮排查重点（待执行）
+
+1. 增加运行时历史时间线日志：每次 `pushSelection/pushStroke/undo/redo` 记录 entry 类型、entryId、selection 快照摘要与时间戳。  
+2. 用固定脚本复现两条链路并抓日志对比：  
+   - 无选区：连续两次曲线提交 + 连续撤销  
+   - 有选区：切换选区后两次曲线提交 + 连续撤销  
+3. 检查 `selection` 异步构建完成时机与曲线提交时机是否发生竞态，确认是否存在“历史先后顺序写错位”。

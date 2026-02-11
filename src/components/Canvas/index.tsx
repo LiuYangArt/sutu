@@ -1298,6 +1298,7 @@ export function Canvas() {
   const {
     updateThumbnail,
     captureBeforeImage,
+    getCapturedStrokeHistoryMeta,
     saveStrokeToHistory,
     discardCapturedStrokeHistory,
     fillActiveLayer,
@@ -1465,10 +1466,16 @@ export function Canvas() {
       if (!layer) return false;
 
       onBeforeCanvasMutation?.();
-      await captureBeforeImage(true);
+      await captureBeforeImage(true, true);
 
       const historyStore = gpuStrokeHistoryStoreRef.current;
-      const historyEntryId = pendingGpuHistoryEntryIdRef.current;
+      const capturedHistoryMeta = getCapturedStrokeHistoryMeta();
+      if (!capturedHistoryMeta || capturedHistoryMeta.layerId !== params.layerId) {
+        discardCapturedStrokeHistory();
+        return false;
+      }
+      const historyEntryId =
+        capturedHistoryMeta.snapshotMode === 'gpu' ? capturedHistoryMeta.entryId : null;
       const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
       const finalizeHistory = () => {
         if (historyStore && historyEntryId) {
@@ -1554,6 +1561,7 @@ export function Canvas() {
       clearPendingGpuHistoryEntry,
       compositeAndRender,
       discardCapturedStrokeHistory,
+      getCapturedStrokeHistoryMeta,
       getVisibleGpuRenderableLayers,
       layers,
       onBeforeCanvasMutation,
@@ -2416,10 +2424,24 @@ export function Canvas() {
       }
 
       onBeforeCanvasMutation?.();
-      await captureBeforeImage(true);
+      await captureBeforeImage(true, true);
 
       const historyStore = gpuStrokeHistoryStoreRef.current;
-      const historyEntryId = pendingGpuHistoryEntryIdRef.current;
+      const capturedHistoryMeta = getCapturedStrokeHistoryMeta();
+      if (!capturedHistoryMeta || capturedHistoryMeta.layerId !== session.layerId) {
+        discardCapturedStrokeHistory();
+        return {
+          ok: false,
+          canForceCpuCommit: true,
+          error: createCurvesRuntimeError({
+            code: 'GPU_COMMIT_FAILED',
+            stage: 'commit',
+            message: 'GPU 曲线历史快照无效，提交已中止。',
+          }),
+        };
+      }
+      const historyEntryId =
+        capturedHistoryMeta.snapshotMode === 'gpu' ? capturedHistoryMeta.entryId : null;
       const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
       const finalizeHistory = () => {
         if (historyStore && historyEntryId) {
@@ -2524,6 +2546,7 @@ export function Canvas() {
       clearPendingGpuHistoryEntry,
       compositeAndRender,
       discardCapturedStrokeHistory,
+      getCapturedStrokeHistoryMeta,
       getVisibleGpuRenderableLayers,
       height,
       layers,
@@ -2751,6 +2774,7 @@ export function Canvas() {
         updateThumbnail(session.layerId);
         compositeAndRender();
       } catch (error) {
+        discardCapturedStrokeHistory();
         console.error('[CurvesGpuFailFast]', {
           sessionId: session.sessionId,
           layerId: session.layerId,
@@ -2784,6 +2808,7 @@ export function Canvas() {
       clearCurvesPreviewVisual,
       commitCurvesGpu,
       compositeAndRender,
+      discardCapturedStrokeHistory,
       layers,
       markLayerDirty,
       onBeforeCanvasMutation,

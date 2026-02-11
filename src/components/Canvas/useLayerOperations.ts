@@ -64,11 +64,18 @@ type PendingStrokeHistory =
       layerId: string;
       entryId: string;
       snapshotMode: 'gpu';
+      beforeImage?: ImageData;
     };
 
 interface SaveStrokeHistoryOptions {
   selectionBefore?: SelectionSnapshot;
   selectionAfter?: SelectionSnapshot;
+}
+
+export interface CapturedStrokeHistoryMeta {
+  layerId: string;
+  entryId: string;
+  snapshotMode: StrokeSnapshotMode;
 }
 
 export interface ApplyGradientToActiveLayerParams extends GradientRenderConfig {
@@ -115,6 +122,7 @@ function toPushStrokeParams(pending: PendingStrokeHistory): PushStrokeParams {
       layerId: pending.layerId,
       entryId: pending.entryId,
       snapshotMode: 'gpu',
+      beforeImage: pending.beforeImage,
     };
   }
   return {
@@ -556,7 +564,7 @@ export function useLayerOperations({
   // 起笔前保存 beforeImage。
   // no-readback 下必须先同步待刷新的 GPU tiles，否则一次撤销会跨越多笔。
   const captureBeforeImage = useCallback(
-    async (preferGpuHistory = true): Promise<void> => {
+    async (preferGpuHistory = true, captureCpuBackupForGpu = false): Promise<void> => {
       const renderer = layerRendererRef.current;
       if (!renderer || !activeLayerId) return;
 
@@ -565,6 +573,23 @@ export function useLayerOperations({
           ? beginGpuStrokeHistory(activeLayerId)
           : null;
       if (gpuEntry?.snapshotMode === 'gpu') {
+        if (captureCpuBackupForGpu) {
+          await syncGpuLayerForHistory?.(activeLayerId);
+          const imageData = renderer.getLayerImageData(activeLayerId);
+          beforeImageRef.current = imageData
+            ? {
+                layerId: activeLayerId,
+                entryId: gpuEntry.entryId,
+                snapshotMode: 'gpu',
+                beforeImage: imageData,
+              }
+            : {
+                layerId: activeLayerId,
+                entryId: gpuEntry.entryId,
+                snapshotMode: 'gpu',
+              };
+          return;
+        }
         beforeImageRef.current = {
           layerId: activeLayerId,
           entryId: gpuEntry.entryId,
@@ -613,6 +638,16 @@ export function useLayerOperations({
 
   const discardCapturedStrokeHistory = useCallback(() => {
     beforeImageRef.current = null;
+  }, []);
+
+  const getCapturedStrokeHistoryMeta = useCallback((): CapturedStrokeHistoryMeta | null => {
+    const pending = beforeImageRef.current;
+    if (!pending) return null;
+    return {
+      layerId: pending.layerId,
+      entryId: pending.entryId,
+      snapshotMode: pending.snapshotMode,
+    };
   }, []);
 
   // Resize canvas with history support
@@ -2010,6 +2045,7 @@ export function useLayerOperations({
   return {
     updateThumbnail,
     captureBeforeImage,
+    getCapturedStrokeHistoryMeta,
     saveStrokeToHistory,
     discardCapturedStrokeHistory,
     fillActiveLayer,
