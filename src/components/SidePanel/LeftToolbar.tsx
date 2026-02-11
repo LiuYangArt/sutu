@@ -19,19 +19,39 @@ import { GradientToolIcon } from '@/components/common/GradientToolIcon';
 import './SidePanel.css';
 
 const ICON_PROPS = { size: 24, strokeWidth: 1.5 } as const;
+type ToolItem = { id: ToolType; label: string; icon: ComponentType<LucideProps> };
 
-const TOOLS: { id: ToolType; label: string; icon: ComponentType<LucideProps> }[] = [
-  { id: 'brush', label: 'Brush (B)', icon: Brush },
-  { id: 'eraser', label: 'Eraser (E)', icon: Eraser },
-  { id: 'eyedropper', label: 'Eyedropper (Alt)', icon: Pipette },
-  { id: 'gradient', label: 'Gradient (G)', icon: GradientToolIcon },
-  { id: 'move', label: 'Move (V)', icon: Move },
-  { id: 'select', label: 'Rectangular Select (M)', icon: SquareDashed },
-  { id: 'lasso', label: 'Lasso (S)', icon: Lasso },
-  { id: 'zoom', label: 'Zoom (Z) - Double-click to reset to 100%', icon: ZoomIcon },
+const TOOL_SHORTCUTS: Record<ToolType, string> = {
+  brush: 'B',
+  eraser: 'E',
+  eyedropper: 'Alt',
+  gradient: 'G',
+  move: 'V',
+  select: 'M',
+  lasso: 'S',
+  zoom: 'Z',
+};
+
+const TOOLS: ToolItem[] = [
+  { id: 'brush', label: 'Brush', icon: Brush },
+  { id: 'eraser', label: 'Eraser', icon: Eraser },
+  { id: 'eyedropper', label: 'Eyedropper', icon: Pipette },
+  { id: 'gradient', label: 'Gradient', icon: GradientToolIcon },
+  { id: 'move', label: 'Move', icon: Move },
+  { id: 'select', label: 'Rectangular Select', icon: SquareDashed },
+  { id: 'lasso', label: 'Lasso', icon: Lasso },
+  { id: 'zoom', label: 'Zoom', icon: ZoomIcon },
 ];
 
-export function LeftToolbar() {
+function getToolTooltip(tool: ToolItem): string {
+  const shortcut = TOOL_SHORTCUTS[tool.id];
+  if (tool.id === 'zoom') {
+    return `${tool.label} (${shortcut}) - Double-click to reset to 100%`;
+  }
+  return `${tool.label} (${shortcut})`;
+}
+
+export function LeftToolbar(): JSX.Element {
   const { currentTool, setTool } = useToolStore();
   const setScale = useViewportStore((s) => s.setScale);
 
@@ -50,7 +70,7 @@ export function LeftToolbar() {
             className={`tool-grid-btn ${currentTool === tool.id ? 'active' : ''}`}
             onClick={() => setTool(tool.id)}
             onDoubleClick={() => handleToolDoubleClick(tool.id)}
-            title={tool.label}
+            title={getToolTooltip(tool)}
           >
             <tool.icon {...ICON_PROPS} />
           </button>

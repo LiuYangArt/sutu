@@ -1,4 +1,4 @@
-import { Crosshair, SlidersHorizontal } from 'lucide-react';
+import { Paintbrush, SlidersHorizontal } from 'lucide-react';
 import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
 import { useToolStore } from '@/stores/tool';
 import { usePanelStore } from '@/stores/panel';
@@ -27,7 +27,7 @@ function PressureToggle({
   );
 }
 
-export function BrushToolbar() {
+export function BrushToolbar(): JSX.Element {
   const {
     currentTool,
     brushSize,
@@ -43,8 +43,6 @@ export function BrushToolbar() {
     togglePressureFlow,
     pressureOpacityEnabled,
     togglePressureOpacity,
-    showCrosshair,
-    toggleCrosshair,
     eraserBackgroundMode,
     toggleEraserBackgroundMode,
   } = useToolStore();
@@ -61,6 +59,11 @@ export function BrushToolbar() {
       openPanel('brush-panel');
     }
   };
+
+  function openBrushLibrary(): void {
+    const win = window as Window & { __openBrushLibrary?: () => void };
+    win.__openBrushLibrary?.();
+  }
 
   // Get current tool size (brush or eraser)
   const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
@@ -144,12 +147,8 @@ export function BrushToolbar() {
         </button>
       )}
 
-      <button
-        className={`tool-btn ${showCrosshair ? 'active' : ''}`}
-        onClick={toggleCrosshair}
-        title="Toggle Crosshair (for cursor delay comparison)"
-      >
-        <Crosshair {...ICON_PROPS} />
+      <button className="tool-btn" onClick={openBrushLibrary} title="Brush Library (Ctrl+F5)">
+        <Paintbrush {...ICON_PROPS} />
       </button>
 
       <button

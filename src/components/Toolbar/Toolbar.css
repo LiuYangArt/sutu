@@ -432,10 +432,44 @@
   text-transform: uppercase;
 }
 
-/* Actions */
-.actions button {
-  font-size: 11px;
-  padding: 4px 10px;
+/* Right-side grouped actions */
+.canvas-actions,
+.history-actions {
+  gap: 2px;
+}
+
+.canvas-actions button,
+.history-actions button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+}
+
+.canvas-actions button:hover,
+.history-actions button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.canvas-actions button:disabled,
+.history-actions button:disabled {
+  opacity: 1;
+  color: var(--text-secondary);
+  filter: brightness(0.72);
+  background: transparent;
+}
+
+.canvas-actions button:disabled:hover,
+.history-actions button:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 /* Zoom Controls */

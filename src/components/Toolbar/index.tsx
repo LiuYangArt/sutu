@@ -24,6 +24,7 @@ import { usePanelStore } from '@/stores/panel';
 import { useSettingsStore } from '@/stores/settings';
 import { useFileStore } from '@/stores/file';
 import { useDocumentStore } from '@/stores/document';
+import { GradientToolIcon } from '@/components/common/GradientToolIcon';
 import { BrushToolbar } from './BrushToolbar';
 import { GradientToolbar } from './GradientToolbar';
 import { SelectionToolbar } from './SelectionToolbar';
@@ -40,7 +41,7 @@ function getFileNameFromPath(path: string): string {
 }
 
 /** App Menu component */
-function AppMenu() {
+function AppMenu(): JSX.Element {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSubmenu, setActiveSubmenu] = useState<AppMenuSubmenu>('none');
   const menuRef = useRef<HTMLDivElement>(null);
@@ -239,7 +240,7 @@ function AppMenu() {
                   <span className="shortcut">F5</span>
                 </button>
                 <button className="menu-item" onClick={handleToggleGradientPanel}>
-                  <Paintbrush size={14} />
+                  <GradientToolIcon size={14} strokeWidth={1.5} />
                   <span>Gradient Editor</span>
                 </button>
                 <button
@@ -282,7 +283,7 @@ function AppMenu() {
   );
 }
 
-export function Toolbar() {
+export function Toolbar(): JSX.Element {
   const currentTool = useToolStore((s) => s.currentTool);
 
   const { scale, zoomIn, zoomOut, resetZoom } = useViewportStore();
@@ -326,6 +327,17 @@ export function Toolbar() {
 
       <div className="toolbar-spacer" />
 
+      <div className="toolbar-section canvas-actions">
+        <button onClick={handleOpenCanvasSizePanel} title="Canvas Size">
+          <ImageUpscale {...ICON_PROPS} />
+        </button>
+        <button onClick={handleOpenQuickExportPanel} title="Quick Export">
+          <Share {...ICON_PROPS} />
+        </button>
+      </div>
+
+      <div className="toolbar-divider" />
+
       <div className="toolbar-section zoom-controls">
         <button onClick={() => zoomOut()} title="Zoom Out">
           <ZoomOut {...ICON_PROPS} />
@@ -340,13 +352,7 @@ export function Toolbar() {
 
       <div className="toolbar-divider" />
 
-      <div className="toolbar-section actions">
-        <button onClick={handleOpenCanvasSizePanel} title="Canvas Size">
-          <ImageUpscale {...ICON_PROPS} />
-        </button>
-        <button onClick={handleOpenQuickExportPanel} title="Quick Export">
-          <Share {...ICON_PROPS} />
-        </button>
+      <div className="toolbar-section history-actions">
         <button
           data-testid="undo-btn"
           disabled={!canUndo()}
