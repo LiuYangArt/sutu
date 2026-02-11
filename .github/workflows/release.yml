@@ -227,6 +227,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Read app name
         id: app_meta
@@ -240,6 +242,11 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -252,25 +259,23 @@ jobs:
         run: |
           find release-assets -type f | sort
 
+      - name: Generate release body
+        shell: bash
+        env:
+          APP_NAME: ${{ steps.app_meta.outputs.app_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.get_version.outputs.VERSION }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4.1-mini
+        run: node scripts/generate-release-notes.mjs
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.app_meta.outputs.app_name }} v${{ steps.get_version.outputs.VERSION }}
           draft: false
           prerelease: false
-          body: |
-            ## ${{ steps.app_meta.outputs.app_name }} v${{ steps.get_version.outputs.VERSION }}
-
-            ### Changes
-            - See commit history for details
-
-            ### Installation
-            - **Windows**: Download `.msi` or `.exe` installer; or `.zip` for portable mode
-            - **macOS**: Download `.dmg` package (and updater archive/signature if needed)
-
-            ### Requirements
-            - Windows 10 (1903) or later
-            - WebView2 Runtime (included in Windows 11, auto-installed on Windows 10)
-            - macOS 11 or later (actual minimum follows your app/SDK config)
+          body_path: release-body.md
           files: |
             release-assets/**/*
