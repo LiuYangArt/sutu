@@ -2,7 +2,7 @@ export const APP_META = {
   displayName: 'Sutu',
   displayNameZh: '速涂',
   npmPackageName: 'sutu',
-  identifier: 'com.sutu.app',
+  identifier: 'com.sutu',
   configDirName: 'com.sutu',
   storagePrefix: 'sutu',
   oraNamespace: 'sutu',

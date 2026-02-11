@@ -4,7 +4,7 @@
  * 将 app.meta.json 作为单一来源，同步到各配置文件与常量文件。
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -26,10 +26,14 @@ function writeJson(path, value) {
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 }
 
+function log(message) {
+  process.stdout.write(`${message}\n`);
+}
+
 function replaceTomlStringValueInSection(content, section, key, value) {
   const sectionRegex = new RegExp(`(\\[${section}\\][\\s\\S]*?)(?=\\n\\[|$)`);
   return content.replace(sectionRegex, (block) => {
-    const keyRegex = new RegExp(`^${key}\\s*=\\s*\"[^\"]*\"`, 'm');
+    const keyRegex = new RegExp(`^${key}\\s*=\\s*"[^"]*"`, 'm');
     if (keyRegex.test(block)) {
       return block.replace(keyRegex, `${key} = "${value}"`);
     }
@@ -42,14 +46,14 @@ function escapeRustString(value) {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-console.log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayNameZh})`);
+log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayNameZh})`);
 
 // package.json
 {
   const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
   pkg.name = appMeta.npmPackageName;
   writeJson(packageJsonPath, pkg);
-  console.log(`   ✅ package.json name -> ${appMeta.npmPackageName}`);
+  log(`   ✅ package.json name -> ${appMeta.npmPackageName}`);
 }
 
 // tauri.conf.json
@@ -64,7 +68,7 @@ console.log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayN
     }));
   }
   writeJson(tauriConfPath, tauri);
-  console.log(`   ✅ tauri.conf.json productName/identifier/title`);
+  log(`   ✅ tauri.conf.json productName/identifier/title`);
 }
 
 // capabilities/default.json
@@ -72,17 +76,21 @@ console.log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayN
   const caps = JSON.parse(readFileSync(capabilitiesPath, 'utf-8'));
   caps.description = `Default capabilities for ${appMeta.displayName}`;
   writeJson(capabilitiesPath, caps);
-  console.log(`   ✅ capabilities/default.json description`);
+  log(`   ✅ capabilities/default.json description`);
 }
 
 // gen/schemas/capabilities.json
 {
-  const generated = JSON.parse(readFileSync(generatedCapabilitiesPath, 'utf-8'));
-  if (generated.default && typeof generated.default === 'object') {
-    generated.default.description = `Default capabilities for ${appMeta.displayName}`;
+  if (existsSync(generatedCapabilitiesPath)) {
+    const generated = JSON.parse(readFileSync(generatedCapabilitiesPath, 'utf-8'));
+    if (generated.default && typeof generated.default === 'object') {
+      generated.default.description = `Default capabilities for ${appMeta.displayName}`;
+    }
+    writeJson(generatedCapabilitiesPath, generated);
+    log(`   ✅ gen/schemas/capabilities.json description`);
+  } else {
+    log(`   ↷ skip gen/schemas/capabilities.json (file not found)`);
   }
-  writeJson(generatedCapabilitiesPath, generated);
-  console.log(`   ✅ gen/schemas/capabilities.json description`);
 }
 
 // Cargo.toml
@@ -92,7 +100,7 @@ console.log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayN
   cargo = replaceTomlStringValueInSection(cargo, 'lib', 'name', appMeta.rustLibName);
   cargo = cargo.replace(/^authors\s*=\s*\[[^\]]*\]/m, `authors = ["${appMeta.teamName}"]`);
   writeFileSync(cargoTomlPath, cargo);
-  console.log(`   ✅ Cargo.toml package/lib/authors`);
+  log(`   ✅ Cargo.toml package/lib/authors`);
 }
 
 // 前端常量
@@ -127,7 +135,7 @@ export function appDotStorageKey(suffix: string): string {
 }
 `;
   writeFileSync(frontendMetaPath, ts);
-  console.log(`   ✅ src/constants/appMeta.ts generated`);
+  log(`   ✅ src/constants/appMeta.ts generated`);
 }
 
 // Rust 常量
@@ -143,7 +151,7 @@ pub const APP_ORA_LEGACY_NAMESPACE: &str = "${escapeRustString(appMeta.legacyOra
 pub const APP_LOG_TARGET: &str = "${escapeRustString(appMeta.logTarget)}";
 `;
   writeFileSync(rustMetaPath, rs);
-  console.log(`   ✅ src-tauri/src/app_meta.rs generated`);
+  log(`   ✅ src-tauri/src/app_meta.rs generated`);
 }
 
 // index.html title
@@ -154,7 +162,7 @@ pub const APP_LOG_TARGET: &str = "${escapeRustString(appMeta.logTarget)}";
   if (after !== before) {
     writeFileSync(indexPath, after);
   }
-  console.log(`   ✅ index.html title`);
+  log(`   ✅ index.html title`);
 }
 
-console.log('🎉 应用命名同步完成');
+log('🎉 应用命名同步完成');

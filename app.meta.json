@@ -4,7 +4,7 @@
   "npmPackageName": "sutu",
   "rustPackageName": "sutu",
   "rustLibName": "sutu_lib",
-  "identifier": "com.sutu.app",
+  "identifier": "com.sutu",
   "configDirName": "com.sutu",
   "storagePrefix": "sutu",
   "oraNamespace": "sutu",
