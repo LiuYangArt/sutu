@@ -26,7 +26,7 @@ del versions.bat >nul 2>nul
 :menu
 cls
 echo ========================================================
-echo                 PaintBoard Release Helper
+echo                 Sutu Release Helper
 echo ========================================================
 echo.
 echo  Current version: !CURRENT_VERSION!

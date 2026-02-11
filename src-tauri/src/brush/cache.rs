@@ -8,6 +8,7 @@
 //! 1. **Memory cache**: Fast access for current session
 //! 2. **Disk cache**: Persistent storage across sessions
 
+use crate::app_meta::APP_CONFIG_DIR_NAME;
 use lz4_flex::compress_prepend_size;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -117,7 +118,7 @@ impl BrushCache {
 fn get_brush_cache_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.paintboard")
+        .join(APP_CONFIG_DIR_NAME)
         .join("brush_cache")
 }
 

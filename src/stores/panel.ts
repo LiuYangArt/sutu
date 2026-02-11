@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { appHyphenStorageKey } from '@/constants/appMeta';
 
 // Restore PanelGeometry definition
 export interface PanelGeometry {
@@ -181,7 +182,7 @@ export const usePanelStore = create<PanelStoreState>()(
         }),
     })),
     {
-      name: 'paintboard-panels',
+      name: appHyphenStorageKey('panels'),
       // Only persist the panels state, not configs (which are code-defined)
       partialize: (state) => ({
         panels: state.panels,

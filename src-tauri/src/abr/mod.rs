@@ -11,7 +11,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use paintboard_lib::abr::AbrParser;
+//! use sutu_lib::abr::AbrParser;
 //!
 //! let data = std::fs::read("brush.abr")?;
 //! let abr_file = AbrParser::parse(&data)?;

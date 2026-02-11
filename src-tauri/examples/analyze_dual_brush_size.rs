@@ -4,9 +4,9 @@
 //! 目标：验证 Dual Brush Size 是存储绝对值还是相对主笔刷的比例
 
 use byteorder::{BigEndian, ReadBytesExt};
-use paintboard_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
-use paintboard_lib::abr::AbrParser;
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use sutu_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
+use sutu_lib::abr::AbrParser;
 
 fn main() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

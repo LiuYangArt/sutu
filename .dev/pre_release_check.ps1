@@ -82,7 +82,7 @@ try {
         cargo check --manifest-path src-tauri/Cargo.toml
     }
 
-    $macTreePath = Join-Path $env:TEMP "paintboard-mac-tree-precheck.txt"
+    $macTreePath = Join-Path $env:TEMP "sutu-mac-tree-precheck.txt"
     Invoke-Step -Title "[2/4] Build macOS dependency tree" -Action {
         cargo tree --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin > $macTreePath
     }

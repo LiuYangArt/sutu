@@ -8,6 +8,7 @@
 //! 1. **Memory cache**: Fast access for current session
 //! 2. **Disk cache**: Persistent storage across sessions
 
+use crate::app_meta::APP_CONFIG_DIR_NAME;
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -204,12 +205,13 @@ fn render_square_thumbnail_rgba(src_rgba: &[u8], src_w: u32, src_h: u32, size: u
 
 /// Get the pattern cache directory path
 fn get_pattern_cache_dir() -> PathBuf {
-    std::env::var("PAINTBOARD_TEST_DATA_DIR")
+    std::env::var("SUTU_TEST_DATA_DIR")
         .ok()
+        .or_else(|| std::env::var("PAINTBOARD_TEST_DATA_DIR").ok())
         .map(PathBuf::from)
         .or_else(dirs::data_dir)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.paintboard")
+        .join(APP_CONFIG_DIR_NAME)
         .join("pattern_cache")
 }
 
@@ -580,9 +582,13 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time before UNIX_EPOCH")
             .as_nanos();
-        let base = std::env::temp_dir().join(format!("paintboard_pattern_cache_test_{}", uniq));
+        let base = std::env::temp_dir().join(format!(
+            "{}_pattern_cache_test_{}",
+            crate::app_meta::APP_STORAGE_PREFIX,
+            uniq
+        ));
         std::fs::create_dir_all(&base).expect("failed to create test dir");
-        std::env::set_var("PAINTBOARD_TEST_DATA_DIR", &base);
+        std::env::set_var("SUTU_TEST_DATA_DIR", &base);
 
         init_pattern_cache();
 
@@ -615,7 +621,7 @@ mod tests {
             "memory hit should not re-write thumb file"
         );
 
-        std::env::remove_var("PAINTBOARD_TEST_DATA_DIR");
+        std::env::remove_var("SUTU_TEST_DATA_DIR");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -11,7 +11,7 @@ mod writer;
 pub use reader::load_psd;
 pub use writer::save_psd;
 
-/// Map PaintBoard blend mode to PSD 4-byte key
+/// Map Sutu blend mode to PSD 4-byte key
 pub fn blend_mode_to_psd(mode: &str) -> [u8; 4] {
     match mode {
         "normal" => *b"norm",
@@ -45,7 +45,7 @@ pub fn blend_mode_to_psd(mode: &str) -> [u8; 4] {
     }
 }
 
-/// Map PSD 4-byte key to PaintBoard blend mode
+/// Map PSD 4-byte key to Sutu blend mode
 pub fn psd_to_blend_mode(key: &[u8]) -> String {
     if key.len() < 4 {
         return "normal".to_string();

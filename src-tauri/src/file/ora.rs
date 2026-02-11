@@ -8,6 +8,7 @@
 
 use super::layer_cache::{cache_layer_png, cache_thumbnail, clear_cache};
 use super::types::{FileError, LayerData, ProjectData};
+use crate::app_meta::{APP_ORA_LEGACY_NAMESPACE, APP_ORA_NAMESPACE};
 use crate::benchmark::{generate_session_id, BackendBenchmark};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use image::{ImageFormat, RgbaImage};
@@ -23,7 +24,15 @@ use zip::{ZipArchive, ZipWriter};
 
 const ORA_MIMETYPE: &str = "image/openraster";
 
-/// Map PaintBoard blend mode to ORA/SVG composite operation
+fn ora_attr_key(name: &str) -> String {
+    format!("{}:{}", APP_ORA_NAMESPACE, name)
+}
+
+fn ora_legacy_attr_key(name: &str) -> String {
+    format!("{}:{}", APP_ORA_LEGACY_NAMESPACE, name)
+}
+
+/// Map Sutu blend mode to ORA/SVG composite operation
 fn blend_mode_to_ora(mode: &str) -> &'static str {
     match mode {
         "normal" => "svg:src-over",
@@ -46,7 +55,7 @@ fn blend_mode_to_ora(mode: &str) -> &'static str {
     }
 }
 
-/// Map ORA/SVG composite operation to PaintBoard blend mode
+/// Map ORA/SVG composite operation to Sutu blend mode
 fn ora_to_blend_mode(composite_op: &str) -> String {
     match composite_op {
         "svg:src-over" => "normal",
@@ -103,12 +112,16 @@ fn generate_stack_xml(project: &ProjectData) -> Result<Vec<u8>, FileError> {
             "visibility",
             if layer.visible { "visible" } else { "hidden" },
         ));
-        // Custom attributes for PaintBoard-specific data
-        layer_elem.push_attribute(("paintboard:id", layer.id.as_str()));
-        layer_elem.push_attribute(("paintboard:type", layer.layer_type.as_str()));
-        layer_elem.push_attribute(("paintboard:locked", layer.locked.to_string().as_str()));
+        // Custom attributes for app-specific data.
+        let attr_id = ora_attr_key("id");
+        let attr_type = ora_attr_key("type");
+        let attr_locked = ora_attr_key("locked");
+        layer_elem.push_attribute((attr_id.as_str(), layer.id.as_str()));
+        layer_elem.push_attribute((attr_type.as_str(), layer.layer_type.as_str()));
+        layer_elem.push_attribute((attr_locked.as_str(), layer.locked.to_string().as_str()));
         if let Some(is_bg) = layer.is_background {
-            layer_elem.push_attribute(("paintboard:is-background", is_bg.to_string().as_str()));
+            let attr_is_background = ora_attr_key("is-background");
+            layer_elem.push_attribute((attr_is_background.as_str(), is_bg.to_string().as_str()));
         }
 
         writer.write_event(Event::Empty(layer_elem))?;
@@ -202,6 +215,15 @@ fn parse_stack_xml(
     _project_width: u32,
     _project_height: u32,
 ) -> Result<Vec<LayerData>, FileError> {
+    let attr_id = ora_attr_key("id");
+    let attr_type = ora_attr_key("type");
+    let attr_locked = ora_attr_key("locked");
+    let attr_is_background = ora_attr_key("is-background");
+    let legacy_attr_id = ora_legacy_attr_key("id");
+    let legacy_attr_type = ora_legacy_attr_key("type");
+    let legacy_attr_locked = ora_legacy_attr_key("locked");
+    let legacy_attr_is_background = ora_legacy_attr_key("is-background");
+
     let mut reader = Reader::from_reader(xml_data);
     reader.trim_text(true);
 
@@ -239,10 +261,16 @@ fn parse_stack_xml(
                         "composite-op" => layer.blend_mode = ora_to_blend_mode(&value),
                         "opacity" => layer.opacity = value.parse().unwrap_or(1.0),
                         "visibility" => layer.visible = value != "hidden",
-                        "paintboard:id" => layer.id = value,
-                        "paintboard:type" => layer.layer_type = value,
-                        "paintboard:locked" => layer.locked = value == "true",
-                        "paintboard:is-background" => layer.is_background = Some(value == "true"),
+                        _ if key == attr_id || key == legacy_attr_id => layer.id = value,
+                        _ if key == attr_type || key == legacy_attr_type => {
+                            layer.layer_type = value;
+                        }
+                        _ if key == attr_locked || key == legacy_attr_locked => {
+                            layer.locked = value == "true";
+                        }
+                        _ if key == attr_is_background || key == legacy_attr_is_background => {
+                            layer.is_background = Some(value == "true");
+                        }
                         _ => {}
                     }
                 }

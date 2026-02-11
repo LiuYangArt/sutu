@@ -1,5 +1,5 @@
 @echo off
-REM PaintBoard Development Scripts
+REM Sutu Development Scripts
 REM Usage: dev.bat [command] or double-click for menu
 
 setlocal enabledelayedexpansion
@@ -25,7 +25,7 @@ goto help
 cls
 echo.
 echo   ============================================
-echo        PaintBoard Development Menu
+echo        Sutu Development Menu
 echo   ============================================
 echo.
 echo   [1] dev            Start development server
@@ -58,55 +58,55 @@ goto menu
 
 :install
 echo.
-echo [PaintBoard] Installing dependencies...
+echo [Sutu] Installing dependencies...
 call pnpm install
 if errorlevel 1 goto error
-echo [PaintBoard] Dependencies installed successfully!
+echo [Sutu] Dependencies installed successfully!
 goto done
 
 :dev
 echo.
-echo [PaintBoard] Starting development server...
+echo [Sutu] Starting development server...
 call pnpm tauri dev
 goto done
 
 :build
 echo.
-echo [PaintBoard] Building project (debug)...
+echo [Sutu] Building project (debug)...
 call pnpm run build:dev
 if errorlevel 1 goto error
 cd src-tauri
 call cargo build
 if errorlevel 1 goto error
-echo [PaintBoard] Build completed!
+echo [Sutu] Build completed!
 goto done
 
 :build_release
 echo.
-echo [PaintBoard] Building project (release)...
+echo [Sutu] Building project (release)...
 call pnpm run build:dev
 if errorlevel 1 goto error
 cd src-tauri
 call cargo build --release
 if errorlevel 1 goto error
-echo [PaintBoard] Release build completed!
+echo [Sutu] Release build completed!
 echo Output: src-tauri\target\release\
 goto done
 
 :test
 echo.
-echo [PaintBoard] Running tests...
+echo [Sutu] Running tests...
 call pnpm test
 if errorlevel 1 goto error
 cd src-tauri
 call cargo test
 if errorlevel 1 goto error
-echo [PaintBoard] All tests passed!
+echo [Sutu] All tests passed!
 goto done
 
 :check
 echo.
-echo [PaintBoard] Running all checks...
+echo [Sutu] Running all checks...
 call pnpm typecheck
 if errorlevel 1 goto error
 call pnpm lint
@@ -119,12 +119,12 @@ if errorlevel 1 goto error
 cd ..
 call pnpm test
 if errorlevel 1 goto error
-echo [PaintBoard] All checks passed!
+echo [Sutu] All checks passed!
 goto done
 
 :lint
 echo.
-echo [PaintBoard] Running linters...
+echo [Sutu] Running linters...
 call pnpm lint
 cd src-tauri
 call cargo clippy -- -D warnings
@@ -132,23 +132,23 @@ goto done
 
 :format
 echo.
-echo [PaintBoard] Formatting code...
+echo [Sutu] Formatting code...
 call pnpm format
 goto done
 
 :clean
 echo.
-echo [PaintBoard] Cleaning build artifacts...
+echo [Sutu] Cleaning build artifacts...
 if exist node_modules rmdir /s /q node_modules
 if exist dist rmdir /s /q dist
 cd src-tauri
 if exist target rmdir /s /q target
-echo [PaintBoard] Cleaned!
+echo [Sutu] Cleaned!
 goto done
 
 :help
 echo.
-echo  PaintBoard Development Scripts
+echo  Sutu Development Scripts
 echo  ==============================
 echo.
 echo  Usage: dev.bat [command]
@@ -168,7 +168,7 @@ goto done
 
 :error
 echo.
-echo [PaintBoard] ERROR: Command failed!
+echo [Sutu] ERROR: Command failed!
 goto done
 
 :done

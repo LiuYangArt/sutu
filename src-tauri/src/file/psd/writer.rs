@@ -53,7 +53,7 @@ fn prepare_layers(project: &ProjectData) -> Result<Vec<PreparedLayer>, FileError
     let mut prepared = Vec::with_capacity(project.layers.len());
 
     // Keep project layer order as-is.
-    // PaintBoard's current layer array order already matches Photoshop export expectation.
+    // Sutu's current layer array order already matches Photoshop export expectation.
     for layer in project.layers.iter() {
         if let Some(ref image_data) = layer.image_data {
             let prepared_layer = prepare_layer(layer, image_data, project.width, project.height)?;

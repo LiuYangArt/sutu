@@ -1,9 +1,9 @@
 #![allow(warnings)]
 use byteorder::{BigEndian, ReadBytesExt};
-use paintboard_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
 use std::io::Cursor;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use sutu_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
 
 fn main() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

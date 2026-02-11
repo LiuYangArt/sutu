@@ -27,6 +27,7 @@ import {
   type M4ParityGateOptions,
   type M4ParityGateResult,
 } from '@/test/m4FeatureParityGate';
+import { appHyphenStorageKey } from '@/constants/appMeta';
 import {
   GPUContext,
   type GpuBrushCommitReadbackMode,
@@ -319,7 +320,7 @@ export function useGlobalExports({
         const { mkdir, writeFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
         const { join, tempDir } = await import('@tauri-apps/api/path');
 
-        const folder = 'paintboard-gpu-compare';
+        const folder = appHyphenStorageKey('gpu-compare');
         await mkdir(folder, { baseDir: BaseDirectory.Temp, recursive: true });
         const tempRoot = await tempDir();
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');

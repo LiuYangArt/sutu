@@ -1,5 +1,5 @@
 /**
- * Test utilities for PaintBoard
+ * Test utilities for Sutu
  */
 
 // Input simulation

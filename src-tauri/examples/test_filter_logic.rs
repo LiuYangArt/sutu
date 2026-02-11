@@ -1,9 +1,9 @@
 #![allow(warnings)]
 use byteorder::{BigEndian, ReadBytesExt};
-use paintboard_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
 use std::io::Cursor;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use sutu_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
 
 fn main() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -21,9 +21,9 @@ fn main() {
 
                     // Helper to find UUID recursively
                     fn find_uuid(
-                        val: &paintboard_lib::abr::descriptor::DescriptorValue,
+                        val: &sutu_lib::abr::descriptor::DescriptorValue,
                     ) -> Option<String> {
-                        use paintboard_lib::abr::descriptor::DescriptorValue;
+                        use sutu_lib::abr::descriptor::DescriptorValue;
                         match val {
                             DescriptorValue::String(s) => return Some(s.clone()),
                             DescriptorValue::Descriptor(d) => {

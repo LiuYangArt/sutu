@@ -1,8 +1,8 @@
 //! Debug script to analyze brush UUID matching issues
 #![allow(warnings)]
 
-use paintboard_lib::abr::{AbrBrush, AbrParser};
 use std::collections::HashMap;
+use sutu_lib::abr::{AbrBrush, AbrParser};
 
 fn main() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

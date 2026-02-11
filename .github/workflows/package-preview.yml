@@ -6,6 +6,8 @@ on:
     paths:
       - "src/**"
       - "src-tauri/**"
+      - "app.meta.json"
+      - "scripts/sync-app-meta.mjs"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/package-preview.yml"
@@ -103,6 +105,13 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Read app name
+        id: app_meta
+        shell: bash
+        run: |
+          app_name=$(node -e "const fs=require('fs'); const conf=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')); process.stdout.write(conf.productName);")
+          echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
+
       - name: Build Tauri app
         run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
 
@@ -111,8 +120,19 @@ jobs:
         shell: pwsh
         run: |
           $shortSha = "${{ github.sha }}".Substring(0, 7)
-          $exePath = "src-tauri/target/release/PaintBoard.exe"
-          $zipName = "PaintBoard_preview_${shortSha}_x64-portable.zip"
+          $appName = "${{ steps.app_meta.outputs.app_name }}"
+          $exePath = "src-tauri/target/release/$appName.exe"
+          if (-not (Test-Path $exePath)) {
+            $fallbackExe = Get-ChildItem "src-tauri/target/release" -Filter "*.exe" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notmatch "uninstall" } |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+            if (-not $fallbackExe) {
+              throw "Could not locate release executable."
+            }
+            $exePath = $fallbackExe.FullName
+          }
+          $zipName = "${appName}_preview_${shortSha}_x64-portable.zip"
           $zipPath = "src-tauri/target/release/bundle/$zipName"
 
           $tempDir = "src-tauri/target/release/bundle/portable"

@@ -1,7 +1,7 @@
 #![allow(warnings)]
-use paintboard_lib::abr::AbrParser;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use sutu_lib::abr::AbrParser;
 
 fn main() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");

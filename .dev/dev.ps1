@@ -1,4 +1,4 @@
-# PaintBoard Development Scripts
+# Sutu Development Scripts
 # Usage: .\dev.ps1 [command]
 
 param(
@@ -11,15 +11,15 @@ $ErrorActionPreference = "Stop"
 $ProjectDir = Split-Path -Parent $PSScriptRoot
 
 function Write-Step($message) {
-    Write-Host "[PaintBoard] $message" -ForegroundColor Cyan
+    Write-Host "[Sutu] $message" -ForegroundColor Cyan
 }
 
 function Write-Success($message) {
-    Write-Host "[PaintBoard] $message" -ForegroundColor Green
+    Write-Host "[Sutu] $message" -ForegroundColor Green
 }
 
 function Write-Error($message) {
-    Write-Host "[PaintBoard] ERROR: $message" -ForegroundColor Red
+    Write-Host "[Sutu] ERROR: $message" -ForegroundColor Red
 }
 
 Push-Location $ProjectDir
@@ -137,7 +137,7 @@ try {
 
         "help" {
             Write-Host ""
-            Write-Host "  PaintBoard Development Scripts" -ForegroundColor Cyan
+            Write-Host "  Sutu Development Scripts" -ForegroundColor Cyan
             Write-Host "  ==============================" -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  Usage: .\dev.ps1 [command]"

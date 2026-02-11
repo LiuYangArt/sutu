@@ -1,6 +1,6 @@
 //! PSD file reader using the `psd` crate
 //!
-//! Converts PSD files to PaintBoard's ProjectData format.
+//! Converts PSD files to Sutu's ProjectData format.
 //! Optimized with WebP encoding and parallel processing via Rayon.
 
 use crate::benchmark::{generate_session_id, BackendBenchmark};
@@ -90,7 +90,7 @@ pub fn load_psd(path: &Path) -> Result<ProjectData, FileError> {
         layers.push(layer);
     }
 
-    // Reverse layers to match PaintBoard's bottom-to-top order
+    // Reverse layers to match Sutu's bottom-to-top order
     // PSD stores layers top-to-bottom
     layers.reverse();
 
@@ -331,7 +331,7 @@ fn create_background_layer_cached(
     })
 }
 
-/// Convert PSD blend mode Debug string to PaintBoard blend mode string
+/// Convert PSD blend mode Debug string to Sutu blend mode string
 fn psd_blend_mode_to_string(mode_debug: &str) -> String {
     match mode_debug {
         "Normal" => "normal",

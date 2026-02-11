@@ -1,14 +1,15 @@
 {
-  "name": "paintboard",
+  "name": "sutu",
   "version": "0.9.9",
   "description": "Professional painting software with low-latency pen input",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
+    "sync:app-meta": "node scripts/sync-app-meta.mjs",
+    "dev": "pnpm sync:app-meta && tauri dev",
     "dev:frontend": "vite",
-    "build": "vite build && tauri build",
-    "build:dev": "vite build",
-    "build:rust": "cd src-tauri && cargo build",
+    "build": "pnpm sync:app-meta && vite build && tauri build",
+    "build:dev": "pnpm sync:app-meta && vite build",
+    "build:rust": "pnpm sync:app-meta && cd src-tauri && cargo build",
     "preview": "vite preview",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" && cargo fmt --manifest-path src-tauri/Cargo.toml",
     "lint": "eslint src --ext .ts,.tsx --fix",
@@ -20,7 +21,7 @@
     "test:e2e": "playwright test",
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
-    "version": "node scripts/sync-version.mjs && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml"
+    "version": "node scripts/sync-version.mjs && node scripts/sync-app-meta.mjs && git add app.meta.json package.json index.html src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/capabilities/default.json src-tauri/gen/schemas/capabilities.json src/constants/appMeta.ts src-tauri/src/app_meta.rs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

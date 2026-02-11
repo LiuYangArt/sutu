@@ -1,0 +1,14 @@
+{
+  "displayName": "Sutu",
+  "displayNameZh": "速涂",
+  "npmPackageName": "sutu",
+  "rustPackageName": "sutu",
+  "rustLibName": "sutu_lib",
+  "identifier": "com.sutu.app",
+  "configDirName": "com.sutu",
+  "storagePrefix": "sutu",
+  "oraNamespace": "sutu",
+  "legacyOraNamespace": "paintboard",
+  "logTarget": "sutu",
+  "teamName": "Sutu Team"
+}

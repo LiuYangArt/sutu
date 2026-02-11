@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use image::{GrayImage, Luma, Rgb, RgbImage};
-use paintboard_lib::abr::AbrParser;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use sutu_lib::abr::AbrParser;
 
 /// Sanitize a pattern name for use in filenames
 fn sanitize_filename(name: &str) -> String {

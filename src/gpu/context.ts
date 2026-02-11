@@ -6,6 +6,7 @@
  */
 
 import type { GPUContextState } from './types';
+import { appHyphenStorageKey } from '@/constants/appMeta';
 
 export class GPUContext {
   private static instance: GPUContext | null = null;
@@ -191,7 +192,7 @@ export function shouldUseGPU(): boolean {
   }
 
   // Check user preference (allow manual override)
-  const preference = localStorage.getItem('paintboard-gpu-enabled');
+  const preference = localStorage.getItem(appHyphenStorageKey('gpu-enabled'));
   if (preference === 'false') {
     // console.log('[shouldUseGPU] GPU disabled by user preference');
     return false;

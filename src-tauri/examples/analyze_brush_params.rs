@@ -8,9 +8,9 @@
 //! 4. 原始描述符键值对
 
 use byteorder::{BigEndian, ReadBytesExt};
-use paintboard_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
-use paintboard_lib::abr::AbrParser;
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use sutu_lib::abr::descriptor::{parse_descriptor, DescriptorValue};
+use sutu_lib::abr::AbrParser;
 
 fn main() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

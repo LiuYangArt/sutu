@@ -14,6 +14,7 @@ import { SaturationSquare } from '@/components/ColorPanel/SaturationSquare';
 import { VerticalHueSlider } from '@/components/ColorPanel/VerticalHueSlider';
 import { hexToHsva, hsvaToHex } from '@/utils/colorUtils';
 import { calculateBrushQuickPanelPosition } from './brushQuickPanelPosition';
+import { appHyphenStorageKey } from '@/constants/appMeta';
 import './BrushQuickPanel.css';
 
 interface BrushQuickPanelProps {
@@ -68,7 +69,7 @@ const PANEL_MARGIN = 12;
 const MIN_PANEL_WIDTH = 420;
 const MIN_PANEL_HEIGHT = 360;
 const PANEL_RESIZE_HANDLE_SIZE = 20;
-const PANEL_SIZE_STORAGE_KEY = 'paintboard-brush-quick-panel-size-v1';
+const PANEL_SIZE_STORAGE_KEY = appHyphenStorageKey('brush-quick-panel-size-v1');
 const PANEL_INTERACTIVE_SELECTOR =
   'button, input, textarea, select, .saturation-square, .vertical-hue-slider, .brush-quick-search, .brush-quick-library';
 const PANEL_SCROLLABLE_SELECTOR = '.brush-quick-library';

@@ -157,7 +157,7 @@ describe('file store autosave and startup restore', () => {
     const saveCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project');
     expect(saveCalls.length).toBe(1);
     expect(saveCalls[0]?.[1]).toMatchObject({
-      path: 'C:/temp/paintboard-autosave.ora',
+      path: 'C:/temp/sutu-autosave.ora',
       format: 'ora',
     });
     expect(getThumbnailMock).not.toHaveBeenCalled();
@@ -228,7 +228,7 @@ describe('file store autosave and startup restore', () => {
     expect(saveCalls.length).toBe(2);
     expect(saveCalls[0]?.[1]).toMatchObject({ path: 'C:/work/project.psd', format: 'psd' });
     expect(saveCalls[1]?.[1]).toMatchObject({
-      path: 'C:/temp/paintboard-autosave.ora',
+      path: 'C:/temp/sutu-autosave.ora',
       format: 'ora',
     });
 
@@ -258,7 +258,7 @@ describe('file store autosave and startup restore', () => {
     expect(restored).toBe(true);
     const loadCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
     expect(loadCalls.length).toBe(1);
-    expect(loadCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/paintboard-autosave.ora' });
+    expect(loadCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
     expect(useDocumentStore.getState().filePath).toBeNull();
     expect(useDocumentStore.getState().fileFormat).toBeNull();
   });
@@ -275,7 +275,7 @@ describe('file store autosave and startup restore', () => {
     coreMocks.invoke.mockImplementation(async (cmd: string, payload?: Record<string, unknown>) => {
       if (cmd === 'load_project') {
         const path = String(payload?.path ?? '');
-        if (path === 'C:/temp/paintboard-autosave.ora') {
+        if (path === 'C:/temp/sutu-autosave.ora') {
           throw new Error('ZIP error: invalid Zip archive');
         }
         return createLoadedProject();
@@ -297,14 +297,14 @@ describe('file store autosave and startup restore', () => {
 
     const loadCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
     expect(loadCalls.length).toBe(2);
-    expect(loadCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/paintboard-autosave.ora' });
+    expect(loadCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
     expect(loadCalls[1]?.[1]).toMatchObject({ path: 'C:/work/last.ora' });
 
     const deleteCalls = coreMocks.invoke.mock.calls.filter(
       ([cmd]) => cmd === 'delete_file_if_exists'
     );
     expect(deleteCalls.length).toBe(1);
-    expect(deleteCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/paintboard-autosave.ora' });
+    expect(deleteCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
 
     const lastPersisted = JSON.parse(
       String(
@@ -389,6 +389,6 @@ describe('file store autosave and startup restore', () => {
       ([cmd]) => cmd === 'delete_file_if_exists'
     );
     expect(deleteCalls.length).toBe(1);
-    expect(deleteCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/paintboard-autosave.ora' });
+    expect(deleteCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Chaos Testing for PaintBoard
+ * Chaos Testing for Sutu
  * Randomly generates input to test robustness and edge cases
  */
 

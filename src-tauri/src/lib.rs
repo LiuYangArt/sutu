@@ -1,10 +1,11 @@
-//! PaintBoard - Professional painting software with low-latency pen input
+//! Sutu - Professional painting software with low-latency pen input
 #![allow(clippy::expect_used)]
 
 //!
 //! This is the main library crate that exposes all modules for the Tauri backend.
 
 pub mod abr;
+pub mod app_meta;
 pub mod bench;
 pub mod benchmark;
 pub mod brush;
@@ -21,8 +22,9 @@ pub fn init() {
     // Setup logging
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "paintboard=debug,tauri=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                format!("{}=debug,tauri=info", app_meta::APP_LOG_TARGET).into()
+            }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -35,7 +37,7 @@ pub fn init() {
     // Initialize brush library
     brush::library::init_library();
 
-    tracing::info!("PaintBoard initializing...");
+    tracing::info!("{} initializing...", app_meta::APP_DISPLAY_NAME);
 }
 
 /// Build HTTP response for custom protocol

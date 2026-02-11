@@ -1,5 +1,5 @@
 @echo off
-REM PaintBoard Test Runner
+REM Sutu Test Runner
 REM Usage: test.bat [command] or double-click for menu
 
 setlocal enabledelayedexpansion
@@ -20,7 +20,7 @@ goto help
 cls
 echo.
 echo   ============================================
-echo        PaintBoard Test Runner
+echo        Sutu Test Runner
 echo   ============================================
 echo.
 echo   [1] unit           Run unit tests (Vitest)
@@ -132,7 +132,7 @@ goto done
 
 :help
 echo.
-echo  PaintBoard Test Runner
+echo  Sutu Test Runner
 echo  ======================
 echo.
 echo  Usage: test.bat [command]

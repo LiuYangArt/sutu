@@ -5,10 +5,10 @@
 #![allow(warnings)]
 
 use image::{GrayImage, Luma, Rgba, RgbaImage};
-use paintboard_lib::abr::AbrParser;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use sutu_lib::abr::AbrParser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let abr_path = Path::new("f:/CodeProjects/PaintBoard/abr/liuyang_paintbrushes.abr");

@@ -8,9 +8,10 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { BaseDirectory, exists, mkdir, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { useDocumentStore, FileFormat, Layer } from './document';
 import { useSettingsStore } from './settings';
+import { appHyphenStorageKey } from '@/constants/appMeta';
 
 const SESSION_FILE = 'autosave-session.json';
-const TEMP_AUTOSAVE_FILE_NAME = 'paintboard-autosave.ora';
+const TEMP_AUTOSAVE_FILE_NAME = `${appHyphenStorageKey('autosave')}.ora`;
 
 // Types matching Rust backend
 interface LayerData {

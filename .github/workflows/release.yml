@@ -103,6 +103,13 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Read app name
+        id: app_meta
+        shell: bash
+        run: |
+          app_name=$(node -e "const fs=require('fs'); const conf=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')); process.stdout.write(conf.productName);")
+          echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
+
       - name: Build Tauri app
         run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
 
@@ -111,8 +118,19 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.get_version.outputs.VERSION }}"
-          $exePath = "src-tauri/target/release/PaintBoard.exe"
-          $zipName = "PaintBoard_${version}_x64-portable.zip"
+          $appName = "${{ steps.app_meta.outputs.app_name }}"
+          $exePath = "src-tauri/target/release/$appName.exe"
+          if (-not (Test-Path $exePath)) {
+            $fallbackExe = Get-ChildItem "src-tauri/target/release" -Filter "*.exe" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notmatch "uninstall" } |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+            if (-not $fallbackExe) {
+              throw "Could not locate release executable."
+            }
+            $exePath = $fallbackExe.FullName
+          }
+          $zipName = "${appName}_${version}_x64-portable.zip"
           $zipPath = "src-tauri/target/release/bundle/$zipName"
 
           # Create temp directory and copy exe
@@ -207,6 +225,16 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app name
+        id: app_meta
+        shell: bash
+        run: |
+          app_name=$(node -e "const fs=require('fs'); const conf=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')); process.stdout.write(conf.productName);")
+          echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
+
       - name: Get version from tag
         id: get_version
         shell: bash
@@ -227,11 +255,11 @@ jobs:
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          name: PaintBoard v${{ steps.get_version.outputs.VERSION }}
+          name: ${{ steps.app_meta.outputs.app_name }} v${{ steps.get_version.outputs.VERSION }}
           draft: false
           prerelease: false
           body: |
-            ## PaintBoard v${{ steps.get_version.outputs.VERSION }}
+            ## ${{ steps.app_meta.outputs.app_name }} v${{ steps.get_version.outputs.VERSION }}
 
             ### Changes
             - See commit history for details

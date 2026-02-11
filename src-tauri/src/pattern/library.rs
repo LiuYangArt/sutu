@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use super::pat::{parse_pat_file, ParsedPattern};
 use super::types::{ImportResult, PatternMode, PatternResource};
+use crate::app_meta::APP_CONFIG_DIR_NAME;
 use crate::brush::pattern_cache;
 
 /// Pattern library index (persisted to disk)
@@ -393,7 +394,7 @@ impl PatternLibrary {
 fn get_library_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.paintboard")
+        .join(APP_CONFIG_DIR_NAME)
         .join("patterns")
 }
 

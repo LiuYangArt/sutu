@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::abr::BrushPreset;
+use crate::app_meta::APP_CONFIG_DIR_NAME;
 use crate::brush::{clone_cached_brush, delete_cached_brush};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -719,7 +720,7 @@ fn unique_id_token() -> String {
 fn get_library_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.paintboard")
+        .join(APP_CONFIG_DIR_NAME)
         .join("brushes")
 }
 
@@ -841,7 +842,8 @@ mod tests {
 
     fn make_library() -> BrushLibrary {
         let dir = std::env::temp_dir().join(format!(
-            "paintboard_brush_library_test_{}",
+            "{}_brush_library_test_{}",
+            crate::app_meta::APP_STORAGE_PREFIX,
             unique_id_token()
         ));
         BrushLibrary::new(dir)

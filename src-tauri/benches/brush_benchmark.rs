@@ -1,8 +1,8 @@
 //! Brush engine benchmarks
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use paintboard_lib::brush::{BrushEngine, BrushSettings};
-use paintboard_lib::input::RawInputPoint;
+use sutu_lib::brush::{BrushEngine, BrushSettings};
+use sutu_lib::input::RawInputPoint;
 
 fn generate_stroke(count: usize) -> Vec<RawInputPoint> {
     (0..count)

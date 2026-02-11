@@ -2,9 +2,9 @@
 //! Scan ABR file structure to find ALL `patt` sections and compare with parsed patterns.
 //! This script helps diagnose why some patterns are missing.
 
-use paintboard_lib::abr::AbrParser;
 use std::collections::HashSet;
 use std::path::Path;
+use sutu_lib::abr::AbrParser;
 
 fn main() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

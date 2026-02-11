@@ -1,8 +1,10 @@
 {
   "$schema": "https://schemas.tauri.app/config/2/capability",
   "identifier": "default",
-  "description": "Default capabilities for PaintBoard",
-  "windows": ["main"],
+  "description": "Default capabilities for Sutu",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-hide",
@@ -15,28 +17,64 @@
     "dialog:allow-save",
     {
       "identifier": "fs:allow-exists",
-      "allow": [{ "path": "$APPCONFIG" }, { "path": "$APPCONFIG/**" }]
+      "allow": [
+        {
+          "path": "$APPCONFIG"
+        },
+        {
+          "path": "$APPCONFIG/**"
+        }
+      ]
     },
     {
       "identifier": "fs:allow-mkdir",
       "allow": [
-        { "path": "$APPCONFIG" },
-        { "path": "$APPCONFIG/**" },
-        { "path": "$TEMP" },
-        { "path": "$TEMP/**" }
+        {
+          "path": "$APPCONFIG"
+        },
+        {
+          "path": "$APPCONFIG/**"
+        },
+        {
+          "path": "$TEMP"
+        },
+        {
+          "path": "$TEMP/**"
+        }
       ]
     },
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [{ "path": "$APPCONFIG" }, { "path": "$APPCONFIG/**" }]
+      "allow": [
+        {
+          "path": "$APPCONFIG"
+        },
+        {
+          "path": "$APPCONFIG/**"
+        }
+      ]
     },
     {
       "identifier": "fs:allow-write-text-file",
-      "allow": [{ "path": "$APPCONFIG" }, { "path": "$APPCONFIG/**" }]
+      "allow": [
+        {
+          "path": "$APPCONFIG"
+        },
+        {
+          "path": "$APPCONFIG/**"
+        }
+      ]
     },
     {
       "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "$TEMP" }, { "path": "$TEMP/**" }]
+      "allow": [
+        {
+          "path": "$TEMP"
+        },
+        {
+          "path": "$TEMP/**"
+        }
+      ]
     }
   ]
 }

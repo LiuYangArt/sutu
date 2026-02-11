@@ -1,7 +1,7 @@
 #![allow(warnings)]
-use paintboard_lib::abr::AbrParser;
 use std::collections::HashMap;
 use std::path::Path;
+use sutu_lib::abr::AbrParser;
 
 fn main() {
     // Setup tracing
@@ -53,8 +53,8 @@ fn main() {
 
             // Try decoding using logic from commands.rs
             use byteorder::{BigEndian, ReadBytesExt};
-            use paintboard_lib::file::psd::compression::packbits_decode;
             use std::io::Cursor;
+            use sutu_lib::file::psd::compression::packbits_decode;
 
             let mut decoded_data = None;
             let offsets = vec![2, 0];

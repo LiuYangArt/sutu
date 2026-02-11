@@ -1,7 +1,7 @@
 /**
  * GPU Rendering Module
  *
- * WebGPU-accelerated brush rendering for PaintBoard.
+ * WebGPU-accelerated brush rendering for Sutu.
  * Provides GPU-based stroke accumulation with automatic fallback to Canvas 2D.
  */
 

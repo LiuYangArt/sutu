@@ -1,4 +1,6 @@
-const STORAGE_KEY = 'paintboard.gpu.residency-budget.v1';
+import { appDotStorageKey } from '@/constants/appMeta';
+
+const STORAGE_KEY = appDotStorageKey('gpu.residency-budget.v1');
 const DEFAULT_BUDGET_BYTES = 512 * 1024 * 1024;
 const DEFAULT_RATIO = 0.6;
 const MIN_BUDGET_BYTES = 256 * 1024 * 1024;

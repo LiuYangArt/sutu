@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PaintBoard",
+  "productName": "Sutu",
   "version": "0.9.9",
-  "identifier": "com.paintboard.app",
+  "identifier": "com.sutu.app",
   "build": {
     "beforeDevCommand": "pnpm dev:frontend",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "PaintBoard",
+        "title": "Sutu",
         "width": 1400,
         "height": 900,
         "minWidth": 800,

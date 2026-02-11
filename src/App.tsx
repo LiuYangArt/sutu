@@ -24,6 +24,7 @@ import { useHistoryStore } from './stores/history';
 import { useViewportStore } from './stores/viewport';
 import { useToastStore } from './stores/toast';
 import { initializeGradientStore } from './stores/gradient';
+import { APP_DISPLAY_NAME } from './constants/appMeta';
 
 // Lazy load DebugPanel (only used in dev mode)
 const DebugPanel = lazy(() => import('./components/DebugPanel'));
@@ -564,7 +565,7 @@ function App() {
   if (!isReady) {
     return (
       <div className="loading">
-        <span>Loading PaintBoard...</span>
+        <span>Loading {APP_DISPLAY_NAME}...</span>
       </div>
     );
   }

@@ -6,6 +6,7 @@ import {
   PatternInfo,
 } from '@/components/BrushPanel/types';
 import { patternManager } from '@/utils/patternManager';
+import { appHyphenStorageKey } from '@/constants/appMeta';
 
 export type ToolType =
   | 'brush'
@@ -1113,7 +1114,7 @@ export const useToolStore = create<ToolState>()(
       };
     },
     {
-      name: 'paintboard-brush-settings',
+      name: appHyphenStorageKey('brush-settings'),
       version: 4,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {

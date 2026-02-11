@@ -1,6 +1,6 @@
 #![allow(warnings)]
-use paintboard_lib::abr::AbrParser;
 use std::path::Path;
+use sutu_lib::abr::AbrParser;
 
 fn main() {
     // Setup tracing

@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Cursor};
 use std::path::Path;
 
-/// Magic marker in ImageDescription to identify PaintBoard TIFF files
+/// Magic marker in ImageDescription to identify Sutu TIFF files
 const PAINTBOARD_TIFF_MARKER: &str = "PAINTBOARD_PROJECT_V1:";
 
 /// Layer metadata stored in TIFF (without pixel data)
@@ -185,7 +185,7 @@ pub fn load_tiff(path: &Path) -> Result<ProjectData, FileError> {
         .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
         .ok();
 
-    // Check if this is a PaintBoard project file
+    // Check if this is a Sutu project file
     let project_meta: Option<TiffProjectMeta> = image_description.and_then(|desc| {
         if let Some(json_str) = desc.strip_prefix(PAINTBOARD_TIFF_MARKER) {
             serde_json::from_str(json_str).ok()
@@ -195,7 +195,7 @@ pub fn load_tiff(path: &Path) -> Result<ProjectData, FileError> {
     });
 
     if let Some(meta) = project_meta {
-        // This is a PaintBoard project - load all layers
+        // This is a Sutu project - load all layers
         let mut layers = Vec::new();
 
         // Skip Page 0 (flattened image) - decoder starts at Page 0

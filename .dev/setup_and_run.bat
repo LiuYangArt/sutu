@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0.."
 
 echo ========================================
-echo   PaintBoard Dev Environment Setup
+echo   Sutu Dev Environment Setup
 echo ========================================
 echo.
 

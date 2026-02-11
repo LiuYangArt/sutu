@@ -1,12 +1,12 @@
 #![allow(warnings)]
-use paintboard_lib::abr::AbrParser;
+use sutu_lib::abr::AbrParser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "paintboard_lib=debug,verify_pattern_fix=debug".into()),
+                .unwrap_or_else(|_| "sutu_lib=debug,verify_pattern_fix=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

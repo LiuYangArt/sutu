@@ -1,13 +1,13 @@
 [package]
-name = "paintboard"
+name = "sutu"
 version = "0.9.9"
 description = "Professional painting software with low-latency pen input"
-authors = ["PaintBoard Team"]
+authors = ["Sutu Team"]
 edition = "2021"
 rust-version = "1.75"
 
 [lib]
-name = "paintboard_lib"
+name = "sutu_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
