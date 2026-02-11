@@ -24,6 +24,15 @@ type CurvesBridgeWindow = Window & {
 interface DragState {
   channel: CurvesChannel;
   pointId: string;
+  beforeSnapshot: CurvesPanelSnapshot | null;
+  moved: boolean;
+}
+
+interface CurvesPanelSnapshot {
+  selectedChannel: CurvesChannel;
+  previewEnabled: boolean;
+  selectedPointId: string | null;
+  pointsByChannel: CurvesPointsByChannel;
 }
 
 const CHANNEL_OPTIONS: Array<{ value: CurvesChannel; label: string }> = [
@@ -56,6 +65,17 @@ function createDefaultPoints(nextId: () => string): CurvesPointsByChannel {
     red: createChannel(),
     green: createChannel(),
     blue: createChannel(),
+  };
+}
+
+function clonePointsByChannel(pointsByChannel: CurvesPointsByChannel): CurvesPointsByChannel {
+  const cloneChannel = (points: CurvePoint[]): CurvePoint[] =>
+    points.map((point) => ({ id: point.id, x: point.x, y: point.y }));
+  return {
+    rgb: cloneChannel(pointsByChannel.rgb),
+    red: cloneChannel(pointsByChannel.red),
+    green: cloneChannel(pointsByChannel.green),
+    blue: cloneChannel(pointsByChannel.blue),
   };
 }
 
@@ -104,6 +124,19 @@ export function CurvesPanel(): JSX.Element {
   const latestPayloadRef = useRef<CurvesPreviewPayload | null>(null);
   const committedRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
+  const undoStackRef = useRef<CurvesPanelSnapshot[]>([]);
+  const redoStackRef = useRef<CurvesPanelSnapshot[]>([]);
+  const currentSnapshotRef = useRef<CurvesPanelSnapshot>({
+    selectedChannel: 'rgb',
+    previewEnabled: true,
+    selectedPointId: null,
+    pointsByChannel: {
+      rgb: [],
+      red: [],
+      green: [],
+      blue: [],
+    },
+  });
 
   const getNextPointId = useCallback(() => {
     pointIdRef.current += 1;
@@ -118,9 +151,12 @@ export function CurvesPanel(): JSX.Element {
   );
   const [sessionInfo, setSessionInfo] = useState<CurvesSessionInfo | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
 
   const activePoints = pointsByChannel[selectedChannel];
   const selectedPoint = getSelectedPoint(activePoints, selectedPointId);
+  const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
+  const canRedo = historyVersion >= 0 && redoStackRef.current.length > 0;
 
   const luts = useMemo(() => {
     return {
@@ -144,6 +180,48 @@ export function CurvesPanel(): JSX.Element {
     }),
     [luts.blue, luts.green, luts.red, luts.rgb, previewEnabled]
   );
+
+  const captureSnapshot = useCallback((): CurvesPanelSnapshot => {
+    const current = currentSnapshotRef.current;
+    return {
+      selectedChannel: current.selectedChannel,
+      previewEnabled: current.previewEnabled,
+      selectedPointId: current.selectedPointId,
+      pointsByChannel: clonePointsByChannel(current.pointsByChannel),
+    };
+  }, []);
+
+  const applySnapshot = useCallback((snapshot: CurvesPanelSnapshot) => {
+    setSelectedChannel(snapshot.selectedChannel);
+    setPreviewEnabled(snapshot.previewEnabled);
+    setSelectedPointId(snapshot.selectedPointId);
+    setPointsByChannel(clonePointsByChannel(snapshot.pointsByChannel));
+  }, []);
+
+  const pushUndoSnapshot = useCallback((snapshot: CurvesPanelSnapshot) => {
+    undoStackRef.current.push(snapshot);
+    if (undoStackRef.current.length > 200) {
+      undoStackRef.current.shift();
+    }
+    redoStackRef.current = [];
+    setHistoryVersion((value) => value + 1);
+  }, []);
+
+  const handleLocalUndo = useCallback(() => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    redoStackRef.current.push(captureSnapshot());
+    applySnapshot(previous);
+    setHistoryVersion((value) => value + 1);
+  }, [applySnapshot, captureSnapshot]);
+
+  const handleLocalRedo = useCallback(() => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current.push(captureSnapshot());
+    applySnapshot(next);
+    setHistoryVersion((value) => value + 1);
+  }, [applySnapshot, captureSnapshot]);
 
   const requestPreviewFrame = useCallback(() => {
     const sessionId = sessionIdRef.current;
@@ -197,6 +275,15 @@ export function CurvesPanel(): JSX.Element {
   }, [endSession]);
 
   useEffect(() => {
+    currentSnapshotRef.current = {
+      selectedChannel,
+      previewEnabled,
+      selectedPointId,
+      pointsByChannel: clonePointsByChannel(pointsByChannel),
+    };
+  }, [pointsByChannel, previewEnabled, selectedChannel, selectedPointId]);
+
+  useEffect(() => {
     latestPayloadRef.current = curvesPayload;
     requestPreviewFrame();
   }, [curvesPayload, requestPreviewFrame]);
@@ -208,6 +295,7 @@ export function CurvesPanel(): JSX.Element {
       if (!drag || !graph) return;
       const rect = graph.getBoundingClientRect();
       const point = fromGraphPoint(event.clientX, event.clientY, rect);
+      let didMove = false;
       setPointsByChannel((prev) => {
         const channelPoints = prev[drag.channel];
         const index = channelPoints.findIndex((item) => item.id === drag.pointId);
@@ -231,6 +319,10 @@ export function CurvesPanel(): JSX.Element {
           nextX = clamp(nextX, minX, maxX);
         }
 
+        if (current.x === nextX && current.y === point.y) {
+          return prev;
+        }
+        didMove = true;
         nextPoints[index] = {
           ...current,
           x: clamp(nextX, 0, 255),
@@ -241,9 +333,16 @@ export function CurvesPanel(): JSX.Element {
           [drag.channel]: nextPoints,
         };
       });
+      if (didMove && dragRef.current) {
+        dragRef.current.moved = true;
+      }
     };
 
     const onPointerUp = (): void => {
+      const drag = dragRef.current;
+      if (drag?.moved && drag.beforeSnapshot) {
+        pushUndoSnapshot(drag.beforeSnapshot);
+      }
       dragRef.current = null;
     };
 
@@ -255,10 +354,30 @@ export function CurvesPanel(): JSX.Element {
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
     };
-  }, []);
+  }, [pushUndoSnapshot]);
 
   useEffect(() => {
-    const handleDelete = (event: KeyboardEvent): void => {
+    const handlePanelKeyDown = (event: KeyboardEvent): void => {
+      const modifierPressed = event.ctrlKey || event.metaKey;
+      if (modifierPressed && !event.altKey) {
+        if (event.code === 'KeyZ') {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.shiftKey) {
+            handleLocalRedo();
+          } else {
+            handleLocalUndo();
+          }
+          return;
+        }
+        if (event.code === 'KeyY') {
+          event.preventDefault();
+          event.stopPropagation();
+          handleLocalRedo();
+          return;
+        }
+      }
+
       if (event.key !== 'Delete') return;
       if (isEditableTarget(event.target)) return;
       const points = pointsByChannel[selectedChannel];
@@ -266,6 +385,7 @@ export function CurvesPanel(): JSX.Element {
       if (index <= 0 || index >= points.length - 1) return;
       event.preventDefault();
       event.stopPropagation();
+      pushUndoSnapshot(captureSnapshot());
       setPointsByChannel((prev) => {
         const channelPoints = prev[selectedChannel];
         const removeIndex = channelPoints.findIndex((point) => point.id === selectedPointId);
@@ -279,11 +399,19 @@ export function CurvesPanel(): JSX.Element {
       setSelectedPointId(null);
     };
 
-    window.addEventListener('keydown', handleDelete, true);
+    window.addEventListener('keydown', handlePanelKeyDown, true);
     return () => {
-      window.removeEventListener('keydown', handleDelete, true);
+      window.removeEventListener('keydown', handlePanelKeyDown, true);
     };
-  }, [pointsByChannel, selectedChannel, selectedPointId]);
+  }, [
+    captureSnapshot,
+    handleLocalRedo,
+    handleLocalUndo,
+    pointsByChannel,
+    pushUndoSnapshot,
+    selectedChannel,
+    selectedPointId,
+  ]);
 
   const handleGraphPointerDown = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
@@ -305,17 +433,28 @@ export function CurvesPanel(): JSX.Element {
 
       if (hitPointId) {
         setSelectedPointId(hitPointId);
-        dragRef.current = { channel: selectedChannel, pointId: hitPointId };
+        dragRef.current = {
+          channel: selectedChannel,
+          pointId: hitPointId,
+          beforeSnapshot: captureSnapshot(),
+          moved: false,
+        };
         return;
       }
 
       const existing = channelPoints.find((item) => item.x === point.x);
       if (existing) {
         setSelectedPointId(existing.id);
-        dragRef.current = { channel: selectedChannel, pointId: existing.id };
+        dragRef.current = {
+          channel: selectedChannel,
+          pointId: existing.id,
+          beforeSnapshot: captureSnapshot(),
+          moved: false,
+        };
         return;
       }
 
+      pushUndoSnapshot(captureSnapshot());
       const pointId = getNextPointId();
       setPointsByChannel((prev) => {
         const nextPoints = [...prev[selectedChannel], { id: pointId, x: point.x, y: point.y }];
@@ -326,15 +465,21 @@ export function CurvesPanel(): JSX.Element {
         };
       });
       setSelectedPointId(pointId);
-      dragRef.current = { channel: selectedChannel, pointId };
+      dragRef.current = {
+        channel: selectedChannel,
+        pointId,
+        beforeSnapshot: null,
+        moved: false,
+      };
     },
-    [getNextPointId, pointsByChannel, selectedChannel]
+    [captureSnapshot, getNextPointId, pointsByChannel, pushUndoSnapshot, selectedChannel]
   );
 
   const handleReset = useCallback(() => {
+    pushUndoSnapshot(captureSnapshot());
     setPointsByChannel(createDefaultPoints(getNextPointId));
     setSelectedPointId(null);
-  }, [getNextPointId]);
+  }, [captureSnapshot, getNextPointId, pushUndoSnapshot]);
 
   const handleCancel = useCallback(() => {
     endSession(true);
@@ -361,10 +506,12 @@ export function CurvesPanel(): JSX.Element {
     <div className="curves-panel">
       <div className="curves-panel__controls">
         <label className="curves-panel__field">
-          <span>Channel</span>
+          <span className="curves-panel__label">Channel</span>
           <select
+            className="curves-panel__select"
             value={selectedChannel}
             onChange={(event) => {
+              pushUndoSnapshot(captureSnapshot());
               setSelectedChannel(event.target.value as CurvesChannel);
               setSelectedPointId(null);
             }}
@@ -381,7 +528,10 @@ export function CurvesPanel(): JSX.Element {
           <input
             type="checkbox"
             checked={previewEnabled}
-            onChange={(event) => setPreviewEnabled(event.target.checked)}
+            onChange={(event) => {
+              pushUndoSnapshot(captureSnapshot());
+              setPreviewEnabled(event.target.checked);
+            }}
           />
           Preview
         </label>
@@ -451,6 +601,25 @@ export function CurvesPanel(): JSX.Element {
         </div>
       )}
       {errorText && <div className="curves-panel__error">{errorText}</div>}
+
+      <div className="curves-panel__history-actions">
+        <button
+          type="button"
+          className="curves-panel__btn curves-panel__btn--ghost"
+          disabled={!canUndo}
+          onClick={handleLocalUndo}
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          className="curves-panel__btn curves-panel__btn--ghost"
+          disabled={!canRedo}
+          onClick={handleLocalRedo}
+        >
+          Redo
+        </button>
+      </div>
 
       <div className="curves-panel__actions">
         <button

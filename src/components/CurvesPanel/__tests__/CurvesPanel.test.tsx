@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { CurvesPanel } from '../index';
 
 type TestWindow = Window & {
@@ -115,5 +115,30 @@ describe('CurvesPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(cancelSpy).toHaveBeenCalledTimes(1);
     expect(cancelSpy).toHaveBeenCalledWith(sessionId);
+  });
+
+  it('Ctrl+Z / Ctrl+Y 只回滚面板内控制点状态', () => {
+    const { container } = render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    fireEvent.pointerDown(graph, { button: 0 });
+    expect(container.querySelectorAll('circle').length).toBe(3);
+
+    fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', ctrlKey: true });
+    expect(container.querySelectorAll('circle').length).toBe(2);
+
+    fireEvent.keyDown(window, { key: 'y', code: 'KeyY', ctrlKey: true });
+    expect(container.querySelectorAll('circle').length).toBe(3);
+  });
+
+  it('通道下拉包含 RGB / Red / Green / Blue', () => {
+    render(<CurvesPanel />);
+
+    const select = screen.getByRole('combobox');
+    const optionTexts = within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+
+    expect(optionTexts).toEqual(['RGB', 'Red', 'Green', 'Blue']);
   });
 });

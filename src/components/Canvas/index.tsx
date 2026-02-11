@@ -214,6 +214,7 @@ const GPU_LAYER_FORMAT: GPUTextureFormat = 'rgba8unorm';
 const MIN_GPU_HISTORY_BUDGET_BYTES = 256 * 1024 * 1024;
 const MAX_GPU_HISTORY_BUDGET_BYTES = 1024 * 1024 * 1024;
 const GPU_HISTORY_BUDGET_RATIO = 0.2;
+const ENABLE_GPU_CURVES = false;
 
 interface CompositeClipRect {
   left: number;
@@ -237,6 +238,7 @@ interface CompositeMovePreview {
 interface CurvesSessionState {
   sessionId: string;
   layerId: string;
+  renderMode: 'gpu' | 'cpu';
   baseImageData: ImageData;
   selectionMask: ImageData | null;
   selectionBounds: { x: number; y: number; width: number; height: number } | null;
@@ -2231,12 +2233,12 @@ export function Canvas() {
     const payload = session.pendingPayload;
     if (!payload) return;
 
-    if (gpuDisplayActive) {
+    if (session.renderMode === 'gpu') {
       renderCurvesPreviewGpu(session, payload);
       return;
     }
     renderCurvesPreviewCpu(session, payload);
-  }, [gpuDisplayActive, renderCurvesPreviewCpu, renderCurvesPreviewGpu]);
+  }, [renderCurvesPreviewCpu, renderCurvesPreviewGpu]);
 
   const scheduleCurvesPreview = useCallback(() => {
     const session = curvesSessionRef.current;
@@ -2411,12 +2413,14 @@ export function Canvas() {
     const previewCanvas = document.createElement('canvas');
     previewCanvas.width = width;
     previewCanvas.height = height;
+    const renderMode: 'gpu' | 'cpu' = ENABLE_GPU_CURVES && gpuDisplayActive ? 'gpu' : 'cpu';
     const sessionId = createHistoryEntryId('curves');
     const histogram = computeLumaHistogram(baseImageData, selectionMaskSnapshot);
 
     curvesSessionRef.current = {
       sessionId,
       layerId: activeLayerId,
+      renderMode,
       baseImageData,
       selectionMask: selectionMaskSnapshot,
       selectionBounds: selectionState.bounds ? { ...selectionState.bounds } : null,
@@ -2431,7 +2435,7 @@ export function Canvas() {
       layerId: activeLayerId,
       hasSelection: !!selectionMaskSnapshot,
       histogram,
-      renderMode: gpuDisplayActive ? 'gpu' : 'cpu',
+      renderMode,
     };
   }, [activeLayerId, disposeCurvesSession, gpuDisplayActive, height, layers, width]);
 
@@ -2454,7 +2458,7 @@ export function Canvas() {
       cancelCurvesPreviewSchedule();
       clearCurvesPreviewVisual();
 
-      if (gpuDisplayActive) {
+      if (session.renderMode === 'gpu') {
         const gpuCommitted = await commitCurvesGpu(session, payload);
         if (gpuCommitted) {
           curvesSessionRef.current = null;
@@ -2492,7 +2496,6 @@ export function Canvas() {
       clearCurvesPreviewVisual,
       commitCurvesGpu,
       compositeAndRender,
-      gpuDisplayActive,
       layers,
       markLayerDirty,
       onBeforeCanvasMutation,
