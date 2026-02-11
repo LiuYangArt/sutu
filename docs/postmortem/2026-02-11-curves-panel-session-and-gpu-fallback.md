@@ -177,3 +177,26 @@ RGB 视图叠加线误用了复合评估（`channel -> rgb`）来绘制路径，
 1. 对高风险新链路，默认应优先暴露错误而不是掩盖错误。  
 2. 自动兜底应仅用于面向普通用户的发布策略，不应干扰研发阶段问题定位。  
 3. “Fail-Fast + 手动应急通道”可以兼顾可修复性与可恢复性。
+
+## 补充复盘（GPU 曲线无选区时预览/提交无效果，2026-02-11）
+
+### 1. 现象
+
+在无选区状态下，曲线面板可正常拖点，但画布预览基本不变化；点击 `OK` 后也可能“看起来提交成功但图像不变”。
+
+### 2. 根因
+
+`tileCurvesComposite.wgsl` 对 `selection_tex` 的采样使用了全局画布坐标直接 `textureLoad`。  
+无选区时绑定的是 `1x1` 白色 selection mask，越界坐标会导致采样值退化为 `0`，相当于把曲线效果整体乘没。
+
+### 3. 修复
+
+1. 在曲线 shader 中补齐 selection 坐标夹取：先取 `textureDimensions(selection_tex)`，再对 `global_xy` 做 `min(dim - 1)`。  
+2. 同时补齐 `global_xy` 与 `dst_tex` 的边界保护，避免越界读取引入未定义行为。  
+3. 新增回归测试：`src/gpu/layers/tileCurvesCompositeShader.test.ts`，锁定“必须使用 clamped selection 采样”。
+
+### 4. 新经验
+
+1. 任何使用“全局坐标采样 selection mask”的 shader，都必须做基于 `textureDimensions` 的坐标夹取。  
+2. 不能假设 selection 纹理总是与画布同尺寸；无选区时通常是 `1x1` 常量纹理。  
+3. “GPU 成功执行但视觉无变化”也要优先排查 mask/采样坐标链路，而不只盯异常日志。

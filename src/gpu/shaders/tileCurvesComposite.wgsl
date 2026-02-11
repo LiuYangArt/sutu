@@ -40,14 +40,26 @@ fn sample_lut(lut: texture_2d<f32>, value: f32) -> f32 {
 
 @fragment
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-  let local_x = u32(position.x);
-  let local_y = u32(position.y);
+  let local_xy = vec2<u32>(u32(position.x), u32(position.y));
+  let global_xy = vec2<u32>(
+    uniforms.tile_origin.x + local_xy.x,
+    uniforms.tile_origin.y + local_xy.y
+  );
 
-  let canvas_x = uniforms.tile_origin.x + local_x;
-  let canvas_y = uniforms.tile_origin.y + local_y;
+  if (global_xy.x >= uniforms.canvas_size.x || global_xy.y >= uniforms.canvas_size.y) {
+    return vec4<f32>(0.0);
+  }
 
-  let dst = textureLoad(dst_tex, vec2<i32>(i32(local_x), i32(local_y)), 0);
-  let selection = textureLoad(selection_tex, vec2<i32>(i32(canvas_x), i32(canvas_y)), 0).r;
+  let dst_dims = textureDimensions(dst_tex);
+  if (local_xy.x >= dst_dims.x || local_xy.y >= dst_dims.y) {
+    return vec4<f32>(0.0);
+  }
+
+  let dst = textureLoad(dst_tex, vec2<i32>(i32(local_xy.x), i32(local_xy.y)), 0);
+  let selection_dims = textureDimensions(selection_tex);
+  let sel_x = min(global_xy.x, selection_dims.x - 1u);
+  let sel_y = min(global_xy.y, selection_dims.y - 1u);
+  let selection = textureLoad(selection_tex, vec2<i32>(i32(sel_x), i32(sel_y)), 0).r;
   if (selection <= 0.0) {
     return dst;
   }
