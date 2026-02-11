@@ -165,6 +165,10 @@
   gap: 8px;
 }
 
+.brush-setting-row.disabled {
+  opacity: 0.55;
+}
+
 .brush-setting-label {
   font-size: 12px;
   color: var(--text-secondary);

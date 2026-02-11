@@ -1459,6 +1459,10 @@ impl AbrParser {
         // ------------------------------------------------------------------
         let mut transfer = TransferSettings::default();
         let mut has_transfer_info = false;
+        let root_minimum_opacity =
+            Self::get_number(brush_desc, &["minimumOpacity"]).map(|v| (v as f32).clamp(0.0, 100.0));
+        let root_minimum_flow =
+            Self::get_number(brush_desc, &["minimumFlow"]).map(|v| (v as f32).clamp(0.0, 100.0));
 
         // Opacity dynamics (opVr)
         if let Some(op) = Self::get_descriptor(brush_desc, &["opVr", "opDy"]) {
@@ -1469,9 +1473,15 @@ impl AbrParser {
             if let Some(v) = Self::get_number(op, &["jitter"]) {
                 transfer.opacity_jitter = (v as f32).clamp(0.0, 100.0);
             }
-            if let Some(v) = Self::get_number(op, &["Mnm ", "Mnm", "minimumOpacity"]) {
-                transfer.minimum_opacity = (v as f32).clamp(0.0, 100.0);
+            if let Some(v) = root_minimum_opacity.or_else(|| {
+                Self::get_number(op, &["Mnm ", "Mnm", "minimumOpacity"])
+                    .map(|n| (n as f32).clamp(0.0, 100.0))
+            }) {
+                transfer.minimum_opacity = v;
             }
+        } else if let Some(v) = root_minimum_opacity {
+            has_transfer_info = true;
+            transfer.minimum_opacity = v;
         }
 
         // Flow dynamics (flVr / flowDynamics)
@@ -1483,9 +1493,15 @@ impl AbrParser {
             if let Some(v) = Self::get_number(fl, &["jitter"]) {
                 transfer.flow_jitter = (v as f32).clamp(0.0, 100.0);
             }
-            if let Some(v) = Self::get_number(fl, &["Mnm ", "Mnm", "minimumFlow"]) {
-                transfer.minimum_flow = (v as f32).clamp(0.0, 100.0);
+            if let Some(v) = root_minimum_flow.or_else(|| {
+                Self::get_number(fl, &["Mnm ", "Mnm", "minimumFlow"])
+                    .map(|n| (n as f32).clamp(0.0, 100.0))
+            }) {
+                transfer.minimum_flow = v;
             }
+        } else if let Some(v) = root_minimum_flow {
+            has_transfer_info = true;
+            transfer.minimum_flow = v;
         }
 
         if has_transfer_info {
@@ -2247,6 +2263,83 @@ mod tests {
         let sc = brush.scatter.expect("scatter");
         assert_eq!(sc.scatter_control, crate::abr::ControlSource::PenPressure);
         assert_eq!(sc.scatter, 236.0);
+    }
+
+    #[test]
+    fn test_transfer_minimum_prefers_root_over_zero_in_dynamics_descriptor() {
+        let mut desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+
+        let mut opvr: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        opvr.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 0.0,
+            },
+        );
+        desc.insert("opVr".to_string(), DescriptorValue::Descriptor(opvr));
+        desc.insert(
+            "minimumOpacity".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 37.0,
+            },
+        );
+
+        let mut fldy: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        fldy.insert(
+            "Mnm ".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 0.0,
+            },
+        );
+        desc.insert(
+            "flowDynamics".to_string(),
+            DescriptorValue::Descriptor(fldy),
+        );
+        desc.insert(
+            "minimumFlow".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 24.0,
+            },
+        );
+
+        let mut brush = make_test_brush("Test");
+        AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
+
+        assert_eq!(brush.transfer_enabled, Some(true));
+        let tr = brush.transfer.expect("transfer");
+        assert_eq!(tr.minimum_opacity, 37.0);
+        assert_eq!(tr.minimum_flow, 24.0);
+    }
+
+    #[test]
+    fn test_transfer_minimum_imports_from_root_when_dynamics_descriptor_missing() {
+        let mut desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        desc.insert(
+            "minimumOpacity".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 31.0,
+            },
+        );
+        desc.insert(
+            "minimumFlow".to_string(),
+            DescriptorValue::UnitFloat {
+                unit: "#Prc".to_string(),
+                value: 18.0,
+            },
+        );
+
+        let mut brush = make_test_brush("Test");
+        AbrParser::apply_advanced_dynamics_from_descriptor(&desc, &mut brush);
+
+        assert_eq!(brush.transfer_enabled, Some(true));
+        let tr = brush.transfer.expect("transfer");
+        assert_eq!(tr.minimum_opacity, 31.0);
+        assert_eq!(tr.minimum_flow, 18.0);
     }
 
     #[test]

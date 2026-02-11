@@ -55,30 +55,21 @@ function JitterGroup({
         onChange={(v) => onControlChange(v as ControlSource)}
         disabled={disabled}
       />
-      {control !== 'off' && (
-        <SliderRow
-          label="Minimum"
-          value={minimum}
-          min={0}
-          max={100}
-          displayValue={`${minimum}%`}
-          onChange={onMinimumChange}
-        />
-      )}
+      <SliderRow
+        label="Minimum"
+        value={minimum}
+        min={0}
+        max={100}
+        displayValue={`${minimum}%`}
+        onChange={onMinimumChange}
+        disabled={disabled || control === 'off'}
+      />
     </div>
   );
 }
 
 export function TransferSettings(): JSX.Element {
-  const {
-    brushFlow,
-    setBrushFlow,
-    brushOpacity,
-    setBrushOpacity,
-    transfer,
-    setTransfer,
-    transferEnabled,
-  } = useToolStore();
+  const { transfer, setTransfer, transferEnabled } = useToolStore();
 
   const disabled = !transferEnabled;
 
@@ -87,26 +78,6 @@ export function TransferSettings(): JSX.Element {
       {/* Section header */}
       <div className="section-header-row">
         <h4>Transfer</h4>
-      </div>
-
-      {/* Base Flow/Opacity sliders (always visible) */}
-      <div className="dynamics-group">
-        <SliderRow
-          label="Flow"
-          value={Math.round(brushFlow * 100)}
-          min={1}
-          max={100}
-          displayValue={`${Math.round(brushFlow * 100)}%`}
-          onChange={(v) => setBrushFlow(v / 100)}
-        />
-        <SliderRow
-          label="Opacity"
-          value={Math.round(brushOpacity * 100)}
-          min={1}
-          max={100}
-          displayValue={`${Math.round(brushOpacity * 100)}%`}
-          onChange={(v) => setBrushOpacity(v / 100)}
-        />
       </div>
 
       {/* Opacity Jitter Group */}
