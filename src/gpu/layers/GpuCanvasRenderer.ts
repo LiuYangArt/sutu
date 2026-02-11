@@ -718,6 +718,14 @@ export class GpuCanvasRenderer {
             ? computeTileDrawRegion(rect, gradientPreview.dirtyRect)
             : { x: 0, y: 0, width: rect.width, height: rect.height };
           if (previewDrawRegion) {
+            const preserveOutsideDirtyRegion = !this.isFullTileDraw(previewDrawRegion, rect);
+            if (preserveOutsideDirtyRegion) {
+              encoder.copyTextureToTexture(
+                { texture: activeSource.texture },
+                { texture: this.activePreviewTexture },
+                [this.tileSize, this.tileSize, 1]
+              );
+            }
             this.renderGradientCompositePass({
               encoder,
               targetView: this.activePreviewView,
@@ -726,6 +734,7 @@ export class GpuCanvasRenderer {
               tileRect: rect,
               drawRegion: previewDrawRegion,
               gradient: gradientPreview,
+              loadExistingTarget: preserveOutsideDirtyRegion,
             });
             activeSource = {
               texture: this.activePreviewTexture,
@@ -738,6 +747,14 @@ export class GpuCanvasRenderer {
             ? computeTileDrawRegion(rect, curvesPreview.dirtyRect)
             : { x: 0, y: 0, width: rect.width, height: rect.height };
           if (previewDrawRegion) {
+            const preserveOutsideDirtyRegion = !this.isFullTileDraw(previewDrawRegion, rect);
+            if (preserveOutsideDirtyRegion) {
+              encoder.copyTextureToTexture(
+                { texture: activeSource.texture },
+                { texture: this.activePreviewTexture },
+                [this.tileSize, this.tileSize, 1]
+              );
+            }
             this.renderCurvesCompositePass({
               encoder,
               targetView: this.activePreviewView,
@@ -746,6 +763,7 @@ export class GpuCanvasRenderer {
               tileRect: rect,
               drawRegion: previewDrawRegion,
               curves: curvesPreview,
+              loadExistingTarget: preserveOutsideDirtyRegion,
             });
             activeSource = {
               texture: this.activePreviewTexture,

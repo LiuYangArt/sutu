@@ -200,3 +200,32 @@ RGB 视图叠加线误用了复合评估（`channel -> rgb`）来绘制路径，
 1. 任何使用“全局坐标采样 selection mask”的 shader，都必须做基于 `textureDimensions` 的坐标夹取。  
 2. 不能假设 selection 纹理总是与画布同尺寸；无选区时通常是 `1x1` 常量纹理。  
 3. “GPU 成功执行但视觉无变化”也要优先排查 mask/采样坐标链路，而不只盯异常日志。
+
+## 补充复盘（有选区时白边与预览卡顿，2026-02-11）
+
+### 1. 现象
+
+1. 有选区时，曲线预览在选区周围出现一圈白边/透明边。  
+2. 拖动曲线点时明显掉帧，主观体感接近 CPU 路径。
+
+### 2. 根因
+
+1. 预览链路在 `dirtyRect` 小于整 tile 时，没有保留 tile 的选区外像素：  
+   `renderLayerStackFrame(...curvesPreview/gradientPreview...)` 里对 `activePreviewView` 使用了 `loadOp: clear`，但没有像 commit 路径一样先拷贝原 tile 并 `loadExistingTarget`，导致选区外区域被清空。  
+2. 曲线 GPU 预览每帧都在调用 `setSelectionMask(session.selectionMask)`，导致选区 mask 每帧全量上传 GPU（`writeTexture`），大选区时造成明显性能回退。
+
+### 3. 修复
+
+1. 在预览路径（gradient + curves）补齐“保留选区外像素”逻辑：  
+   - 先判断 `preserveOutsideDirtyRegion = !isFullTileDraw(previewDrawRegion, rect)`  
+   - 若为真，先 `copyTextureToTexture(activeSource.texture -> activePreviewTexture)`  
+   - 预览 pass 使用 `loadExistingTarget: preserveOutsideDirtyRegion`  
+2. 选区 mask 上传改为“会话初始化时一次”：
+   - `beginCurvesSession`（GPU 模式）时设置一次 `setSelectionMask(selectionMaskSnapshot)`  
+   - 移除 `renderCurvesPreviewGpu` 与 `commitCurvesGpu` 内每次调用的重复设置  
+   - 会话结束后继续按既有逻辑恢复全局 selection mask。
+
+### 4. 回归
+
+1. 新增 `src/gpu/layers/GpuCanvasRenderer.previewSelection.test.ts`，锁定预览路径必须启用 `preserveOutsideDirtyRegion + loadExistingTarget`。  
+2. 保留 `src/gpu/layers/tileCurvesCompositeShader.test.ts`，继续覆盖 selection 采样坐标夹取。

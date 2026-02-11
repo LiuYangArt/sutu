@@ -2275,7 +2275,6 @@ export function Canvas() {
         gpuRenderer.syncLayerFromCanvas(visibleLayer.id, layer.canvas, visibleLayer.revision);
       }
 
-      gpuRenderer.setSelectionMask(session.selectionMask);
       const dirtyRect = resolveSelectionDirtyRect(width, height, session.selectionBounds);
       const luts = curvesPayloadToLuts(payload);
       const curvesParams: GpuCurvesRenderParams = {
@@ -2440,7 +2439,6 @@ export function Canvas() {
           );
         }
 
-        gpuRenderer.setSelectionMask(session.selectionMask);
         const dirtyRect = resolveSelectionDirtyRect(width, height, session.selectionBounds);
         const luts = curvesPayloadToLuts(payload);
         const curvesParams: GpuCurvesRenderParams = {
@@ -2608,6 +2606,10 @@ export function Canvas() {
         halted: false,
       },
     };
+
+    if (renderMode === 'gpu') {
+      gpuRendererRef.current?.setSelectionMask(selectionMaskSnapshot);
+    }
 
     return {
       sessionId,
