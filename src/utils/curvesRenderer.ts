@@ -1,4 +1,5 @@
 import type {
+  CurveKernel,
   CurvePoint,
   CurvesLuts,
   CurvesPointsByChannel,
@@ -12,6 +13,15 @@ const DELTA_EPSILON = 1e-6;
 
 type CurveNode = Pick<CurvePoint, 'x' | 'y'>;
 
+interface BuildCurveOptions {
+  kernel?: CurveKernel;
+}
+
+interface NaturalSpline {
+  nodes: CurveNode[];
+  secondDerivatives: number[];
+}
+
 function clamp(value: number, min: number, max: number): number {
   if (value < min) return min;
   if (value > max) return max;
@@ -24,6 +34,19 @@ function clampByte(value: number): number {
 
 function readLut(lut: Uint8Array, index: number): number {
   return lut[index] ?? index;
+}
+
+function sampleLutLinear(lut: Uint8Array, input: number): number {
+  const clampedInput = clamp(input, CHANNEL_MIN, CHANNEL_MAX);
+  const low = Math.floor(clampedInput);
+  const high = Math.min(CHANNEL_MAX, low + 1);
+  if (high === low) {
+    return lut[low] ?? low;
+  }
+  const t = clampedInput - low;
+  const lowValue = lut[low] ?? low;
+  const highValue = lut[high] ?? high;
+  return lowValue + (highValue - lowValue) * t;
 }
 
 export function createIdentityLut(): Uint8Array {
@@ -70,12 +93,8 @@ export function normalizeCurvePoints(points: readonly CurveNode[]): CurveNode[] 
   return normalized;
 }
 
-export function buildCurveLut(points: readonly CurveNode[]): Uint8Array {
-  const nodes = normalizeCurvePoints(points);
-  if (nodes.length < 2) {
-    return createIdentityLut();
-  }
-
+function buildLegacyMonotoneLut(nodes: readonly CurveNode[]): Uint8Array {
+  if (nodes.length < 2) return createIdentityLut();
   const lastIndex = nodes.length - 1;
   const h: number[] = new Array(lastIndex).fill(0);
   const delta: number[] = new Array(lastIndex).fill(0);
@@ -151,6 +170,156 @@ export function buildCurveLut(points: readonly CurveNode[]): Uint8Array {
     lut[x] = clampByte(Math.round(last.y));
   }
 
+  return lut;
+}
+
+export function buildNaturalSpline(nodes: readonly CurveNode[]): NaturalSpline | null {
+  if (nodes.length < 2) return null;
+
+  const secondDerivatives = new Array<number>(nodes.length).fill(0);
+  const work = new Array<number>(nodes.length).fill(0);
+
+  secondDerivatives[0] = 0;
+  work[0] = 0;
+
+  for (let i = 1; i < nodes.length - 1; i += 1) {
+    const prev = nodes[i - 1];
+    const current = nodes[i];
+    const next = nodes[i + 1];
+    if (!prev || !current || !next) continue;
+
+    const denominator = next.x - prev.x;
+    if (denominator <= 0) continue;
+
+    const sig = (current.x - prev.x) / denominator;
+    const p = sig * (secondDerivatives[i - 1] ?? 0) + 2;
+    if (Math.abs(p) <= 1e-12) continue;
+
+    secondDerivatives[i] = (sig - 1) / p;
+
+    const slopeNext = (next.y - current.y) / Math.max(1, next.x - current.x);
+    const slopePrev = (current.y - prev.y) / Math.max(1, current.x - prev.x);
+    const rhs = (6 * (slopeNext - slopePrev)) / denominator;
+    work[i] = (rhs - sig * (work[i - 1] ?? 0)) / p;
+  }
+
+  secondDerivatives[nodes.length - 1] = 0;
+
+  for (let k = nodes.length - 2; k >= 0; k -= 1) {
+    const current = secondDerivatives[k] ?? 0;
+    const nextSecond = secondDerivatives[k + 1] ?? 0;
+    const nextWork = work[k] ?? 0;
+    secondDerivatives[k] = current * nextSecond + nextWork;
+  }
+
+  return {
+    nodes: nodes.map((node) => ({ ...node })),
+    secondDerivatives,
+  };
+}
+
+export function evaluateNaturalSplineAt(spline: NaturalSpline, input: number): number {
+  const { nodes, secondDerivatives } = spline;
+  if (nodes.length === 0) return clamp(input, CHANNEL_MIN, CHANNEL_MAX);
+
+  const x = clamp(input, CHANNEL_MIN, CHANNEL_MAX);
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  if (!first || !last) return x;
+
+  if (x <= first.x) return first.y;
+  if (x >= last.x) return last.y;
+
+  let low = 0;
+  let high = nodes.length - 1;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    const midNode = nodes[mid];
+    if (!midNode || midNode.x > x) {
+      high = mid;
+    } else {
+      low = mid;
+    }
+  }
+
+  const left = nodes[low];
+  const right = nodes[high];
+  if (!left || !right) return x;
+
+  const segmentWidth = right.x - left.x;
+  if (segmentWidth <= 0) return left.y;
+
+  const a = (right.x - x) / segmentWidth;
+  const b = (x - left.x) / segmentWidth;
+  const leftSecond = secondDerivatives[low] ?? 0;
+  const rightSecond = secondDerivatives[high] ?? 0;
+
+  return (
+    a * left.y +
+    b * right.y +
+    (((a * a * a - a) * leftSecond + (b * b * b - b) * rightSecond) * segmentWidth * segmentWidth) /
+      6
+  );
+}
+
+function resolveKernel(options?: BuildCurveOptions): CurveKernel {
+  return options?.kernel ?? 'natural';
+}
+
+function buildEvaluatorFromNodes(
+  nodes: readonly CurveNode[],
+  kernel: CurveKernel
+): (input: number) => number {
+  if (kernel === 'legacy_monotone') {
+    const lut = buildLegacyMonotoneLut(nodes);
+    return (input: number) => sampleLutLinear(lut, input);
+  }
+
+  const spline = buildNaturalSpline(nodes);
+  if (!spline) {
+    return (input: number) => clamp(input, CHANNEL_MIN, CHANNEL_MAX);
+  }
+  return (input: number) => evaluateNaturalSplineAt(spline, input);
+}
+
+export function buildCurveEvaluator(
+  points: readonly CurveNode[],
+  options?: BuildCurveOptions
+): (input: number) => number {
+  const nodes = normalizeCurvePoints(points);
+  if (nodes.length < 2) {
+    return (input: number) => clamp(input, CHANNEL_MIN, CHANNEL_MAX);
+  }
+  return buildEvaluatorFromNodes(nodes, resolveKernel(options));
+}
+
+export function evaluateCurveAt(
+  points: readonly CurveNode[],
+  input: number,
+  options?: BuildCurveOptions
+): number {
+  return buildCurveEvaluator(points, options)(input);
+}
+
+export function buildCurveLut(
+  points: readonly CurveNode[],
+  options?: BuildCurveOptions
+): Uint8Array {
+  const nodes = normalizeCurvePoints(points);
+  if (nodes.length < 2) {
+    return createIdentityLut();
+  }
+
+  const kernel = resolveKernel(options);
+  if (kernel === 'legacy_monotone') {
+    return buildLegacyMonotoneLut(nodes);
+  }
+
+  const evaluator = buildEvaluatorFromNodes(nodes, kernel);
+  const lut = createIdentityLut();
+  for (let x = CHANNEL_MIN; x <= CHANNEL_MAX; x += 1) {
+    lut[x] = clampByte(Math.round(evaluator(x)));
+  }
   return lut;
 }
 

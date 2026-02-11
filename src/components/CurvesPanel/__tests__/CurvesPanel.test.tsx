@@ -16,6 +16,12 @@ type TestWindow = Window & {
 };
 
 const sessionId = 'curves-session-test';
+const GRAPH_LEFT = -128;
+const GRAPH_WIDTH = 256;
+
+function clientXFromCurveInput(input: number): number {
+  return GRAPH_LEFT + (input / 255) * GRAPH_WIDTH;
+}
 
 describe('CurvesPanel', () => {
   const beginSpy = vi.fn<
@@ -154,5 +160,71 @@ describe('CurvesPanel', () => {
     fireEvent.pointerUp(window, { clientX: 360, clientY: 360 });
 
     expect(container.querySelectorAll('circle').length).toBe(2);
+  });
+
+  it('在曲线框内超过控制点极限 16px 并松手会删除该点', () => {
+    const { container } = render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(64),
+      clientY: 0,
+    });
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(192),
+      clientY: 0,
+    });
+    expect(container.querySelectorAll('circle').length).toBe(4);
+
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(64),
+      clientY: 0,
+    });
+    fireEvent.pointerMove(window, {
+      clientX: clientXFromCurveInput(220),
+      clientY: 0,
+    });
+    fireEvent.pointerUp(window, {
+      clientX: clientXFromCurveInput(220),
+      clientY: 0,
+    });
+
+    expect(container.querySelectorAll('circle').length).toBe(3);
+  });
+
+  it('超过控制点极限但不足 16px 时松手不删除', () => {
+    const { container } = render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(64),
+      clientY: 0,
+    });
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(192),
+      clientY: 0,
+    });
+    expect(container.querySelectorAll('circle').length).toBe(4);
+
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(64),
+      clientY: 0,
+    });
+    fireEvent.pointerMove(window, {
+      clientX: clientXFromCurveInput(200),
+      clientY: 0,
+    });
+    fireEvent.pointerUp(window, {
+      clientX: clientXFromCurveInput(200),
+      clientY: 0,
+    });
+
+    expect(container.querySelectorAll('circle').length).toBe(4);
   });
 });

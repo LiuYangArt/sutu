@@ -8,13 +8,14 @@ import type {
   CurvesPreviewPayload,
   CurvesSessionInfo,
 } from '@/types/curves';
-import { buildCurveLut } from '@/utils/curvesRenderer';
+import { buildCurveEvaluator, buildCurveLut } from '@/utils/curvesRenderer';
 import './CurvesPanel.css';
 
 const GRAPH_SIZE = 256;
 const POINT_HIT_RADIUS_PX = 8;
 const GRID_DIVISIONS = 4;
-const CURVE_RENDER_SAMPLES = 1024;
+const CURVE_RENDER_SAMPLES = 2048;
+const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 16;
 
 type CurvesBridgeWindow = Window & {
   __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
@@ -37,6 +38,13 @@ interface CurvesPanelSnapshot {
   previewEnabled: boolean;
   selectedPointId: string | null;
   pointsByChannel: CurvesPointsByChannel;
+}
+
+interface DragRange {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 }
 
 const CHANNEL_OPTIONS: Array<{ value: CurvesChannel; label: string }> = [
@@ -108,12 +116,55 @@ function getSelectedPoint(points: CurvePoint[], selectedId: string | null): Curv
   return points.find((point) => point.id === selectedId) ?? null;
 }
 
-function isPointerOutsideGraph(clientX: number, clientY: number, rect: DOMRect): boolean {
-  return clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom;
+function fromGraphPointRaw(
+  clientX: number,
+  clientY: number,
+  rect: DOMRect
+): { x: number; y: number } {
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  const safeClientX = Number.isFinite(clientX) ? clientX : rect.left;
+  const safeClientY = Number.isFinite(clientY) ? clientY : rect.top;
+  const x = ((safeClientX - rect.left) / width) * 255;
+  const y = 255 - ((safeClientY - rect.top) / height) * 255;
+  return { x, y };
 }
 
 function canDeletePointAtIndex(index: number, length: number): boolean {
   return index > 0 && index < length - 1;
+}
+
+function getPointDragRange(points: CurvePoint[], index: number): DragRange {
+  const isFirst = index === 0;
+  const isLast = index === points.length - 1;
+
+  if (isFirst) {
+    return { minX: 0, maxX: 0, minY: 0, maxY: 255 };
+  }
+  if (isLast) {
+    return { minX: 255, maxX: 255, minY: 0, maxY: 255 };
+  }
+
+  const prevPoint = points[index - 1];
+  const nextPoint = points[index + 1];
+  return {
+    minX: (prevPoint?.x ?? 0) + 1,
+    maxX: (nextPoint?.x ?? 255) - 1,
+    minY: 0,
+    maxY: 255,
+  };
+}
+
+function computeOvershootPixels(
+  rawValue: number,
+  min: number,
+  max: number,
+  pixelsPerUnit: number
+): number {
+  const safeScale = Math.max(1e-6, pixelsPerUnit);
+  if (rawValue < min) return (min - rawValue) * safeScale;
+  if (rawValue > max) return (rawValue - max) * safeScale;
+  return 0;
 }
 
 function createDragState(args: {
@@ -132,26 +183,13 @@ function createDragState(args: {
   };
 }
 
-function sampleLutLinear(lut: Uint8Array, input: number): number {
-  const clampedInput = clamp(input, 0, 255);
-  const low = Math.floor(clampedInput);
-  const high = Math.min(255, low + 1);
-  if (high === low) {
-    return lut[low] ?? low;
-  }
-  const t = clampedInput - low;
-  const lowValue = lut[low] ?? low;
-  const highValue = lut[high] ?? high;
-  return lowValue + (highValue - lowValue) * t;
-}
-
-function buildPathFromLut(lut: Uint8Array): string {
+function buildPathFromEvaluator(evaluator: (input: number) => number): string {
   const sampleCount = Math.max(2, CURVE_RENDER_SAMPLES);
   let path = '';
   for (let i = 0; i < sampleCount; i += 1) {
     const t = i / (sampleCount - 1);
     const input = t * 255;
-    const value = sampleLutLinear(lut, input);
+    const value = evaluator(input);
     const x = toGraphX(input);
     const y = toGraphY(value);
     path += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
@@ -338,11 +376,30 @@ export function CurvesPanel(): JSX.Element {
       const graph = graphRef.current;
       if (!drag || !graph) return;
       const rect = graph.getBoundingClientRect();
-      const outsideGraph = isPointerOutsideGraph(event.clientX, event.clientY, rect);
+      const rawPoint = fromGraphPointRaw(event.clientX, event.clientY, rect);
       if (drag.canDeleteByDragOut) {
-        drag.deleteOnRelease = outsideGraph;
-        if (outsideGraph) {
-          return;
+        const livePoints = currentSnapshotRef.current.pointsByChannel[drag.channel];
+        const index = livePoints.findIndex((point) => point.id === drag.pointId);
+        if (index >= 0) {
+          const range = getPointDragRange(livePoints, index);
+          const pixelsPerXUnit = rect.width / 255;
+          const pixelsPerYUnit = rect.height / 255;
+          const overshootX = computeOvershootPixels(
+            rawPoint.x,
+            range.minX,
+            range.maxX,
+            pixelsPerXUnit
+          );
+          const overshootY = computeOvershootPixels(
+            rawPoint.y,
+            range.minY,
+            range.maxY,
+            pixelsPerYUnit
+          );
+          drag.deleteOnRelease =
+            Math.max(overshootX, overshootY) >= DRAG_DELETE_OVERSHOOT_THRESHOLD_PX;
+        } else {
+          drag.deleteOnRelease = false;
         }
       }
 
@@ -355,30 +412,18 @@ export function CurvesPanel(): JSX.Element {
         const nextPoints = [...channelPoints];
         const current = nextPoints[index];
         if (!current) return prev;
+        const range = getPointDragRange(channelPoints, index);
+        const nextX = clamp(point.x, range.minX, range.maxX);
+        const nextY = clamp(point.y, range.minY, range.maxY);
 
-        let nextX = point.x;
-        const isFirst = index === 0;
-        const isLast = index === channelPoints.length - 1;
-        if (isFirst) {
-          nextX = 0;
-        } else if (isLast) {
-          nextX = 255;
-        } else {
-          const prevPoint = channelPoints[index - 1];
-          const nextPoint = channelPoints[index + 1];
-          const minX = (prevPoint?.x ?? 0) + 1;
-          const maxX = (nextPoint?.x ?? 255) - 1;
-          nextX = clamp(nextX, minX, maxX);
-        }
-
-        if (current.x === nextX && current.y === point.y) {
+        if (current.x === nextX && current.y === nextY) {
           return prev;
         }
         didMove = true;
         nextPoints[index] = {
           ...current,
           x: clamp(nextX, 0, 255),
-          y: clamp(point.y, 0, 255),
+          y: clamp(nextY, 0, 255),
         };
         return {
           ...prev,
@@ -577,7 +622,10 @@ export function CurvesPanel(): JSX.Element {
     closePanel('curves-panel');
   }, [closePanel, curvesPayload, endSession]);
 
-  const activeLutPath = buildPathFromLut(luts[selectedChannel]);
+  const activeCurvePath = useMemo(() => {
+    const evaluator = buildCurveEvaluator(activePoints);
+    return buildPathFromEvaluator(evaluator);
+  }, [activePoints]);
 
   return (
     <div className="curves-panel">
@@ -651,7 +699,7 @@ export function CurvesPanel(): JSX.Element {
           )}
           <line x1={0} y1={GRAPH_SIZE} x2={GRAPH_SIZE} y2={0} className="curves-panel__baseline" />
           <path
-            d={activeLutPath}
+            d={activeCurvePath}
             className="curves-panel__curve"
             shapeRendering="geometricPrecision"
           />

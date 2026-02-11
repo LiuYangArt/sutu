@@ -1,4 +1,5 @@
 export type CurvesChannel = 'rgb' | 'red' | 'green' | 'blue';
+export type CurveKernel = 'natural' | 'legacy_monotone';
 
 export interface CurvePoint {
   id: string;

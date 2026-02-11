@@ -14,19 +14,71 @@ function createShiftLut(offset: number): Uint8Array {
   return lut;
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const normalized = hex.replace(/^#/, '').trim();
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  return [r, g, b];
+}
+
 describe('curvesRenderer', () => {
-  it('buildCurveLut outputs monotonic values for monotonic points', () => {
-    const lut = buildCurveLut([
-      { x: 0, y: 0 },
-      { x: 80, y: 160 },
-      { x: 180, y: 220 },
-      { x: 255, y: 255 },
-    ]);
+  it('legacy kernel keeps monotonic behavior for monotonic control points', () => {
+    const lut = buildCurveLut(
+      [
+        { x: 0, y: 0 },
+        { x: 80, y: 160 },
+        { x: 180, y: 220 },
+        { x: 255, y: 255 },
+      ],
+      { kernel: 'legacy_monotone' }
+    );
 
     for (let i = 1; i < lut.length; i += 1) {
       const prev = lut[i - 1] ?? 0;
       const current = lut[i] ?? 0;
       expect(current).toBeGreaterThanOrEqual(prev);
+    }
+  });
+
+  it('natural kernel matches sampled Photoshop RGB outputs', () => {
+    const samples = [
+      {
+        before: '#6646a4',
+        point1: { x: 166, y: 224 },
+        point2: { x: 108, y: 58 },
+        after: '#2c00dc',
+      },
+      {
+        before: '#d4d5c4',
+        point1: { x: 204, y: 96 },
+        point2: { x: 36, y: 140 },
+        after: '#707355',
+      },
+      {
+        before: '#1b1c1a',
+        point1: { x: 208, y: 59 },
+        point2: { x: 58, y: 212 },
+        after: '#797d75',
+      },
+      {
+        before: '#61082c',
+        point1: { x: 111, y: 222 },
+        point2: { x: 95, y: 89 },
+        after: '#690000',
+      },
+    ];
+
+    for (const sample of samples) {
+      const lut = buildCurveLut([sample.point1, sample.point2]);
+      const source = hexToRgb(sample.before);
+      const expected = hexToRgb(sample.after);
+      const mapped: [number, number, number] = [
+        lut[source[0]] ?? source[0],
+        lut[source[1]] ?? source[1],
+        lut[source[2]] ?? source[2],
+      ];
+      expect(mapped).toEqual(expected);
     }
   });
 
