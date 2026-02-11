@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "sync:app-meta": "node scripts/sync-app-meta.mjs",
+    "sync:icons": "node scripts/sync-icons.mjs",
     "dev": "pnpm sync:app-meta && tauri dev",
     "dev:frontend": "vite",
     "build": "pnpm sync:app-meta && vite build && tauri build",

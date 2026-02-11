@@ -19,6 +19,7 @@ if "%1"=="check" goto check
 if "%1"=="lint" goto lint
 if "%1"=="format" goto format
 if "%1"=="clean" goto clean
+if "%1"=="sync-icons" goto sync_icons
 goto help
 
 :menu
@@ -37,9 +38,10 @@ echo   [6] check          Run all checks
 echo   [7] lint           Run linters
 echo   [8] format         Format code
 echo   [9] clean          Clean build artifacts
+echo   [10] sync-icons    Regenerate all icon assets
 echo   [0] exit           Exit
 echo.
-set /p choice="  Enter choice [1-9, 0 to exit]: "
+set /p choice="  Enter choice [1-10, 0 to exit]: "
 
 if "%choice%"=="1" goto dev
 if "%choice%"=="2" goto build
@@ -50,6 +52,7 @@ if "%choice%"=="6" goto check
 if "%choice%"=="7" goto lint
 if "%choice%"=="8" goto format
 if "%choice%"=="9" goto clean
+if "%choice%"=="10" goto sync_icons
 if "%choice%"=="0" goto end
 echo.
 echo   Invalid choice, please try again.
@@ -146,6 +149,14 @@ if exist target rmdir /s /q target
 echo [Sutu] Cleaned!
 goto done
 
+:sync_icons
+echo.
+echo [Sutu] Regenerating icon assets...
+call pnpm sync:icons
+if errorlevel 1 goto error
+echo [Sutu] Icon assets updated!
+goto done
+
 :help
 echo.
 echo  Sutu Development Scripts
@@ -163,6 +174,7 @@ echo    check          Run all checks (typecheck, lint, test)
 echo    lint           Run linters only
 echo    format         Format all code
 echo    clean          Remove all build artifacts
+echo    sync-icons     Regenerate all icon assets from src-tauri/icons/icon.png
 echo.
 goto done
 
