@@ -1346,6 +1346,11 @@ export function Canvas() {
       const historyStore = gpuStrokeHistoryStoreRef.current;
       const historyEntryId = pendingGpuHistoryEntryIdRef.current;
       const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
+      const finalizeHistory = () => {
+        if (historyStore && historyEntryId) {
+          historyStore.finalizeStroke(historyEntryId);
+        }
+      };
 
       try {
         const visibleGpuLayers = getVisibleGpuRenderableLayers();
@@ -1416,6 +1421,7 @@ export function Canvas() {
         });
         return false;
       } finally {
+        finalizeHistory();
         clearPendingGpuHistoryEntry();
       }
     },
