@@ -99,6 +99,13 @@ export interface GpuLayerStackCacheStats {
   lastInvalidationReason: string | null;
 }
 
+interface DisplayViewport {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 type TileSourceKind =
   | 'transparent'
   | 'layer'
@@ -492,6 +499,7 @@ export class GpuCanvasRenderer {
   }
 
   renderFrame(params: RenderFrameParams): void {
+    this.syncCanvasDimensionsIfNeeded();
     const { layerId, scratchTexture, strokeOpacity, renderScale } = params;
     const compositeMode = params.compositeMode ?? 'paint';
     const clampedOpacity = Math.max(0, Math.min(1, strokeOpacity));
@@ -518,6 +526,8 @@ export class GpuCanvasRenderer {
     for (const coord of this.visibleTiles) {
       const rect = this.layerStore.getTileRect(coord);
       if (rect.width <= 0 || rect.height <= 0) continue;
+      const viewport = this.computeDisplayViewport(rect);
+      if (!viewport) continue;
 
       const tile = this.layerStore.getTile(layerId, coord);
       const tileView = tile ? tile.view : this.transparentLayerView;
@@ -546,8 +556,8 @@ export class GpuCanvasRenderer {
         ],
       });
 
-      pass.setViewport(rect.originX, rect.originY, rect.width, rect.height, 0, 1);
-      pass.setScissorRect(rect.originX, rect.originY, rect.width, rect.height);
+      pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+      pass.setScissorRect(viewport.x, viewport.y, viewport.width, viewport.height);
       pass.setBindGroup(0, bindGroup, [uniformOffset]);
       pass.draw(6, 1, 0, 0);
       drawIndex += 1;
@@ -558,6 +568,7 @@ export class GpuCanvasRenderer {
   }
 
   renderLayerStackFrame(params: RenderLayerStackFrameParams): void {
+    this.syncCanvasDimensionsIfNeeded();
     const { layers, activeLayerId, scratchTexture, strokeOpacity, renderScale } = params;
     const gradientPreview = params.gradientPreview ?? null;
     const compositeMode = params.compositeMode ?? 'paint';
@@ -700,15 +711,17 @@ export class GpuCanvasRenderer {
         ],
       });
       displayPass.setPipeline(this.displayPipeline);
-      this.drawDisplayTile({
+      const tileDrawn = this.drawDisplayTile({
         pass: displayPass,
         tileView: current.view,
         tileRect: rect,
         uniformIndex,
       });
       displayPass.end();
-      hasDrawnTile = true;
-      uniformIndex += 1;
+      if (tileDrawn) {
+        hasDrawnTile = true;
+        uniformIndex += 1;
+      }
     }
 
     if (!hasDrawnTile) {
@@ -1316,8 +1329,10 @@ export class GpuCanvasRenderer {
     tileView: GPUTextureView;
     tileRect: TileRect;
     uniformIndex: number;
-  }): void {
+  }): boolean {
     const { pass, tileView, tileRect, uniformIndex } = args;
+    const viewport = this.computeDisplayViewport(tileRect);
+    if (!viewport) return false;
     const uniformOffset = this.writeUniforms(uniformIndex, {
       canvasWidth: this.width,
       canvasHeight: this.height,
@@ -1342,10 +1357,11 @@ export class GpuCanvasRenderer {
       ],
     });
 
-    pass.setViewport(tileRect.originX, tileRect.originY, tileRect.width, tileRect.height, 0, 1);
-    pass.setScissorRect(tileRect.originX, tileRect.originY, tileRect.width, tileRect.height);
+    pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+    pass.setScissorRect(viewport.x, viewport.y, viewport.width, viewport.height);
     pass.setBindGroup(0, bindGroup, [uniformOffset]);
     pass.draw(6, 1, 0, 0);
+    return true;
   }
 
   private async composeFlattenedTileTexture(args: {
@@ -1757,6 +1773,26 @@ export class GpuCanvasRenderer {
     pass.setScissorRect(viewport.x, viewport.y, viewport.width, viewport.height);
     pass.draw(6, 1, 0, 0);
     pass.end();
+  }
+
+  private syncCanvasDimensionsIfNeeded(): void {
+    const canvasWidth = this.canvas.width;
+    const canvasHeight = this.canvas.height;
+    if (canvasWidth === this.width && canvasHeight === this.height) return;
+    this.resize(canvasWidth, canvasHeight);
+  }
+
+  private computeDisplayViewport(tileRect: TileRect): DisplayViewport | null {
+    const targetWidth = this.canvas.width;
+    const targetHeight = this.canvas.height;
+    const x = tileRect.originX;
+    const y = tileRect.originY;
+    const right = Math.min(targetWidth, tileRect.originX + tileRect.width);
+    const bottom = Math.min(targetHeight, tileRect.originY + tileRect.height);
+    const width = right - x;
+    const height = bottom - y;
+    if (width <= 0 || height <= 0) return null;
+    return { x, y, width, height };
   }
 
   private writeGradientUniforms(args: {
