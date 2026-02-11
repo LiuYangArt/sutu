@@ -1,6 +1,6 @@
 {
   "name": "sutu",
-  "version": "0.9.9",
+  "version": "0.10.0",
   "description": "Professional painting software with low-latency pen input",
   "license": "GPL-3.0-only",
   "type": "module",
@@ -22,7 +22,7 @@
     "test:e2e": "playwright test",
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
-    "version": "node scripts/sync-version.mjs && node scripts/sync-app-meta.mjs && git add app.meta.json package.json index.html src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/capabilities/default.json src-tauri/gen/schemas/capabilities.json src/constants/appMeta.ts src-tauri/src/app_meta.rs"
+    "version": "node scripts/sync-version.mjs && node scripts/sync-app-meta.mjs && git add app.meta.json package.json index.html src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/capabilities/default.json src/constants/appMeta.ts src-tauri/src/app_meta.rs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
