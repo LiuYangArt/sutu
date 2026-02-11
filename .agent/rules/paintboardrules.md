@@ -2,4 +2,4 @@
 trigger: always_on
 ---
 
-@CLAUDE.md
+@AGENTS.md
