@@ -1,10 +1,12 @@
 import tileCompositeShader from '../shaders/tileComposite.wgsl?raw';
 import tileLayerBlendShader from '../shaders/tileLayerBlend.wgsl?raw';
 import tileGradientCompositeShader from '../shaders/tileGradientComposite.wgsl?raw';
+import tileCurvesCompositeShader from '../shaders/tileCurvesComposite.wgsl?raw';
 import { GpuLayerStore, type TileCoord, type TileRect } from './GpuLayerStore';
 import { TileResidencyManager } from './TileResidencyManager';
 import { SelectionMaskGpu } from './SelectionMaskGpu';
 import { GradientRampLut, type GradientRampLutUpdateInput } from './GradientRampLut';
+import { CurvesLut } from './CurvesLut';
 import type { GpuStrokeHistoryStore, GpuStrokeHistoryTileApplyItem } from './GpuStrokeHistoryStore';
 import { buildBelowCacheSignature } from './layerStackCache';
 import { computeTileDrawRegion, type TileDrawRegion } from './dirtyTileClip';
@@ -18,7 +20,12 @@ import {
 import { alignTo } from '../utils/textureCopyRect';
 import type { Rect } from '@/utils/strokeBuffer';
 import { TRANSPARENT_BACKDROP_EPS } from '@/utils/layerBlendMath';
-import type { GpuGradientRenderParams, GpuRenderableLayer, StrokeCompositeMode } from '../types';
+import type {
+  GpuCurvesRenderParams,
+  GpuGradientRenderParams,
+  GpuRenderableLayer,
+  StrokeCompositeMode,
+} from '../types';
 
 interface GpuCanvasRendererOptions {
   tileSize: number;
@@ -59,6 +66,7 @@ interface RenderLayerStackFrameParams {
   compositeMode?: StrokeCompositeMode;
   renderScale: number;
   gradientPreview?: GpuGradientRenderParams | null;
+  curvesPreview?: GpuCurvesRenderParams | null;
 }
 
 interface ReadbackTarget {
@@ -85,9 +93,22 @@ interface RenderLayerStackGradientPreviewFrameParams {
   gradient: GpuGradientRenderParams;
 }
 
+interface RenderLayerStackCurvesPreviewFrameParams {
+  layers: GpuRenderableLayer[];
+  activeLayerId: string | null;
+  curves: GpuCurvesRenderParams;
+}
+
 interface CommitGradientParams {
   layerId: string;
   gradient: GpuGradientRenderParams;
+  baseLayerCanvas?: HTMLCanvasElement | null;
+  historyCapture?: CommitStrokeHistoryCapture;
+}
+
+interface CommitCurvesParams {
+  layerId: string;
+  curves: GpuCurvesRenderParams;
   baseLayerCanvas?: HTMLCanvasElement | null;
   historyCapture?: CommitStrokeHistoryCapture;
 }
@@ -121,6 +142,8 @@ const LAYER_BLEND_UNIFORM_BYTES = 32;
 const INITIAL_LAYER_BLEND_UNIFORM_SLOTS = 1024;
 const GRADIENT_UNIFORM_BYTES = 64;
 const INITIAL_GRADIENT_UNIFORM_SLOTS = 1024;
+const CURVES_UNIFORM_BYTES = 32;
+const INITIAL_CURVES_UNIFORM_SLOTS = 1024;
 
 function createSolidMaskTexture1x1(device: GPUDevice, label: string, value: number): GPUTexture {
   const texture = device.createTexture({
@@ -215,6 +238,14 @@ export class GpuCanvasRenderer {
   private gradientUniformSlots: number;
   private gradientUniformWriteIndex = 0;
   private gradientRampLut: GradientRampLut;
+  private curvesBindGroupLayout: GPUBindGroupLayout;
+  private curvesPipelineLayout: GPUPipelineLayout;
+  private curvesPipeline: GPURenderPipeline;
+  private curvesUniformBuffer: GPUBuffer;
+  private curvesUniformStride: number;
+  private curvesUniformSlots: number;
+  private curvesUniformWriteIndex = 0;
+  private curvesLut: CurvesLut;
 
   private whiteMaskTexture: GPUTexture;
   private whiteMaskView: GPUTextureView;
@@ -415,6 +446,51 @@ export class GpuCanvasRenderer {
     this.gradientUniformBuffer = this.createGradientUniformBuffer(this.gradientUniformSlots);
     this.gradientRampLut = new GradientRampLut(device);
 
+    const curvesShaderModule = device.createShaderModule({
+      label: 'Tile Curves Composite Shader',
+      code: tileCurvesCompositeShader,
+    });
+    this.curvesBindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: {
+            type: 'uniform',
+            hasDynamicOffset: true,
+            minBindingSize: CURVES_UNIFORM_BYTES,
+          },
+        },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
+    });
+    this.curvesPipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [this.curvesBindGroupLayout],
+    });
+    this.curvesPipeline = device.createRenderPipeline({
+      label: 'Tile Curves Composite Pipeline',
+      layout: this.curvesPipelineLayout,
+      vertex: { module: curvesShaderModule, entryPoint: 'vs_main' },
+      fragment: {
+        module: curvesShaderModule,
+        entryPoint: 'fs_main',
+        targets: [{ format: this.layerFormat }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.curvesUniformStride = alignTo(
+      CURVES_UNIFORM_BYTES,
+      device.limits.minUniformBufferOffsetAlignment
+    );
+    this.curvesUniformSlots = INITIAL_CURVES_UNIFORM_SLOTS;
+    this.curvesUniformBuffer = this.createCurvesUniformBuffer(this.curvesUniformSlots);
+    this.curvesLut = new CurvesLut(device);
+
     this.whiteMaskTexture = createSolidMaskTexture1x1(device, 'Selection Mask Fallback', 255);
     this.whiteMaskView = this.whiteMaskTexture.createView();
 
@@ -565,6 +641,7 @@ export class GpuCanvasRenderer {
     this.syncCanvasDimensionsIfNeeded();
     const { layers, activeLayerId, scratchTexture, strokeOpacity, renderScale } = params;
     const gradientPreview = params.gradientPreview ?? null;
+    const curvesPreview = params.curvesPreview ?? null;
     const compositeMode = params.compositeMode ?? 'paint';
     this.pruneLayerRevisionState(layers);
     const visibleLayers = layers.filter((layer) => layer.visible);
@@ -607,8 +684,13 @@ export class GpuCanvasRenderer {
       this.ensureGradientUniformBufferCapacity(this.visibleTiles.length);
       this.gradientRampLut.update(this.toGradientLutInput(gradientPreview));
     }
+    if (curvesPreview) {
+      this.ensureCurvesUniformBufferCapacity(this.visibleTiles.length);
+      this.curvesLut.update(curvesPreview);
+    }
     this.layerBlendUniformWriteIndex = 0;
     this.gradientUniformWriteIndex = 0;
+    this.curvesUniformWriteIndex = 0;
     const selectionView = this.selectionMask.getTextureView() ?? this.whiteMaskView;
     const scratchView = scratchTexture ? scratchTexture.createView() : null;
     const clampedStrokeOpacity = Math.max(0, Math.min(1, strokeOpacity));
@@ -644,6 +726,26 @@ export class GpuCanvasRenderer {
               tileRect: rect,
               drawRegion: previewDrawRegion,
               gradient: gradientPreview,
+            });
+            activeSource = {
+              texture: this.activePreviewTexture,
+              view: this.activePreviewView,
+              source: 'active-preview',
+            };
+          }
+        } else if (curvesPreview) {
+          const previewDrawRegion = curvesPreview.dirtyRect
+            ? computeTileDrawRegion(rect, curvesPreview.dirtyRect)
+            : { x: 0, y: 0, width: rect.width, height: rect.height };
+          if (previewDrawRegion) {
+            this.renderCurvesCompositePass({
+              encoder,
+              targetView: this.activePreviewView,
+              tileView: activeSource.view,
+              selectionView,
+              tileRect: rect,
+              drawRegion: previewDrawRegion,
+              curves: curvesPreview,
             });
             activeSource = {
               texture: this.activePreviewTexture,
@@ -745,6 +847,18 @@ export class GpuCanvasRenderer {
       compositeMode: 'paint',
       renderScale: 1,
       gradientPreview: params.gradient,
+    });
+  }
+
+  renderLayerStackFrameWithCurvesPreview(params: RenderLayerStackCurvesPreviewFrameParams): void {
+    this.renderLayerStackFrame({
+      layers: params.layers,
+      activeLayerId: params.activeLayerId,
+      scratchTexture: null,
+      strokeOpacity: 1,
+      compositeMode: 'paint',
+      renderScale: 1,
+      curvesPreview: params.curves,
     });
   }
 
@@ -970,6 +1084,119 @@ export class GpuCanvasRenderer {
           tileRect: rect,
           drawRegion,
           gradient,
+        });
+        historyCapture?.store.captureAfterTile(
+          historyCapture.entryId,
+          encoder,
+          layerId,
+          coord,
+          newTile.texture
+        );
+      }
+
+      committedTiles.push(coord);
+    }
+
+    this.device.queue.submit([encoder.finish()]);
+    if (activeLayerTmpTexture) {
+      activeLayerTmpTexture.destroy();
+    }
+    if (committedTiles.length > 0) {
+      this.bumpLayerContentGeneration(layerId);
+    }
+    return committedTiles;
+  }
+
+  commitCurves(params: CommitCurvesParams): TileCoord[] {
+    const { layerId, curves, baseLayerCanvas, historyCapture } = params;
+    const curvesDirtyRect = curves.dirtyRect ?? {
+      left: 0,
+      top: 0,
+      right: this.width,
+      bottom: this.height,
+    };
+    const tiles = this.getTilesForRect(curvesDirtyRect);
+    if (tiles.length === 0) return [];
+
+    this.ensureCurvesUniformBufferCapacity(tiles.length);
+    this.curvesUniformWriteIndex = 0;
+    this.curvesLut.update(curves);
+    const selectionView = this.selectionMask.getTextureView() ?? this.whiteMaskView;
+
+    const encoder = this.device.createCommandEncoder();
+    let activeLayerTmpTexture: GPUTexture | null = null;
+    let activeLayerTmpView: GPUTextureView | null = null;
+    const committedTiles: TileCoord[] = [];
+
+    for (const coord of tiles) {
+      const rect = this.layerStore.getTileRect(coord);
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      const drawRegion = computeTileDrawRegion(rect, curvesDirtyRect);
+      if (!drawRegion) continue;
+
+      let existingTile = this.layerStore.getTile(layerId, coord);
+      if (!existingTile && baseLayerCanvas) {
+        this.layerStore.uploadTilesFromCanvas(layerId, baseLayerCanvas, [coord], {
+          onlyMissing: true,
+        });
+        existingTile = this.layerStore.getTile(layerId, coord);
+      }
+
+      historyCapture?.store.captureBeforeTile(
+        historyCapture.entryId,
+        encoder,
+        layerId,
+        coord,
+        existingTile?.texture ?? this.transparentLayerTexture
+      );
+
+      if (existingTile) {
+        if (!activeLayerTmpTexture || !activeLayerTmpView) {
+          activeLayerTmpTexture = this.createTempTileTexture();
+          activeLayerTmpView = activeLayerTmpTexture.createView();
+        }
+        const preserveOutsideDirtyRegion = !this.isFullTileDraw(drawRegion, rect);
+        if (preserveOutsideDirtyRegion) {
+          encoder.copyTextureToTexture(
+            { texture: existingTile.texture },
+            { texture: activeLayerTmpTexture },
+            [this.tileSize, this.tileSize, 1]
+          );
+        }
+
+        this.renderCurvesCompositePass({
+          encoder,
+          targetView: activeLayerTmpView,
+          tileView: existingTile.view,
+          selectionView,
+          tileRect: rect,
+          drawRegion,
+          curves,
+          loadExistingTarget: preserveOutsideDirtyRegion,
+        });
+
+        encoder.copyTextureToTexture(
+          { texture: activeLayerTmpTexture },
+          { texture: existingTile.texture },
+          [this.tileSize, this.tileSize, 1]
+        );
+        historyCapture?.store.captureAfterTile(
+          historyCapture.entryId,
+          encoder,
+          layerId,
+          coord,
+          existingTile.texture
+        );
+      } else {
+        const newTile = this.layerStore.getOrCreateTile(layerId, coord);
+        this.renderCurvesCompositePass({
+          encoder,
+          targetView: newTile.view,
+          tileView: this.transparentLayerView,
+          selectionView,
+          tileRect: rect,
+          drawRegion,
+          curves,
         });
         historyCapture?.store.captureAfterTile(
           historyCapture.entryId,
@@ -1769,6 +1996,70 @@ export class GpuCanvasRenderer {
     pass.end();
   }
 
+  private renderCurvesCompositePass(args: {
+    encoder: GPUCommandEncoder;
+    targetView: GPUTextureView;
+    tileView: GPUTextureView;
+    selectionView: GPUTextureView;
+    tileRect: TileRect;
+    drawRegion?: TileDrawRegion;
+    curves: GpuCurvesRenderParams;
+    loadExistingTarget?: boolean;
+  }): void {
+    const {
+      encoder,
+      targetView,
+      tileView,
+      selectionView,
+      tileRect,
+      drawRegion,
+      loadExistingTarget,
+    } = args;
+    const uniformOffset = this.writeCurvesUniforms({
+      canvasWidth: this.width,
+      canvasHeight: this.height,
+      tileOriginX: tileRect.originX,
+      tileOriginY: tileRect.originY,
+    });
+
+    const bindGroup = this.device.createBindGroup({
+      layout: this.curvesBindGroupLayout,
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: this.curvesUniformBuffer,
+            size: CURVES_UNIFORM_BYTES,
+          },
+        },
+        { binding: 1, resource: tileView },
+        { binding: 2, resource: selectionView },
+        { binding: 3, resource: this.curvesLut.getTextureView('rgb') },
+        { binding: 4, resource: this.curvesLut.getTextureView('red') },
+        { binding: 5, resource: this.curvesLut.getTextureView('green') },
+        { binding: 6, resource: this.curvesLut.getTextureView('blue') },
+      ],
+    });
+
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: targetView,
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: loadExistingTarget ? 'load' : 'clear',
+          storeOp: 'store',
+        },
+      ],
+    });
+    pass.setPipeline(this.curvesPipeline);
+    pass.setBindGroup(0, bindGroup, [uniformOffset]);
+    const viewport = drawRegion ?? { x: 0, y: 0, width: tileRect.width, height: tileRect.height };
+    pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+    pass.setScissorRect(viewport.x, viewport.y, viewport.width, viewport.height);
+    pass.draw(6, 1, 0, 0);
+    pass.end();
+  }
+
   private syncCanvasDimensionsIfNeeded(): void {
     const canvasWidth = this.canvas.width;
     const canvasHeight = this.canvas.height;
@@ -1812,6 +2103,27 @@ export class GpuCanvasRenderer {
     view.setUint32(56, 0, true);
     view.setUint32(60, 0, true);
     this.device.queue.writeBuffer(this.gradientUniformBuffer, offset, data);
+    return offset;
+  }
+
+  private writeCurvesUniforms(args: {
+    canvasWidth: number;
+    canvasHeight: number;
+    tileOriginX: number;
+    tileOriginY: number;
+  }): number {
+    const offset = this.nextCurvesUniformOffset();
+    const data = new ArrayBuffer(CURVES_UNIFORM_BYTES);
+    const view = new DataView(data);
+    view.setUint32(0, args.canvasWidth >>> 0, true);
+    view.setUint32(4, args.canvasHeight >>> 0, true);
+    view.setUint32(8, args.tileOriginX >>> 0, true);
+    view.setUint32(12, args.tileOriginY >>> 0, true);
+    view.setUint32(16, 0, true);
+    view.setUint32(20, 0, true);
+    view.setUint32(24, 0, true);
+    view.setUint32(28, 0, true);
+    this.device.queue.writeBuffer(this.curvesUniformBuffer, offset, data);
     return offset;
   }
 
@@ -1935,6 +2247,26 @@ export class GpuCanvasRenderer {
     this.gradientUniformBuffer = this.createGradientUniformBuffer(this.gradientUniformSlots);
   }
 
+  private createCurvesUniformBuffer(slots: number): GPUBuffer {
+    const size = Math.max(this.curvesUniformStride, this.curvesUniformStride * slots);
+    return this.device.createBuffer({
+      label: 'Tile Curves Composite Uniforms',
+      size,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  private ensureCurvesUniformBufferCapacity(requiredSlots: number): void {
+    if (requiredSlots <= this.curvesUniformSlots) return;
+    let nextSlots = this.curvesUniformSlots;
+    while (nextSlots < requiredSlots) {
+      nextSlots *= 2;
+    }
+    this.curvesUniformBuffer.destroy();
+    this.curvesUniformSlots = nextSlots;
+    this.curvesUniformBuffer = this.createCurvesUniformBuffer(this.curvesUniformSlots);
+  }
+
   private nextLayerBlendUniformOffset(): number {
     if (this.layerBlendUniformWriteIndex >= this.layerBlendUniformSlots) {
       this.ensureLayerBlendUniformCapacity(this.layerBlendUniformWriteIndex + 1);
@@ -1950,6 +2282,15 @@ export class GpuCanvasRenderer {
     }
     const offset = this.gradientUniformWriteIndex * this.gradientUniformStride;
     this.gradientUniformWriteIndex += 1;
+    return offset;
+  }
+
+  private nextCurvesUniformOffset(): number {
+    if (this.curvesUniformWriteIndex >= this.curvesUniformSlots) {
+      this.ensureCurvesUniformBufferCapacity(this.curvesUniformWriteIndex + 1);
+    }
+    const offset = this.curvesUniformWriteIndex * this.curvesUniformStride;
+    this.curvesUniformWriteIndex += 1;
     return offset;
   }
 

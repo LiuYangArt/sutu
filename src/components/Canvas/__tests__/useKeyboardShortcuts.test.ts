@@ -326,6 +326,38 @@ describe('useKeyboardShortcuts', () => {
     expect(calls[1]?.[0]).toBeGreaterThan(50); // BracketRight increased
   });
 
+  it('handles Ctrl+M to open curves panel and keeps M for select tool', () => {
+    const setTool = vi.fn<[ToolType], void>();
+    const handleOpenCurvesPanel = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool,
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleOpenCurvesPanel,
+      })
+    );
+
+    act(() => {
+      dispatchWindowKeyDown({ code: 'KeyM', ctrlKey: true });
+      dispatchWindowKeyDown({ code: 'KeyM' });
+    });
+
+    expect(handleOpenCurvesPanel).toHaveBeenCalledTimes(1);
+    expect(setTool).toHaveBeenCalledWith('select');
+  });
+
   it('does not intercept Ctrl+A/Z/Y/X/C/V/J in input/textarea', () => {
     const setTool = vi.fn<[ToolType], void>();
     const handleUndo = vi.fn();

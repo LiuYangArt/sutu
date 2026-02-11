@@ -27,6 +27,7 @@ export type {
   GpuGradientPoint,
   GpuGradientConfig,
   GpuGradientRenderParams,
+  GpuCurvesRenderParams,
 } from './types';
 
 export {

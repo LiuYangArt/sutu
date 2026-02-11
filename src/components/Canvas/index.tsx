@@ -6,6 +6,7 @@ import { useViewportStore } from '@/stores/viewport';
 import { createHistoryEntryId, type HistoryEntry, useHistoryStore } from '@/stores/history';
 import { useSettingsStore } from '@/stores/settings';
 import { useTabletStore } from '@/stores/tablet';
+import { usePanelStore } from '@/stores/panel';
 import { useSelectionHandler } from './useSelectionHandler';
 import { useCursor } from './useCursor';
 import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
@@ -38,12 +39,19 @@ import {
   GpuStrokeCommitCoordinator,
   GpuStrokeHistoryStore,
   loadResidencyBudget,
+  type GpuCurvesRenderParams,
   type GpuRenderableLayer,
   type GpuGradientRenderParams,
   type GpuBrushCommitReadbackMode,
   type GpuBrushCommitMetricsSnapshot,
   type GpuStrokeCommitResult,
 } from '@/gpu';
+import type { CurvesPreviewPayload, CurvesSessionInfo } from '@/types/curves';
+import {
+  applyCurvesToImageData,
+  computeLumaHistogram,
+  curvesPayloadToLuts,
+} from '@/utils/curvesRenderer';
 import {
   bumpLayerRevisions,
   isGpuHistoryPathAvailable,
@@ -176,6 +184,10 @@ declare global {
     }>;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
+    __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
+    __canvasCurvesPreview?: (sessionId: string, payload: CurvesPreviewPayload) => boolean;
+    __canvasCurvesCommit?: (sessionId: string, payload: CurvesPreviewPayload) => Promise<boolean>;
+    __canvasCurvesCancel?: (sessionId: string) => void;
     __strokeDiagnostics?: {
       onPointBuffered: () => void;
       onStrokeStart: () => void;
@@ -220,6 +232,18 @@ interface CompositeMovePreview {
   layerId: string;
   canvas: HTMLCanvasElement;
   dirtyRect?: CompositeClipRect | null;
+}
+
+interface CurvesSessionState {
+  sessionId: string;
+  layerId: string;
+  baseImageData: ImageData;
+  selectionMask: ImageData | null;
+  selectionBounds: { x: number; y: number; width: number; height: number } | null;
+  histogram: number[];
+  previewCanvas: HTMLCanvasElement;
+  previewRafId: number | null;
+  pendingPayload: CurvesPreviewPayload | null;
 }
 
 function isLineTool(tool: ToolType | null): boolean {
@@ -272,6 +296,24 @@ function clampNumber(value: number, min: number, max: number): number {
   return value;
 }
 
+function resolveSelectionDirtyRect(
+  width: number,
+  height: number,
+  selectionBounds: { x: number; y: number; width: number; height: number } | null
+): Rect {
+  if (!selectionBounds) {
+    return { left: 0, top: 0, right: width, bottom: height };
+  }
+  const left = Math.max(0, Math.floor(selectionBounds.x));
+  const top = Math.max(0, Math.floor(selectionBounds.y));
+  const right = Math.min(width, Math.ceil(selectionBounds.x + selectionBounds.width));
+  const bottom = Math.min(height, Math.ceil(selectionBounds.y + selectionBounds.height));
+  if (right <= left || bottom <= top) {
+    return { left: 0, top: 0, right: width, bottom: height };
+  }
+  return { left, top, right, bottom };
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -310,6 +352,7 @@ export function Canvas() {
     dirtyRect: CompositeClipRect | null;
   } | null>(null);
   const lastPointerClientPosRef = useRef<{ x: number; y: number } | null>(null);
+  const curvesSessionRef = useRef<CurvesSessionState | null>(null);
   const finalizeFloatingSelectionSessionRef = useRef<(reason?: string) => void>(() => undefined);
   const hasFloatingSelectionSessionRef = useRef<() => boolean>(() => false);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
@@ -400,6 +443,7 @@ export function Canvas() {
   }));
 
   const { pushAddLayer } = useHistoryStore();
+  const openPanel = usePanelStore((s) => s.openPanel);
 
   const { isPanning, scale, setScale, setIsPanning, pan, zoomIn, zoomOut, offsetX, offsetY } =
     useViewportStore();
@@ -693,6 +737,7 @@ export function Canvas() {
 
   useEffect(() => {
     if (gpuRendererRef.current) {
+      if (curvesSessionRef.current) return;
       gpuRendererRef.current.setSelectionMask(selectionMask ?? null);
     }
   }, [selectionMask]);
@@ -1903,6 +1948,9 @@ export function Canvas() {
       handleMergeSelectedLayers(selectedIds);
     },
     handleMergeAllLayers,
+    handleOpenCurvesPanel: () => {
+      openPanel('curves-panel');
+    },
   });
 
   const resolveImportAnchorPoint = useCallback(
@@ -2091,6 +2139,397 @@ export function Canvas() {
     if (!gpuDisplayActive) return;
     renderGpuFrame(false);
   }, [gpuDisplayActive, renderGpuFrame]);
+
+  const renderCurvesPreviewCpu = useCallback(
+    (session: CurvesSessionState, payload: CurvesPreviewPayload) => {
+      const renderer = layerRendererRef.current;
+      if (!renderer) return;
+      if (!payload.previewEnabled) {
+        clearGradientPreview();
+        return;
+      }
+
+      const luts = curvesPayloadToLuts(payload);
+      const previewImage = applyCurvesToImageData({
+        baseImageData: session.baseImageData,
+        luts,
+        selectionMask: session.selectionMask,
+      });
+
+      const previewCtx = session.previewCanvas.getContext('2d');
+      if (!previewCtx) return;
+      previewCtx.putImageData(previewImage, 0, 0);
+
+      const overlay = gradientPreviewCanvasRef.current;
+      if (!overlay) return;
+      const overlayCtx = overlay.getContext('2d');
+      if (!overlayCtx) return;
+      overlayCtx.clearRect(0, 0, width, height);
+      const composed = renderer.composite(undefined, undefined, {
+        activeLayerId: session.layerId,
+        canvas: session.previewCanvas,
+      });
+      overlayCtx.drawImage(composed, 0, 0);
+    },
+    [clearGradientPreview, height, width]
+  );
+
+  const renderCurvesPreviewGpu = useCallback(
+    (session: CurvesSessionState, payload: CurvesPreviewPayload) => {
+      if (!payload.previewEnabled) {
+        renderGpuFrame(false);
+        return;
+      }
+      if (!gpuDisplayActive) return;
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return;
+
+      const visibleGpuLayers = getVisibleGpuRenderableLayers();
+      for (const visibleLayer of visibleGpuLayers) {
+        const layer = renderer.getLayer(visibleLayer.id);
+        if (!layer) continue;
+        gpuRenderer.syncLayerFromCanvas(visibleLayer.id, layer.canvas, visibleLayer.revision);
+      }
+
+      gpuRenderer.setSelectionMask(session.selectionMask);
+      const dirtyRect = resolveSelectionDirtyRect(width, height, session.selectionBounds);
+      const luts = curvesPayloadToLuts(payload);
+      const curvesParams: GpuCurvesRenderParams = {
+        rgbLut: luts.rgb,
+        redLut: luts.red,
+        greenLut: luts.green,
+        blueLut: luts.blue,
+        dirtyRect,
+      };
+      gpuRenderer.renderLayerStackFrameWithCurvesPreview({
+        layers: visibleGpuLayers,
+        activeLayerId: session.layerId,
+        curves: curvesParams,
+      });
+    },
+    [getVisibleGpuRenderableLayers, gpuDisplayActive, height, renderGpuFrame, width]
+  );
+
+  const restoreGpuSelectionMaskFromStore = useCallback(() => {
+    const gpuRenderer = gpuRendererRef.current;
+    if (!gpuRenderer) return;
+    gpuRenderer.setSelectionMask(selectionMask ?? null);
+  }, [selectionMask]);
+
+  const clearCurvesPreviewVisual = useCallback(() => {
+    clearGradientPreview();
+    if (gpuDisplayActive) {
+      renderGpuFrame(false);
+    }
+  }, [clearGradientPreview, gpuDisplayActive, renderGpuFrame]);
+
+  const runCurvesPreviewFrame = useCallback(() => {
+    const session = curvesSessionRef.current;
+    if (!session) return;
+    session.previewRafId = null;
+    const payload = session.pendingPayload;
+    if (!payload) return;
+
+    if (gpuDisplayActive) {
+      renderCurvesPreviewGpu(session, payload);
+      return;
+    }
+    renderCurvesPreviewCpu(session, payload);
+  }, [gpuDisplayActive, renderCurvesPreviewCpu, renderCurvesPreviewGpu]);
+
+  const scheduleCurvesPreview = useCallback(() => {
+    const session = curvesSessionRef.current;
+    if (!session) return;
+    if (session.previewRafId !== null) return;
+    session.previewRafId = window.requestAnimationFrame(runCurvesPreviewFrame);
+  }, [runCurvesPreviewFrame]);
+
+  const cancelCurvesPreviewSchedule = useCallback(() => {
+    const session = curvesSessionRef.current;
+    if (!session) return;
+    if (session.previewRafId !== null) {
+      window.cancelAnimationFrame(session.previewRafId);
+      session.previewRafId = null;
+    }
+    session.pendingPayload = null;
+  }, []);
+
+  const commitCurvesGpu = useCallback(
+    async (session: CurvesSessionState, payload: CurvesPreviewPayload): Promise<boolean> => {
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return false;
+      const layerState = layers.find((layer) => layer.id === session.layerId);
+      if (!layerState || layerState.locked || !layerState.visible) return false;
+
+      const layer = renderer.getLayer(session.layerId);
+      if (!layer) return false;
+
+      onBeforeCanvasMutation?.();
+      await captureBeforeImage(true);
+
+      const historyStore = gpuStrokeHistoryStoreRef.current;
+      const historyEntryId = pendingGpuHistoryEntryIdRef.current;
+      const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
+      const finalizeHistory = () => {
+        if (historyStore && historyEntryId) {
+          historyStore.finalizeStroke(historyEntryId);
+        }
+      };
+
+      try {
+        const visibleGpuLayers = getVisibleGpuRenderableLayers();
+        for (const visibleLayer of visibleGpuLayers) {
+          const sourceLayer = renderer.getLayer(visibleLayer.id);
+          if (!sourceLayer) continue;
+          gpuRenderer.syncLayerFromCanvas(
+            visibleLayer.id,
+            sourceLayer.canvas,
+            visibleLayer.revision
+          );
+        }
+
+        gpuRenderer.setSelectionMask(session.selectionMask);
+        const dirtyRect = resolveSelectionDirtyRect(width, height, session.selectionBounds);
+        const luts = curvesPayloadToLuts(payload);
+        const curvesParams: GpuCurvesRenderParams = {
+          rgbLut: luts.rgb,
+          redLut: luts.red,
+          greenLut: luts.green,
+          blueLut: luts.blue,
+          dirtyRect,
+        };
+
+        const committedTiles = gpuRenderer.commitCurves({
+          layerId: session.layerId,
+          curves: curvesParams,
+          baseLayerCanvas: layer.canvas,
+          historyCapture:
+            historyStore && historyEntryId
+              ? {
+                  entryId: historyEntryId,
+                  store: historyStore,
+                }
+              : undefined,
+        });
+
+        if (committedTiles.length === 0) {
+          discardCapturedStrokeHistory();
+          return false;
+        }
+
+        if (readbackMode === 'enabled') {
+          await gpuRenderer.readbackTilesToLayer({
+            layerId: session.layerId,
+            tiles: committedTiles,
+            targetCtx: layer.ctx,
+          });
+        } else {
+          trackPendingGpuCpuSyncTiles(session.layerId, committedTiles);
+          schedulePendingGpuCpuSync(session.layerId);
+        }
+
+        saveStrokeToHistory();
+        updateThumbnail(session.layerId);
+        compositeAndRender();
+        return true;
+      } catch (error) {
+        discardCapturedStrokeHistory();
+        console.warn('[CurvesGpu] Failed to commit GPU curves', {
+          layerId: session.layerId,
+          error,
+        });
+        return false;
+      } finally {
+        finalizeHistory();
+        clearPendingGpuHistoryEntry();
+        restoreGpuSelectionMaskFromStore();
+      }
+    },
+    [
+      captureBeforeImage,
+      clearPendingGpuHistoryEntry,
+      compositeAndRender,
+      discardCapturedStrokeHistory,
+      getVisibleGpuRenderableLayers,
+      height,
+      layers,
+      onBeforeCanvasMutation,
+      restoreGpuSelectionMaskFromStore,
+      saveStrokeToHistory,
+      schedulePendingGpuCpuSync,
+      trackPendingGpuCpuSyncTiles,
+      updateThumbnail,
+      width,
+    ]
+  );
+
+  const disposeCurvesSession = useCallback(
+    (options?: { clearVisual?: boolean }) => {
+      const session = curvesSessionRef.current;
+      if (!session) return;
+      cancelCurvesPreviewSchedule();
+      if (options?.clearVisual !== false) {
+        clearCurvesPreviewVisual();
+      }
+      curvesSessionRef.current = null;
+      restoreGpuSelectionMaskFromStore();
+    },
+    [cancelCurvesPreviewSchedule, clearCurvesPreviewVisual, restoreGpuSelectionMaskFromStore]
+  );
+
+  const beginCurvesSession = useCallback((): CurvesSessionInfo | null => {
+    disposeCurvesSession();
+    const renderer = layerRendererRef.current;
+    if (!renderer || !activeLayerId) return null;
+
+    const layerState = layers.find((layer) => layer.id === activeLayerId);
+    if (!layerState || layerState.locked || !layerState.visible) return null;
+
+    const baseLayerImage = renderer.getLayerImageData(activeLayerId);
+    if (!baseLayerImage) return null;
+
+    const selectionState = useSelectionStore.getState();
+    if (selectionState.selectionMaskPending) return null;
+
+    let selectionMaskSnapshot: ImageData | null = null;
+    if (selectionState.hasSelection) {
+      if (!selectionState.selectionMask) return null;
+      selectionMaskSnapshot = new ImageData(
+        new Uint8ClampedArray(selectionState.selectionMask.data),
+        selectionState.selectionMask.width,
+        selectionState.selectionMask.height
+      );
+    }
+
+    const baseImageData = new ImageData(
+      new Uint8ClampedArray(baseLayerImage.data),
+      baseLayerImage.width,
+      baseLayerImage.height
+    );
+    const previewCanvas = document.createElement('canvas');
+    previewCanvas.width = width;
+    previewCanvas.height = height;
+    const sessionId = createHistoryEntryId('curves');
+    const histogram = computeLumaHistogram(baseImageData, selectionMaskSnapshot);
+
+    curvesSessionRef.current = {
+      sessionId,
+      layerId: activeLayerId,
+      baseImageData,
+      selectionMask: selectionMaskSnapshot,
+      selectionBounds: selectionState.bounds ? { ...selectionState.bounds } : null,
+      histogram,
+      previewCanvas,
+      previewRafId: null,
+      pendingPayload: null,
+    };
+
+    return {
+      sessionId,
+      layerId: activeLayerId,
+      hasSelection: !!selectionMaskSnapshot,
+      histogram,
+      renderMode: gpuDisplayActive ? 'gpu' : 'cpu',
+    };
+  }, [activeLayerId, disposeCurvesSession, gpuDisplayActive, height, layers, width]);
+
+  const previewCurvesSession = useCallback(
+    (sessionId: string, payload: CurvesPreviewPayload): boolean => {
+      const session = curvesSessionRef.current;
+      if (!session || session.sessionId !== sessionId) return false;
+      session.pendingPayload = payload;
+      scheduleCurvesPreview();
+      return true;
+    },
+    [scheduleCurvesPreview]
+  );
+
+  const commitCurvesSession = useCallback(
+    async (sessionId: string, payload: CurvesPreviewPayload): Promise<boolean> => {
+      const session = curvesSessionRef.current;
+      if (!session || session.sessionId !== sessionId) return false;
+
+      cancelCurvesPreviewSchedule();
+      clearCurvesPreviewVisual();
+
+      if (gpuDisplayActive) {
+        const gpuCommitted = await commitCurvesGpu(session, payload);
+        if (gpuCommitted) {
+          curvesSessionRef.current = null;
+          restoreGpuSelectionMaskFromStore();
+          return true;
+        }
+      }
+
+      const renderer = layerRendererRef.current;
+      if (!renderer) return false;
+      const layerState = layers.find((layer) => layer.id === session.layerId);
+      if (!layerState || layerState.locked || !layerState.visible) return false;
+
+      onBeforeCanvasMutation?.();
+      await captureBeforeImage(false);
+      const luts = curvesPayloadToLuts(payload);
+      const nextImage = applyCurvesToImageData({
+        baseImageData: session.baseImageData,
+        luts,
+        selectionMask: session.selectionMask,
+      });
+      renderer.setLayerImageData(session.layerId, nextImage);
+      saveStrokeToHistory();
+      markLayerDirty(session.layerId);
+      updateThumbnail(session.layerId);
+      compositeAndRender();
+
+      curvesSessionRef.current = null;
+      restoreGpuSelectionMaskFromStore();
+      return true;
+    },
+    [
+      cancelCurvesPreviewSchedule,
+      captureBeforeImage,
+      clearCurvesPreviewVisual,
+      commitCurvesGpu,
+      compositeAndRender,
+      gpuDisplayActive,
+      layers,
+      markLayerDirty,
+      onBeforeCanvasMutation,
+      restoreGpuSelectionMaskFromStore,
+      saveStrokeToHistory,
+      updateThumbnail,
+    ]
+  );
+
+  const cancelCurvesSession = useCallback(
+    (sessionId: string): void => {
+      const session = curvesSessionRef.current;
+      if (!session || session.sessionId !== sessionId) return;
+      disposeCurvesSession();
+    },
+    [disposeCurvesSession]
+  );
+
+  useEffect(() => {
+    window.__canvasCurvesBeginSession = beginCurvesSession;
+    window.__canvasCurvesPreview = previewCurvesSession;
+    window.__canvasCurvesCommit = commitCurvesSession;
+    window.__canvasCurvesCancel = cancelCurvesSession;
+    return () => {
+      delete window.__canvasCurvesBeginSession;
+      delete window.__canvasCurvesPreview;
+      delete window.__canvasCurvesCommit;
+      delete window.__canvasCurvesCancel;
+      disposeCurvesSession();
+    };
+  }, [
+    beginCurvesSession,
+    previewCurvesSession,
+    commitCurvesSession,
+    cancelCurvesSession,
+    disposeCurvesSession,
+  ]);
 
   const {
     handleGradientPointerDown,

@@ -5,9 +5,11 @@ import { useShallow } from 'zustand/react/shallow';
 
 // Registry of available floating panel contents.
 import { BrushPanel } from '../BrushPanel';
+import { CurvesPanel } from '../CurvesPanel';
 
 const PANEL_REGISTRY: Record<string, React.FC> = {
   'brush-panel': BrushPanel,
+  'curves-panel': CurvesPanel,
   'debug-panel': () => <div style={{ padding: 10, color: '#ccc' }}>Debug Info Content</div>,
 };
 

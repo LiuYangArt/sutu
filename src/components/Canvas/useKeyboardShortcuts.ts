@@ -58,6 +58,7 @@ interface UseKeyboardShortcutsParams {
   handleCreateLayer?: () => void;
   handleMergeSelectedLayers?: () => void;
   handleMergeAllLayers?: () => void;
+  handleOpenCurvesPanel?: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -80,6 +81,7 @@ export function useKeyboardShortcuts({
   handleCreateLayer,
   handleMergeSelectedLayers,
   handleMergeAllLayers,
+  handleOpenCurvesPanel,
 }: UseKeyboardShortcutsParams): { spacePressed: boolean } {
   const [spacePressed, setSpacePressed] = useState(false);
   const pushSelection = useHistoryStore((s) => s.pushSelection);
@@ -105,7 +107,10 @@ export function useKeyboardShortcuts({
 
       // 优先处理修饰键组合 (Undo/Redo/Selection)
       if (e.ctrlKey || e.metaKey) {
-        if (isEditableTarget(e.target) && (isTextEditingCommand(e.code) || e.code === 'KeyE')) {
+        if (
+          isEditableTarget(e.target) &&
+          (isTextEditingCommand(e.code) || e.code === 'KeyE' || e.code === 'KeyM')
+        ) {
           return;
         }
 
@@ -153,6 +158,11 @@ export function useKeyboardShortcuts({
             } else {
               handleMergeSelectedLayers?.();
             }
+            return;
+          }
+          case 'KeyM': {
+            e.preventDefault();
+            handleOpenCurvesPanel?.();
             return;
           }
           case 'KeyV': {
@@ -301,6 +311,7 @@ export function useKeyboardShortcuts({
     handleCreateLayer,
     handleMergeSelectedLayers,
     handleMergeAllLayers,
+    handleOpenCurvesPanel,
   ]);
 
   return { spacePressed };

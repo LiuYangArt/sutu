@@ -1,0 +1,119 @@
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { CurvesPanel } from '../index';
+
+type TestWindow = Window & {
+  __canvasCurvesBeginSession?: () => {
+    sessionId: string;
+    layerId: string;
+    hasSelection: boolean;
+    histogram: number[];
+    renderMode: 'gpu' | 'cpu';
+  } | null;
+  __canvasCurvesPreview?: (sessionId: string, payload: unknown) => boolean;
+  __canvasCurvesCommit?: (sessionId: string, payload: unknown) => Promise<boolean>;
+  __canvasCurvesCancel?: (sessionId: string) => void;
+};
+
+const sessionId = 'curves-session-test';
+
+describe('CurvesPanel', () => {
+  const beginSpy = vi.fn<
+    [],
+    {
+      sessionId: string;
+      layerId: string;
+      hasSelection: boolean;
+      histogram: number[];
+      renderMode: 'gpu' | 'cpu';
+    } | null
+  >();
+  const previewSpy = vi.fn<[string, unknown], boolean>();
+  const commitSpy = vi.fn<[string, unknown], Promise<boolean>>();
+  const cancelSpy = vi.fn<[string], void>();
+
+  beforeEach(() => {
+    beginSpy.mockReset();
+    previewSpy.mockReset();
+    commitSpy.mockReset();
+    cancelSpy.mockReset();
+
+    beginSpy.mockReturnValue({
+      sessionId,
+      layerId: 'layer_1',
+      hasSelection: false,
+      histogram: new Array(256).fill(0),
+      renderMode: 'cpu',
+    });
+    previewSpy.mockReturnValue(true);
+    commitSpy.mockResolvedValue(true);
+
+    (window as TestWindow).__canvasCurvesBeginSession = beginSpy;
+    (window as TestWindow).__canvasCurvesPreview = previewSpy;
+    (window as TestWindow).__canvasCurvesCommit = commitSpy;
+    (window as TestWindow).__canvasCurvesCancel = cancelSpy;
+    vi.stubGlobal('PointerEvent', MouseEvent as unknown as typeof PointerEvent);
+
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+      cb(16);
+      return 1;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(() => {
+      return {
+        x: -128,
+        y: -128,
+        left: -128,
+        top: -128,
+        width: 256,
+        height: 256,
+        right: 128,
+        bottom: 128,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+  });
+
+  afterEach(() => {
+    delete (window as TestWindow).__canvasCurvesBeginSession;
+    delete (window as TestWindow).__canvasCurvesPreview;
+    delete (window as TestWindow).__canvasCurvesCommit;
+    delete (window as TestWindow).__canvasCurvesCancel;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('点击曲线可新增控制点，并支持 Delete 删除', async () => {
+    const { container } = render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    expect(beginSpy).toHaveBeenCalledTimes(1);
+    expect(previewSpy).toHaveBeenCalled();
+    expect(container.querySelectorAll('circle').length).toBe(2);
+
+    fireEvent.pointerDown(graph, { button: 0 });
+    expect(container.querySelectorAll('circle').length).toBe(3);
+
+    fireEvent.keyDown(window, { key: 'Delete', code: 'Delete' });
+    expect(container.querySelectorAll('circle').length).toBe(2);
+  });
+
+  it('点击 OK 调用 Commit bridge', async () => {
+    render(<CurvesPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => {
+      expect(commitSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(commitSpy.mock.calls[0]?.[0]).toBe(sessionId);
+  });
+
+  it('点击 Cancel 调用 Cancel bridge', () => {
+    render(<CurvesPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(cancelSpy).toHaveBeenCalledWith(sessionId);
+  });
+});

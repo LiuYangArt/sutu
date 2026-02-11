@@ -556,10 +556,19 @@ function App() {
       minWidth: 300,
       minHeight: 360,
     });
+    registerPanel({
+      id: 'curves-panel',
+      title: 'Curves',
+      defaultGeometry: { x: window.innerWidth - 520, y: 120, width: 360, height: 520 },
+      defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 380, offsetY: 80 },
+      minWidth: 320,
+      minHeight: 420,
+    });
 
     // Ensure panels are closed by default
     closePanel('brush-panel');
     closePanel('gradient-panel');
+    closePanel('curves-panel');
   }, [registerPanel, closePanel]);
 
   if (!isReady) {

@@ -166,6 +166,14 @@ export interface GpuGradientRenderParams extends GpuGradientConfig {
   dirtyRect: Rect | null;
 }
 
+export interface GpuCurvesRenderParams {
+  rgbLut: Uint8Array;
+  redLut: Uint8Array;
+  greenLut: Uint8Array;
+  blueLut: Uint8Array;
+  dirtyRect: Rect | null;
+}
+
 export interface GpuBrushCommitMetricsSnapshot {
   attemptCount: number;
   committedCount: number;

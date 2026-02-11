@@ -1,0 +1,137 @@
+.curves-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  min-height: 360px;
+}
+
+.curves-panel__controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.curves-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.curves-panel__field select {
+  min-width: 120px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+.curves-panel__preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.curves-panel__graph-wrap {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: #2b2b2b;
+  padding: 6px;
+}
+
+.curves-panel__graph {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.curves-panel__bg {
+  fill: #3a3a3a;
+}
+
+.curves-panel__grid {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+}
+
+.curves-panel__histogram {
+  fill: rgba(194, 194, 194, 0.35);
+  stroke: none;
+}
+
+.curves-panel__baseline {
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1;
+}
+
+.curves-panel__curve {
+  fill: none;
+  stroke: #f7f7f7;
+  stroke-width: 1.5;
+}
+
+.curves-panel__point {
+  fill: #101010;
+  stroke: #f1f1f1;
+  stroke-width: 1.2;
+}
+
+.curves-panel__point--selected {
+  fill: #ffffff;
+  stroke: #111111;
+}
+
+.curves-panel__io {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.curves-panel__hint {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.curves-panel__error {
+  color: var(--danger-text);
+  font-size: 12px;
+}
+
+.curves-panel__actions {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.curves-panel__btn {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.curves-panel__btn:hover {
+  background: var(--surface-hover);
+}
+
+.curves-panel__btn--primary {
+  background: var(--accent-9);
+  border-color: var(--accent-9);
+  color: #fff;
+}
+
+.curves-panel__btn--primary:hover {
+  background: var(--accent-8);
+}
