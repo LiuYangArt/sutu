@@ -8,6 +8,18 @@
 import type { GPUContextState } from './types';
 import { appHyphenStorageKey } from '@/constants/appMeta';
 
+function isWindowsPlatform(): boolean {
+  type NavigatorWithUAData = Navigator & {
+    userAgentData?: {
+      platform?: string;
+    };
+  };
+
+  const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
+  const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
+  return /windows/i.test(platformHint);
+}
+
 export class GPUContext {
   private static instance: GPUContext | null = null;
   private state: GPUContextState = {
@@ -55,10 +67,13 @@ export class GPUContext {
     }
 
     try {
-      // Request high-performance adapter
-      const adapter = await navigator.gpu.requestAdapter({
-        powerPreference: 'high-performance',
-      });
+      // Chromium on Windows currently ignores powerPreference and emits a warning.
+      const requestOptions: GPURequestAdapterOptions | undefined = isWindowsPlatform()
+        ? undefined
+        : { powerPreference: 'high-performance' };
+      const adapter = requestOptions
+        ? await navigator.gpu.requestAdapter(requestOptions)
+        : await navigator.gpu.requestAdapter();
 
       if (!adapter) {
         console.warn('[GPUContext] No suitable GPU adapter found');
