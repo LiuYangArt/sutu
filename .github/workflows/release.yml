@@ -266,8 +266,10 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ steps.get_version.outputs.VERSION }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: gpt-4.1-mini
+          RELEASE_NOTES_API_KEY: ${{ secrets.RELEASE_NOTES_API_KEY || secrets.OPENAI_API_KEY }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'gpt-4.1-mini' }}
+          RELEASE_NOTES_API_BASE_URL: ${{ vars.RELEASE_NOTES_API_BASE_URL || 'https://api.openai.com' }}
+          RELEASE_NOTES_API_PATH: ${{ vars.RELEASE_NOTES_API_PATH || '/v1/chat/completions' }}
         run: node scripts/generate-release-notes.mjs
 
       - name: Upload Release Assets
