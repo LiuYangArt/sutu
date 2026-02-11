@@ -7,6 +7,11 @@ import { useGradientStore } from '@/stores/gradient';
 import { useSelectionStore } from '@/stores/selection';
 import type { LayerRenderer } from '@/utils/layerRenderer';
 
+type GradientPreviewPayload = {
+  previewLayerCanvas?: HTMLCanvasElement | null;
+  guide?: { start: { x: number; y: number }; end: { x: number; y: number }; showAnchor: boolean };
+};
+
 function createLayer(id: string): Layer {
   return {
     id,
@@ -17,6 +22,18 @@ function createLayer(id: string): Layer {
     opacity: 100,
     blendMode: 'normal',
   };
+}
+
+function createMockLayerRenderer(): LayerRenderer {
+  return {
+    getLayerImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(16), 2, 2)),
+  } as unknown as LayerRenderer;
+}
+
+function getFirstPreviewPayload(
+  renderPreview: ReturnType<typeof vi.fn>
+): GradientPreviewPayload | undefined {
+  return renderPreview.mock.calls[0]?.[0] as GradientPreviewPayload | undefined;
 }
 
 describe('useGradientTool', () => {
@@ -64,11 +81,44 @@ describe('useGradientTool', () => {
     cb(16);
   }
 
+  it('renders guide-only preview on pointer down before drag', () => {
+    const layer = createLayer('layer_anchor');
+    const renderer = createMockLayerRenderer();
+    const renderPreview = vi.fn();
+
+    const { result } = renderHook(() =>
+      useGradientTool({
+        currentTool: 'gradient',
+        activeLayerId: layer.id,
+        layers: [layer],
+        width: 2,
+        height: 2,
+        layerRendererRef: { current: renderer },
+        applyGradientToActiveLayer: vi.fn(async (_params: unknown) => true),
+        renderPreview,
+        clearPreview: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.handleGradientPointerDown(1, 1, {
+        button: 0,
+        shiftKey: false,
+      } as PointerEvent);
+      flushNextFrame();
+    });
+
+    expect(renderPreview).toHaveBeenCalledTimes(1);
+    const payload = getFirstPreviewPayload(renderPreview);
+    expect(payload?.previewLayerCanvas).toBeUndefined();
+    expect(payload?.guide?.showAnchor).toBe(true);
+    expect(payload?.guide?.start).toEqual({ x: 1, y: 1 });
+    expect(payload?.guide?.end).toEqual({ x: 1, y: 1 });
+  });
+
   it('handles drag session and commits on pointer up', async () => {
     const layer = createLayer('layer_a');
-    const renderer = {
-      getLayerImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(16), 2, 2)),
-    } as unknown as LayerRenderer;
+    const renderer = createMockLayerRenderer();
 
     const applyGradientToActiveLayer = vi.fn(async (_params: unknown) => true);
     const renderPreview = vi.fn();
@@ -106,6 +156,11 @@ describe('useGradientTool', () => {
     });
 
     expect(renderPreview).toHaveBeenCalledTimes(1);
+    const previewPayload = getFirstPreviewPayload(renderPreview);
+    expect(previewPayload?.previewLayerCanvas).toBeInstanceOf(HTMLCanvasElement);
+    expect(previewPayload?.guide?.showAnchor).toBe(true);
+    expect(previewPayload?.guide?.start).toEqual({ x: 0, y: 0 });
+    expect(previewPayload?.guide?.end).toEqual({ x: 2, y: 0 });
 
     await act(async () => {
       result.current.handleGradientPointerUp(2, 0, { shiftKey: false } as PointerEvent);
@@ -117,9 +172,7 @@ describe('useGradientTool', () => {
 
   it('applies shift 45-degree constraint for end point', async () => {
     const layer = createLayer('layer_shift');
-    const renderer = {
-      getLayerImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(16), 2, 2)),
-    } as unknown as LayerRenderer;
+    const renderer = createMockLayerRenderer();
 
     const applyGradientToActiveLayer = vi.fn(async (_params: unknown) => true);
 
@@ -159,9 +212,7 @@ describe('useGradientTool', () => {
 
   it('does not commit for zero-length drag', async () => {
     const layer = createLayer('layer_zero');
-    const renderer = {
-      getLayerImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(16), 2, 2)),
-    } as unknown as LayerRenderer;
+    const renderer = createMockLayerRenderer();
 
     const applyGradientToActiveLayer = vi.fn(async (_params: unknown) => true);
 
@@ -190,11 +241,50 @@ describe('useGradientTool', () => {
     expect(applyGradientToActiveLayer).not.toHaveBeenCalled();
   });
 
+  it('falls back to guide-only preview when selection mask is pending', () => {
+    useSelectionStore.setState({
+      hasSelection: true,
+      selectionMask: null,
+      selectionMaskPending: true,
+    });
+
+    const layer = createLayer('layer_selection_pending');
+    const renderer = createMockLayerRenderer();
+    const renderPreview = vi.fn();
+
+    const { result } = renderHook(() =>
+      useGradientTool({
+        currentTool: 'gradient',
+        activeLayerId: layer.id,
+        layers: [layer],
+        width: 2,
+        height: 2,
+        layerRendererRef: { current: renderer },
+        applyGradientToActiveLayer: vi.fn(async (_params: unknown) => true),
+        renderPreview,
+        clearPreview: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.handleGradientPointerDown(0, 0, {
+        button: 0,
+        shiftKey: false,
+      } as PointerEvent);
+      result.current.handleGradientPointerMove(2, 1, { shiftKey: false } as PointerEvent);
+      flushNextFrame();
+    });
+
+    expect(renderPreview).toHaveBeenCalledTimes(1);
+    const payload = getFirstPreviewPayload(renderPreview);
+    expect(payload?.previewLayerCanvas).toBeUndefined();
+    expect(payload?.guide?.start).toEqual({ x: 0, y: 0 });
+    expect(payload?.guide?.end).toEqual({ x: 2, y: 1 });
+  });
+
   it('throttles preview rendering with requestAnimationFrame', () => {
     const layer = createLayer('layer_throttle');
-    const renderer = {
-      getLayerImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(16), 2, 2)),
-    } as unknown as LayerRenderer;
+    const renderer = createMockLayerRenderer();
 
     const renderPreview = vi.fn();
 

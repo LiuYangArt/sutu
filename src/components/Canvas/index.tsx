@@ -18,7 +18,7 @@ import { useGlobalExports } from './useGlobalExports';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { usePointerHandlers } from './usePointerHandlers';
 import { useStrokeProcessor } from './useStrokeProcessor';
-import { useGradientTool } from './useGradientTool';
+import { useGradientTool, type GradientPreviewPayload } from './useGradientTool';
 import { SelectionOverlay } from './SelectionOverlay';
 import { BrushQuickPanel } from './BrushQuickPanel';
 import { clientToCanvasPoint, getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
@@ -51,6 +51,74 @@ import {
 import { runGpuMovePreviewFrame } from './movePreviewGpuSync';
 
 import './Canvas.css';
+
+const MIN_GRADIENT_GUIDE_SCALE = 0.0001;
+
+function strokeGradientGuideLine(
+  ctx: CanvasRenderingContext2D,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  color: string,
+  width: number
+): void {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+}
+
+function strokeGradientGuideCircle(
+  ctx: CanvasRenderingContext2D,
+  center: { x: number; y: number },
+  radius: number,
+  color: string,
+  width: number
+): void {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function drawGradientGuideOverlay(
+  ctx: CanvasRenderingContext2D,
+  guide: NonNullable<GradientPreviewPayload['guide']>,
+  displayScale: number
+): void {
+  const safeScale = Math.max(displayScale, MIN_GRADIENT_GUIDE_SCALE);
+  const lineOuterWidth = 3 / safeScale;
+  const lineInnerWidth = 1.5 / safeScale;
+  const anchorRadius = 4.5 / safeScale;
+  const anchorCoreRadius = 1.6 / safeScale;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  strokeGradientGuideLine(ctx, guide.start, guide.end, 'rgba(255, 255, 255, 0.95)', lineOuterWidth);
+  strokeGradientGuideLine(ctx, guide.start, guide.end, 'rgba(0, 0, 0, 0.9)', lineInnerWidth);
+
+  if (guide.showAnchor) {
+    strokeGradientGuideCircle(
+      ctx,
+      guide.start,
+      anchorRadius,
+      'rgba(255, 255, 255, 0.95)',
+      lineOuterWidth
+    );
+    strokeGradientGuideCircle(ctx, guide.start, anchorRadius, 'rgba(0, 0, 0, 0.9)', lineInnerWidth);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.beginPath();
+    ctx.arc(guide.start.x, guide.start.y, anchorCoreRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
 
 declare global {
   interface Window {
@@ -1831,28 +1899,31 @@ export function Canvas() {
   }, [height, width]);
 
   const renderGradientPreview = useCallback(
-    (payload: { layerId: string; previewLayerCanvas: HTMLCanvasElement }) => {
+    (payload: GradientPreviewPayload) => {
       const overlay = gradientPreviewCanvasRef.current;
-      const renderer = layerRendererRef.current;
-      if (!overlay || !renderer) return;
+      if (!overlay) return;
 
       const ctx = overlay.getContext('2d');
       if (!ctx) return;
 
-      const compositePreview = renderer.composite(
-        undefined,
-        undefined,
-        payload
-          ? {
-              activeLayerId: payload.layerId,
-              canvas: payload.previewLayerCanvas,
-            }
-          : undefined
-      );
       ctx.clearRect(0, 0, width, height);
-      ctx.drawImage(compositePreview, 0, 0);
+
+      if (payload.previewLayerCanvas) {
+        const renderer = layerRendererRef.current;
+        if (renderer) {
+          const compositePreview = renderer.composite(undefined, undefined, {
+            activeLayerId: payload.layerId,
+            canvas: payload.previewLayerCanvas,
+          });
+          ctx.drawImage(compositePreview, 0, 0);
+        }
+      }
+
+      const guide = payload.guide;
+      if (!guide) return;
+      drawGradientGuideOverlay(ctx, guide, displayScale);
     },
-    [height, width]
+    [displayScale, height, width]
   );
 
   const {

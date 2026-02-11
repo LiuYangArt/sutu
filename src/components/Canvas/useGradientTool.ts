@@ -12,9 +12,16 @@ import {
 } from '@/utils/gradientRenderer';
 import type { ApplyGradientToActiveLayerParams } from './useLayerOperations';
 
-interface GradientPreviewPayload {
+export interface GradientPreviewGuide {
+  start: GradientPoint;
+  end: GradientPoint;
+  showAnchor: boolean;
+}
+
+export interface GradientPreviewPayload {
   layerId: string;
-  previewLayerCanvas: HTMLCanvasElement;
+  previewLayerCanvas?: HTMLCanvasElement | null;
+  guide?: GradientPreviewGuide;
 }
 
 interface UseGradientToolParams {
@@ -87,6 +94,17 @@ function buildGradientConfig(): Omit<ApplyGradientToActiveLayerParams, 'start' |
   };
 }
 
+function buildGuidePreviewPayload(session: GradientSession): GradientPreviewPayload {
+  return {
+    layerId: session.layerId,
+    guide: {
+      start: session.start,
+      end: session.end,
+      showAnchor: true,
+    },
+  };
+}
+
 export function useGradientTool({
   currentTool,
   activeLayerId,
@@ -137,9 +155,16 @@ export function useGradientTool({
     const session = sessionRef.current;
     if (!session) return;
 
+    const guidePayload = buildGuidePreviewPayload(session);
+
     const selectionState = useSelectionStore.getState();
     if (!canRenderSelectionPreview(selectionState)) {
-      clearPreview();
+      renderPreview(guidePayload);
+      return;
+    }
+
+    if (isZeroLengthGradient(session.start, session.end)) {
+      renderPreview(guidePayload);
       return;
     }
 
@@ -161,10 +186,10 @@ export function useGradientTool({
     previewCtx.putImageData(previewImage, 0, 0);
 
     renderPreview({
-      layerId: session.layerId,
+      ...guidePayload,
       previewLayerCanvas: session.previewCanvas,
     });
-  }, [clearPreview, height, renderPreview, width]);
+  }, [height, renderPreview, width]);
 
   const schedulePreview = useCallback(() => {
     if (rafRef.current !== null) return;
