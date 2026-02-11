@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import type {
   AddColorStopOptions,
@@ -36,6 +37,12 @@ interface GradientBarProps {
   onUpdateOpacityStop: (id: string, patch: Partial<OpacityStop>) => void;
 }
 
+interface SegmentRenderItem<T> {
+  right: T;
+  center: number;
+  active: boolean;
+}
+
 type DragState =
   | { kind: 'color-stop'; id: string }
   | { kind: 'opacity-stop'; id: string }
@@ -52,6 +59,10 @@ const PREVIEW_TOP = 20;
 const PREVIEW_HEIGHT = 28;
 const PREVIEW_BOTTOM = PREVIEW_TOP + PREVIEW_HEIGHT;
 const STOP_EPSILON = 0.002;
+
+function toPercentPosition(value: number): string {
+  return `${Math.round(clamp01(value) * 1000) / 10}%`;
+}
 
 function readPositionFromEvent(track: HTMLElement, event: PointerEvent): number {
   const rect = track.getBoundingClientRect();
@@ -89,6 +100,75 @@ function findSegmentByRightId<T extends { id: string; position: number; midpoint
   return { left, right };
 }
 
+function buildSegmentRenderItems<T extends { id: string; position: number; midpoint: number }>(
+  stops: T[],
+  selectedId: string | null
+): SegmentRenderItem<T>[] {
+  const sorted = [...stops].sort((a, b) => a.position - b.position);
+  return sorted.slice(1).map((right, index) => {
+    const left = sorted[index]!;
+    const span = Math.max(1e-6, right.position - left.position);
+    return {
+      right,
+      center: left.position + span * clampMidpoint(right.midpoint),
+      active: selectedId === left.id || selectedId === right.id,
+    };
+  });
+}
+
+function resolveMidpointFromPosition<T extends { id: string; position: number; midpoint: number }>(
+  stops: T[],
+  rightId: string,
+  position: number
+): number | null {
+  const segment = findSegmentByRightId(stops, rightId);
+  if (!segment) return null;
+  const span = Math.max(1e-6, segment.right.position - segment.left.position);
+  const localT = clamp01((position - segment.left.position) / span);
+  return clampMidpoint(localT);
+}
+
+function renderMidpointHandles<T extends { id: string }>(
+  segments: SegmentRenderItem<T>[],
+  className: string,
+  keyPrefix: string,
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>, rightId: string) => void
+): JSX.Element[] {
+  return segments
+    .filter((segment) => segment.active)
+    .map((segment) => (
+      <button
+        key={`${keyPrefix}-${segment.right.id}`}
+        type="button"
+        data-gradient-control="true"
+        className={`gradient-midpoint ${className}`}
+        style={{ left: toPercentPosition(segment.center) }}
+        onPointerDown={(event) => onPointerDown(event, segment.right.id)}
+      />
+    ));
+}
+
+function renderStopHandles<T extends { id: string; position: number }>(
+  stops: T[],
+  selectedId: string | null,
+  className: string,
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>, stopId: string) => void,
+  renderContent: (stop: T) => ReactNode
+): JSX.Element[] {
+  return stops.map((stop) => (
+    <button
+      key={stop.id}
+      type="button"
+      data-gradient-control="true"
+      className={`gradient-stop ${className} ${selectedId === stop.id ? 'selected' : ''}`}
+      style={{ left: toPercentPosition(stop.position) }}
+      onPointerDown={(event) => onPointerDown(event, stop.id)}
+    >
+      {renderContent(stop)}
+    </button>
+  ));
+}
+
 export function GradientBar({
   colorStops,
   opacityStops,
@@ -103,9 +183,17 @@ export function GradientBar({
   onAddOpacityStop,
   onUpdateColorStop,
   onUpdateOpacityStop,
-}: GradientBarProps) {
+}: GradientBarProps): JSX.Element {
   const stripRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState>(null);
+
+  function beginDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    dragState: Exclude<DragState, null>
+  ): void {
+    event.preventDefault();
+    dragRef.current = dragState;
+  }
 
   const previewCss = useMemo(
     () =>
@@ -119,27 +207,15 @@ export function GradientBar({
     [backgroundColor, colorStops, foregroundColor, opacityStops, transparencyEnabled]
   );
 
-  const colorSegments = useMemo(() => {
-    const sorted = [...colorStops].sort((a, b) => a.position - b.position);
-    return sorted.slice(1).map((right, index) => {
-      const left = sorted[index]!;
-      const span = Math.max(1e-6, right.position - left.position);
-      const center = left.position + span * clampMidpoint(right.midpoint);
-      const active = selectedColorStopId === left.id || selectedColorStopId === right.id;
-      return { left, right, center, active };
-    });
-  }, [colorStops, selectedColorStopId]);
+  const colorSegments = useMemo(
+    () => buildSegmentRenderItems(colorStops, selectedColorStopId),
+    [colorStops, selectedColorStopId]
+  );
 
-  const opacitySegments = useMemo(() => {
-    const sorted = [...opacityStops].sort((a, b) => a.position - b.position);
-    return sorted.slice(1).map((right, index) => {
-      const left = sorted[index]!;
-      const span = Math.max(1e-6, right.position - left.position);
-      const center = left.position + span * clampMidpoint(right.midpoint);
-      const active = selectedOpacityStopId === left.id || selectedOpacityStopId === right.id;
-      return { left, right, center, active };
-    });
-  }, [opacityStops, selectedOpacityStopId]);
+  const opacitySegments = useMemo(
+    () => buildSegmentRenderItems(opacityStops, selectedOpacityStopId),
+    [opacityStops, selectedOpacityStopId]
+  );
 
   const handlePointerMove = useCallback(
     (event: PointerEvent) => {
@@ -149,32 +225,30 @@ export function GradientBar({
       if (!strip) return;
       const position = readPositionFromEvent(strip, event);
 
-      if (drag.kind === 'color-stop') {
-        const clamped = clampStopPosition(colorStops, drag.id, position);
-        onUpdateColorStop(drag.id, { position: clamped });
-        return;
+      switch (drag.kind) {
+        case 'color-stop': {
+          const clamped = clampStopPosition(colorStops, drag.id, position);
+          onUpdateColorStop(drag.id, { position: clamped });
+          return;
+        }
+        case 'opacity-stop': {
+          const clamped = clampStopPosition(opacityStops, drag.id, position);
+          onUpdateOpacityStop(drag.id, { position: clamped });
+          return;
+        }
+        case 'color-midpoint': {
+          const midpoint = resolveMidpointFromPosition(colorStops, drag.rightId, position);
+          if (midpoint === null) return;
+          onUpdateColorStop(drag.rightId, { midpoint });
+          return;
+        }
+        case 'opacity-midpoint': {
+          const midpoint = resolveMidpointFromPosition(opacityStops, drag.rightId, position);
+          if (midpoint === null) return;
+          onUpdateOpacityStop(drag.rightId, { midpoint });
+          return;
+        }
       }
-
-      if (drag.kind === 'opacity-stop') {
-        const clamped = clampStopPosition(opacityStops, drag.id, position);
-        onUpdateOpacityStop(drag.id, { position: clamped });
-        return;
-      }
-
-      if (drag.kind === 'color-midpoint') {
-        const segment = findSegmentByRightId(colorStops, drag.rightId);
-        if (!segment) return;
-        const span = Math.max(1e-6, segment.right.position - segment.left.position);
-        const localT = clamp01((position - segment.left.position) / span);
-        onUpdateColorStop(drag.rightId, { midpoint: clampMidpoint(localT) });
-        return;
-      }
-
-      const segment = findSegmentByRightId(opacityStops, drag.rightId);
-      if (!segment) return;
-      const span = Math.max(1e-6, segment.right.position - segment.left.position);
-      const localT = clamp01((position - segment.left.position) / span);
-      onUpdateOpacityStop(drag.rightId, { midpoint: clampMidpoint(localT) });
     },
     [colorStops, onUpdateColorStop, onUpdateOpacityStop, opacityStops]
   );
@@ -225,86 +299,47 @@ export function GradientBar({
       >
         <div className="gradient-preview-band" style={{ backgroundImage: previewCss }} />
 
-        {opacitySegments
-          .filter((segment) => segment.active)
-          .map((segment) => {
-            const left = `${Math.round(segment.center * 1000) / 10}%`;
-            return (
-              <button
-                key={`opacity-mid-${segment.right.id}`}
-                type="button"
-                data-gradient-control="true"
-                className="gradient-midpoint opacity-midpoint"
-                style={{ left }}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  dragRef.current = { kind: 'opacity-midpoint', rightId: segment.right.id };
-                }}
-              />
-            );
-          })}
+        {renderMidpointHandles(
+          opacitySegments,
+          'opacity-midpoint',
+          'opacity-mid',
+          (event, rightId) => beginDrag(event, { kind: 'opacity-midpoint', rightId })
+        )}
 
-        {colorSegments
-          .filter((segment) => segment.active)
-          .map((segment) => {
-            const left = `${Math.round(segment.center * 1000) / 10}%`;
-            return (
-              <button
-                key={`color-mid-${segment.right.id}`}
-                type="button"
-                data-gradient-control="true"
-                className="gradient-midpoint color-midpoint"
-                style={{ left }}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  dragRef.current = { kind: 'color-midpoint', rightId: segment.right.id };
-                }}
-              />
-            );
-          })}
+        {renderMidpointHandles(colorSegments, 'color-midpoint', 'color-mid', (event, rightId) =>
+          beginDrag(event, { kind: 'color-midpoint', rightId })
+        )}
 
-        {opacityStops.map((stop) => {
-          const left = `${Math.round(clamp01(stop.position) * 1000) / 10}%`;
-          const selected = selectedOpacityStopId === stop.id;
-          return (
-            <button
-              key={stop.id}
-              type="button"
-              data-gradient-control="true"
-              className={`gradient-stop opacity-stop ${selected ? 'selected' : ''}`}
-              style={{ left }}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                dragRef.current = { kind: 'opacity-stop', id: stop.id };
-                onSelectOpacityStop(stop.id);
+        {renderStopHandles(
+          opacityStops,
+          selectedOpacityStopId,
+          'opacity-stop',
+          (event, stopId) => {
+            beginDrag(event, { kind: 'opacity-stop', id: stopId });
+            onSelectOpacityStop(stopId);
+          },
+          (stop) => (
+            <span className="stop-label">{Math.round(stop.opacity * 100)}%</span>
+          )
+        )}
+
+        {renderStopHandles(
+          colorStops,
+          selectedColorStopId,
+          'color-stop',
+          (event, stopId) => {
+            beginDrag(event, { kind: 'color-stop', id: stopId });
+            onSelectColorStop(stopId);
+          },
+          (stop) => (
+            <span
+              className="stop-color"
+              style={{
+                backgroundColor: resolveStopDisplayColor(stop, foregroundColor, backgroundColor),
               }}
-            >
-              <span className="stop-label">{Math.round(stop.opacity * 100)}%</span>
-            </button>
-          );
-        })}
-
-        {colorStops.map((stop) => {
-          const left = `${Math.round(clamp01(stop.position) * 1000) / 10}%`;
-          const selected = selectedColorStopId === stop.id;
-          const color = resolveStopDisplayColor(stop, foregroundColor, backgroundColor);
-          return (
-            <button
-              key={stop.id}
-              type="button"
-              data-gradient-control="true"
-              className={`gradient-stop color-stop ${selected ? 'selected' : ''}`}
-              style={{ left }}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                dragRef.current = { kind: 'color-stop', id: stop.id };
-                onSelectColorStop(stop.id);
-              }}
-            >
-              <span className="stop-color" style={{ backgroundColor: color }} />
-            </button>
-          );
-        })}
+            />
+          )
+        )}
       </div>
     </div>
   );

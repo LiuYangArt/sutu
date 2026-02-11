@@ -18,7 +18,7 @@ function toPercent(value: number): number {
   return Math.round(clamp01(value) * 100);
 }
 
-function fromPercent(value: string, fallback: number): number {
+function parsePercent(value: string, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return clamp01(parsed / 100);
@@ -35,7 +35,46 @@ export function StopEditor({
   onRemoveColorStop,
   onUpdateOpacityStop,
   onRemoveOpacityStop,
-}: StopEditorProps) {
+}: StopEditorProps): JSX.Element {
+  const canDeleteOpacityStop = opacityStopCount > 2;
+  const canDeleteColorStop = colorStopCount > 2;
+
+  function updateOpacity(value: string): void {
+    if (!opacityStop) return;
+    onUpdateOpacityStop(opacityStop.id, {
+      opacity: parsePercent(value, opacityStop.opacity),
+    });
+  }
+
+  function updateOpacityLocation(value: string): void {
+    if (!opacityStop) return;
+    onUpdateOpacityStop(opacityStop.id, {
+      position: parsePercent(value, opacityStop.position),
+    });
+  }
+
+  function updateColorSource(value: string): void {
+    if (!colorStop) return;
+    onUpdateColorStop(colorStop.id, {
+      source: value as ColorStop['source'],
+    });
+  }
+
+  function updateColorLocation(value: string): void {
+    if (!colorStop) return;
+    onUpdateColorStop(colorStop.id, {
+      position: parsePercent(value, colorStop.position),
+    });
+  }
+
+  function updateFixedColor(value: string): void {
+    if (!colorStop) return;
+    onUpdateColorStop(colorStop.id, {
+      color: value,
+      source: 'fixed',
+    });
+  }
+
   return (
     <section className="gradient-stop-editor">
       <h4>Stops</h4>
@@ -49,11 +88,7 @@ export function StopEditor({
             max={100}
             step={1}
             value={toPercent(opacityStop.opacity)}
-            onChange={(event) =>
-              onUpdateOpacityStop(opacityStop.id, {
-                opacity: fromPercent(event.target.value, opacityStop.opacity),
-              })
-            }
+            onChange={(event) => updateOpacity(event.target.value)}
           />
           <span className="stop-editor-label">Location</span>
           <input
@@ -62,16 +97,12 @@ export function StopEditor({
             max={100}
             step={1}
             value={toPercent(opacityStop.position)}
-            onChange={(event) =>
-              onUpdateOpacityStop(opacityStop.id, {
-                position: fromPercent(event.target.value, opacityStop.position),
-              })
-            }
+            onChange={(event) => updateOpacityLocation(event.target.value)}
           />
           <button
             type="button"
             className="stop-delete-btn"
-            disabled={opacityStopCount <= 2}
+            disabled={!canDeleteOpacityStop}
             onClick={() => onRemoveOpacityStop(opacityStop.id)}
           >
             Delete
@@ -84,11 +115,7 @@ export function StopEditor({
           <span className="stop-editor-label">Source</span>
           <select
             value={colorStop.source}
-            onChange={(event) =>
-              onUpdateColorStop(colorStop.id, {
-                source: event.target.value as ColorStop['source'],
-              })
-            }
+            onChange={(event) => updateColorSource(event.target.value)}
           >
             <option value="fixed">Fixed Color</option>
             <option value="foreground">Foreground</option>
@@ -101,28 +128,19 @@ export function StopEditor({
             max={100}
             step={1}
             value={toPercent(colorStop.position)}
-            onChange={(event) =>
-              onUpdateColorStop(colorStop.id, {
-                position: fromPercent(event.target.value, colorStop.position),
-              })
-            }
+            onChange={(event) => updateColorLocation(event.target.value)}
           />
           <span className="stop-editor-label">Color</span>
           <input
             type="color"
             disabled={colorStop.source !== 'fixed'}
             value={resolveStopDisplayColor(colorStop, foregroundColor, backgroundColor)}
-            onChange={(event) =>
-              onUpdateColorStop(colorStop.id, {
-                color: event.target.value,
-                source: 'fixed',
-              })
-            }
+            onChange={(event) => updateFixedColor(event.target.value)}
           />
           <button
             type="button"
             className="stop-delete-btn"
-            disabled={colorStopCount <= 2}
+            disabled={!canDeleteColorStop}
             onClick={() => onRemoveColorStop(colorStop.id)}
           >
             Delete

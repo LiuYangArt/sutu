@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useGradientStore } from '@/stores/gradient';
+import { useGradientStore, type GradientPreset } from '@/stores/gradient';
 import { useToolStore } from '@/stores/tool';
 import { GradientBar } from './GradientBar';
 import { StopEditor } from './StopEditor';
@@ -11,6 +11,10 @@ function askName(message: string, initialValue: string): string | null {
   if (input === null) return null;
   const trimmed = input.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolvePreset(presets: GradientPreset[], id: string): GradientPreset | null {
+  return presets.find((preset) => preset.id === id) ?? null;
 }
 
 function resolveSelectedStop<T extends { id: string }>(
@@ -44,16 +48,39 @@ export function GradientEditor(): JSX.Element {
 
   const foregroundColor = useToolStore((s) => s.brushColor);
   const backgroundColor = useToolStore((s) => s.backgroundColor);
+  const customGradient = settings.customGradient;
 
   const selectedColorStop = useMemo(
-    () => resolveSelectedStop(settings.customGradient.colorStops, selectedColorStopId),
-    [selectedColorStopId, settings.customGradient.colorStops]
+    () => resolveSelectedStop(customGradient.colorStops, selectedColorStopId),
+    [customGradient.colorStops, selectedColorStopId]
   );
 
   const selectedOpacityStop = useMemo(
-    () => resolveSelectedStop(settings.customGradient.opacityStops, selectedOpacityStopId),
-    [selectedOpacityStopId, settings.customGradient.opacityStops]
+    () => resolveSelectedStop(customGradient.opacityStops, selectedOpacityStopId),
+    [customGradient.opacityStops, selectedOpacityStopId]
   );
+
+  function handleSaveCustomPreset(): void {
+    const name = askName('Save gradient preset as', customGradient.name);
+    if (!name) return;
+    saveCustomAsPreset(name);
+  }
+
+  function handleRenamePreset(id: string): void {
+    const preset = resolvePreset(presets, id);
+    if (!preset) return;
+    const name = askName('Rename gradient preset', preset.name);
+    if (!name) return;
+    renamePreset(id, name);
+  }
+
+  function handleDeletePreset(id: string): void {
+    const preset = resolvePreset(presets, id);
+    if (!preset) return;
+    const ok = window.confirm(`Delete preset "${preset.name}"?`);
+    if (!ok) return;
+    deletePreset(id);
+  }
 
   return (
     <div className="gradient-editor">
@@ -64,25 +91,9 @@ export function GradientEditor(): JSX.Element {
         backgroundColor={backgroundColor}
         onActivate={setActivePreset}
         onCopyToCustom={copyPresetToCustom}
-        onSaveCustom={() => {
-          const name = askName('Save gradient preset as', settings.customGradient.name);
-          if (!name) return;
-          saveCustomAsPreset(name);
-        }}
-        onRename={(id) => {
-          const preset = presets.find((item) => item.id === id);
-          if (!preset) return;
-          const name = askName('Rename gradient preset', preset.name);
-          if (!name) return;
-          renamePreset(id, name);
-        }}
-        onDelete={(id) => {
-          const preset = presets.find((item) => item.id === id);
-          if (!preset) return;
-          const ok = window.confirm(`Delete preset "${preset.name}"?`);
-          if (!ok) return;
-          deletePreset(id);
-        }}
+        onSaveCustom={handleSaveCustomPreset}
+        onRename={handleRenamePreset}
+        onDelete={handleDeletePreset}
       />
 
       <section className="gradient-editor-main">
@@ -90,14 +101,14 @@ export function GradientEditor(): JSX.Element {
           Name
           <input
             type="text"
-            value={settings.customGradient.name}
+            value={customGradient.name}
             onChange={(event) => setCustomGradientName(event.target.value)}
           />
         </label>
 
         <GradientBar
-          colorStops={settings.customGradient.colorStops}
-          opacityStops={settings.customGradient.opacityStops}
+          colorStops={customGradient.colorStops}
+          opacityStops={customGradient.opacityStops}
           transparencyEnabled={settings.transparency}
           selectedColorStopId={selectedColorStopId}
           selectedOpacityStopId={selectedOpacityStopId}
@@ -114,8 +125,8 @@ export function GradientEditor(): JSX.Element {
         <StopEditor
           colorStop={selectedColorStop}
           opacityStop={selectedOpacityStop}
-          colorStopCount={settings.customGradient.colorStops.length}
-          opacityStopCount={settings.customGradient.opacityStops.length}
+          colorStopCount={customGradient.colorStops.length}
+          opacityStopCount={customGradient.opacityStops.length}
           foregroundColor={foregroundColor}
           backgroundColor={backgroundColor}
           onUpdateColorStop={updateColorStop}

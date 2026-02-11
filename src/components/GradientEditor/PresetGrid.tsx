@@ -13,6 +13,20 @@ interface PresetGridProps {
   onDelete: (id: string) => void;
 }
 
+function buildPresetPreview(
+  preset: GradientPreset,
+  foregroundColor: string,
+  backgroundColor: string
+): string {
+  return buildGradientPreviewCss(
+    preset.colorStops,
+    preset.opacityStops,
+    foregroundColor,
+    backgroundColor,
+    true
+  );
+}
+
 export function PresetGrid({
   presets,
   activePresetId,
@@ -23,7 +37,7 @@ export function PresetGrid({
   onSaveCustom,
   onRename,
   onDelete,
-}: PresetGridProps) {
+}: PresetGridProps): JSX.Element {
   return (
     <section className="gradient-presets">
       <div className="gradient-presets-header">
@@ -36,13 +50,7 @@ export function PresetGrid({
       <div className="gradient-preset-list">
         {presets.map((preset) => {
           const active = preset.id === activePresetId;
-          const preview = buildGradientPreviewCss(
-            preset.colorStops,
-            preset.opacityStops,
-            foregroundColor,
-            backgroundColor,
-            true
-          );
+          const preview = buildPresetPreview(preset, foregroundColor, backgroundColor);
 
           return (
             <div key={preset.id} className={`gradient-preset-item ${active ? 'active' : ''}`}>

@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { useGradientStore, type GradientShape } from '@/stores/gradient';
+import {
+  useGradientStore,
+  type ColorStop,
+  type GradientShape,
+  type OpacityStop,
+} from '@/stores/gradient';
 import { usePanelStore } from '@/stores/panel';
 import { useToolStore } from '@/stores/tool';
 import { buildGradientPreviewCss } from '@/components/GradientEditor/utils';
@@ -12,6 +17,15 @@ const SHAPE_OPTIONS: Array<{ value: GradientShape; label: string }> = [
   { value: 'reflected', label: 'Reflected' },
   { value: 'diamond', label: 'Diamond' },
 ];
+
+function buildPresetPreviewCss(
+  colorStops: ColorStop[],
+  opacityStops: OpacityStop[],
+  foregroundColor: string,
+  backgroundColor: string
+): string {
+  return buildGradientPreviewCss(colorStops, opacityStops, foregroundColor, backgroundColor, true);
+}
 
 export function GradientToolbar(): JSX.Element {
   const [blendMenuOpen, setBlendMenuOpen] = useState(false);
@@ -37,6 +51,8 @@ export function GradientToolbar(): JSX.Element {
   const closePanel = usePanelStore((s) => s.closePanel);
 
   const activeBlendModeLabel = getBlendModeLabel(settings.blendMode);
+  const toggleGradientEditor = () =>
+    (isGradientPanelOpen ? closePanel : openPanel)('gradient-panel');
 
   const previewCss = buildGradientPreviewCss(
     settings.customGradient.colorStops,
@@ -69,13 +85,7 @@ export function GradientToolbar(): JSX.Element {
           <button
             className={`gradient-preview-trigger ${isGradientPanelOpen ? 'active' : ''}`}
             title="Open Gradient Editor"
-            onClick={() => {
-              if (isGradientPanelOpen) {
-                closePanel('gradient-panel');
-              } else {
-                openPanel('gradient-panel');
-              }
-            }}
+            onClick={toggleGradientEditor}
           >
             <span className="gradient-preview-chip" style={{ backgroundImage: previewCss }} />
           </button>
@@ -99,12 +109,11 @@ export function GradientToolbar(): JSX.Element {
           >
             {presets.map((preset) => {
               const active = preset.id === settings.activePresetId;
-              const presetPreview = buildGradientPreviewCss(
+              const presetPreview = buildPresetPreviewCss(
                 preset.colorStops,
                 preset.opacityStops,
                 foregroundColor,
-                backgroundColor,
-                true
+                backgroundColor
               );
 
               return (
