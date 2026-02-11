@@ -28,6 +28,7 @@ export interface PanelState extends PanelGeometry {
   minWidth?: number;
   minHeight?: number;
   resizable?: boolean;
+  autoHeight?: boolean;
   closable?: boolean;
   minimizable?: boolean;
   maxWidth?: number;
@@ -44,6 +45,7 @@ export interface PanelConfig {
   maxWidth?: number;
   maxHeight?: number;
   resizable?: boolean;
+  autoHeight?: boolean;
   closable?: boolean;
   minimizable?: boolean;
 }
@@ -71,6 +73,7 @@ function extractCapabilities(config: PanelConfig) {
   return {
     alignment: config.defaultAlignment,
     resizable: config.resizable ?? true,
+    autoHeight: config.autoHeight ?? false,
     closable: config.closable ?? true,
     minimizable: config.minimizable ?? true,
     minWidth: config.minWidth,

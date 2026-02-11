@@ -141,4 +141,18 @@ describe('CurvesPanel', () => {
 
     expect(optionTexts).toEqual(['RGB', 'Red', 'Green', 'Blue']);
   });
+
+  it('拖动控制点到曲线框外并松手会删除该点', () => {
+    const { container } = render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    fireEvent.pointerDown(graph, { button: 0, clientX: 0, clientY: 0 });
+    expect(container.querySelectorAll('circle').length).toBe(3);
+
+    fireEvent.pointerDown(graph, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(window, { clientX: 360, clientY: 360 });
+    fireEvent.pointerUp(window, { clientX: 360, clientY: 360 });
+
+    expect(container.querySelectorAll('circle').length).toBe(2);
+  });
 });

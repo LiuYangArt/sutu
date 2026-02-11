@@ -106,6 +106,8 @@
   fill: none;
   stroke: #f2f2f2;
   stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .curves-panel__point {
@@ -127,12 +129,6 @@
   font-family: var(--font-mono);
 }
 
-.curves-panel__hint {
-  color: var(--text-secondary);
-  font-size: 12px;
-  word-break: break-all;
-}
-
 .curves-panel__error {
   color: var(--danger-text);
   font-size: 12px;
@@ -141,7 +137,7 @@
 .curves-panel__history-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .curves-panel__actions {
@@ -164,6 +160,31 @@
 }
 
 .curves-panel__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.curves-panel__icon-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.curves-panel__icon-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.curves-panel__icon-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

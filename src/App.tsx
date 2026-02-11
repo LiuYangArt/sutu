@@ -559,10 +559,10 @@ function App() {
     registerPanel({
       id: 'curves-panel',
       title: 'Curves',
-      defaultGeometry: { x: window.innerWidth - 520, y: 120, width: 360, height: 520 },
+      defaultGeometry: { x: window.innerWidth - 520, y: 120, width: 380, height: 540 },
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 380, offsetY: 80 },
-      minWidth: 320,
-      minHeight: 420,
+      resizable: false,
+      autoHeight: true,
     });
 
     // Ensure panels are closed by default

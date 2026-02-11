@@ -183,7 +183,7 @@ export const FloatingPanel = React.memo(function FloatingPanel({
   const style: React.CSSProperties = {
     position: 'fixed',
     width: panel.width,
-    height: panel.isCollapsed ? 'auto' : panel.height,
+    height: panel.isCollapsed ? 'auto' : panel.autoHeight ? 'auto' : panel.height,
     zIndex: panel.zIndex,
   };
 

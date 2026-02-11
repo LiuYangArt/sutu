@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Redo2, Undo2 } from 'lucide-react';
 import { usePanelStore } from '@/stores/panel';
 import type {
   CurvePoint,
@@ -13,6 +14,7 @@ import './CurvesPanel.css';
 const GRAPH_SIZE = 256;
 const POINT_HIT_RADIUS_PX = 8;
 const GRID_DIVISIONS = 4;
+const CURVE_RENDER_SAMPLES = 1024;
 
 type CurvesBridgeWindow = Window & {
   __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
@@ -26,6 +28,8 @@ interface DragState {
   pointId: string;
   beforeSnapshot: CurvesPanelSnapshot | null;
   moved: boolean;
+  canDeleteByDragOut: boolean;
+  deleteOnRelease: boolean;
 }
 
 interface CurvesPanelSnapshot {
@@ -104,11 +108,51 @@ function getSelectedPoint(points: CurvePoint[], selectedId: string | null): Curv
   return points.find((point) => point.id === selectedId) ?? null;
 }
 
+function isPointerOutsideGraph(clientX: number, clientY: number, rect: DOMRect): boolean {
+  return clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom;
+}
+
+function canDeletePointAtIndex(index: number, length: number): boolean {
+  return index > 0 && index < length - 1;
+}
+
+function createDragState(args: {
+  channel: CurvesChannel;
+  pointId: string;
+  beforeSnapshot: CurvesPanelSnapshot | null;
+  canDeleteByDragOut: boolean;
+}): DragState {
+  return {
+    channel: args.channel,
+    pointId: args.pointId,
+    beforeSnapshot: args.beforeSnapshot,
+    moved: false,
+    canDeleteByDragOut: args.canDeleteByDragOut,
+    deleteOnRelease: false,
+  };
+}
+
+function sampleLutLinear(lut: Uint8Array, input: number): number {
+  const clampedInput = clamp(input, 0, 255);
+  const low = Math.floor(clampedInput);
+  const high = Math.min(255, low + 1);
+  if (high === low) {
+    return lut[low] ?? low;
+  }
+  const t = clampedInput - low;
+  const lowValue = lut[low] ?? low;
+  const highValue = lut[high] ?? high;
+  return lowValue + (highValue - lowValue) * t;
+}
+
 function buildPathFromLut(lut: Uint8Array): string {
+  const sampleCount = Math.max(2, CURVE_RENDER_SAMPLES);
   let path = '';
-  for (let i = 0; i < lut.length; i += 1) {
-    const value = lut[i] ?? i;
-    const x = toGraphX(i);
+  for (let i = 0; i < sampleCount; i += 1) {
+    const t = i / (sampleCount - 1);
+    const input = t * 255;
+    const value = sampleLutLinear(lut, input);
+    const x = toGraphX(input);
     const y = toGraphY(value);
     path += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
   }
@@ -151,12 +195,12 @@ export function CurvesPanel(): JSX.Element {
   );
   const [sessionInfo, setSessionInfo] = useState<CurvesSessionInfo | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
-  const [historyVersion, setHistoryVersion] = useState(0);
+  const [, setHistoryVersion] = useState(0);
 
   const activePoints = pointsByChannel[selectedChannel];
   const selectedPoint = getSelectedPoint(activePoints, selectedPointId);
-  const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
-  const canRedo = historyVersion >= 0 && redoStackRef.current.length > 0;
+  const canUndo = undoStackRef.current.length > 0;
+  const canRedo = redoStackRef.current.length > 0;
 
   const luts = useMemo(() => {
     return {
@@ -294,6 +338,14 @@ export function CurvesPanel(): JSX.Element {
       const graph = graphRef.current;
       if (!drag || !graph) return;
       const rect = graph.getBoundingClientRect();
+      const outsideGraph = isPointerOutsideGraph(event.clientX, event.clientY, rect);
+      if (drag.canDeleteByDragOut) {
+        drag.deleteOnRelease = outsideGraph;
+        if (outsideGraph) {
+          return;
+        }
+      }
+
       const point = fromGraphPoint(event.clientX, event.clientY, rect);
       let didMove = false;
       setPointsByChannel((prev) => {
@@ -340,7 +392,30 @@ export function CurvesPanel(): JSX.Element {
 
     const onPointerUp = (): void => {
       const drag = dragRef.current;
-      if (drag?.moved && drag.beforeSnapshot) {
+      if (!drag) return;
+      if (drag.deleteOnRelease && drag.canDeleteByDragOut) {
+        let removed = false;
+        setPointsByChannel((prev) => {
+          const channelPoints = prev[drag.channel];
+          const removeIndex = channelPoints.findIndex((point) => point.id === drag.pointId);
+          if (removeIndex <= 0 || removeIndex >= channelPoints.length - 1) return prev;
+          removed = true;
+          return {
+            ...prev,
+            [drag.channel]: channelPoints.filter((point) => point.id !== drag.pointId),
+          };
+        });
+        if (removed) {
+          setSelectedPointId(null);
+          if (drag.beforeSnapshot) {
+            pushUndoSnapshot(drag.beforeSnapshot);
+          }
+        }
+        dragRef.current = null;
+        return;
+      }
+
+      if (drag.moved && drag.beforeSnapshot) {
         pushUndoSnapshot(drag.beforeSnapshot);
       }
       dragRef.current = null;
@@ -432,25 +507,27 @@ export function CurvesPanel(): JSX.Element {
       }
 
       if (hitPointId) {
+        const hitIndex = channelPoints.findIndex((item) => item.id === hitPointId);
         setSelectedPointId(hitPointId);
-        dragRef.current = {
+        dragRef.current = createDragState({
           channel: selectedChannel,
           pointId: hitPointId,
           beforeSnapshot: captureSnapshot(),
-          moved: false,
-        };
+          canDeleteByDragOut: canDeletePointAtIndex(hitIndex, channelPoints.length),
+        });
         return;
       }
 
       const existing = channelPoints.find((item) => item.x === point.x);
       if (existing) {
+        const existingIndex = channelPoints.findIndex((item) => item.id === existing.id);
         setSelectedPointId(existing.id);
-        dragRef.current = {
+        dragRef.current = createDragState({
           channel: selectedChannel,
           pointId: existing.id,
           beforeSnapshot: captureSnapshot(),
-          moved: false,
-        };
+          canDeleteByDragOut: canDeletePointAtIndex(existingIndex, channelPoints.length),
+        });
         return;
       }
 
@@ -465,12 +542,12 @@ export function CurvesPanel(): JSX.Element {
         };
       });
       setSelectedPointId(pointId);
-      dragRef.current = {
+      dragRef.current = createDragState({
         channel: selectedChannel,
         pointId,
         beforeSnapshot: null,
-        moved: false,
-      };
+        canDeleteByDragOut: false,
+      });
     },
     [captureSnapshot, getNextPointId, pointsByChannel, pushUndoSnapshot, selectedChannel]
   );
@@ -573,7 +650,11 @@ export function CurvesPanel(): JSX.Element {
             />
           )}
           <line x1={0} y1={GRAPH_SIZE} x2={GRAPH_SIZE} y2={0} className="curves-panel__baseline" />
-          <path d={activeLutPath} className="curves-panel__curve" />
+          <path
+            d={activeLutPath}
+            className="curves-panel__curve"
+            shapeRendering="geometricPrecision"
+          />
           {activePoints.map((point) => (
             <circle
               key={point.id}
@@ -595,29 +676,28 @@ export function CurvesPanel(): JSX.Element {
         <span>Output: {selectedPoint?.y ?? '-'}</span>
       </div>
 
-      {sessionInfo && (
-        <div className="curves-panel__hint">
-          Target Layer: {sessionInfo.layerId} · Mode: {sessionInfo.renderMode.toUpperCase()}
-        </div>
-      )}
       {errorText && <div className="curves-panel__error">{errorText}</div>}
 
       <div className="curves-panel__history-actions">
         <button
           type="button"
-          className="curves-panel__btn curves-panel__btn--ghost"
+          className="curves-panel__icon-btn"
           disabled={!canUndo}
           onClick={handleLocalUndo}
+          title="Undo (Ctrl+Z)"
+          aria-label="Undo"
         >
-          Undo
+          <Undo2 size={16} strokeWidth={1.5} />
         </button>
         <button
           type="button"
-          className="curves-panel__btn curves-panel__btn--ghost"
+          className="curves-panel__icon-btn"
           disabled={!canRedo}
           onClick={handleLocalRedo}
+          title="Redo (Ctrl+Y)"
+          aria-label="Redo"
         >
-          Redo
+          <Redo2 size={16} strokeWidth={1.5} />
         </button>
       </div>
 
