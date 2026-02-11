@@ -283,42 +283,55 @@ function parseAiSummary(rawText) {
   return { features, fixes };
 }
 
-function buildChangesSection(summary, compareUrl) {
+function buildChangesSectionByLanguage(summary, compareUrl) {
   const features = Array.isArray(summary?.features) ? summary.features : [];
   const fixes = Array.isArray(summary?.fixes) ? summary.fixes : [];
 
-  const lines = ['### Changes / 更新', '#### 功能更新 / Features'];
+  const zhLines = [];
+  const enLines = [];
 
-  if (features.length === 0) {
-    lines.push('- 中文：本版本无新增用户可见功能。');
-    lines.push('- English: No new user-facing features in this release.');
-  } else {
+  if (features.length > 0) {
+    zhLines.push('#### 功能更新');
     for (const item of features) {
-      lines.push(`- 中文：${item.zh}`);
-      lines.push(`- English: ${item.en}`);
+      zhLines.push(`- ${item.zh}`);
     }
+    zhLines.push('');
+
+    enLines.push('#### Features');
+    for (const item of features) {
+      enLines.push(`- ${item.en}`);
+    }
+    enLines.push('');
   }
 
-  lines.push('');
-  lines.push('#### 问题修复 / Bug Fixes');
-
-  if (fixes.length === 0) {
-    lines.push('- 中文：本版本无新增用户可见问题修复。');
-    lines.push('- English: No new user-facing bug fixes in this release.');
-  } else {
+  if (fixes.length > 0) {
+    zhLines.push('#### 问题修复');
     for (const item of fixes) {
-      lines.push(`- 中文：${item.zh}`);
-      lines.push(`- English: ${item.en}`);
+      zhLines.push(`- ${item.zh}`);
     }
+    zhLines.push('');
+
+    enLines.push('#### Bug Fixes');
+    for (const item of fixes) {
+      enLines.push(`- ${item.en}`);
+    }
+    enLines.push('');
   }
 
   if (compareUrl) {
-    lines.push('');
-    lines.push(`- 中文：完整对比：${compareUrl}`);
-    lines.push(`- English: Full compare: ${compareUrl}`);
+    zhLines.push('#### 版本对比');
+    zhLines.push(`- 完整对比：${compareUrl}`);
+    zhLines.push('');
+
+    enLines.push('#### Compare');
+    enLines.push(`- Full compare: ${compareUrl}`);
+    enLines.push('');
   }
 
-  return lines.join('\n').trim();
+  return {
+    zh: zhLines.join('\n').trim(),
+    en: enLines.join('\n').trim(),
+  };
 }
 
 const IGNORE_PATTERNS = [
@@ -582,26 +595,34 @@ async function main() {
     summary = summarizeFallback(commits);
   }
 
-  const changesSection = buildChangesSection(summary, compareUrl);
+  const changesByLanguage = buildChangesSectionByLanguage(summary, compareUrl);
 
   const body = [
     `## ${appName} v${version}`,
     '',
-    changesSection,
+    '### 中文',
+    changesByLanguage.zh,
     '',
-    '### Installation / 安装',
-    '- 中文：Windows 下载 `.msi` 或 `.exe` 安装包；便携模式使用 `.zip`。',
-    '- English: On Windows, download the `.msi` or `.exe` installer; use `.zip` for portable mode.',
-    '- 中文：macOS 下载 `.dmg` 安装包（如需自动更新，可同时下载 app 压缩包与签名文件）。',
-    '- English: On macOS, download the `.dmg` package (optionally download app archive/signature for updater flows).',
+    '#### 安装',
+    '- Windows 下载 `.msi` 或 `.exe` 安装包；便携模式使用 `.zip`。',
+    '- macOS 下载 `.dmg` 安装包（如需自动更新，可同时下载 app 压缩包与签名文件）。',
     '',
-    '### Requirements / 系统要求',
-    '- 中文：Windows 10（1903）或更高版本。',
-    '- English: Windows 10 (1903) or later.',
-    '- 中文：需要 WebView2 Runtime（Windows 11 内置，Windows 10 会自动安装）。',
-    '- English: WebView2 Runtime is required (built into Windows 11 and auto-installed on Windows 10).',
-    '- 中文：macOS 11 或更高版本（实际最低版本以应用/SDK 配置为准）。',
-    '- English: macOS 11 or later (actual minimum follows app/SDK configuration).',
+    '#### 系统要求',
+    '- Windows 10（1903）或更高版本。',
+    '- 需要 WebView2 Runtime（Windows 11 内置，Windows 10 会自动安装）。',
+    '- macOS 11 或更高版本（实际最低版本以应用/SDK 配置为准）。',
+    '',
+    '### English',
+    changesByLanguage.en,
+    '',
+    '#### Installation',
+    '- On Windows, download the `.msi` or `.exe` installer; use `.zip` for portable mode.',
+    '- On macOS, download the `.dmg` package (optionally download app archive/signature for updater flows).',
+    '',
+    '#### Requirements',
+    '- Windows 10 (1903) or later.',
+    '- WebView2 Runtime is required (built into Windows 11 and auto-installed on Windows 10).',
+    '- macOS 11 or later (actual minimum follows app/SDK configuration).',
     '',
   ].join('\n');
 
