@@ -12,7 +12,7 @@ import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { useRawPointerInput } from './useRawPointerInput';
 import { useAltEyedropper } from './useAltEyedropper';
 import { useShiftLineMode } from './useShiftLineMode';
-import { useLayerOperations } from './useLayerOperations';
+import { useLayerOperations, type ApplyGradientToActiveLayerParams } from './useLayerOperations';
 import { useMoveTool } from './useMoveTool';
 import { useGlobalExports } from './useGlobalExports';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
@@ -24,6 +24,7 @@ import { BrushQuickPanel } from './BrushQuickPanel';
 import { clientToCanvasPoint, getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
 import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
 import { LayerRenderer, type LayerMovePreview } from '@/utils/layerRenderer';
+import type { Rect } from '@/utils/strokeBuffer';
 import {
   StrokeCaptureController,
   type FixedStrokeCaptureLoadResult,
@@ -38,6 +39,7 @@ import {
   GpuStrokeHistoryStore,
   loadResidencyBudget,
   type GpuRenderableLayer,
+  type GpuGradientRenderParams,
   type GpuBrushCommitReadbackMode,
   type GpuBrushCommitMetricsSnapshot,
   type GpuStrokeCommitResult,
@@ -1173,6 +1175,7 @@ export function Canvas() {
     updateThumbnail,
     captureBeforeImage,
     saveStrokeToHistory,
+    discardCapturedStrokeHistory,
     fillActiveLayer,
     applyGradientToActiveLayer,
     handleClearSelection,
@@ -1319,6 +1322,123 @@ export function Canvas() {
     trackPendingGpuCpuSyncTiles,
     schedulePendingGpuCpuSync,
   ]);
+
+  const commitGradientGpu = useCallback(
+    async (
+      params: ApplyGradientToActiveLayerParams & { layerId: string; dirtyRect: Rect | null }
+    ): Promise<boolean> => {
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return false;
+      const layerState = layers.find((layer) => layer.id === params.layerId);
+      if (!layerState || layerState.locked || !layerState.visible) return false;
+
+      const selectionState = useSelectionStore.getState();
+      if (selectionState.selectionMaskPending) return false;
+      if (selectionState.hasSelection && !selectionState.selectionMask) return false;
+
+      const layer = renderer.getLayer(params.layerId);
+      if (!layer) return false;
+
+      onBeforeCanvasMutation?.();
+      await captureBeforeImage(true);
+
+      const historyStore = gpuStrokeHistoryStoreRef.current;
+      const historyEntryId = pendingGpuHistoryEntryIdRef.current;
+      const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
+      const finalizeHistory = () => {
+        if (historyStore && historyEntryId) {
+          historyStore.finalizeStroke(historyEntryId);
+        }
+      };
+
+      try {
+        const visibleGpuLayers = getVisibleGpuRenderableLayers();
+        for (const visibleLayer of visibleGpuLayers) {
+          const sourceLayer = renderer.getLayer(visibleLayer.id);
+          if (!sourceLayer) continue;
+          gpuRenderer.syncLayerFromCanvas(
+            visibleLayer.id,
+            sourceLayer.canvas,
+            visibleLayer.revision
+          );
+        }
+
+        const gradientParams: GpuGradientRenderParams = {
+          shape: params.shape,
+          colorStops: params.colorStops,
+          opacityStops: params.opacityStops,
+          blendMode: params.blendMode,
+          opacity: params.opacity,
+          reverse: params.reverse,
+          dither: params.dither,
+          transparency: params.transparency,
+          foregroundColor: params.foregroundColor,
+          backgroundColor: params.backgroundColor,
+          start: params.start,
+          end: params.end,
+          dirtyRect: params.dirtyRect,
+        };
+
+        const committedTiles = gpuRenderer.commitGradient({
+          layerId: params.layerId,
+          gradient: gradientParams,
+          baseLayerCanvas: layer.canvas,
+          historyCapture:
+            historyStore && historyEntryId
+              ? {
+                  entryId: historyEntryId,
+                  store: historyStore,
+                }
+              : undefined,
+        });
+
+        if (committedTiles.length === 0) {
+          discardCapturedStrokeHistory();
+          return false;
+        }
+
+        if (readbackMode === 'enabled') {
+          await gpuRenderer.readbackTilesToLayer({
+            layerId: params.layerId,
+            tiles: committedTiles,
+            targetCtx: layer.ctx,
+          });
+        } else {
+          trackPendingGpuCpuSyncTiles(params.layerId, committedTiles);
+          schedulePendingGpuCpuSync(params.layerId);
+        }
+
+        saveStrokeToHistory();
+        updateThumbnail(params.layerId);
+        compositeAndRender();
+        return true;
+      } catch (error) {
+        discardCapturedStrokeHistory();
+        console.warn('[GradientGpu] Failed to commit GPU gradient', {
+          layerId: params.layerId,
+          error,
+        });
+        return false;
+      } finally {
+        finalizeHistory();
+        clearPendingGpuHistoryEntry();
+      }
+    },
+    [
+      captureBeforeImage,
+      clearPendingGpuHistoryEntry,
+      compositeAndRender,
+      discardCapturedStrokeHistory,
+      getVisibleGpuRenderableLayers,
+      layers,
+      onBeforeCanvasMutation,
+      saveStrokeToHistory,
+      schedulePendingGpuCpuSync,
+      trackPendingGpuCpuSyncTiles,
+      updateThumbnail,
+    ]
+  );
 
   const getGpuBrushCommitMetricsSnapshot = useCallback((): GpuBrushCommitMetricsSnapshot | null => {
     return gpuCommitCoordinatorRef.current?.getCommitMetricsSnapshot() ?? null;
@@ -1926,6 +2046,52 @@ export function Canvas() {
     [displayScale, height, width]
   );
 
+  const renderGpuGradientPreview = useCallback(
+    (payload: {
+      layerId: string;
+      gradientParams: ApplyGradientToActiveLayerParams;
+      dirtyRect: Rect | null;
+    }) => {
+      if (!gpuDisplayActive) return;
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return;
+
+      const visibleGpuLayers = getVisibleGpuRenderableLayers();
+      for (const visibleLayer of visibleGpuLayers) {
+        const layer = renderer.getLayer(visibleLayer.id);
+        if (!layer) continue;
+        gpuRenderer.syncLayerFromCanvas(visibleLayer.id, layer.canvas, visibleLayer.revision);
+      }
+
+      gpuRenderer.renderLayerStackFrameWithGradientPreview({
+        layers: visibleGpuLayers,
+        activeLayerId: payload.layerId,
+        gradient: {
+          shape: payload.gradientParams.shape,
+          colorStops: payload.gradientParams.colorStops,
+          opacityStops: payload.gradientParams.opacityStops,
+          blendMode: payload.gradientParams.blendMode,
+          opacity: payload.gradientParams.opacity,
+          reverse: payload.gradientParams.reverse,
+          dither: payload.gradientParams.dither,
+          transparency: payload.gradientParams.transparency,
+          foregroundColor: payload.gradientParams.foregroundColor,
+          backgroundColor: payload.gradientParams.backgroundColor,
+          start: payload.gradientParams.start,
+          end: payload.gradientParams.end,
+          dirtyRect: payload.dirtyRect,
+        },
+      });
+    },
+    [getVisibleGpuRenderableLayers, gpuDisplayActive]
+  );
+
+  const clearGpuGradientPreview = useCallback(() => {
+    if (!gpuDisplayActive) return;
+    renderGpuFrame(false);
+  }, [gpuDisplayActive, renderGpuFrame]);
+
   const {
     handleGradientPointerDown,
     handleGradientPointerMove,
@@ -1939,6 +2105,10 @@ export function Canvas() {
     height,
     layerRendererRef,
     applyGradientToActiveLayer,
+    applyGpuGradientToActiveLayer: commitGradientGpu,
+    useGpuGradientPath: gpuDisplayActive,
+    renderGpuPreview: renderGpuGradientPreview,
+    clearGpuPreview: clearGpuGradientPreview,
     renderPreview: renderGradientPreview,
     clearPreview: clearGradientPreview,
   });

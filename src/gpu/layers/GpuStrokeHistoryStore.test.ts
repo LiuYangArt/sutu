@@ -110,4 +110,42 @@ describe('GpuStrokeHistoryStore', () => {
     expect(stats.fallbackCount).toBe(1);
     expect(stats.lastFallbackAtMs).not.toBeNull();
   });
+
+  it('requires finalizeStroke before apply becomes available', () => {
+    ensureGpuTextureUsageGlobal();
+    const { device } = createMockDevice();
+    const encoder = createMockEncoder();
+    const layerTexture = createMockTexture() as unknown as GPUTexture;
+    const store = new GpuStrokeHistoryStore({
+      device,
+      tileSize: 16,
+      layerFormat: 'rgba8unorm',
+      budgetBytes: 4096,
+    });
+
+    expect(store.beginStroke('entry-need-finalize', 'layer-1')).toBe('gpu');
+    expect(
+      store.captureBeforeTile(
+        'entry-need-finalize',
+        encoder,
+        'layer-1',
+        { x: 0, y: 0 },
+        layerTexture
+      )
+    ).toBe(true);
+    expect(
+      store.captureAfterTile(
+        'entry-need-finalize',
+        encoder,
+        'layer-1',
+        { x: 0, y: 0 },
+        layerTexture
+      )
+    ).toBe(true);
+
+    expect(store.apply('entry-need-finalize', 'undo')).toBeNull();
+
+    store.finalizeStroke('entry-need-finalize');
+    expect(store.apply('entry-need-finalize', 'undo')).not.toBeNull();
+  });
 });

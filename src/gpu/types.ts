@@ -9,6 +9,7 @@ import type { BrushTexture } from '@/stores/tool';
 import type { TextureSettings, TextureBlendMode } from '@/components/BrushPanel/types';
 import type { TileCoord } from './layers/GpuLayerStore';
 import type { BlendMode } from '@/stores/document';
+import type { ColorStop, GradientShape, OpacityStop } from '@/stores/gradient';
 
 /**
  * Dab instance data for GPU instancing
@@ -139,6 +140,30 @@ export interface GpuRenderableLayer {
   opacity: number;
   blendMode: BlendMode;
   revision: number;
+}
+
+export interface GpuGradientPoint {
+  x: number;
+  y: number;
+}
+
+export interface GpuGradientConfig {
+  shape: GradientShape;
+  colorStops: ColorStop[];
+  opacityStops: OpacityStop[];
+  blendMode: BlendMode;
+  opacity: number;
+  reverse: boolean;
+  dither: boolean;
+  transparency: boolean;
+  foregroundColor: string;
+  backgroundColor: string;
+}
+
+export interface GpuGradientRenderParams extends GpuGradientConfig {
+  start: GpuGradientPoint;
+  end: GpuGradientPoint;
+  dirtyRect: Rect | null;
 }
 
 export interface GpuBrushCommitMetricsSnapshot {

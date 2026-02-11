@@ -611,6 +611,10 @@ export function useLayerOperations({
     [pushStroke, setDocumentDirty]
   );
 
+  const discardCapturedStrokeHistory = useCallback(() => {
+    beforeImageRef.current = null;
+  }, []);
+
   // Resize canvas with history support
   const handleResizeCanvas = useCallback(
     (options: ResizeCanvasOptions) => {
@@ -2007,6 +2011,7 @@ export function useLayerOperations({
     updateThumbnail,
     captureBeforeImage,
     saveStrokeToHistory,
+    discardCapturedStrokeHistory,
     fillActiveLayer,
     applyGradientToActiveLayer,
     handleClearSelection,

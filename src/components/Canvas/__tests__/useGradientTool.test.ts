@@ -170,6 +170,100 @@ describe('useGradientTool', () => {
     expect(clearPreview).toHaveBeenCalled();
   });
 
+  it('uses gpu preview and gpu commit path when enabled', async () => {
+    const layer = createLayer('layer_gpu');
+    const renderer = createMockLayerRenderer();
+    const renderPreview = vi.fn();
+    const renderGpuPreview = vi.fn();
+    const clearGpuPreview = vi.fn();
+    const applyGpuGradientToActiveLayer = vi.fn(async (_params: unknown) => true);
+
+    const { result } = renderHook(() =>
+      useGradientTool({
+        currentTool: 'gradient',
+        activeLayerId: layer.id,
+        layers: [layer],
+        width: 2,
+        height: 2,
+        layerRendererRef: { current: renderer },
+        applyGradientToActiveLayer: vi.fn(async (_params: unknown) => true),
+        applyGpuGradientToActiveLayer,
+        useGpuGradientPath: true,
+        renderGpuPreview,
+        clearGpuPreview,
+        renderPreview,
+        clearPreview: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.handleGradientPointerDown(0, 0, {
+        button: 0,
+        shiftKey: false,
+      } as PointerEvent);
+      result.current.handleGradientPointerMove(2, 0, { shiftKey: false } as PointerEvent);
+      flushNextFrame();
+    });
+
+    expect(renderGpuPreview).toHaveBeenCalledTimes(1);
+    const gpuPayload = renderGpuPreview.mock.calls[0]?.[0] as
+      | { layerId: string; dirtyRect: { left: number; top: number; right: number; bottom: number } }
+      | undefined;
+    expect(gpuPayload?.layerId).toBe(layer.id);
+    expect(gpuPayload?.dirtyRect).toEqual({ left: 0, top: 0, right: 2, bottom: 2 });
+
+    const previewPayload = getFirstPreviewPayload(renderPreview);
+    expect(previewPayload?.previewLayerCanvas).toBeUndefined();
+    expect(previewPayload?.guide?.start).toEqual({ x: 0, y: 0 });
+    expect(previewPayload?.guide?.end).toEqual({ x: 2, y: 0 });
+
+    await act(async () => {
+      result.current.handleGradientPointerUp(2, 0, { shiftKey: false } as PointerEvent);
+    });
+
+    expect(applyGpuGradientToActiveLayer).toHaveBeenCalledTimes(1);
+    expect(clearGpuPreview).toHaveBeenCalled();
+  });
+
+  it('falls back to cpu commit when gpu commit returns false', async () => {
+    const layer = createLayer('layer_gpu_fallback');
+    const renderer = createMockLayerRenderer();
+    const applyGradientToActiveLayer = vi.fn(async (_params: unknown) => true);
+    const applyGpuGradientToActiveLayer = vi.fn(async (_params: unknown) => false);
+
+    const { result } = renderHook(() =>
+      useGradientTool({
+        currentTool: 'gradient',
+        activeLayerId: layer.id,
+        layers: [layer],
+        width: 2,
+        height: 2,
+        layerRendererRef: { current: renderer },
+        applyGradientToActiveLayer,
+        applyGpuGradientToActiveLayer,
+        useGpuGradientPath: true,
+        renderGpuPreview: vi.fn(),
+        clearGpuPreview: vi.fn(),
+        renderPreview: vi.fn(),
+        clearPreview: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.handleGradientPointerDown(0, 0, {
+        button: 0,
+        shiftKey: false,
+      } as PointerEvent);
+    });
+
+    await act(async () => {
+      result.current.handleGradientPointerUp(2, 0, { shiftKey: false } as PointerEvent);
+    });
+
+    expect(applyGpuGradientToActiveLayer).toHaveBeenCalledTimes(1);
+    expect(applyGradientToActiveLayer).toHaveBeenCalledTimes(1);
+  });
+
   it('applies shift 45-degree constraint for end point', async () => {
     const layer = createLayer('layer_shift');
     const renderer = createMockLayerRenderer();

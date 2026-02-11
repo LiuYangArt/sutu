@@ -5,6 +5,7 @@ import { useToolStore } from '@/stores/tool';
 import { useGradientStore } from '@/stores/gradient';
 import { useSelectionStore } from '@/stores/selection';
 import { LayerRenderer } from '@/utils/layerRenderer';
+import type { Rect } from '@/utils/strokeBuffer';
 import {
   isZeroLengthGradient,
   renderGradientToImageData,
@@ -32,6 +33,16 @@ interface UseGradientToolParams {
   height: number;
   layerRendererRef: RefObject<LayerRenderer | null>;
   applyGradientToActiveLayer: (params: ApplyGradientToActiveLayerParams) => Promise<boolean>;
+  applyGpuGradientToActiveLayer?: (
+    params: ApplyGradientToActiveLayerParams & { layerId: string; dirtyRect: Rect | null }
+  ) => Promise<boolean>;
+  useGpuGradientPath?: boolean;
+  renderGpuPreview?: (params: {
+    layerId: string;
+    gradientParams: ApplyGradientToActiveLayerParams;
+    dirtyRect: Rect | null;
+  }) => void;
+  clearGpuPreview?: () => void;
   renderPreview: (payload: GradientPreviewPayload) => void;
   clearPreview: () => void;
 }
@@ -40,6 +51,8 @@ interface GradientSession {
   layerId: string;
   start: GradientPoint;
   end: GradientPoint;
+  dirtyRect: Rect | null;
+  useGpuPath: boolean;
   gradientConfig: Omit<ApplyGradientToActiveLayerParams, 'start' | 'end'>;
   baseImageData: ImageData;
   previewCanvas: HTMLCanvasElement;
@@ -58,6 +71,39 @@ function createPreviewCanvas(width: number, height: number): HTMLCanvasElement {
   previewCanvas.width = width;
   previewCanvas.height = height;
   return previewCanvas;
+}
+
+function normalizeRect(rect: Rect, width: number, height: number): Rect | null {
+  const left = Math.max(0, Math.floor(rect.left));
+  const top = Math.max(0, Math.floor(rect.top));
+  const right = Math.min(width, Math.ceil(rect.right));
+  const bottom = Math.min(height, Math.ceil(rect.bottom));
+  if (right <= left || bottom <= top) return null;
+  return { left, top, right, bottom };
+}
+
+function resolveGradientDirtyRect(
+  width: number,
+  height: number,
+  selectionState: ReturnType<typeof useSelectionStore.getState>
+): Rect | null {
+  if (!selectionState.hasSelection) {
+    return { left: 0, top: 0, right: width, bottom: height };
+  }
+  const bounds = selectionState.bounds;
+  if (!bounds) {
+    return { left: 0, top: 0, right: width, bottom: height };
+  }
+  return normalizeRect(
+    {
+      left: bounds.x,
+      top: bounds.y,
+      right: bounds.x + bounds.width,
+      bottom: bounds.y + bounds.height,
+    },
+    width,
+    height
+  );
 }
 
 function constrain45Degree(start: GradientPoint, point: GradientPoint): GradientPoint {
@@ -105,6 +151,30 @@ function buildGuidePreviewPayload(session: GradientSession): GradientPreviewPayl
   };
 }
 
+async function commitGradientWithFallback(args: {
+  session: GradientSession;
+  params: ApplyGradientToActiveLayerParams;
+  applyGradientToActiveLayer: (params: ApplyGradientToActiveLayerParams) => Promise<boolean>;
+  applyGpuGradientToActiveLayer?: (
+    params: ApplyGradientToActiveLayerParams & { layerId: string; dirtyRect: Rect | null }
+  ) => Promise<boolean>;
+}): Promise<void> {
+  const { session, params, applyGradientToActiveLayer, applyGpuGradientToActiveLayer } = args;
+  if (!session.useGpuPath || !applyGpuGradientToActiveLayer) {
+    await applyGradientToActiveLayer(params);
+    return;
+  }
+
+  const applied = await applyGpuGradientToActiveLayer({
+    ...params,
+    layerId: session.layerId,
+    dirtyRect: session.dirtyRect,
+  });
+  if (!applied) {
+    await applyGradientToActiveLayer(params);
+  }
+}
+
 export function useGradientTool({
   currentTool,
   activeLayerId,
@@ -113,6 +183,10 @@ export function useGradientTool({
   height,
   layerRendererRef,
   applyGradientToActiveLayer,
+  applyGpuGradientToActiveLayer,
+  useGpuGradientPath = false,
+  renderGpuPreview,
+  clearGpuPreview,
   renderPreview,
   clearPreview,
 }: UseGradientToolParams): {
@@ -146,8 +220,9 @@ export function useGradientTool({
   const stopSession = useCallback(() => {
     cancelScheduledPreview();
     sessionRef.current = null;
+    clearGpuPreview?.();
     clearPreview();
-  }, [cancelScheduledPreview, clearPreview]);
+  }, [cancelScheduledPreview, clearGpuPreview, clearPreview]);
 
   const renderPreviewFrame = useCallback(() => {
     rafRef.current = null;
@@ -173,6 +248,16 @@ export function useGradientTool({
       start: session.start,
       end: session.end,
     };
+    if (session.useGpuPath && renderGpuPreview) {
+      renderGpuPreview({
+        layerId: session.layerId,
+        gradientParams: params,
+        dirtyRect: session.dirtyRect,
+      });
+      renderPreview(guidePayload);
+      return;
+    }
+
     const previewImage = renderGradientToImageData({
       ...params,
       width,
@@ -189,7 +274,7 @@ export function useGradientTool({
       ...guidePayload,
       previewLayerCanvas: session.previewCanvas,
     });
-  }, [height, renderPreview, width]);
+  }, [height, renderGpuPreview, renderPreview, width]);
 
   const schedulePreview = useCallback(() => {
     if (rafRef.current !== null) return;
@@ -227,12 +312,17 @@ export function useGradientTool({
       const baseImageData = renderer.getLayerImageData(activeLayerId);
       if (!baseImageData) return false;
 
+      const selectionState = useSelectionStore.getState();
       const start = { x: canvasX, y: canvasY };
+      const useGpuPath =
+        useGpuGradientPath && !!renderGpuPreview && !!applyGpuGradientToActiveLayer;
 
       sessionRef.current = {
         layerId: activeLayerId,
         start,
         end: start,
+        dirtyRect: resolveGradientDirtyRect(width, height, selectionState),
+        useGpuPath,
         gradientConfig: buildGradientConfig(),
         baseImageData,
         previewCanvas: createPreviewCanvas(width, height),
@@ -241,7 +331,18 @@ export function useGradientTool({
       schedulePreview();
       return true;
     },
-    [activeLayerId, currentTool, height, layerRendererRef, layers, schedulePreview, width]
+    [
+      activeLayerId,
+      applyGpuGradientToActiveLayer,
+      currentTool,
+      height,
+      layerRendererRef,
+      layers,
+      renderGpuPreview,
+      schedulePreview,
+      useGpuGradientPath,
+      width,
+    ]
   );
 
   const handleGradientPointerMove = useCallback(
@@ -264,6 +365,7 @@ export function useGradientTool({
 
       if (isZeroLengthGradient(session.start, session.end)) {
         sessionRef.current = null;
+        clearGpuPreview?.();
         clearPreview();
         return;
       }
@@ -274,10 +376,22 @@ export function useGradientTool({
         end: session.end,
       };
       sessionRef.current = null;
+      clearGpuPreview?.();
       clearPreview();
-      void applyGradientToActiveLayer(params);
+      void commitGradientWithFallback({
+        session,
+        params,
+        applyGradientToActiveLayer,
+        applyGpuGradientToActiveLayer,
+      });
     },
-    [applyGradientToActiveLayer, cancelScheduledPreview, clearPreview]
+    [
+      applyGpuGradientToActiveLayer,
+      applyGradientToActiveLayer,
+      cancelScheduledPreview,
+      clearGpuPreview,
+      clearPreview,
+    ]
   );
 
   useEffect(() => {

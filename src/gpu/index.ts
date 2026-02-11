@@ -24,6 +24,9 @@ export type {
   GpuBrushCommitMetricsSnapshot,
   GpuLayerBlendModeM3,
   GpuRenderableLayer,
+  GpuGradientPoint,
+  GpuGradientConfig,
+  GpuGradientRenderParams,
 } from './types';
 
 export {
