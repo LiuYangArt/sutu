@@ -298,3 +298,47 @@ RGB 视图叠加线误用了复合评估（`channel -> rgb`）来绘制路径，
    - 无选区：连续两次曲线提交 + 连续撤销  
    - 有选区：切换选区后两次曲线提交 + 连续撤销  
 3. 检查 `selection` 异步构建完成时机与曲线提交时机是否发生竞态，确认是否存在“历史先后顺序写错位”。
+
+## 补充复盘（曲线 Ctrl+Z 最终修复，2026-02-11）
+
+### 1. 最终现象与证据
+
+用户在 `Ctrl+M -> 调整曲线 -> OK -> Ctrl+Z` 路径下，主观表现为“撤销无效”。  
+运行时时间线日志显示：
+
+1. 曲线提交历史已正常入栈（`commitGpuPushStroke`，entryId 为 `curves-*`）。  
+2. `Ctrl+Z` 事件已正常触发并命中该条目。  
+3. 撤销执行分支已走到 `undoStrokeCpuFallbackApplied`，即 CPU 回撤逻辑确实执行成功。  
+
+因此问题不在“是否撤销”，而在“撤销后的画面是否按最新状态渲染”。
+
+### 2. 根因
+
+`stroke` 类型的 undo/redo 分支里，执行顺序是：
+
+1. `compositeAndRender()`  
+2. `markLayerDirty(layerId)`
+
+在 GPU 显示路径下，渲染帧会依据 layer revision 判断是否需要从 CPU canvas 同步到 GPU。  
+由于 revision 在本次渲染之后才递增，导致这一帧仍使用旧纹理，表现为“看起来没撤销”。
+
+### 3. 修复
+
+将 `stroke` 的 undo/redo 顺序统一调整为：
+
+1. `markLayerDirty(layerId)`  
+2. `compositeAndRender()`
+
+并保持其余历史语义不变（包括 GPU apply 失败时的 CPU fallback 与坏条目跳过机制）。
+
+### 4. 清理与简化
+
+1. 移除本轮诊断阶段新增的 `HistoryTrace` 临时日志与开关。  
+2. 保留必要告警（如缺失 `beforeImage` 的异常告警），避免污染常规控制台。  
+3. 对 undo/redo 主流程做等价简化，减少临时分支与噪音代码，便于后续维护。
+
+### 5. 新经验
+
+1. 历史系统问题要区分“状态已回退”与“画面已刷新”，两者可能不一致。  
+2. 在 GPU 缓存/revision 参与渲染决策的路径中，`mark dirty` 的时序属于功能正确性，而非单纯性能细节。  
+3. 诊断日志应短期开启、问题闭环后及时回收，避免长期干扰真实告警信号。

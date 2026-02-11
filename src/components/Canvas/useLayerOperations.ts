@@ -4,7 +4,6 @@ import type { SelectionPoint, SelectionSnapshot } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
 import {
   createHistoryEntryId,
-  type HistoryEntry,
   type LayerPropsChange,
   type PushStrokeParams,
   type StrokeSnapshotMode,
@@ -103,42 +102,6 @@ interface DecodedImageSource {
   width: number;
   height: number;
   cleanup: () => void;
-}
-
-const HISTORY_TRACE_PREFIX = '[HistoryTrace][LayerOps]';
-const HISTORY_TRACE_DEFAULT_ENABLED = import.meta.env.DEV && import.meta.env.MODE !== 'test';
-
-function isHistoryTraceEnabled(): boolean {
-  if (typeof window === 'undefined') return false;
-  if (typeof window.__historyTrace === 'boolean') return window.__historyTrace;
-  return HISTORY_TRACE_DEFAULT_ENABLED;
-}
-
-function summarizeHistoryEntryForLog(entry: HistoryEntry | null): Record<string, unknown> | null {
-  if (!entry) return null;
-  if (entry.type === 'stroke') {
-    return {
-      type: entry.type,
-      layerId: entry.layerId,
-      entryId: entry.entryId,
-      snapshotMode: entry.snapshotMode,
-      hasBeforeImage: !!entry.beforeImage,
-      hasAfterImage: !!entry.afterImage,
-      hasSelectionBefore: !!entry.selectionBefore,
-      hasSelectionAfter: !!entry.selectionAfter,
-      timestamp: entry.timestamp,
-    };
-  }
-  return {
-    type: entry.type,
-    timestamp: entry.timestamp,
-  };
-}
-
-function historyTrace(event: string, payload: Record<string, unknown>): void {
-  if (!isHistoryTraceEnabled()) return;
-  // eslint-disable-next-line no-console
-  console.info(HISTORY_TRACE_PREFIX, event, payload);
 }
 
 function createCanvasContext2D(
@@ -921,67 +884,34 @@ export function useLayerOperations({
   // Handle undo for all operation types
   const handleUndo = useCallback(() => {
     void (async () => {
-      const beforeUndoState = useHistoryStore.getState();
-      historyTrace('undoRequested', {
-        undoDepth: beforeUndoState.undoStack.length,
-        redoDepth: beforeUndoState.redoStack.length,
-      });
       let entry = undo();
-      historyTrace('undoPopped', {
-        entry: summarizeHistoryEntryForLog(entry),
-      });
       while (entry) {
-        while (
-          entry &&
-          entry.type === 'stroke' &&
-          !layers.some((l) => l.id === (entry as { layerId: string }).layerId)
-        ) {
-          historyTrace('undoSkipMissingLayerStroke', {
-            entry: summarizeHistoryEntryForLog(entry),
-          });
+        while (entry && entry.type === 'stroke') {
+          const strokeEntry = entry;
+          if (layers.some((l) => l.id === strokeEntry.layerId)) {
+            break;
+          }
           entry = undo();
-          historyTrace('undoPopped', {
-            entry: summarizeHistoryEntryForLog(entry),
-          });
-        }
-        if (!entry) {
-          historyTrace('undoStoppedNoEntry', {});
-          return;
+          if (!entry) return;
         }
 
         onBeforeCanvasMutation?.();
 
         if (entry.type === 'selection') {
-          historyTrace('undoApplySelection', {
-            entry: summarizeHistoryEntryForLog(entry),
-          });
           entry.after = useSelectionStore.getState().createSnapshot();
           useSelectionStore.getState().applySnapshot(entry.before);
           return;
         }
 
         const renderer = layerRendererRef.current;
-        if (!renderer) {
-          historyTrace('undoStoppedRendererMissing', {
-            entry: summarizeHistoryEntryForLog(entry),
-          });
-          return;
-        }
+        if (!renderer) return;
         let skippedBrokenStroke = false;
 
         switch (entry.type) {
           case 'stroke': {
-            historyTrace('undoStrokeStart', {
-              entry: summarizeHistoryEntryForLog(entry),
-            });
             const gpuApplied =
               entry.snapshotMode === 'gpu' &&
               (await applyGpuStrokeHistory?.(entry.entryId, 'undo', entry.layerId));
-            historyTrace('undoStrokeGpuAttempted', {
-              entryId: entry.entryId,
-              snapshotMode: entry.snapshotMode,
-              gpuApplied: !!gpuApplied,
-            });
             if (gpuApplied) {
               if (entry.selectionBefore) {
                 entry.selectionAfter = useSelectionStore.getState().createSnapshot();
@@ -990,10 +920,6 @@ export function useLayerOperations({
               markLayerDirty(entry.layerId);
               compositeAndRender();
               updateThumbnail(entry.layerId);
-              historyTrace('undoStrokeGpuApplied', {
-                entryId: entry.entryId,
-                layerId: entry.layerId,
-              });
               break;
             }
 
@@ -1003,20 +929,11 @@ export function useLayerOperations({
             if (currentImageData) {
               entry.afterImage = currentImageData;
             }
-            historyTrace('undoStrokeCpuFallbackSnapshot', {
-              entryId: entry.entryId,
-              layerId: entry.layerId,
-              capturedAfterImage: !!currentImageData,
-              hasBeforeImage: !!entry.beforeImage,
-            });
             if (!entry.beforeImage) {
               console.warn('[History] Missing CPU beforeImage for undo fallback', {
                 layerId: entry.layerId,
                 entryId: entry.entryId,
                 snapshotMode: entry.snapshotMode,
-              });
-              historyTrace('undoStrokeSkipMissingBeforeImage', {
-                entry: summarizeHistoryEntryForLog(entry),
               });
               skippedBrokenStroke = true;
               break;
@@ -1029,10 +946,6 @@ export function useLayerOperations({
             markLayerDirty(entry.layerId);
             compositeAndRender();
             updateThumbnail(entry.layerId);
-            historyTrace('undoStrokeCpuFallbackApplied', {
-              entryId: entry.entryId,
-              layerId: entry.layerId,
-            });
             break;
           }
           case 'layerProps': {
@@ -1229,18 +1142,9 @@ export function useLayerOperations({
           }
         }
         if (skippedBrokenStroke) {
-          historyTrace('undoContinueAfterBrokenStroke', {
-            previousEntry: summarizeHistoryEntryForLog(entry),
-          });
           entry = undo();
-          historyTrace('undoPopped', {
-            entry: summarizeHistoryEntryForLog(entry),
-          });
           continue;
         }
-        historyTrace('undoApplied', {
-          entry: summarizeHistoryEntryForLog(entry),
-        });
         return;
       }
     })();
@@ -1260,23 +1164,12 @@ export function useLayerOperations({
   // Handle redo for all operation types
   const handleRedo = useCallback(() => {
     void (async () => {
-      const beforeRedoState = useHistoryStore.getState();
-      historyTrace('redoRequested', {
-        undoDepth: beforeRedoState.undoStack.length,
-        redoDepth: beforeRedoState.redoStack.length,
-      });
       const entry = redo();
-      historyTrace('redoPopped', {
-        entry: summarizeHistoryEntryForLog(entry),
-      });
       if (!entry) return;
 
       onBeforeCanvasMutation?.();
 
       if (entry.type === 'selection') {
-        historyTrace('redoApplySelection', {
-          entry: summarizeHistoryEntryForLog(entry),
-        });
         if (entry.after) {
           useSelectionStore.getState().applySnapshot(entry.after);
         }
@@ -1284,26 +1177,13 @@ export function useLayerOperations({
       }
 
       const renderer = layerRendererRef.current;
-      if (!renderer) {
-        historyTrace('redoStoppedRendererMissing', {
-          entry: summarizeHistoryEntryForLog(entry),
-        });
-        return;
-      }
+      if (!renderer) return;
 
       switch (entry.type) {
         case 'stroke': {
-          historyTrace('redoStrokeStart', {
-            entry: summarizeHistoryEntryForLog(entry),
-          });
           const gpuApplied =
             entry.snapshotMode === 'gpu' &&
             (await applyGpuStrokeHistory?.(entry.entryId, 'redo', entry.layerId));
-          historyTrace('redoStrokeGpuAttempted', {
-            entryId: entry.entryId,
-            snapshotMode: entry.snapshotMode,
-            gpuApplied: !!gpuApplied,
-          });
           if (gpuApplied) {
             if (entry.selectionAfter) {
               useSelectionStore.getState().applySnapshot(entry.selectionAfter);
@@ -1311,22 +1191,12 @@ export function useLayerOperations({
             markLayerDirty(entry.layerId);
             compositeAndRender();
             updateThumbnail(entry.layerId);
-            historyTrace('redoStrokeGpuApplied', {
-              entryId: entry.entryId,
-              layerId: entry.layerId,
-            });
             break;
           }
 
           // Restore afterImage (saved during undo)
           if (entry.afterImage) {
             renderer.setLayerImageData(entry.layerId, entry.afterImage);
-          } else {
-            historyTrace('redoStrokeMissingAfterImage', {
-              entryId: entry.entryId,
-              layerId: entry.layerId,
-              snapshotMode: entry.snapshotMode,
-            });
           }
           if (entry.selectionAfter) {
             useSelectionStore.getState().applySnapshot(entry.selectionAfter);
@@ -1334,10 +1204,6 @@ export function useLayerOperations({
           markLayerDirty(entry.layerId);
           compositeAndRender();
           updateThumbnail(entry.layerId);
-          historyTrace('redoStrokeCpuFallbackApplied', {
-            entryId: entry.entryId,
-            layerId: entry.layerId,
-          });
           break;
         }
         case 'layerProps': {
@@ -1471,9 +1337,6 @@ export function useLayerOperations({
           break;
         }
       }
-      historyTrace('redoApplied', {
-        entry: summarizeHistoryEntryForLog(entry),
-      });
     })();
   }, [
     redo,
