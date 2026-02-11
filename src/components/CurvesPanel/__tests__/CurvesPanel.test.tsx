@@ -137,6 +137,34 @@ describe('CurvesPanel', () => {
     expect(commitSpy.mock.calls[0]?.[0]).toBe(sessionId);
   });
 
+  it('提交进行中时忽略重复 OK 点击', async () => {
+    let resolveCommit: (value: CurvesCommitResult) => void = () => {};
+    commitSpy.mockImplementation(
+      () =>
+        new Promise<CurvesCommitResult>((resolve) => {
+          resolveCommit = resolve;
+        })
+    );
+
+    render(<CurvesPanel />);
+    const okButton = screen.getByRole('button', { name: 'OK' });
+    fireEvent.click(okButton);
+    fireEvent.click(okButton);
+
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    expect(okButton).toBeDisabled();
+
+    resolveCommit({
+      ok: true,
+      appliedMode: 'gpu',
+      canForceCpuCommit: false,
+    });
+
+    await waitFor(() => {
+      expect(commitSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('GPU 预览失败时显示详细错误并停止自动降级提示', async () => {
     previewSpy.mockReturnValue({
       ok: false,

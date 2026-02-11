@@ -24,6 +24,20 @@ const TEXT_EDITABLE_INPUT_TYPES = new Set([
   'number',
 ]);
 
+const HISTORY_TRACE_DEFAULT_ENABLED = import.meta.env.DEV && import.meta.env.MODE !== 'test';
+
+function isHistoryTraceEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (typeof window.__historyTrace === 'boolean') return window.__historyTrace;
+  return HISTORY_TRACE_DEFAULT_ENABLED;
+}
+
+function historyTrace(event: string, payload: Record<string, unknown>): void {
+  if (!isHistoryTraceEnabled()) return;
+  // eslint-disable-next-line no-console
+  console.info('[HistoryTrace][Keyboard]', event, payload);
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!target) return false;
   if (target instanceof HTMLTextAreaElement) return true;
@@ -121,6 +135,15 @@ export function useKeyboardShortcuts({
           case 'KeyZ': {
             e.preventDefault();
             e.stopPropagation();
+            historyTrace('historyShortcutTriggered', {
+              action: e.shiftKey ? 'redo' : 'undo',
+              code: e.code,
+              repeat: e.repeat,
+              ctrlKey: e.ctrlKey,
+              metaKey: e.metaKey,
+              targetTag:
+                e.target instanceof HTMLElement ? e.target.tagName.toLowerCase() : 'unknown',
+            });
             if (e.shiftKey) {
               handleRedo();
             } else {

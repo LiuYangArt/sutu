@@ -164,6 +164,7 @@ declare global {
     __gpuBrushCommitReadbackModeSet?: (mode: GpuBrushCommitReadbackMode) => boolean;
     __gpuBrushNoReadbackPilot?: () => boolean;
     __gpuBrushNoReadbackPilotSet?: (enabled: boolean) => boolean;
+    __historyTrace?: boolean;
     __gpuM0Baseline?: () => Promise<void>;
     __strokeCaptureStart?: () => boolean;
     __strokeCaptureStop?: () => StrokeCaptureData | null;
@@ -230,6 +231,8 @@ const MIN_GPU_HISTORY_BUDGET_BYTES = 256 * 1024 * 1024;
 const MAX_GPU_HISTORY_BUDGET_BYTES = 1024 * 1024 * 1024;
 const GPU_HISTORY_BUDGET_RATIO = 0.2;
 const ENABLE_GPU_CURVES = true;
+const HISTORY_TRACE_DEFAULT_ENABLED = import.meta.env.DEV && import.meta.env.MODE !== 'test';
+const CURVES_HISTORY_TRACE_PREFIX = '[HistoryTrace][Curves]';
 
 interface CompositeClipRect {
   left: number;
@@ -264,6 +267,43 @@ interface CurvesSessionState {
   gpuError: CurvesRuntimeError | null;
   previewHalted: boolean;
   lastPreviewResult: CurvesPreviewResult;
+}
+
+function isHistoryTraceEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (typeof window.__historyTrace === 'boolean') return window.__historyTrace;
+  return HISTORY_TRACE_DEFAULT_ENABLED;
+}
+
+function summarizeHistoryEntryForLog(
+  entry: HistoryEntry | undefined
+): Record<string, unknown> | null {
+  if (!entry) return null;
+  if (entry.type === 'stroke') {
+    return {
+      type: entry.type,
+      layerId: entry.layerId,
+      entryId: entry.entryId,
+      snapshotMode: entry.snapshotMode,
+      hasBeforeImage: !!entry.beforeImage,
+      hasAfterImage: !!entry.afterImage,
+      timestamp: entry.timestamp,
+    };
+  }
+  return {
+    type: entry.type,
+    timestamp: entry.timestamp,
+  };
+}
+
+function logCurvesHistoryTrace(event: string, payload: Record<string, unknown>): void {
+  if (!isHistoryTraceEnabled()) return;
+  // eslint-disable-next-line no-console
+  console.info(CURVES_HISTORY_TRACE_PREFIX, event, payload);
+}
+
+function cloneCurvesSessionImageData(imageData: ImageData): ImageData {
+  return new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
 }
 
 function isLineTool(tool: ToolType | null): boolean {
@@ -2423,31 +2463,14 @@ export function Canvas() {
         };
       }
 
+      logCurvesHistoryTrace('commitGpuStart', {
+        sessionId: session.sessionId,
+        layerId: session.layerId,
+        hasSelection: !!session.selectionMask,
+        selectionBounds: session.selectionBounds,
+      });
       onBeforeCanvasMutation?.();
-      await captureBeforeImage(true, true);
-
-      const historyStore = gpuStrokeHistoryStoreRef.current;
-      const capturedHistoryMeta = getCapturedStrokeHistoryMeta();
-      if (!capturedHistoryMeta || capturedHistoryMeta.layerId !== session.layerId) {
-        discardCapturedStrokeHistory();
-        return {
-          ok: false,
-          canForceCpuCommit: true,
-          error: createCurvesRuntimeError({
-            code: 'GPU_COMMIT_FAILED',
-            stage: 'commit',
-            message: 'GPU 曲线历史快照无效，提交已中止。',
-          }),
-        };
-      }
-      const historyEntryId =
-        capturedHistoryMeta.snapshotMode === 'gpu' ? capturedHistoryMeta.entryId : null;
       const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
-      const finalizeHistory = () => {
-        if (historyStore && historyEntryId) {
-          historyStore.finalizeStroke(historyEntryId);
-        }
-      };
 
       try {
         const visibleGpuLayers = getVisibleGpuRenderableLayers();
@@ -2475,16 +2498,13 @@ export function Canvas() {
           layerId: session.layerId,
           curves: curvesParams,
           baseLayerCanvas: layer.canvas,
-          historyCapture:
-            historyStore && historyEntryId
-              ? {
-                  entryId: historyEntryId,
-                  store: historyStore,
-                }
-              : undefined,
         });
 
         if (committedTiles.length === 0) {
+          logCurvesHistoryTrace('commitGpuNoTiles', {
+            sessionId: session.sessionId,
+            layerId: session.layerId,
+          });
           discardCapturedStrokeHistory();
           return {
             ok: false,
@@ -2508,7 +2528,26 @@ export function Canvas() {
           schedulePendingGpuCpuSync(session.layerId);
         }
 
-        saveStrokeToHistory();
+        const historyBeforePush = useHistoryStore.getState();
+        useHistoryStore.getState().pushStroke({
+          layerId: session.layerId,
+          entryId: session.sessionId,
+          snapshotMode: 'cpu',
+          beforeImage: cloneCurvesSessionImageData(session.baseImageData),
+        });
+        const historyAfterPush = useHistoryStore.getState();
+        const undoTop = historyAfterPush.undoStack[historyAfterPush.undoStack.length - 1];
+        logCurvesHistoryTrace('commitGpuPushStroke', {
+          sessionId: session.sessionId,
+          layerId: session.layerId,
+          readbackMode,
+          committedTileCount: committedTiles.length,
+          undoDepthBefore: historyBeforePush.undoStack.length,
+          undoDepthAfter: historyAfterPush.undoStack.length,
+          redoDepthAfter: historyAfterPush.redoStack.length,
+          undoTop: summarizeHistoryEntryForLog(undoTop),
+        });
+        useDocumentStore.getState().markDirty();
         updateThumbnail(session.layerId);
         compositeAndRender();
         return {
@@ -2517,7 +2556,6 @@ export function Canvas() {
           canForceCpuCommit: false,
         };
       } catch (error) {
-        discardCapturedStrokeHistory();
         console.error('[CurvesGpuFailFast]', {
           sessionId: session.sessionId,
           layerId: session.layerId,
@@ -2536,23 +2574,19 @@ export function Canvas() {
           }),
         };
       } finally {
-        finalizeHistory();
         clearPendingGpuHistoryEntry();
         restoreGpuSelectionMaskFromStore();
       }
     },
     [
-      captureBeforeImage,
       clearPendingGpuHistoryEntry,
       compositeAndRender,
       discardCapturedStrokeHistory,
-      getCapturedStrokeHistoryMeta,
       getVisibleGpuRenderableLayers,
       height,
       layers,
       onBeforeCanvasMutation,
       restoreGpuSelectionMaskFromStore,
-      saveStrokeToHistory,
       schedulePendingGpuCpuSync,
       trackPendingGpuCpuSyncTiles,
       updateThumbnail,
@@ -2629,6 +2663,14 @@ export function Canvas() {
         halted: false,
       },
     };
+    logCurvesHistoryTrace('beginSession', {
+      sessionId,
+      layerId: activeLayerId,
+      renderMode,
+      hasSelection: !!selectionMaskSnapshot,
+      selectionBounds: selectionState.bounds ?? null,
+      baseImageSize: `${baseImageData.width}x${baseImageData.height}`,
+    });
 
     if (renderMode === 'gpu') {
       gpuRendererRef.current?.setSelectionMask(selectionMaskSnapshot);
@@ -2700,6 +2742,13 @@ export function Canvas() {
       cancelCurvesPreviewSchedule();
       clearCurvesPreviewVisual();
       const forceCpu = request?.forceCpu === true;
+      logCurvesHistoryTrace('commitSessionStart', {
+        sessionId: session.sessionId,
+        layerId: session.layerId,
+        requestedSessionId: sessionId,
+        renderMode: session.renderMode,
+        forceCpu,
+      });
 
       if (session.renderMode === 'gpu' && !forceCpu) {
         let gpuResult: CurvesCommitResult;
@@ -2725,10 +2774,21 @@ export function Canvas() {
           };
         }
         if (gpuResult.ok) {
+          logCurvesHistoryTrace('commitSessionGpuSuccess', {
+            sessionId: session.sessionId,
+            layerId: session.layerId,
+            appliedMode: gpuResult.appliedMode,
+          });
           curvesSessionRef.current = null;
           restoreGpuSelectionMaskFromStore();
           return gpuResult;
         }
+        logCurvesHistoryTrace('commitSessionGpuFailed', {
+          sessionId: session.sessionId,
+          layerId: session.layerId,
+          canForceCpuCommit: gpuResult.canForceCpuCommit,
+          errorCode: gpuResult.error?.code ?? null,
+        });
         session.gpuError = gpuResult.error ?? null;
         session.previewHalted = true;
         return gpuResult;
@@ -2761,7 +2821,6 @@ export function Canvas() {
 
       try {
         onBeforeCanvasMutation?.();
-        await captureBeforeImage(false);
         const luts = curvesPayloadToLuts(payload);
         const nextImage = applyCurvesToImageData({
           baseImageData: session.baseImageData,
@@ -2769,12 +2828,28 @@ export function Canvas() {
           selectionMask: session.selectionMask,
         });
         renderer.setLayerImageData(session.layerId, nextImage);
-        saveStrokeToHistory();
+        const historyBeforePush = useHistoryStore.getState();
+        useHistoryStore.getState().pushStroke({
+          layerId: session.layerId,
+          entryId: session.sessionId,
+          snapshotMode: 'cpu',
+          beforeImage: cloneCurvesSessionImageData(session.baseImageData),
+        });
+        const historyAfterPush = useHistoryStore.getState();
+        const undoTop = historyAfterPush.undoStack[historyAfterPush.undoStack.length - 1];
+        logCurvesHistoryTrace('commitCpuPushStroke', {
+          sessionId: session.sessionId,
+          layerId: session.layerId,
+          undoDepthBefore: historyBeforePush.undoStack.length,
+          undoDepthAfter: historyAfterPush.undoStack.length,
+          redoDepthAfter: historyAfterPush.redoStack.length,
+          undoTop: summarizeHistoryEntryForLog(undoTop),
+        });
+        useDocumentStore.getState().markDirty();
         markLayerDirty(session.layerId);
         updateThumbnail(session.layerId);
         compositeAndRender();
       } catch (error) {
-        discardCapturedStrokeHistory();
         console.error('[CurvesGpuFailFast]', {
           sessionId: session.sessionId,
           layerId: session.layerId,
@@ -2796,6 +2871,10 @@ export function Canvas() {
 
       curvesSessionRef.current = null;
       restoreGpuSelectionMaskFromStore();
+      logCurvesHistoryTrace('commitSessionCpuSuccess', {
+        sessionId: session.sessionId,
+        layerId: session.layerId,
+      });
       return {
         ok: true,
         appliedMode: 'cpu',
@@ -2804,16 +2883,13 @@ export function Canvas() {
     },
     [
       cancelCurvesPreviewSchedule,
-      captureBeforeImage,
       clearCurvesPreviewVisual,
       commitCurvesGpu,
       compositeAndRender,
-      discardCapturedStrokeHistory,
       layers,
       markLayerDirty,
       onBeforeCanvasMutation,
       restoreGpuSelectionMaskFromStore,
-      saveStrokeToHistory,
       updateThumbnail,
     ]
   );

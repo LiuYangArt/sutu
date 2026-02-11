@@ -2,6 +2,12 @@ import { create } from 'zustand';
 import { Layer } from './document';
 import type { SelectionSnapshot } from './selection';
 
+declare global {
+  interface Window {
+    __historyTrace?: boolean;
+  }
+}
+
 /**
  * History entry types for unified timeline
  */
@@ -280,6 +286,49 @@ export function createHistoryEntryId(prefix: string = 'stroke'): string {
   return `${prefix}-${Date.now()}-${random}`;
 }
 
+const HISTORY_TRACE_PREFIX = '[HistoryTrace]';
+const HISTORY_TRACE_DEFAULT_ENABLED = import.meta.env.DEV && import.meta.env.MODE !== 'test';
+
+function isHistoryTraceEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  const flag = window.__historyTrace;
+  if (typeof flag === 'boolean') return flag;
+  return HISTORY_TRACE_DEFAULT_ENABLED;
+}
+
+function summarizeHistoryEntry(entry: HistoryEntry): Record<string, unknown> {
+  if (entry.type === 'stroke') {
+    return {
+      type: entry.type,
+      layerId: entry.layerId,
+      entryId: entry.entryId,
+      snapshotMode: entry.snapshotMode,
+      hasBeforeImage: !!entry.beforeImage,
+      hasAfterImage: !!entry.afterImage,
+      beforeImageSize: entry.beforeImage
+        ? `${entry.beforeImage.width}x${entry.beforeImage.height}`
+        : null,
+      afterImageSize: entry.afterImage
+        ? `${entry.afterImage.width}x${entry.afterImage.height}`
+        : null,
+      hasSelectionBefore: !!entry.selectionBefore,
+      hasSelectionAfter: !!entry.selectionAfter,
+      timestamp: entry.timestamp,
+    };
+  }
+
+  return {
+    type: entry.type,
+    timestamp: entry.timestamp,
+  };
+}
+
+function historyTrace(event: string, payload: Record<string, unknown>): void {
+  if (!isHistoryTraceEnabled()) return;
+  // eslint-disable-next-line no-console
+  console.info(HISTORY_TRACE_PREFIX, event, payload);
+}
+
 export const useHistoryStore = create<HistoryState>((set, get) => {
   // Helper to push entry and manage stack size
   function pushEntry(entry: HistoryEntry) {
@@ -287,6 +336,12 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
     const newStack = [...undoStack, entry];
     if (newStack.length > maxHistorySize) newStack.shift();
     set({ undoStack: newStack, redoStack: [] });
+    historyTrace('pushEntry', {
+      entry: summarizeHistoryEntry(entry),
+      undoDepthBefore: undoStack.length,
+      undoDepthAfter: newStack.length,
+      redoDepthAfter: 0,
+    });
   }
 
   return {
@@ -306,6 +361,12 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         console.warn('[HistoryStore] Missing beforeImage for CPU stroke entry', {
           layerId,
           entryId,
+        });
+        historyTrace('pushStrokeRejected', {
+          layerId,
+          entryId,
+          snapshotMode,
+          reason: 'missing_cpu_beforeImage',
         });
         return;
       }
@@ -449,7 +510,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
 
     undo: () => {
       const { undoStack, redoStack } = get();
-      if (undoStack.length === 0) return null;
+      if (undoStack.length === 0) {
+        historyTrace('undoEmpty', {
+          undoDepth: 0,
+          redoDepth: redoStack.length,
+        });
+        return null;
+      }
 
       const entry = undoStack[undoStack.length - 1];
       if (!entry) return null;
@@ -458,12 +525,25 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
         undoStack: undoStack.slice(0, -1),
         redoStack: [...redoStack, entry],
       });
+      historyTrace('undoPop', {
+        entry: summarizeHistoryEntry(entry),
+        undoDepthBefore: undoStack.length,
+        undoDepthAfter: undoStack.length - 1,
+        redoDepthBefore: redoStack.length,
+        redoDepthAfter: redoStack.length + 1,
+      });
       return entry;
     },
 
     redo: () => {
       const { undoStack, redoStack } = get();
-      if (redoStack.length === 0) return null;
+      if (redoStack.length === 0) {
+        historyTrace('redoEmpty', {
+          undoDepth: undoStack.length,
+          redoDepth: 0,
+        });
+        return null;
+      }
 
       const entry = redoStack[redoStack.length - 1];
       if (!entry) return null;
@@ -471,6 +551,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => {
       set({
         undoStack: [...undoStack, entry],
         redoStack: redoStack.slice(0, -1),
+      });
+      historyTrace('redoPop', {
+        entry: summarizeHistoryEntry(entry),
+        undoDepthBefore: undoStack.length,
+        undoDepthAfter: undoStack.length + 1,
+        redoDepthBefore: redoStack.length,
+        redoDepthAfter: redoStack.length - 1,
       });
       return entry;
     },

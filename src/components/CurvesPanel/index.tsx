@@ -266,6 +266,7 @@ export function CurvesPanel(): JSX.Element {
   const [errorText, setErrorText] = useState<string | null>(null);
   const [allowForceCpuCommit, setAllowForceCpuCommit] = useState(false);
   const [confirmForceCpuCommit, setConfirmForceCpuCommit] = useState(false);
+  const [isCommitting, setIsCommitting] = useState(false);
   const [inputValueDraft, setInputValueDraft] = useState('');
   const [outputValueDraft, setOutputValueDraft] = useState('');
   const [, setHistoryVersion] = useState(0);
@@ -398,6 +399,7 @@ export function CurvesPanel(): JSX.Element {
       setSessionInfo(null);
       setAllowForceCpuCommit(false);
       setConfirmForceCpuCommit(false);
+      setIsCommitting(false);
     },
     [stopPreviewFrame]
   );
@@ -554,6 +556,7 @@ export function CurvesPanel(): JSX.Element {
   useEffect(() => {
     const handlePanelKeyDown = (event: KeyboardEvent): void => {
       if (!sessionIdRef.current) return;
+      if (isCommitting) return;
       const modifierPressed = event.ctrlKey || event.metaKey;
       if (modifierPressed && !event.altKey) {
         if (event.code === 'KeyZ') {
@@ -607,6 +610,7 @@ export function CurvesPanel(): JSX.Element {
     pushUndoSnapshot,
     selectedChannel,
     selectedPointId,
+    isCommitting,
   ]);
 
   const handleGraphPointerDown = useCallback(
@@ -754,29 +758,35 @@ export function CurvesPanel(): JSX.Element {
   }, [captureSnapshot, getNextPointId, pushUndoSnapshot]);
 
   const handleCancel = useCallback(() => {
+    if (isCommitting) return;
     endSession(true);
     closePanel('curves-panel');
-  }, [closePanel, endSession]);
+  }, [closePanel, endSession, isCommitting]);
 
   const handleCommit = useCallback(async () => {
     const sessionId = sessionIdRef.current;
-    if (!sessionId) return;
+    if (!sessionId || isCommitting) return;
     const win = window as CurvesBridgeWindow;
-    const result = await win.__canvasCurvesCommit?.(sessionId, curvesPayload);
-    if (!result?.ok) {
-      setAllowForceCpuCommit(Boolean(result?.canForceCpuCommit));
-      setConfirmForceCpuCommit(false);
-      setErrorText(formatCurvesRuntimeError(result?.error, '曲线提交失败，已保持当前图像不变。'));
-      return;
+    setIsCommitting(true);
+    try {
+      const result = await win.__canvasCurvesCommit?.(sessionId, curvesPayload);
+      if (!result?.ok) {
+        setAllowForceCpuCommit(Boolean(result?.canForceCpuCommit));
+        setConfirmForceCpuCommit(false);
+        setErrorText(formatCurvesRuntimeError(result?.error, '曲线提交失败，已保持当前图像不变。'));
+        return;
+      }
+      committedRef.current = true;
+      endSession(false);
+      closePanel('curves-panel');
+    } finally {
+      setIsCommitting(false);
     }
-    committedRef.current = true;
-    endSession(false);
-    closePanel('curves-panel');
-  }, [closePanel, curvesPayload, endSession]);
+  }, [closePanel, curvesPayload, endSession, isCommitting]);
 
   const handleForceCpuCommit = useCallback(async () => {
     const sessionId = sessionIdRef.current;
-    if (!sessionId || !allowForceCpuCommit) return;
+    if (!sessionId || !allowForceCpuCommit || isCommitting) return;
     if (!confirmForceCpuCommit) {
       setConfirmForceCpuCommit(true);
       setErrorText('GPU 提交已失败。再次点击“使用 CPU 提交”以确认执行应急提交。');
@@ -784,18 +794,30 @@ export function CurvesPanel(): JSX.Element {
     }
 
     const win = window as CurvesBridgeWindow;
-    const result = await win.__canvasCurvesCommit?.(sessionId, curvesPayload, { forceCpu: true });
-    if (!result?.ok) {
-      setAllowForceCpuCommit(Boolean(result?.canForceCpuCommit));
-      setConfirmForceCpuCommit(false);
-      setErrorText(formatCurvesRuntimeError(result?.error, 'CPU 曲线提交失败，图像未修改。'));
-      return;
-    }
+    setIsCommitting(true);
+    try {
+      const result = await win.__canvasCurvesCommit?.(sessionId, curvesPayload, { forceCpu: true });
+      if (!result?.ok) {
+        setAllowForceCpuCommit(Boolean(result?.canForceCpuCommit));
+        setConfirmForceCpuCommit(false);
+        setErrorText(formatCurvesRuntimeError(result?.error, 'CPU 曲线提交失败，图像未修改。'));
+        return;
+      }
 
-    committedRef.current = true;
-    endSession(false);
-    closePanel('curves-panel');
-  }, [allowForceCpuCommit, closePanel, confirmForceCpuCommit, curvesPayload, endSession]);
+      committedRef.current = true;
+      endSession(false);
+      closePanel('curves-panel');
+    } finally {
+      setIsCommitting(false);
+    }
+  }, [
+    allowForceCpuCommit,
+    closePanel,
+    confirmForceCpuCommit,
+    curvesPayload,
+    endSession,
+    isCommitting,
+  ]);
 
   const activeCurvePath = useMemo(
     () => buildPathFromEvaluator(evaluators[selectedChannel]),
@@ -959,7 +981,7 @@ export function CurvesPanel(): JSX.Element {
         <button
           type="button"
           className="curves-panel__icon-btn"
-          disabled={!canUndo}
+          disabled={!canUndo || isCommitting}
           onClick={handleLocalUndo}
           title="Undo (Ctrl+Z)"
           aria-label="Undo"
@@ -969,7 +991,7 @@ export function CurvesPanel(): JSX.Element {
         <button
           type="button"
           className="curves-panel__icon-btn"
-          disabled={!canRedo}
+          disabled={!canRedo || isCommitting}
           onClick={handleLocalRedo}
           title="Redo (Ctrl+Y)"
           aria-label="Redo"
@@ -982,6 +1004,7 @@ export function CurvesPanel(): JSX.Element {
         <button
           type="button"
           className="curves-panel__btn curves-panel__btn--ghost"
+          disabled={isCommitting}
           onClick={handleReset}
         >
           Reset
@@ -989,6 +1012,7 @@ export function CurvesPanel(): JSX.Element {
         <button
           type="button"
           className="curves-panel__btn curves-panel__btn--ghost"
+          disabled={isCommitting}
           onClick={handleCancel}
         >
           Cancel
@@ -997,6 +1021,7 @@ export function CurvesPanel(): JSX.Element {
           <button
             type="button"
             className="curves-panel__btn curves-panel__btn--ghost"
+            disabled={isCommitting}
             onClick={() => void handleForceCpuCommit()}
           >
             {confirmForceCpuCommit ? '确认使用 CPU 提交' : '使用 CPU 提交'}
@@ -1005,6 +1030,7 @@ export function CurvesPanel(): JSX.Element {
         <button
           type="button"
           className="curves-panel__btn curves-panel__btn--primary"
+          disabled={isCommitting}
           onClick={() => void handleCommit()}
         >
           OK
