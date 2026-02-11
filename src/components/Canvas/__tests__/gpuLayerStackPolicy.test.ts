@@ -119,7 +119,7 @@ describe('gpuLayerStackPolicy', () => {
     expect(next.has('legacy')).toBe(false);
   });
 
-  it('enables gpu history only on gpu display brush path', () => {
+  it('enables gpu history on gpu display brush-like and gradient path', () => {
     expect(
       isGpuHistoryPathAvailable({
         gpuDisplayActive: true,
@@ -130,6 +130,12 @@ describe('gpuLayerStackPolicy', () => {
       isGpuHistoryPathAvailable({
         gpuDisplayActive: true,
         currentTool: 'eraser',
+      })
+    ).toBe(true);
+    expect(
+      isGpuHistoryPathAvailable({
+        gpuDisplayActive: true,
+        currentTool: 'gradient',
       })
     ).toBe(true);
   });
