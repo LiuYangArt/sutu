@@ -1,6 +1,6 @@
 name: Bug Report
 description: 报告一个可复现的问题，帮助我们快速定位和修复
-title: "[Bug]: "
+title: '[Bug]: '
 body:
   - type: markdown
     attributes:
@@ -41,7 +41,7 @@ body:
       label: 预期结果
       placeholder: 应该发生什么
     validations:
-      required: true
+      required: false
   - type: textarea
     id: actual_behavior
     attributes:
@@ -65,7 +65,7 @@ body:
         - GPU: NVIDIA RTX 4060
         - 驱动版本: xxx
     validations:
-      required: true
+      required: false
   - type: textarea
     id: logs
     attributes:
@@ -77,4 +77,3 @@ body:
     attributes:
       label: 补充信息
       description: 其他你认为有帮助的信息
-
