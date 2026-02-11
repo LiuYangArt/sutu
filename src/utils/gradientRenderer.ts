@@ -31,7 +31,15 @@ export interface GradientRenderInput extends GradientRenderConfig {
 
 interface ResolvedColorStop {
   position: number;
+  midpoint: number;
   rgb: readonly [number, number, number];
+}
+
+interface ResolvedOpacityStop {
+  id: string;
+  position: number;
+  midpoint: number;
+  opacity: number;
 }
 
 interface GradientSample {
@@ -40,11 +48,20 @@ interface GradientSample {
 }
 
 const EPSILON = 1e-6;
+const MIDPOINT_MIN = 0.05;
+const MIDPOINT_MAX = 0.95;
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
   if (value > 1) return 1;
+  return value;
+}
+
+function clampMidpoint(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  if (value < MIDPOINT_MIN) return MIDPOINT_MIN;
+  if (value > MIDPOINT_MAX) return MIDPOINT_MAX;
   return value;
 }
 
@@ -107,6 +124,7 @@ function normalizeColorStops(
   const normalized = stops
     .map((stop) => ({
       position: clamp01(stop.position),
+      midpoint: clampMidpoint(stop.midpoint),
       rgb: resolveStopColor(stop, foregroundColor, backgroundColor) as readonly [
         number,
         number,
@@ -117,15 +135,16 @@ function normalizeColorStops(
 
   if (normalized.length >= 2) return normalized;
   return [
-    { position: 0, rgb: hexToRgb(foregroundColor) },
-    { position: 1, rgb: hexToRgb(backgroundColor) },
+    { position: 0, midpoint: 0.5, rgb: hexToRgb(foregroundColor) },
+    { position: 1, midpoint: 0.5, rgb: hexToRgb(backgroundColor) },
   ];
 }
 
-function normalizeOpacityStops(stops: OpacityStop[]): OpacityStop[] {
+function normalizeOpacityStops(stops: OpacityStop[]): ResolvedOpacityStop[] {
   const normalized = stops
     .map((stop) => ({
       position: clamp01(stop.position),
+      midpoint: clampMidpoint(stop.midpoint),
       opacity: clamp01(stop.opacity),
       id: stop.id,
     }))
@@ -133,12 +152,18 @@ function normalizeOpacityStops(stops: OpacityStop[]): OpacityStop[] {
 
   if (normalized.length >= 2) return normalized;
   return [
-    { id: 'default_o0', position: 0, opacity: 1 },
-    { id: 'default_o1', position: 1, opacity: 1 },
+    { id: 'default_o0', position: 0, midpoint: 0.5, opacity: 1 },
+    { id: 'default_o1', position: 1, midpoint: 0.5, opacity: 1 },
   ];
 }
 
-function sampleNumberAt<T extends { position: number }>(
+function mapMidpointT(t: number, midpoint: number): number {
+  const safeMidpoint = clampMidpoint(midpoint);
+  const gamma = Math.log(0.5) / Math.log(safeMidpoint);
+  return clamp01(Math.pow(clamp01(t), gamma));
+}
+
+function sampleNumberAt<T extends { position: number; midpoint: number }>(
   stops: T[],
   t: number,
   picker: (stop: T) => number
@@ -152,7 +177,8 @@ function sampleNumberAt<T extends { position: number }>(
     const left = stops[i - 1]!;
     const span = Math.max(EPSILON, right.position - left.position);
     const localT = clamp01((t - left.position) / span);
-    return lerp(picker(left), picker(right), localT);
+    const adjustedT = mapMidpointT(localT, right.midpoint);
+    return lerp(picker(left), picker(right), adjustedT);
   }
 
   return picker(stops[stops.length - 1]!);
@@ -166,7 +192,7 @@ function sampleRgbAt(stops: ResolvedColorStop[], t: number): readonly [number, n
   ];
 }
 
-function sampleAlphaAt(stops: OpacityStop[], t: number, transparency: boolean): number {
+function sampleAlphaAt(stops: ResolvedOpacityStop[], t: number, transparency: boolean): number {
   if (!transparency) return 1;
   return sampleNumberAt(stops, t, (stop) => stop.opacity);
 }

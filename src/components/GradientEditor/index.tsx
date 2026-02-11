@@ -57,46 +57,6 @@ export function GradientEditor(): JSX.Element {
 
   return (
     <div className="gradient-editor">
-      <section className="gradient-editor-main">
-        <label className="gradient-name-field">
-          Name
-          <input
-            type="text"
-            value={settings.customGradient.name}
-            onChange={(event) => setCustomGradientName(event.target.value)}
-          />
-        </label>
-
-        <GradientBar
-          colorStops={settings.customGradient.colorStops}
-          opacityStops={settings.customGradient.opacityStops}
-          transparencyEnabled={settings.transparency}
-          selectedColorStopId={selectedColorStopId}
-          selectedOpacityStopId={selectedOpacityStopId}
-          foregroundColor={foregroundColor}
-          backgroundColor={backgroundColor}
-          onSelectColorStop={selectColorStop}
-          onSelectOpacityStop={selectOpacityStop}
-          onAddColorStop={addColorStop}
-          onAddOpacityStop={addOpacityStop}
-          onUpdateColorStopPosition={(id, position) => updateColorStop(id, { position })}
-          onUpdateOpacityStopPosition={(id, position) => updateOpacityStop(id, { position })}
-          onRemoveColorStop={removeColorStop}
-          onRemoveOpacityStop={removeOpacityStop}
-        />
-
-        <StopEditor
-          colorStop={selectedColorStop}
-          opacityStop={selectedOpacityStop}
-          foregroundColor={foregroundColor}
-          backgroundColor={backgroundColor}
-          onUpdateColorStop={updateColorStop}
-          onRemoveColorStop={removeColorStop}
-          onUpdateOpacityStop={updateOpacityStop}
-          onRemoveOpacityStop={removeOpacityStop}
-        />
-      </section>
-
       <PresetGrid
         presets={presets}
         activePresetId={settings.activePresetId}
@@ -124,6 +84,46 @@ export function GradientEditor(): JSX.Element {
           deletePreset(id);
         }}
       />
+
+      <section className="gradient-editor-main">
+        <label className="gradient-name-field">
+          Name
+          <input
+            type="text"
+            value={settings.customGradient.name}
+            onChange={(event) => setCustomGradientName(event.target.value)}
+          />
+        </label>
+
+        <GradientBar
+          colorStops={settings.customGradient.colorStops}
+          opacityStops={settings.customGradient.opacityStops}
+          transparencyEnabled={settings.transparency}
+          selectedColorStopId={selectedColorStopId}
+          selectedOpacityStopId={selectedOpacityStopId}
+          foregroundColor={foregroundColor}
+          backgroundColor={backgroundColor}
+          onSelectColorStop={selectColorStop}
+          onSelectOpacityStop={selectOpacityStop}
+          onAddColorStop={addColorStop}
+          onAddOpacityStop={addOpacityStop}
+          onUpdateColorStop={updateColorStop}
+          onUpdateOpacityStop={updateOpacityStop}
+        />
+
+        <StopEditor
+          colorStop={selectedColorStop}
+          opacityStop={selectedOpacityStop}
+          colorStopCount={settings.customGradient.colorStops.length}
+          opacityStopCount={settings.customGradient.opacityStops.length}
+          foregroundColor={foregroundColor}
+          backgroundColor={backgroundColor}
+          onUpdateColorStop={updateColorStop}
+          onRemoveColorStop={removeColorStop}
+          onUpdateOpacityStop={updateOpacityStop}
+          onRemoveOpacityStop={removeOpacityStop}
+        />
+      </section>
     </div>
   );
 }

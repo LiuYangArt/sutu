@@ -4,6 +4,8 @@ import { clamp01, resolveStopDisplayColor } from './utils';
 interface StopEditorProps {
   colorStop: ColorStop | null;
   opacityStop: OpacityStop | null;
+  colorStopCount: number;
+  opacityStopCount: number;
   foregroundColor: string;
   backgroundColor: string;
   onUpdateColorStop: (id: string, patch: Partial<ColorStop>) => void;
@@ -12,9 +14,21 @@ interface StopEditorProps {
   onRemoveOpacityStop: (id: string) => void;
 }
 
+function toPercent(value: number): number {
+  return Math.round(clamp01(value) * 100);
+}
+
+function fromPercent(value: string, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return clamp01(parsed / 100);
+}
+
 export function StopEditor({
   colorStop,
   opacityStop,
+  colorStopCount,
+  opacityStopCount,
   foregroundColor,
   backgroundColor,
   onUpdateColorStop,
@@ -24,110 +38,99 @@ export function StopEditor({
 }: StopEditorProps) {
   return (
     <section className="gradient-stop-editor">
-      <h4>Selected Stop</h4>
-      {colorStop && (
-        <div className="stop-editor-block">
-          <div className="stop-editor-row">
-            <span>Color Stop</span>
-            <button className="danger" onClick={() => onRemoveColorStop(colorStop.id)}>
-              Delete
-            </button>
-          </div>
-          <label>
-            Source
-            <select
-              value={colorStop.source}
-              onChange={(event) =>
-                onUpdateColorStop(colorStop.id, {
-                  source: event.target.value as ColorStop['source'],
-                })
-              }
-            >
-              <option value="fixed">Fixed Color</option>
-              <option value="foreground">Foreground</option>
-              <option value="background">Background</option>
-            </select>
-          </label>
-
-          <label>
-            Position
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.001}
-              value={clamp01(colorStop.position)}
-              onChange={(event) =>
-                onUpdateColorStop(colorStop.id, {
-                  position: Number(event.target.value),
-                })
-              }
-            />
-          </label>
-
-          <label>
-            Color
-            <input
-              type="color"
-              disabled={colorStop.source !== 'fixed'}
-              value={resolveStopDisplayColor(colorStop, foregroundColor, backgroundColor)}
-              onChange={(event) =>
-                onUpdateColorStop(colorStop.id, {
-                  color: event.target.value,
-                  source: 'fixed',
-                })
-              }
-            />
-          </label>
-        </div>
-      )}
+      <h4>Stops</h4>
 
       {opacityStop && (
-        <div className="stop-editor-block">
-          <div className="stop-editor-row">
-            <span>Opacity Stop</span>
-            <button className="danger" onClick={() => onRemoveOpacityStop(opacityStop.id)}>
-              Delete
-            </button>
-          </div>
-          <label>
-            Position
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.001}
-              value={clamp01(opacityStop.position)}
-              onChange={(event) =>
-                onUpdateOpacityStop(opacityStop.id, {
-                  position: Number(event.target.value),
-                })
-              }
-            />
-          </label>
-
-          <label>
-            Opacity
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={clamp01(opacityStop.opacity)}
-              onChange={(event) =>
-                onUpdateOpacityStop(opacityStop.id, {
-                  opacity: Number(event.target.value),
-                })
-              }
-            />
-            <span className="stop-value">{Math.round(clamp01(opacityStop.opacity) * 100)}%</span>
-          </label>
+        <div className="stop-editor-grid">
+          <span className="stop-editor-label">Opacity</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={toPercent(opacityStop.opacity)}
+            onChange={(event) =>
+              onUpdateOpacityStop(opacityStop.id, {
+                opacity: fromPercent(event.target.value, opacityStop.opacity),
+              })
+            }
+          />
+          <span className="stop-editor-label">Location</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={toPercent(opacityStop.position)}
+            onChange={(event) =>
+              onUpdateOpacityStop(opacityStop.id, {
+                position: fromPercent(event.target.value, opacityStop.position),
+              })
+            }
+          />
+          <button
+            type="button"
+            className="stop-delete-btn"
+            disabled={opacityStopCount <= 2}
+            onClick={() => onRemoveOpacityStop(opacityStop.id)}
+          >
+            Delete
+          </button>
         </div>
       )}
 
-      {!colorStop && !opacityStop && (
-        <p className="empty-hint">Select a stop to edit its details.</p>
+      {colorStop && (
+        <div className="stop-editor-grid">
+          <span className="stop-editor-label">Source</span>
+          <select
+            value={colorStop.source}
+            onChange={(event) =>
+              onUpdateColorStop(colorStop.id, {
+                source: event.target.value as ColorStop['source'],
+              })
+            }
+          >
+            <option value="fixed">Fixed Color</option>
+            <option value="foreground">Foreground</option>
+            <option value="background">Background</option>
+          </select>
+          <span className="stop-editor-label">Location</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={toPercent(colorStop.position)}
+            onChange={(event) =>
+              onUpdateColorStop(colorStop.id, {
+                position: fromPercent(event.target.value, colorStop.position),
+              })
+            }
+          />
+          <span className="stop-editor-label">Color</span>
+          <input
+            type="color"
+            disabled={colorStop.source !== 'fixed'}
+            value={resolveStopDisplayColor(colorStop, foregroundColor, backgroundColor)}
+            onChange={(event) =>
+              onUpdateColorStop(colorStop.id, {
+                color: event.target.value,
+                source: 'fixed',
+              })
+            }
+          />
+          <button
+            type="button"
+            className="stop-delete-btn"
+            disabled={colorStopCount <= 2}
+            onClick={() => onRemoveColorStop(colorStop.id)}
+          >
+            Delete
+          </button>
+        </div>
       )}
+
+      {!colorStop && !opacityStop && <p className="empty-hint">Select a stop to edit details.</p>}
     </section>
   );
 }

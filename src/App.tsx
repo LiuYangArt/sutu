@@ -8,6 +8,7 @@ import { CanvasSizePanel } from './components/CanvasSizePanel';
 import { QuickExportPanel } from './components/QuickExportPanel';
 import { NewFilePanel, type BackgroundPreset } from './components/NewFilePanel';
 import { ConfirmUnsavedChangesDialog } from './components/ConfirmUnsavedChangesDialog';
+import { GradientEditorModal } from './components/GradientEditor/GradientEditorModal';
 import { useDocumentStore, type ResizeCanvasOptions } from './stores/document';
 import { useSelectionStore } from './stores/selection';
 import { useTabletStore } from './stores/tablet';
@@ -612,6 +613,7 @@ function App() {
       <RightPanel />
       {/* Floating panels */}
       <PanelLayer />
+      <GradientEditorModal />
       {/* Toast notifications */}
       <ToastLayer />
       {/* Settings Panel */}

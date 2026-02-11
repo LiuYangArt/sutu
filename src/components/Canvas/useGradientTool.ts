@@ -33,6 +33,7 @@ interface GradientSession {
   layerId: string;
   start: GradientPoint;
   end: GradientPoint;
+  gradientConfig: Omit<ApplyGradientToActiveLayerParams, 'start' | 'end'>;
   baseImageData: ImageData;
   previewCanvas: HTMLCanvasElement;
 }
@@ -67,17 +68,12 @@ function constrain45Degree(start: GradientPoint, point: GradientPoint): Gradient
   };
 }
 
-function buildGradientParams(
-  start: GradientPoint,
-  end: GradientPoint
-): ApplyGradientToActiveLayerParams {
+function buildGradientConfig(): Omit<ApplyGradientToActiveLayerParams, 'start' | 'end'> {
   const gradientState = useGradientStore.getState();
   const toolState = useToolStore.getState();
   const settings = gradientState.settings;
 
   return {
-    start,
-    end,
     shape: settings.shape,
     colorStops: settings.customGradient.colorStops,
     opacityStops: settings.customGradient.opacityStops,
@@ -147,7 +143,11 @@ export function useGradientTool({
       return;
     }
 
-    const params = buildGradientParams(session.start, session.end);
+    const params: ApplyGradientToActiveLayerParams = {
+      ...session.gradientConfig,
+      start: session.start,
+      end: session.end,
+    };
     const previewImage = renderGradientToImageData({
       ...params,
       width,
@@ -208,6 +208,7 @@ export function useGradientTool({
         layerId: activeLayerId,
         start,
         end: start,
+        gradientConfig: buildGradientConfig(),
         baseImageData,
         previewCanvas: createPreviewCanvas(width, height),
       };
@@ -242,7 +243,11 @@ export function useGradientTool({
         return;
       }
 
-      const params = buildGradientParams(session.start, session.end);
+      const params: ApplyGradientToActiveLayerParams = {
+        ...session.gradientConfig,
+        start: session.start,
+        end: session.end,
+      };
       sessionRef.current = null;
       clearPreview();
       void applyGradientToActiveLayer(params);

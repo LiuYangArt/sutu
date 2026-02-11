@@ -8,13 +8,13 @@ import {
 import type { ColorStop, OpacityStop } from '@/stores/gradient';
 
 const COLOR_STOPS: ColorStop[] = [
-  { id: 'c0', position: 0, source: 'fixed', color: '#000000' },
-  { id: 'c1', position: 1, source: 'fixed', color: '#ffffff' },
+  { id: 'c0', position: 0, midpoint: 0.5, source: 'fixed', color: '#000000' },
+  { id: 'c1', position: 1, midpoint: 0.5, source: 'fixed', color: '#ffffff' },
 ];
 
 const OPACITY_STOPS: OpacityStop[] = [
-  { id: 'o0', position: 0, opacity: 1 },
-  { id: 'o1', position: 1, opacity: 0 },
+  { id: 'o0', position: 0, midpoint: 0.5, opacity: 1 },
+  { id: 'o1', position: 1, midpoint: 0.5, opacity: 0 },
 ];
 
 describe('gradientRenderer', () => {
@@ -63,12 +63,12 @@ describe('gradientRenderer', () => {
       end: { x: 1, y: 0 },
       shape: 'linear',
       colorStops: [
-        { id: 'c0', position: 0, source: 'fixed', color: '#ff0000' },
-        { id: 'c1', position: 1, source: 'fixed', color: '#ff0000' },
+        { id: 'c0', position: 0, midpoint: 0.5, source: 'fixed', color: '#ff0000' },
+        { id: 'c1', position: 1, midpoint: 0.5, source: 'fixed', color: '#ff0000' },
       ],
       opacityStops: [
-        { id: 'o0', position: 0, opacity: 1 },
-        { id: 'o1', position: 1, opacity: 1 },
+        { id: 'o0', position: 0, midpoint: 0.5, opacity: 1 },
+        { id: 'o1', position: 1, midpoint: 0.5, opacity: 1 },
       ],
       blendMode: 'multiply',
       opacity: 1,
@@ -130,5 +130,19 @@ describe('gradientRenderer', () => {
   it('detects zero-length drag', () => {
     expect(isZeroLengthGradient({ x: 1, y: 1 }, { x: 1, y: 1 })).toBe(true);
     expect(isZeroLengthGradient({ x: 1, y: 1 }, { x: 1.01, y: 1.01 })).toBe(false);
+  });
+
+  it('uses midpoint-remapped interpolation', () => {
+    const sample = sampleGradientAt(
+      0.2,
+      [
+        { id: 'm0', position: 0, midpoint: 0.5, source: 'fixed', color: '#000000' },
+        { id: 'm1', position: 1, midpoint: 0.2, source: 'fixed', color: '#ffffff' },
+      ],
+      OPACITY_STOPS,
+      { foregroundColor: '#000000', backgroundColor: '#ffffff' }
+    );
+
+    expect(sample.rgb[0]).toBeCloseTo(0.5, 2);
   });
 });

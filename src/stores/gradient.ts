@@ -4,7 +4,9 @@ import { immer } from 'zustand/middleware/immer';
 import type { BlendMode } from './document';
 
 const GRADIENT_FILE = 'gradients.json';
-const GRADIENT_SCHEMA_VERSION = 1;
+const GRADIENT_SCHEMA_VERSION = 2;
+const MIDPOINT_MIN = 0.05;
+const MIDPOINT_MAX = 0.95;
 
 export type GradientShape = 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond';
 export type ColorStopSource = 'fixed' | 'foreground' | 'background';
@@ -12,6 +14,7 @@ export type ColorStopSource = 'fixed' | 'foreground' | 'background';
 export interface ColorStop {
   id: string;
   position: number;
+  midpoint: number;
   source: ColorStopSource;
   color: string;
 }
@@ -19,7 +22,19 @@ export interface ColorStop {
 export interface OpacityStop {
   id: string;
   position: number;
+  midpoint: number;
   opacity: number;
+}
+
+export interface AddColorStopOptions {
+  source?: ColorStopSource;
+  color?: string;
+  midpoint?: number;
+}
+
+export interface AddOpacityStopOptions {
+  opacity?: number;
+  midpoint?: number;
 }
 
 export interface GradientPreset {
@@ -67,10 +82,10 @@ interface GradientState {
   setCustomGradientName: (name: string) => void;
   selectColorStop: (id: string | null) => void;
   selectOpacityStop: (id: string | null) => void;
-  addColorStop: (position: number) => string;
+  addColorStop: (position: number, options?: AddColorStopOptions) => string;
   updateColorStop: (id: string, patch: Partial<ColorStop>) => void;
   removeColorStop: (id: string) => void;
-  addOpacityStop: (position: number) => string;
+  addOpacityStop: (position: number, options?: AddOpacityStopOptions) => string;
   updateOpacityStop: (id: string, patch: Partial<OpacityStop>) => void;
   removeOpacityStop: (id: string) => void;
 
@@ -98,6 +113,13 @@ function clampSmoothness(value: number): number {
 
 function clampPosition(value: number): number {
   return clamp01(value);
+}
+
+function clampMidpoint(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  if (value < MIDPOINT_MIN) return MIDPOINT_MIN;
+  if (value > MIDPOINT_MAX) return MIDPOINT_MAX;
+  return value;
 }
 
 function toHexColor(input: string | undefined, fallback: string): string {
@@ -140,6 +162,7 @@ function normalizeColorStop(stop: Partial<ColorStop>): ColorStop {
   return {
     id: typeof stop.id === 'string' && stop.id.length > 0 ? stop.id : createId('color'),
     position: clampPosition(typeof stop.position === 'number' ? stop.position : 0),
+    midpoint: clampMidpoint(typeof stop.midpoint === 'number' ? stop.midpoint : 0.5),
     source,
     color: toHexColor(stop.color, source === 'background' ? '#ffffff' : '#000000'),
   };
@@ -149,6 +172,7 @@ function normalizeOpacityStop(stop: Partial<OpacityStop>): OpacityStop {
   return {
     id: typeof stop.id === 'string' && stop.id.length > 0 ? stop.id : createId('opacity'),
     position: clampPosition(typeof stop.position === 'number' ? stop.position : 0),
+    midpoint: clampMidpoint(typeof stop.midpoint === 'number' ? stop.midpoint : 0.5),
     opacity: clamp01(typeof stop.opacity === 'number' ? stop.opacity : 1),
   };
 }
@@ -158,8 +182,8 @@ function normalizeColorStops(stops: ColorStop[] | undefined): ColorStop[] {
   normalized.sort((a, b) => a.position - b.position);
   if (normalized.length >= 2) return normalized;
   return [
-    { id: createId('color'), position: 0, source: 'foreground', color: '#000000' },
-    { id: createId('color'), position: 1, source: 'background', color: '#ffffff' },
+    { id: createId('color'), position: 0, midpoint: 0.5, source: 'foreground', color: '#000000' },
+    { id: createId('color'), position: 1, midpoint: 0.5, source: 'background', color: '#ffffff' },
   ];
 }
 
@@ -168,8 +192,8 @@ function normalizeOpacityStops(stops: OpacityStop[] | undefined): OpacityStop[] 
   normalized.sort((a, b) => a.position - b.position);
   if (normalized.length >= 2) return normalized;
   return [
-    { id: createId('opacity'), position: 0, opacity: 1 },
-    { id: createId('opacity'), position: 1, opacity: 1 },
+    { id: createId('opacity'), position: 0, midpoint: 0.5, opacity: 1 },
+    { id: createId('opacity'), position: 1, midpoint: 0.5, opacity: 1 },
   ];
 }
 
@@ -192,12 +216,12 @@ function createDefaultPresets(): GradientPreset[] {
       id: 'preset_fg_bg',
       name: 'Foreground to Background',
       colorStops: [
-        { id: 'fgbg_c0', position: 0, source: 'foreground', color: '#000000' },
-        { id: 'fgbg_c1', position: 1, source: 'background', color: '#ffffff' },
+        { id: 'fgbg_c0', position: 0, midpoint: 0.5, source: 'foreground', color: '#000000' },
+        { id: 'fgbg_c1', position: 1, midpoint: 0.5, source: 'background', color: '#ffffff' },
       ],
       opacityStops: [
-        { id: 'fgbg_o0', position: 0, opacity: 1 },
-        { id: 'fgbg_o1', position: 1, opacity: 1 },
+        { id: 'fgbg_o0', position: 0, midpoint: 0.5, opacity: 1 },
+        { id: 'fgbg_o1', position: 1, midpoint: 0.5, opacity: 1 },
       ],
       smoothness: 100,
     }),
@@ -205,12 +229,12 @@ function createDefaultPresets(): GradientPreset[] {
       id: 'preset_fg_transparent',
       name: 'Foreground to Transparent',
       colorStops: [
-        { id: 'fgt_c0', position: 0, source: 'foreground', color: '#000000' },
-        { id: 'fgt_c1', position: 1, source: 'foreground', color: '#000000' },
+        { id: 'fgt_c0', position: 0, midpoint: 0.5, source: 'foreground', color: '#000000' },
+        { id: 'fgt_c1', position: 1, midpoint: 0.5, source: 'foreground', color: '#000000' },
       ],
       opacityStops: [
-        { id: 'fgt_o0', position: 0, opacity: 1 },
-        { id: 'fgt_o1', position: 1, opacity: 0 },
+        { id: 'fgt_o0', position: 0, midpoint: 0.5, opacity: 1 },
+        { id: 'fgt_o1', position: 1, midpoint: 0.5, opacity: 0 },
       ],
       smoothness: 100,
     }),
@@ -218,12 +242,12 @@ function createDefaultPresets(): GradientPreset[] {
       id: 'preset_bw',
       name: 'Black and White',
       colorStops: [
-        { id: 'bw_c0', position: 0, source: 'fixed', color: '#000000' },
-        { id: 'bw_c1', position: 1, source: 'fixed', color: '#ffffff' },
+        { id: 'bw_c0', position: 0, midpoint: 0.5, source: 'fixed', color: '#000000' },
+        { id: 'bw_c1', position: 1, midpoint: 0.5, source: 'fixed', color: '#ffffff' },
       ],
       opacityStops: [
-        { id: 'bw_o0', position: 0, opacity: 1 },
-        { id: 'bw_o1', position: 1, opacity: 1 },
+        { id: 'bw_o0', position: 0, midpoint: 0.5, opacity: 1 },
+        { id: 'bw_o1', position: 1, midpoint: 0.5, opacity: 1 },
       ],
       smoothness: 100,
     }),
@@ -231,17 +255,17 @@ function createDefaultPresets(): GradientPreset[] {
       id: 'preset_rainbow',
       name: 'Rainbow',
       colorStops: [
-        { id: 'rb_c0', position: 0, source: 'fixed', color: '#ff0000' },
-        { id: 'rb_c1', position: 0.17, source: 'fixed', color: '#ff7f00' },
-        { id: 'rb_c2', position: 0.33, source: 'fixed', color: '#ffff00' },
-        { id: 'rb_c3', position: 0.5, source: 'fixed', color: '#00ff00' },
-        { id: 'rb_c4', position: 0.67, source: 'fixed', color: '#0000ff' },
-        { id: 'rb_c5', position: 0.83, source: 'fixed', color: '#4b0082' },
-        { id: 'rb_c6', position: 1, source: 'fixed', color: '#9400d3' },
+        { id: 'rb_c0', position: 0, midpoint: 0.5, source: 'fixed', color: '#ff0000' },
+        { id: 'rb_c1', position: 0.17, midpoint: 0.5, source: 'fixed', color: '#ff7f00' },
+        { id: 'rb_c2', position: 0.33, midpoint: 0.5, source: 'fixed', color: '#ffff00' },
+        { id: 'rb_c3', position: 0.5, midpoint: 0.5, source: 'fixed', color: '#00ff00' },
+        { id: 'rb_c4', position: 0.67, midpoint: 0.5, source: 'fixed', color: '#0000ff' },
+        { id: 'rb_c5', position: 0.83, midpoint: 0.5, source: 'fixed', color: '#4b0082' },
+        { id: 'rb_c6', position: 1, midpoint: 0.5, source: 'fixed', color: '#9400d3' },
       ],
       opacityStops: [
-        { id: 'rb_o0', position: 0, opacity: 1 },
-        { id: 'rb_o1', position: 1, opacity: 1 },
+        { id: 'rb_o0', position: 0, midpoint: 0.5, opacity: 1 },
+        { id: 'rb_o1', position: 1, midpoint: 0.5, opacity: 1 },
       ],
       smoothness: 100,
     }),
@@ -462,14 +486,21 @@ export const useGradientStore = create<GradientState>()(
         });
       },
 
-      addColorStop: (position) => {
+      addColorStop: (position, options) => {
         const id = createId('color');
         updateAndPersist((state) => {
+          const source: ColorStopSource =
+            options?.source === 'foreground' || options?.source === 'background'
+              ? options.source
+              : options?.source === 'fixed'
+                ? 'fixed'
+                : 'fixed';
           const nextStop: ColorStop = {
             id,
             position: clampPosition(position),
-            source: 'fixed',
-            color: '#ffffff',
+            midpoint: clampMidpoint(options?.midpoint ?? 0.5),
+            source,
+            color: toHexColor(options?.color ?? '#ffffff', '#ffffff'),
           };
           state.settings.customGradient.colorStops = sortByPosition([
             ...state.settings.customGradient.colorStops,
@@ -496,6 +527,8 @@ export const useGradientStore = create<GradientState>()(
               color: toHexColor(patch.color ?? stop.color, stop.color),
               position:
                 typeof patch.position === 'number' ? clampPosition(patch.position) : stop.position,
+              midpoint:
+                typeof patch.midpoint === 'number' ? clampMidpoint(patch.midpoint) : stop.midpoint,
             };
           });
           state.settings.customGradient.colorStops = sortByPosition(nextStops);
@@ -504,6 +537,7 @@ export const useGradientStore = create<GradientState>()(
 
       removeColorStop: (id) => {
         updateAndPersist((state) => {
+          if (state.settings.customGradient.colorStops.length <= 2) return;
           const filtered = state.settings.customGradient.colorStops.filter(
             (stop) => stop.id !== id
           );
@@ -514,13 +548,14 @@ export const useGradientStore = create<GradientState>()(
         });
       },
 
-      addOpacityStop: (position) => {
+      addOpacityStop: (position, options) => {
         const id = createId('opacity');
         updateAndPersist((state) => {
           const nextStop: OpacityStop = {
             id,
             position: clampPosition(position),
-            opacity: 1,
+            midpoint: clampMidpoint(options?.midpoint ?? 0.5),
+            opacity: clamp01(options?.opacity ?? 1),
           };
           state.settings.customGradient.opacityStops = sortByPosition([
             ...state.settings.customGradient.opacityStops,
@@ -539,6 +574,8 @@ export const useGradientStore = create<GradientState>()(
               ...stop,
               position:
                 typeof patch.position === 'number' ? clampPosition(patch.position) : stop.position,
+              midpoint:
+                typeof patch.midpoint === 'number' ? clampMidpoint(patch.midpoint) : stop.midpoint,
               opacity: typeof patch.opacity === 'number' ? clamp01(patch.opacity) : stop.opacity,
             };
           });
@@ -548,6 +585,7 @@ export const useGradientStore = create<GradientState>()(
 
       removeOpacityStop: (id) => {
         updateAndPersist((state) => {
+          if (state.settings.customGradient.opacityStops.length <= 2) return;
           const filtered = state.settings.customGradient.opacityStops.filter(
             (stop) => stop.id !== id
           );

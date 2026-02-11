@@ -1,9 +1,19 @@
 import type { ColorStop, OpacityStop } from '@/stores/gradient';
 
+const MIDPOINT_MIN = 0.05;
+const MIDPOINT_MAX = 0.95;
+
 export function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
   if (value > 1) return 1;
+  return value;
+}
+
+export function clampMidpoint(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  if (value < MIDPOINT_MIN) return MIDPOINT_MIN;
+  if (value > MIDPOINT_MAX) return MIDPOINT_MAX;
   return value;
 }
 
@@ -40,11 +50,25 @@ function hexToRgb(hex: string): [number, number, number] {
   return [r, g, b];
 }
 
+function rgbToHex(r: number, g: number, b: number): string {
+  const rr = Math.round(Math.min(255, Math.max(0, r)));
+  const gg = Math.round(Math.min(255, Math.max(0, g)));
+  const bb = Math.round(Math.min(255, Math.max(0, b)));
+  const value = (rr << 16) + (gg << 8) + bb;
+  return `#${value.toString(16).padStart(6, '0')}`;
+}
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-function sampleNumberAt<T extends { position: number }>(
+function mapMidpointT(t: number, midpoint: number): number {
+  const safeMidpoint = clampMidpoint(midpoint);
+  const gamma = Math.log(0.5) / Math.log(safeMidpoint);
+  return clamp01(Math.pow(clamp01(t), gamma));
+}
+
+function sampleNumberAt<T extends { position: number; midpoint: number }>(
   stops: T[],
   position: number,
   picker: (stop: T) => number
@@ -58,8 +82,9 @@ function sampleNumberAt<T extends { position: number }>(
     if (clamped > right.position) continue;
     const left = stops[i - 1]!;
     const span = Math.max(1e-6, right.position - left.position);
-    const t = clamp01((clamped - left.position) / span);
-    return lerp(picker(left), picker(right), t);
+    const localT = clamp01((clamped - left.position) / span);
+    const adjustedT = mapMidpointT(localT, right.midpoint);
+    return lerp(picker(left), picker(right), adjustedT);
   }
 
   return picker(stops[stops.length - 1]!);
@@ -70,14 +95,53 @@ function normalizeOpacityStops(stops: OpacityStop[]): OpacityStop[] {
     .map((stop) => ({
       ...stop,
       position: clamp01(stop.position),
+      midpoint: clampMidpoint(stop.midpoint),
       opacity: clamp01(stop.opacity),
     }))
     .sort((a, b) => a.position - b.position);
   if (normalized.length >= 2) return normalized;
   return [
-    { id: 'default_o0', position: 0, opacity: 1 },
-    { id: 'default_o1', position: 1, opacity: 1 },
+    { id: 'default_o0', position: 0, midpoint: 0.5, opacity: 1 },
+    { id: 'default_o1', position: 1, midpoint: 0.5, opacity: 1 },
   ];
+}
+
+function normalizeColorStops(
+  colorStops: ColorStop[],
+  foregroundColor: string,
+  backgroundColor: string
+): Array<{ position: number; midpoint: number; rgb: [number, number, number] }> {
+  const normalized = [...colorStops]
+    .map((stop) => ({
+      position: clamp01(stop.position),
+      midpoint: clampMidpoint(stop.midpoint),
+      rgb: hexToRgb(resolveStopDisplayColor(stop, foregroundColor, backgroundColor)),
+    }))
+    .sort((a, b) => a.position - b.position);
+
+  if (normalized.length >= 2) return normalized;
+  return [
+    { position: 0, midpoint: 0.5, rgb: hexToRgb(foregroundColor) },
+    { position: 1, midpoint: 0.5, rgb: hexToRgb(backgroundColor) },
+  ];
+}
+
+export function sampleOpacityAt(position: number, opacityStops: OpacityStop[]): number {
+  const sortedOpacity = normalizeOpacityStops(opacityStops);
+  return sampleNumberAt(sortedOpacity, position, (stop) => stop.opacity);
+}
+
+export function sampleColorHexAt(
+  position: number,
+  colorStops: ColorStop[],
+  foregroundColor: string,
+  backgroundColor: string
+): string {
+  const sortedColors = normalizeColorStops(colorStops, foregroundColor, backgroundColor);
+  const r = sampleNumberAt(sortedColors, position, (stop) => stop.rgb[0]);
+  const g = sampleNumberAt(sortedColors, position, (stop) => stop.rgb[1]);
+  const b = sampleNumberAt(sortedColors, position, (stop) => stop.rgb[2]);
+  return rgbToHex(r, g, b);
 }
 
 export function buildGradientPreviewCss(
@@ -87,17 +151,9 @@ export function buildGradientPreviewCss(
   backgroundColor: string,
   transparencyEnabled = true
 ): string {
-  const sortedColors = [...colorStops]
-    .map((stop) => ({
-      position: clamp01(stop.position),
-      rgb: hexToRgb(resolveStopDisplayColor(stop, foregroundColor, backgroundColor)),
-    }))
-    .sort((a, b) => a.position - b.position);
-  if (sortedColors.length === 0) {
-    return 'linear-gradient(90deg, rgba(0,0,0,1) 0%, rgba(255,255,255,1) 100%)';
-  }
-
+  const sortedColors = normalizeColorStops(colorStops, foregroundColor, backgroundColor);
   const sortedOpacity = normalizeOpacityStops(opacityStops);
+
   const samplePositions = Array.from(
     new Set([
       0,

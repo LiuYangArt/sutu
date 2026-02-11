@@ -28,10 +28,12 @@ export function PresetGrid({
     <section className="gradient-presets">
       <div className="gradient-presets-header">
         <h4>Presets</h4>
-        <button onClick={onSaveCustom}>Save Current</button>
+        <button type="button" className="gradient-preset-btn primary" onClick={onSaveCustom}>
+          Save Current
+        </button>
       </div>
 
-      <div className="gradient-preset-grid">
+      <div className="gradient-preset-list">
         {presets.map((preset) => {
           const active = preset.id === activePresetId;
           const preview = buildGradientPreviewCss(
@@ -41,9 +43,11 @@ export function PresetGrid({
             backgroundColor,
             true
           );
+
           return (
-            <div key={preset.id} className={`gradient-preset-card ${active ? 'active' : ''}`}>
+            <div key={preset.id} className={`gradient-preset-item ${active ? 'active' : ''}`}>
               <button
+                type="button"
                 className="gradient-preset-preview"
                 style={{ backgroundImage: preview }}
                 title={preset.name}
@@ -51,11 +55,27 @@ export function PresetGrid({
                 onDoubleClick={() => onCopyToCustom(preset.id)}
               />
               <div className="gradient-preset-meta">
-                <span>{preset.name}</span>
+                <span className="gradient-preset-name">{preset.name}</span>
                 <div className="gradient-preset-actions">
-                  <button onClick={() => onCopyToCustom(preset.id)}>Use</button>
-                  <button onClick={() => onRename(preset.id)}>Rename</button>
-                  <button className="danger" onClick={() => onDelete(preset.id)}>
+                  <button
+                    type="button"
+                    className="gradient-preset-btn"
+                    onClick={() => onCopyToCustom(preset.id)}
+                  >
+                    Use
+                  </button>
+                  <button
+                    type="button"
+                    className="gradient-preset-btn"
+                    onClick={() => onRename(preset.id)}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    className="gradient-preset-btn danger"
+                    onClick={() => onDelete(preset.id)}
+                  >
                     Delete
                   </button>
                 </div>
