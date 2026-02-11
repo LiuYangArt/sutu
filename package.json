@@ -2,6 +2,7 @@
   "name": "sutu",
   "version": "0.9.9",
   "description": "Professional painting software with low-latency pen input",
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "sync:app-meta": "node scripts/sync-app-meta.mjs",

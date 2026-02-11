@@ -4,13 +4,17 @@
 
 # Sutu (速涂)
 
-个人用绘画软件，支持 Wacom 压感输入，基于 Tauri + React + Rust 构建。目前只支持windows平台。 
-当前主链路为 GPU-First（WebGPU + Tile）：实时绘画默认不做 readback，仅在导出/截图时执行分块 readback。
+个人用绘画软件，支持 Wacom 压感输入，基于 Tauri + React + Rust 构建。目前只支持windows平台。
+数位板输入链路使用了 `wintab_lite`进行 WinTab 接入。
+使用gpu compute shader笔刷，对显卡/显存有一定要求。
 目标是做一个接近ps绘画体验的轻量级项目。
 支持ps的abr笔刷文件导入，支持大部分笔刷属性。
 
 ## 下载
 
-在Release中下载最新的安装包 [https://github.com/LiuYangArt/PaintBoard/releases/](https://github.com/LiuYangArt/PaintBoard/releases/)
+在右侧Release中下载最新的安装包。
 
+## 许可证
 
+本项目采用 GNU General Public License v3.0（GPL-3.0-only）。
+完整条款见仓库根目录 `LICENSE`。
