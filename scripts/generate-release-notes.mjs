@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * 生成 GitHub Release 正文：
- * 1) 有 API Key 时，用 AI 基于本次提交生成中英双语变更摘要
- * 2) 自动过滤 thinking / reasoning 内容，避免进入最终 Release 文案
- * 3) 没有密钥或调用失败时，回退到基于 commit 的双语摘要
+ * 1) 有 API Key 时，用 AI 生成“功能更新 + 问题修复”双语摘要
+ * 2) 自动过滤 thinking/reasoning 内容，禁止进入最终 Release 文案
+ * 3) 没有密钥或 AI 输出不合规时，回退到本地规则化双语精简摘要
  */
 
 import { execSync } from 'node:child_process';
@@ -201,7 +201,7 @@ function extractFirstJsonObject(text) {
   return '';
 }
 
-function normalizeBullet(text) {
+function normalizeSentence(text) {
   return String(text || '')
     .replace(/^[-*]\s+/, '')
     .replace(/^\d+[.)]\s+/, '')
@@ -209,30 +209,50 @@ function normalizeBullet(text) {
     .trim();
 }
 
-function isThinkingBullet(text) {
-  const value = text.trim();
-  return /^(thinking|analysis|reasoning|thoughts?|chain[- ]of[- ]thought|思考|推理|分析)/i.test(value);
+function cjkCount(text) {
+  const matches = String(text || '').match(/[\u3400-\u9fff]/g);
+  return matches ? matches.length : 0;
 }
 
-function toBulletList(values, maxSize = 8) {
-  const unique = [];
-  for (const item of values) {
-    const normalized = normalizeBullet(item);
-    if (!normalized || isThinkingBullet(normalized)) {
+function normalizePairItem(item) {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+  const zh = normalizeSentence(item.zh);
+  const en = normalizeSentence(item.en);
+  if (!zh || !en) {
+    return null;
+  }
+  if (cjkCount(en) > 0) {
+    return null;
+  }
+  return { zh, en };
+}
+
+function dedupePairs(items) {
+  const result = [];
+  const seen = new Set();
+
+  for (const item of items) {
+    const normalized = normalizePairItem(item);
+    if (!normalized) {
       continue;
     }
-    if (!unique.includes(normalized)) {
-      unique.push(normalized);
+    const key = `${normalized.zh}__${normalized.en}`.toLowerCase();
+    if (seen.has(key)) {
+      continue;
     }
+    seen.add(key);
+    result.push(normalized);
   }
-
-  if (unique.length <= maxSize) {
-    return unique;
-  }
-  return unique.slice(0, maxSize);
+  return result;
 }
 
-function parseBilingualItems(rawText) {
+function clampPairs(items, maxCount = 3) {
+  return dedupePairs(items).slice(0, maxCount);
+}
+
+function parseAiSummary(rawText) {
   const cleaned = stripThinkingArtifacts(rawText);
   if (!cleaned) {
     return null;
@@ -250,44 +270,193 @@ function parseBilingualItems(rawText) {
     return null;
   }
 
-  const zhSource = parsed?.zh ?? parsed?.zh_cn ?? parsed?.cn ?? parsed?.chinese ?? [];
-  const enSource = parsed?.en ?? parsed?.en_us ?? parsed?.english ?? [];
+  const featuresSource = Array.isArray(parsed?.features) ? parsed.features : [];
+  const fixesSource = Array.isArray(parsed?.fixes) ? parsed.fixes : [];
 
-  const zhItems = toBulletList(Array.isArray(zhSource) ? zhSource : []);
-  const enItems = toBulletList(Array.isArray(enSource) ? enSource : []);
+  const features = clampPairs(featuresSource, 3);
+  const fixes = clampPairs(fixesSource, 3);
 
-  if (zhItems.length === 0 || enItems.length === 0) {
+  if (features.length === 0 && fixes.length === 0) {
     return null;
   }
 
-  return {
-    zhItems,
-    enItems,
-  };
+  return { features, fixes };
 }
 
-function buildBilingualChangesSection(zhItems, enItems, compareUrl) {
-  const lines = ['### Changes / 更新', '#### 中文'];
-  for (const item of zhItems) {
-    lines.push(`- ${item}`);
-  }
-  if (compareUrl) {
-    lines.push(`- 完整对比：${compareUrl}`);
+function buildChangesSection(summary, compareUrl) {
+  const features = Array.isArray(summary?.features) ? summary.features : [];
+  const fixes = Array.isArray(summary?.fixes) ? summary.fixes : [];
+
+  const lines = ['### Changes / 更新', '#### 功能更新 / Features'];
+
+  if (features.length === 0) {
+    lines.push('- 中文：本版本无新增用户可见功能。');
+    lines.push('- English: No new user-facing features in this release.');
+  } else {
+    for (const item of features) {
+      lines.push(`- 中文：${item.zh}`);
+      lines.push(`- English: ${item.en}`);
+    }
   }
 
   lines.push('');
-  lines.push('#### English');
-  for (const item of enItems) {
-    lines.push(`- ${item}`);
+  lines.push('#### 问题修复 / Bug Fixes');
+
+  if (fixes.length === 0) {
+    lines.push('- 中文：本版本无新增用户可见问题修复。');
+    lines.push('- English: No new user-facing bug fixes in this release.');
+  } else {
+    for (const item of fixes) {
+      lines.push(`- 中文：${item.zh}`);
+      lines.push(`- English: ${item.en}`);
+    }
   }
+
   if (compareUrl) {
-    lines.push(`- Full compare: ${compareUrl}`);
+    lines.push('');
+    lines.push(`- 中文：完整对比：${compareUrl}`);
+    lines.push(`- English: Full compare: ${compareUrl}`);
   }
 
   return lines.join('\n').trim();
 }
 
-async function generateAiChanges({
+const IGNORE_PATTERNS = [
+  /^v?\d+\.\d+\.\d+$/i,
+  /(^|\s)(release|chore|ci|workflow|pipeline|lint|format|deps?)(\s|:|$)/i,
+  /发布流程|发包|打包|自动发布|workflow|readme|文档|docs?|license|图标|icon|logo/i,
+];
+
+const FIX_PATTERNS = [/修复|fix|bug|crash|异常|错误|闪退|崩溃|失效|问题/i];
+
+const FEATURE_PATTERNS = [/新增|增加|支持|加入|实现|introduce|add|support|implement|feature|新功能|工具/i];
+
+const TOPIC_RULES = [
+  {
+    id: 'brush-settings-fix',
+    type: 'fix',
+    pattern: /opacity|flow|笔刷|画笔|brush/i,
+    zh: '修复了笔刷参数设置相关问题（含 opacity/flow 设置边界）。',
+    en: 'Fixed brush parameter setting issues, including opacity/flow boundary handling.',
+  },
+  {
+    id: 'export-fix',
+    type: 'fix',
+    pattern: /导出|export|保存|save|读取|load|文件/i,
+    zh: '修复了文件导出与保存链路中的稳定性问题。',
+    en: 'Fixed stability issues in export and save workflows.',
+  },
+  {
+    id: 'layer-fix',
+    type: 'fix',
+    pattern: /图层|layer/i,
+    zh: '修复了图层相关交互中的异常行为。',
+    en: 'Fixed abnormal behaviors in layer-related interactions.',
+  },
+  {
+    id: 'input-fix',
+    type: 'fix',
+    pattern: /快捷键|shortcut|hotkey|键盘|输入|压感|wacom|tablet/i,
+    zh: '修复了输入与快捷键相关的问题。',
+    en: 'Fixed input and shortcut-related issues.',
+  },
+  {
+    id: 'feature-tooling',
+    type: 'feature',
+    pattern: /工具|tool|面板|panel|交互|ui|界面/i,
+    zh: '改进了绘画工具与界面交互体验。',
+    en: 'Improved drawing tools and UI interaction experience.',
+  },
+  {
+    id: 'feature-performance',
+    type: 'feature',
+    pattern: /性能|优化|卡顿|流畅|latency|performance|speed/i,
+    zh: '优化了绘制链路性能，提升整体响应速度。',
+    en: 'Optimized drawing pipeline performance for better responsiveness.',
+  },
+];
+
+function shouldIgnoreCommit(subject) {
+  return IGNORE_PATTERNS.some((pattern) => pattern.test(subject));
+}
+
+function isFixCommit(subject) {
+  return FIX_PATTERNS.some((pattern) => pattern.test(subject));
+}
+
+function isFeatureCommit(subject) {
+  return FEATURE_PATTERNS.some((pattern) => pattern.test(subject));
+}
+
+function summarizeFallback(commits) {
+  const features = [];
+  const fixes = [];
+  const seenRuleIds = new Set();
+
+  function pushFeature(zh, en) {
+    if (features.length >= 3) {
+      return;
+    }
+    const key = `${zh}__${en}`;
+    if (features.some((item) => `${item.zh}__${item.en}` === key)) {
+      return;
+    }
+    features.push({ zh, en });
+  }
+
+  function pushFix(zh, en) {
+    if (fixes.length >= 3) {
+      return;
+    }
+    const key = `${zh}__${en}`;
+    if (fixes.some((item) => `${item.zh}__${item.en}` === key)) {
+      return;
+    }
+    fixes.push({ zh, en });
+  }
+
+  for (const commit of commits) {
+    const subject = normalizeSentence(commit.subject);
+    if (!subject || shouldIgnoreCommit(subject)) {
+      continue;
+    }
+
+    let matchedTopic = false;
+    for (const rule of TOPIC_RULES) {
+      if (!rule.pattern.test(subject)) {
+        continue;
+      }
+      if (seenRuleIds.has(rule.id)) {
+        matchedTopic = true;
+        break;
+      }
+      seenRuleIds.add(rule.id);
+      if (rule.type === 'fix') {
+        pushFix(rule.zh, rule.en);
+      } else {
+        pushFeature(rule.zh, rule.en);
+      }
+      matchedTopic = true;
+      break;
+    }
+    if (matchedTopic) {
+      continue;
+    }
+
+    if (isFixCommit(subject)) {
+      pushFix('修复了若干影响使用体验的问题。', 'Fixed several issues affecting user experience.');
+      continue;
+    }
+
+    if (isFeatureCommit(subject)) {
+      pushFeature('新增或改进了部分用户可见功能。', 'Added or improved several user-facing features.');
+    }
+  }
+
+  return { features, fixes };
+}
+
+async function generateAiSummary({
   appName,
   version,
   currentTag,
@@ -297,7 +466,6 @@ async function generateAiChanges({
   aiModel,
   aiApiBaseUrl,
   aiApiPath,
-  compareUrl,
 }) {
   const commitBlock = commits.length
     ? commits
@@ -311,17 +479,19 @@ async function generateAiChanges({
     `Version: ${version}`,
     `Current tag: ${currentTag}`,
     `Previous tag: ${previousTag || '(none)'}`,
-    compareUrl ? `Compare: ${compareUrl}` : 'Compare: (unavailable)',
     '',
     'Commits in this release:',
     commitBlock,
     '',
-    '请基于以上信息输出版本变更摘要，必须严格遵守：',
-    '1) 仅返回一个 JSON 对象，不要 markdown，不要代码块，不要额外解释。',
-    '2) JSON 结构必须是：{"zh":["..."],"en":["..."]}',
-    '3) zh 与 en 都要有 4-8 条，聚焦用户可感知变化。',
-    '4) 禁止输出 thinking、analysis、reasoning、思考过程等内容。',
-    '5) 如果存在潜在破坏性变更，需在 zh 与 en 都明确标注。',
+    '请输出用于 Release Notes 的精简摘要，严格遵守：',
+    '1) 只保留用户真正需要关心的信息：功能更新（features）和问题修复（fixes）。',
+    '2) 忽略内部改动：发布流程、CI、文档、图标、重构、纯维护。',
+    '3) 将同一主题的多个 commit 合并成一条，避免重复和冗余。',
+    '4) 每类最多 3 条，句子简洁、面向用户价值。',
+    '5) 只返回一个 JSON 对象，不要 markdown，不要代码块，不要解释，不要 thinking/reasoning。',
+    '6) JSON 结构必须是：',
+    '{"features":[{"zh":"...","en":"..."}],"fixes":[{"zh":"...","en":"..."}]}',
+    '7) en 字段必须是英文，不能包含中文字符。',
   ].join('\n');
 
   const endpoint = joinUrl(aiApiBaseUrl, aiApiPath);
@@ -336,7 +506,7 @@ async function generateAiChanges({
       messages: [
         {
           role: 'system',
-          content: '你是发布工程师。输出必须可直接用于 Release Notes，不得包含推理过程。',
+          content: '你是发布工程师。输出仅允许最终可发布内容，严禁输出任何推理过程。',
         },
         {
           role: 'user',
@@ -344,7 +514,7 @@ async function generateAiChanges({
         },
       ],
       stream: false,
-      temperature: 0.2,
+      temperature: 0.1,
     }),
   });
 
@@ -359,35 +529,12 @@ async function generateAiChanges({
     throw new Error('AI 返回为空');
   }
 
-  const parsed = parseBilingualItems(generatedText);
+  const parsed = parseAiSummary(generatedText);
   if (!parsed) {
-    throw new Error('AI 返回格式不符合预期（缺少可解析的 zh/en JSON）');
+    throw new Error('AI 返回格式不符合要求（需要 features/fixes 双语 JSON）');
   }
 
-  return buildBilingualChangesSection(parsed.zhItems, parsed.enItems, compareUrl);
-}
-
-function generateFallbackChanges(commits, compareUrl) {
-  const zhItems = [];
-  const enItems = [];
-
-  if (commits.length === 0) {
-    zhItems.push('本次未检测到可归纳的提交记录，可能仅包含发布流程调整或重新打包。');
-    enItems.push('No notable commits were detected; this release may contain packaging or release-process updates only.');
-  } else {
-    const topCommits = commits.slice(0, 8);
-    for (const commit of topCommits) {
-      zhItems.push(`提交：${commit.subject} (${commit.hash})`);
-      enItems.push(`Commit: ${commit.subject} (${commit.hash})`);
-    }
-    if (commits.length > topCommits.length) {
-      const extra = commits.length - topCommits.length;
-      zhItems.push(`其余 ${extra} 项改动请查看提交历史。`);
-      enItems.push(`See commit history for the remaining ${extra} changes.`);
-    }
-  }
-
-  return buildBilingualChangesSection(zhItems, enItems, compareUrl);
+  return parsed;
 }
 
 async function main() {
@@ -409,10 +556,10 @@ async function main() {
   const aiApiBaseUrl = (process.env.RELEASE_NOTES_API_BASE_URL || process.env.OPENAI_API_BASE_URL || 'https://api.openai.com').trim();
   const aiApiPath = (process.env.RELEASE_NOTES_API_PATH || process.env.OPENAI_API_PATH || '/v1/chat/completions').trim();
 
-  let changesSection = '';
+  let summary = null;
   if (aiApiKey) {
     try {
-      changesSection = await generateAiChanges({
+      summary = await generateAiSummary({
         appName,
         version,
         currentTag,
@@ -422,7 +569,6 @@ async function main() {
         aiModel,
         aiApiBaseUrl,
         aiApiPath,
-        compareUrl,
       });
       log(`AI 生成成功（model=${aiModel}）。`);
     } catch (error) {
@@ -432,9 +578,11 @@ async function main() {
     log('未检测到 RELEASE_NOTES_API_KEY（或 OPENAI_API_KEY），使用回退摘要。');
   }
 
-  if (!changesSection) {
-    changesSection = generateFallbackChanges(commits, compareUrl);
+  if (!summary) {
+    summary = summarizeFallback(commits);
   }
+
+  const changesSection = buildChangesSection(summary, compareUrl);
 
   const body = [
     `## ${appName} v${version}`,
