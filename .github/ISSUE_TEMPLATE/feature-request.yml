@@ -1,0 +1,50 @@
+name: Feature Request
+description: 提交功能建议或产品改进想法
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你的建议。请尽量说明背景、目标和预期价值，便于我们评估优先级。
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索过现有 Issues，确认不是重复需求
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 需求背景/痛点
+      description: 你遇到了什么问题，为什么需要这个功能
+      placeholder: 例如：当前无法快速批量调整图层透明度，影响效率
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 描述你期望的功能行为或交互流程
+      placeholder: 例如：在图层面板增加多选后统一调整透明度
+    validations:
+      required: true
+  - type: textarea
+    id: expected_value
+    attributes:
+      label: 预期收益
+      description: 这个功能能解决什么问题，带来什么价值
+      placeholder: 例如：减少重复操作，提升大项目编辑效率
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案
+      description: 你尝试过的替代方案或折中方式（可选）
+  - type: textarea
+    id: references
+    attributes:
+      label: 参考资料
+      description: 可附上截图、原型、竞品链接或其他说明
+

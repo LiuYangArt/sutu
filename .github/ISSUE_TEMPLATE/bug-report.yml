@@ -1,0 +1,80 @@
+name: Bug Report
+description: 报告一个可复现的问题，帮助我们快速定位和修复
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈问题。请尽量完整填写，信息越充分，修复越快。
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索过现有 Issues，确认不是重复问题
+          required: true
+        - label: 我已升级到最新版本后仍可复现
+          required: false
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: 问题描述
+      description: 简洁说明发生了什么问题
+      placeholder: 例如：使用橡皮擦时画布出现明显卡顿
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce_steps
+    attributes:
+      label: 复现步骤
+      description: 请按顺序列出步骤，确保他人可以复现
+      placeholder: |
+        1. 打开应用并新建画布
+        2. 选择 XXX 工具
+        3. 执行 XXX 操作
+        4. 观察到异常现象
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: 预期结果
+      placeholder: 应该发生什么
+    validations:
+      required: true
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: 实际结果
+      placeholder: 实际发生了什么
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图/录屏
+      description: 可直接拖拽图片或视频到输入框
+      placeholder: 在此粘贴截图、录屏或错误弹窗图片
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      placeholder: |
+        - OS: Windows 11
+        - App 版本: v0.0.0
+        - GPU: NVIDIA RTX 4060
+        - 驱动版本: xxx
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志/报错信息
+      description: 若有控制台报错、崩溃日志，请粘贴到这里
+      render: shell
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 其他你认为有帮助的信息
+
