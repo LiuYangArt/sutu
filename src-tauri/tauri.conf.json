@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Sutu",
+        "title": "Sutu v0.11.0",
         "width": 1400,
         "height": 900,
         "minWidth": 800,

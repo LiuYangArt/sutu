@@ -21,6 +21,9 @@ const frontendMetaPath = join(rootDir, 'src', 'constants', 'appMeta.ts');
 const rustMetaPath = join(rootDir, 'src-tauri', 'src', 'app_meta.rs');
 
 const appMeta = JSON.parse(readFileSync(appMetaPath, 'utf-8'));
+const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+const appVersion = pkg.version;
+const windowTitle = `${appMeta.displayName} v${appVersion}`;
 
 function writeJson(path, value) {
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
@@ -46,11 +49,15 @@ function escapeRustString(value) {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+function toTsSingleQuotedString(value) {
+  return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
 log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayNameZh})`);
+log(`📦 使用版本号: ${appVersion}`);
 
 // package.json
 {
-  const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
   pkg.name = appMeta.npmPackageName;
   writeJson(packageJsonPath, pkg);
   log(`   ✅ package.json name -> ${appMeta.npmPackageName}`);
@@ -64,11 +71,11 @@ log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayNameZh})`
   if (tauri.app?.windows && Array.isArray(tauri.app.windows)) {
     tauri.app.windows = tauri.app.windows.map((win) => ({
       ...win,
-      title: appMeta.displayName,
+      title: windowTitle,
     }));
   }
   writeJson(tauriConfPath, tauri);
-  log(`   ✅ tauri.conf.json productName/identifier/title`);
+  log(`   ✅ tauri.conf.json productName/identifier/title -> ${windowTitle}`);
 }
 
 // capabilities/default.json
@@ -107,15 +114,15 @@ log(`📛 同步应用命名: ${appMeta.displayName} (${appMeta.displayNameZh})`
 {
   mkdirSync(dirname(frontendMetaPath), { recursive: true });
   const ts = `export const APP_META = {
-  displayName: ${JSON.stringify(appMeta.displayName)},
-  displayNameZh: ${JSON.stringify(appMeta.displayNameZh)},
-  npmPackageName: ${JSON.stringify(appMeta.npmPackageName)},
-  identifier: ${JSON.stringify(appMeta.identifier)},
-  configDirName: ${JSON.stringify(appMeta.configDirName)},
-  storagePrefix: ${JSON.stringify(appMeta.storagePrefix)},
-  oraNamespace: ${JSON.stringify(appMeta.oraNamespace)},
-  legacyOraNamespace: ${JSON.stringify(appMeta.legacyOraNamespace)},
-  logTarget: ${JSON.stringify(appMeta.logTarget)},
+  displayName: ${toTsSingleQuotedString(appMeta.displayName)},
+  displayNameZh: ${toTsSingleQuotedString(appMeta.displayNameZh)},
+  npmPackageName: ${toTsSingleQuotedString(appMeta.npmPackageName)},
+  identifier: ${toTsSingleQuotedString(appMeta.identifier)},
+  configDirName: ${toTsSingleQuotedString(appMeta.configDirName)},
+  storagePrefix: ${toTsSingleQuotedString(appMeta.storagePrefix)},
+  oraNamespace: ${toTsSingleQuotedString(appMeta.oraNamespace)},
+  legacyOraNamespace: ${toTsSingleQuotedString(appMeta.legacyOraNamespace)},
+  logTarget: ${toTsSingleQuotedString(appMeta.logTarget)},
 } as const;
 
 export const APP_DISPLAY_NAME = APP_META.displayName;
