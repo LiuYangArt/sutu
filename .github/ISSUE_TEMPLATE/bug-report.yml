@@ -1,79 +1,80 @@
 name: Bug Report
-description: 报告一个可复现的问题，帮助我们快速定位和修复
+description: 报告一个可复现的问题，帮助我们快速定位和修复 | Report a reproducible issue to help us locate and fix it faster
 title: '[Bug]: '
 body:
   - type: markdown
     attributes:
       value: |
         感谢反馈问题。请尽量完整填写，信息越充分，修复越快。
+        Thanks for reporting. Please fill in as completely as possible - the more details, the faster we can fix it.
   - type: checkboxes
     id: precheck
     attributes:
-      label: 提交前检查
+      label: 提交前检查 | Check Before Submit
       options:
-        - label: 我已搜索过现有 Issues，确认不是重复问题
+        - label: 我已搜索过现有 Issues，确认不是重复问题 | I have searched existing issues and confirmed this is not a duplicate
           required: true
-        - label: 我已升级到最新版本后仍可复现
+        - label: 我已升级到最新版本后仍可复现 | I can still reproduce this issue on the latest version
           required: false
   - type: textarea
     id: bug_description
     attributes:
-      label: 问题描述
-      description: 简洁说明发生了什么问题
-      placeholder: 例如：使用橡皮擦时画布出现明显卡顿
+      label: 问题描述 | Problem Description
+      description: 简洁说明发生了什么问题 | Briefly describe what went wrong
+      placeholder: 例如：使用橡皮擦时画布出现明显卡顿 | Example: Noticeable lag appears on canvas when using the eraser
     validations:
       required: true
   - type: textarea
     id: reproduce_steps
     attributes:
-      label: 复现步骤
-      description: 请按顺序列出步骤，确保他人可以复现
+      label: 复现步骤 | Reproduction Steps
+      description: 请按顺序列出步骤，确保他人可以复现 | List steps in order so others can reproduce it
       placeholder: |
-        1. 打开应用并新建画布
-        2. 选择 XXX 工具
-        3. 执行 XXX 操作
-        4. 观察到异常现象
+        1. 打开应用并新建画布 | Open app and create a new canvas
+        2. 选择 XXX 工具 | Select tool XXX
+        3. 执行 XXX 操作 | Perform action XXX
+        4. 观察到异常现象 | Observe the abnormal behavior
     validations:
       required: true
   - type: textarea
     id: expected_behavior
     attributes:
-      label: 预期结果
-      placeholder: 应该发生什么
+      label: 预期结果 | Expected Behavior
+      placeholder: 应该发生什么 | What should happen
     validations:
       required: false
   - type: textarea
     id: actual_behavior
     attributes:
-      label: 实际结果
-      placeholder: 实际发生了什么
+      label: 实际结果 | Actual Behavior
+      placeholder: 实际发生了什么 | What actually happened
     validations:
       required: true
   - type: textarea
     id: screenshots
     attributes:
-      label: 截图/录屏
-      description: 可直接拖拽图片或视频到输入框
-      placeholder: 在此粘贴截图、录屏或错误弹窗图片
+      label: 截图/录屏 | Screenshots / Screen Recording
+      description: 可直接拖拽图片或视频到输入框 | You can drag images or videos directly into the input
+      placeholder: 在此粘贴截图、录屏或错误弹窗图片 | Paste screenshots, recordings, or error dialog images here
   - type: textarea
     id: environment
     attributes:
-      label: 环境信息
+      label: 环境信息 | Environment
       placeholder: |
         - OS: Windows 11
-        - App 版本: v0.0.0
+        - App 版本 / Version: v0.0.0
         - GPU: NVIDIA RTX 4060
-        - 驱动版本: xxx
+        - 驱动版本 / Driver: xxx
     validations:
       required: false
   - type: textarea
     id: logs
     attributes:
-      label: 日志/报错信息
-      description: 若有控制台报错、崩溃日志，请粘贴到这里
+      label: 日志/报错信息 | Logs / Errors
+      description: 若有控制台报错、崩溃日志，请粘贴到这里 | Paste console errors or crash logs if available
       render: shell
   - type: textarea
     id: additional
     attributes:
-      label: 补充信息
-      description: 其他你认为有帮助的信息
+      label: 补充信息 | Additional Context
+      description: 其他你认为有帮助的信息 | Any other details you think may help
