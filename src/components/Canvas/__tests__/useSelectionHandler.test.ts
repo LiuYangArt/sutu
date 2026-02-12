@@ -28,10 +28,9 @@ describe('useSelectionHandler', () => {
     useHistoryStore.getState().clear();
     resetSelectionState();
 
-    vi.spyOn(HTMLCanvasElement.prototype as any, 'getContext').mockImplementation(function (
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
       this: HTMLCanvasElement
     ) {
-      const canvas = this as HTMLCanvasElement;
       return {
         fillStyle: '#ffffff',
         beginPath: vi.fn(),
@@ -42,12 +41,12 @@ describe('useSelectionHandler', () => {
         closePath: vi.fn(),
         fill: vi.fn(),
         getImageData: vi.fn((_x = 0, _y = 0, w?: number, h?: number) => {
-          const width = Math.max(1, Math.floor(w ?? canvas.width ?? 1));
-          const height = Math.max(1, Math.floor(h ?? canvas.height ?? 1));
+          const width = Math.max(1, Math.floor(w ?? this.width ?? 1));
+          const height = Math.max(1, Math.floor(h ?? this.height ?? 1));
           return new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
         }),
       } as unknown as CanvasRenderingContext2D;
-    } as any);
+    } as unknown as HTMLCanvasElement['getContext']);
   });
 
   afterEach(() => {
@@ -128,5 +127,36 @@ describe('useSelectionHandler', () => {
       window.dispatchEvent(new Event('blur'));
     });
     expect(result.current.effectiveLassoMode).toBe('freehand');
+  });
+
+  it('Alt 拖拽切换到 freehand 后，后续 move 不应重复插入 polygonal 锚点', () => {
+    const { result } = renderHook(() => useSelectionHandler({ currentTool: 'lasso', scale: 1 }));
+
+    act(() => {
+      window.dispatchEvent(createAltEvent('keydown'));
+
+      result.current.handleSelectionPointerDown(10, 10, {
+        altKey: true,
+        shiftKey: false,
+        ctrlKey: false,
+      } as PointerEvent);
+
+      // 第一次 move 仅记录拖拽起点；第二次触发 polygonal -> freehand 切换
+      result.current.handleSelectionPointerMove(20, 20, {} as PointerEvent);
+      result.current.handleSelectionPointerMove(30, 30, {} as PointerEvent);
+
+      // 切换后应持续记录 freehand 点，而不是再次注入 polygonal 锚点
+      result.current.handleSelectionPointerMove(40, 40, {} as PointerEvent);
+      result.current.handleSelectionPointerMove(50, 50, {} as PointerEvent);
+    });
+
+    const path = useSelectionStore.getState().creationPoints;
+    expect(path.map((p) => p.type)).toEqual([
+      'polygonal',
+      'polygonal',
+      'freehand',
+      'freehand',
+      'freehand',
+    ]);
   });
 });
