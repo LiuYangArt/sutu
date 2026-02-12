@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Paintbrush, SlidersHorizontal } from 'lucide-react';
 import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
 import { useToolStore } from '@/stores/tool';
@@ -5,6 +6,105 @@ import { usePanelStore } from '@/stores/panel';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
+const BRUSH_SIZE_MIN = 1;
+const BRUSH_SIZE_MAX = 1000;
+const UNIT_PERCENT_MIN = 1;
+const UNIT_PERCENT_MAX = 100;
+const UNIT_VALUE_MIN = 0.01;
+const UNIT_VALUE_MAX = 1;
+const UNIT_VALUE_STEP = 0.01;
+
+function clampValue(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function parseDraftValue(draft: string, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseFloat(draft);
+  if (Number.isNaN(parsed)) return fallback;
+  return clampValue(parsed, min, max);
+}
+
+function percentToUnit(value: number): number {
+  return Math.round(value) / 100;
+}
+
+interface EditableNumericValueProps {
+  value: number;
+  displayValue: string;
+  min: number;
+  max: number;
+  onCommit: (value: number) => void;
+}
+
+function EditableNumericValue({
+  value,
+  displayValue,
+  min,
+  max,
+  onCommit,
+}: EditableNumericValueProps): JSX.Element {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(value.toString());
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraft(value.toString());
+    }
+  }, [value, isEditing]);
+
+  useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  function commitEdit(): void {
+    const nextValue = parseDraftValue(draft, value, min, max);
+    onCommit(nextValue);
+    setIsEditing(false);
+  }
+
+  function cancelEdit(): void {
+    setDraft(value.toString());
+    setIsEditing(false);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Enter') {
+      commitEdit();
+      return;
+    }
+    if (event.key === 'Escape') {
+      cancelEdit();
+    }
+  }
+
+  if (isEditing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        className="setting-value-input"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commitEdit}
+        onKeyDown={handleKeyDown}
+      />
+    );
+  }
+
+  return (
+    <span
+      className="setting-value editable"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => setIsEditing(true)}
+      title="Click to edit"
+    >
+      {displayValue}
+    </span>
+  );
+}
 
 /** Pressure toggle button component */
 function PressureToggle({
@@ -52,13 +152,13 @@ export function BrushToolbar(): JSX.Element {
   const openPanel = usePanelStore((s) => s.openPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
 
-  const toggleBrushPanel = () => {
+  function toggleBrushPanel(): void {
     if (brushPanelOpen) {
       closePanel('brush-panel');
     } else {
       openPanel('brush-panel');
     }
-  };
+  }
 
   function openBrushLibrary(): void {
     const win = window as Window & { __openBrushLibrary?: () => void };
@@ -74,14 +174,18 @@ export function BrushToolbar(): JSX.Element {
     calculateValue: calculateSizeValue,
   } = useNonLinearSlider({
     value: currentSize,
-    min: 1,
-    max: 1000,
+    min: BRUSH_SIZE_MIN,
+    max: BRUSH_SIZE_MAX,
     nonLinearConfig: BRUSH_SIZE_SLIDER_CONFIG,
   });
 
+  const roundedCurrentSize = Math.round(currentSize);
+  const flowPercent = Math.round(brushFlow * 100);
+  const opacityPercent = Math.round(brushOpacity * 100);
+
   return (
     <div className="toolbar-section brush-settings">
-      <label className="setting">
+      <div className="setting">
         <span className="setting-label">Size</span>
         <PressureToggle
           enabled={pressureSizeEnabled}
@@ -96,10 +200,16 @@ export function BrushToolbar(): JSX.Element {
           value={sizeSliderPosition}
           onChange={(e) => setCurrentSize(calculateSizeValue(Number(e.target.value)))}
         />
-        <span className="setting-value">{currentSize}px</span>
-      </label>
+        <EditableNumericValue
+          value={roundedCurrentSize}
+          displayValue={`${roundedCurrentSize}px`}
+          min={BRUSH_SIZE_MIN}
+          max={BRUSH_SIZE_MAX}
+          onCommit={(nextValue) => setCurrentSize(Math.round(nextValue))}
+        />
+      </div>
 
-      <label className="setting">
+      <div className="setting">
         <span className="setting-label">Flow</span>
         <PressureToggle
           enabled={pressureFlowEnabled}
@@ -108,16 +218,22 @@ export function BrushToolbar(): JSX.Element {
         />
         <input
           type="range"
-          min="0.01"
-          max="1"
-          step="0.01"
+          min={UNIT_VALUE_MIN}
+          max={UNIT_VALUE_MAX}
+          step={UNIT_VALUE_STEP}
           value={brushFlow}
           onChange={(e) => setBrushFlow(Number(e.target.value))}
         />
-        <span className="setting-value">{Math.round(brushFlow * 100)}%</span>
-      </label>
+        <EditableNumericValue
+          value={flowPercent}
+          displayValue={`${flowPercent}%`}
+          min={UNIT_PERCENT_MIN}
+          max={UNIT_PERCENT_MAX}
+          onCommit={(nextValue) => setBrushFlow(percentToUnit(nextValue))}
+        />
+      </div>
 
-      <label className="setting">
+      <div className="setting">
         <span className="setting-label">Opacity</span>
         <PressureToggle
           enabled={pressureOpacityEnabled}
@@ -126,14 +242,20 @@ export function BrushToolbar(): JSX.Element {
         />
         <input
           type="range"
-          min="0.01"
-          max="1"
-          step="0.01"
+          min={UNIT_VALUE_MIN}
+          max={UNIT_VALUE_MAX}
+          step={UNIT_VALUE_STEP}
           value={brushOpacity}
           onChange={(e) => setBrushOpacity(Number(e.target.value))}
         />
-        <span className="setting-value">{Math.round(brushOpacity * 100)}%</span>
-      </label>
+        <EditableNumericValue
+          value={opacityPercent}
+          displayValue={`${opacityPercent}%`}
+          min={UNIT_PERCENT_MIN}
+          max={UNIT_PERCENT_MAX}
+          onCommit={(nextValue) => setBrushOpacity(percentToUnit(nextValue))}
+        />
+      </div>
 
       {currentTool === 'eraser' && (
         <button
