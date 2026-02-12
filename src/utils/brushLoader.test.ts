@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetBrushTextureCacheForTests,
+  getCachedBrushTexture,
   loadBrushTexture,
   prewarmBrushTextures,
 } from '@/utils/brushLoader';
@@ -41,9 +42,11 @@ describe('brushLoader cache behavior', () => {
 
     const first = await loadBrushTexture('tip-cache-hit', 2, 2);
     const second = await loadBrushTexture('tip-cache-hit', 2, 2);
+    const syncCached = getCachedBrushTexture('tip-cache-hit');
 
     expect(first).not.toBeNull();
     expect(second).toBe(first);
+    expect(syncCached).toBe(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

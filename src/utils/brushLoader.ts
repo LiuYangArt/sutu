@@ -35,6 +35,23 @@ function readTextureCache(textureId: string): ImageData | null {
   return cached;
 }
 
+export function getCachedBrushTexture(textureId: string): ImageData | null {
+  return readTextureCache(textureId);
+}
+
+function buildImageDataFromGray(gray: Uint8Array, width: number, height: number): ImageData {
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0; i < gray.length; i++) {
+    const v = gray[i]!;
+    const idx = i * 4;
+    rgba[idx] = v;
+    rgba[idx + 1] = v;
+    rgba[idx + 2] = v;
+    rgba[idx + 3] = 255;
+  }
+  return new ImageData(rgba, width, height);
+}
+
 /**
  * Loads a brush texture via the project:// protocol (mapped to http://project.localhost)
  * Decompresses LZ4 Gray8 data and converts to RGBA ImageData
@@ -83,18 +100,7 @@ export async function loadBrushTexture(
       const compressed = new Uint8Array(await response.arrayBuffer());
       const gray = decompressLz4PrependSize(compressed);
 
-      // Gray8 → RGBA conversion
-      const rgba = new Uint8ClampedArray(width * height * 4);
-      for (let i = 0; i < gray.length; i++) {
-        const v = gray[i]!;
-        const idx = i * 4;
-        rgba[idx] = v;
-        rgba[idx + 1] = v;
-        rgba[idx + 2] = v;
-        rgba[idx + 3] = 255;
-      }
-
-      const imageData = new ImageData(rgba, width, height);
+      const imageData = buildImageDataFromGray(gray, width, height);
       touchTextureCache(textureId, imageData);
       return imageData;
     } catch (err) {
