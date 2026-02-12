@@ -1,7 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { CurvesPanel } from '../index';
-import type { CurvesCommitResult, CurvesPreviewResult } from '@/types/curves';
+import type {
+  CurvesCommitResult,
+  CurvesHistogramByChannel,
+  CurvesPreviewResult,
+} from '@/types/curves';
 
 type TestWindow = Window & {
   __canvasCurvesBeginSession?: () => {
@@ -9,6 +13,7 @@ type TestWindow = Window & {
     layerId: string;
     hasSelection: boolean;
     histogram: number[];
+    histogramByChannel: CurvesHistogramByChannel;
     renderMode: 'gpu' | 'cpu';
   } | null;
   __canvasCurvesPreview?: (sessionId: string, payload: unknown) => CurvesPreviewResult;
@@ -34,6 +39,23 @@ function clientYFromCurveOutput(output: number): number {
   return GRAPH_TOP + ((255 - output) / 255) * GRAPH_HEIGHT;
 }
 
+function createHistogramWithPeak(bin: number, weight = 1): number[] {
+  const histogram = new Array<number>(256).fill(0);
+  histogram[bin] = weight;
+  return histogram;
+}
+
+function createHistogramByChannel(
+  peaks?: Partial<Record<'rgb' | 'red' | 'green' | 'blue', number>>
+): CurvesHistogramByChannel {
+  return {
+    rgb: createHistogramWithPeak(peaks?.rgb ?? 0, 1),
+    red: createHistogramWithPeak(peaks?.red ?? 0, 1),
+    green: createHistogramWithPeak(peaks?.green ?? 0, 1),
+    blue: createHistogramWithPeak(peaks?.blue ?? 0, 1),
+  };
+}
+
 describe('CurvesPanel', () => {
   const beginSpy = vi.fn<
     [],
@@ -42,6 +64,7 @@ describe('CurvesPanel', () => {
       layerId: string;
       hasSelection: boolean;
       histogram: number[];
+      histogramByChannel: CurvesHistogramByChannel;
       renderMode: 'gpu' | 'cpu';
     } | null
   >();
@@ -63,6 +86,7 @@ describe('CurvesPanel', () => {
       layerId: 'layer_1',
       hasSelection: false,
       histogram: new Array(256).fill(0),
+      histogramByChannel: createHistogramByChannel(),
       renderMode: 'cpu',
     });
     previewSpy.mockReturnValue({
@@ -432,5 +456,47 @@ describe('CurvesPanel', () => {
     ) as SVGPathElement | null;
     expect(redOverlayAfterRgbEdit).toBeTruthy();
     expect(redOverlayAfterRgbEdit?.getAttribute('d')).toBe(beforeRgbEditPath);
+  });
+
+  it('切换通道时应展示对应通道直方图', () => {
+    beginSpy.mockReturnValueOnce({
+      sessionId,
+      layerId: 'layer_1',
+      hasSelection: false,
+      histogram: createHistogramWithPeak(12, 4),
+      histogramByChannel: createHistogramByChannel({
+        rgb: 12,
+        red: 48,
+        green: 96,
+        blue: 144,
+      }),
+      renderMode: 'cpu',
+    });
+
+    const { container } = render(<CurvesPanel />);
+    const channelSelect = screen.getByRole('combobox');
+    const histogramPath = () =>
+      container.querySelector('path.curves-panel__histogram')?.getAttribute('d') ?? null;
+
+    const rgbPath = histogramPath();
+    expect(rgbPath).not.toBeNull();
+
+    fireEvent.change(channelSelect, { target: { value: 'red' } });
+    const redPath = histogramPath();
+    expect(redPath).not.toBeNull();
+    expect(redPath).not.toBe(rgbPath);
+
+    fireEvent.change(channelSelect, { target: { value: 'green' } });
+    const greenPath = histogramPath();
+    expect(greenPath).not.toBeNull();
+    expect(greenPath).not.toBe(redPath);
+
+    fireEvent.change(channelSelect, { target: { value: 'blue' } });
+    const bluePath = histogramPath();
+    expect(bluePath).not.toBeNull();
+    expect(bluePath).not.toBe(greenPath);
+
+    fireEvent.change(channelSelect, { target: { value: 'rgb' } });
+    expect(histogramPath()).toBe(rgbPath);
   });
 });

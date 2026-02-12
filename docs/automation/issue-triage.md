@@ -16,7 +16,7 @@
 
 1. 每 6 小时增量扫描（默认）
 2. 每天 1 次全量扫描
-3. 每 30 分钟恢复扫描（仅处理 `triage:needs-ai-retry`）
+3. 每 30 分钟恢复扫描（仅处理 `triage:needs-ai-retry`，不更新 `docs/todo/issues.md`）
 
 同时支持 `workflow_dispatch` 手动触发并选择 `incremental/full/retry`。
 
@@ -60,7 +60,7 @@ AI 请求重试策略默认：
 
 ## 7. Todo 文件格式
 
-自动维护文件：`docs/todo/issues.md`
+自动维护文件：`docs/todo/issues.md`（仅 `incremental/full` 模式更新）
 
 固定区块：
 

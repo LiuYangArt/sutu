@@ -623,26 +623,30 @@ async function main() {
 
   const duplicateStats = await runDuplicateDetection({ aiConfig, allOpenIssues, targetIssues });
 
-  const refreshedOpenIssues = listOpenIssues();
-  const closedDuplicates = listClosedDuplicateIssues();
-  const todoPayload = buildTodoPayload(refreshedOpenIssues, closedDuplicates);
-  const markdown = renderTodoMarkdown({
-    generatedAt: new Date().toISOString(),
-    repository,
-    sections: todoPayload.sections,
-    duplicates: todoPayload.duplicates,
-  });
-
-  const writeResult = writeTodoFile(markdown);
-  if (writeResult.changed) {
-    log(`Updated ${TODO_FILE_PATH}`);
-    if (!SKIP_GIT_WRITE && !READ_ONLY) {
-      commitAndPushTodo(defaultBranch);
-    } else {
-      log('Skip git write or read-only mode is enabled; not committing todo changes.');
-    }
+  if (TRIAGE_MODE === 'retry') {
+    log(`Skip ${TODO_FILE_PATH} update in retry mode to reduce write frequency.`);
   } else {
-    log(`${TODO_FILE_PATH} unchanged.`);
+    const refreshedOpenIssues = listOpenIssues();
+    const closedDuplicates = listClosedDuplicateIssues();
+    const todoPayload = buildTodoPayload(refreshedOpenIssues, closedDuplicates);
+    const markdown = renderTodoMarkdown({
+      generatedAt: new Date().toISOString(),
+      repository,
+      sections: todoPayload.sections,
+      duplicates: todoPayload.duplicates,
+    });
+
+    const writeResult = writeTodoFile(markdown);
+    if (writeResult.changed) {
+      log(`Updated ${TODO_FILE_PATH}`);
+      if (!SKIP_GIT_WRITE && !READ_ONLY) {
+        commitAndPushTodo(defaultBranch);
+      } else {
+        log('Skip git write or read-only mode is enabled; not committing todo changes.');
+      }
+    } else {
+      log(`${TODO_FILE_PATH} unchanged.`);
+    }
   }
 
   log(
