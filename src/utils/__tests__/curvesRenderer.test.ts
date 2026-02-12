@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyCurvesToImageData, buildCurveLut, createIdentityLut } from '@/utils/curvesRenderer';
+import {
+  applyCurvesToImageData,
+  buildCurveLut,
+  computeHistogramsByChannel,
+  createIdentityLut,
+} from '@/utils/curvesRenderer';
 
 function createImageDataFromRgba(width: number, height: number, rgba: number[]): ImageData {
   return new ImageData(new Uint8ClampedArray(rgba), width, height);
@@ -214,5 +219,37 @@ describe('curvesRenderer', () => {
     expect(result.data[4]).toBe(30);
     expect(result.data[5]).toBe(30);
     expect(result.data[6]).toBe(30);
+  });
+
+  it('computes independent per-channel histograms for curves panel', () => {
+    const image = createImageDataFromRgba(2, 1, [10, 20, 30, 255, 100, 110, 120, 255]);
+
+    const histogramByChannel = computeHistogramsByChannel(image);
+
+    expect(histogramByChannel.red[10]).toBe(1);
+    expect(histogramByChannel.red[100]).toBe(1);
+    expect(histogramByChannel.green[20]).toBe(1);
+    expect(histogramByChannel.green[110]).toBe(1);
+    expect(histogramByChannel.blue[30]).toBe(1);
+    expect(histogramByChannel.blue[120]).toBe(1);
+
+    const luma0 = Math.round(0.2126 * 10 + 0.7152 * 20 + 0.0722 * 30);
+    const luma1 = Math.round(0.2126 * 100 + 0.7152 * 110 + 0.0722 * 120);
+    expect(histogramByChannel.rgb[luma0]).toBe(1);
+    expect(histogramByChannel.rgb[luma1]).toBe(1);
+  });
+
+  it('respects selection mask in all histogram channels', () => {
+    const image = createImageDataFromRgba(2, 1, [10, 20, 30, 255, 100, 110, 120, 255]);
+    const selectionMask = createImageDataFromRgba(2, 1, [0, 0, 0, 255, 0, 0, 0, 0]);
+
+    const histogramByChannel = computeHistogramsByChannel(image, selectionMask);
+
+    expect(histogramByChannel.red[10]).toBe(1);
+    expect(histogramByChannel.red[100] ?? 0).toBe(0);
+    expect(histogramByChannel.green[20]).toBe(1);
+    expect(histogramByChannel.green[110] ?? 0).toBe(0);
+    expect(histogramByChannel.blue[30]).toBe(1);
+    expect(histogramByChannel.blue[120] ?? 0).toBe(0);
   });
 });

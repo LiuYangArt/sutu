@@ -8,6 +8,7 @@ export interface CurvePoint {
 }
 
 export type CurvesPointsByChannel = Record<CurvesChannel, CurvePoint[]>;
+export type CurvesHistogramByChannel = Record<CurvesChannel, number[]>;
 
 export interface CurvesState {
   selectedChannel: CurvesChannel;
@@ -67,5 +68,6 @@ export interface CurvesSessionInfo {
   layerId: string;
   hasSelection: boolean;
   histogram: number[];
+  histogramByChannel: CurvesHistogramByChannel;
   renderMode: 'gpu' | 'cpu';
 }
