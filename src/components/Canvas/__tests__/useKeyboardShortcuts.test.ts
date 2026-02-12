@@ -147,7 +147,7 @@ describe('useKeyboardShortcuts', () => {
     expect(handleDuplicateActiveLayer).toHaveBeenCalledTimes(1);
   });
 
-  it('handles Ctrl+E / Ctrl+Shift+E for merge shortcuts', () => {
+  it('handles Ctrl+E / Ctrl+Alt+E for merge shortcuts', () => {
     const handleMergeSelectedLayers = vi.fn();
     const handleMergeAllLayers = vi.fn();
 
@@ -177,6 +177,49 @@ describe('useKeyboardShortcuts', () => {
       code: 'KeyE',
       ctrlKey: true,
     });
+    const ctrlAltE = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyE',
+      ctrlKey: true,
+      altKey: true,
+    });
+
+    act(() => {
+      window.dispatchEvent(ctrlE);
+      window.dispatchEvent(ctrlAltE);
+    });
+
+    expect(ctrlE.defaultPrevented).toBe(true);
+    expect(ctrlAltE.defaultPrevented).toBe(true);
+    expect(handleMergeSelectedLayers).toHaveBeenCalledTimes(1);
+    expect(handleMergeAllLayers).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not consume Ctrl+Shift+E so app-level quick export can handle it', () => {
+    const handleMergeSelectedLayers = vi.fn();
+    const handleMergeAllLayers = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleMergeSelectedLayers,
+        handleMergeAllLayers,
+      })
+    );
+
     const ctrlShiftE = new KeyboardEvent('keydown', {
       bubbles: true,
       cancelable: true,
@@ -186,14 +229,12 @@ describe('useKeyboardShortcuts', () => {
     });
 
     act(() => {
-      window.dispatchEvent(ctrlE);
       window.dispatchEvent(ctrlShiftE);
     });
 
-    expect(ctrlE.defaultPrevented).toBe(true);
-    expect(ctrlShiftE.defaultPrevented).toBe(true);
-    expect(handleMergeSelectedLayers).toHaveBeenCalledTimes(1);
-    expect(handleMergeAllLayers).toHaveBeenCalledTimes(1);
+    expect(ctrlShiftE.defaultPrevented).toBe(false);
+    expect(handleMergeSelectedLayers).not.toHaveBeenCalled();
+    expect(handleMergeAllLayers).not.toHaveBeenCalled();
   });
 
   it('handles N: create layer', () => {

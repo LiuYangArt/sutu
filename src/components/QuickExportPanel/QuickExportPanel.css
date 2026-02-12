@@ -79,20 +79,15 @@
   border: 1px solid var(--border);
 }
 
-.quick-export-ratio-lock {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--primary-border);
-  background: var(--primary-bg);
-  color: var(--primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 18px;
-  cursor: default;
-  flex-shrink: 0;
+.quick-export-field input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.quick-export-field input[type='number']::-webkit-outer-spin-button,
+.quick-export-field input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .quick-export-path-row {

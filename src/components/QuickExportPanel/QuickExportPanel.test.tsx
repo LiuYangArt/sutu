@@ -39,8 +39,7 @@ describe('QuickExportPanel', () => {
         ...DEFAULT_QUICK_EXPORT_SETTINGS,
         lastPath: '',
         lastFormat: 'png',
-        lastWidth: 400,
-        lastHeight: 200,
+        maxSize: 400,
         transparentBackground: true,
         backgroundPreset: 'current-bg',
       },
@@ -52,14 +51,14 @@ describe('QuickExportPanel', () => {
     expect(screen.getByLabelText('Export Path')).toHaveValue('D:\\Artwork\\sample.png');
   });
 
-  it('keeps ratio locked when width changes', () => {
+  it('updates current output resolution by max size', () => {
     render(<QuickExportPanel isOpen onClose={vi.fn()} />);
 
-    fireEvent.change(screen.getByLabelText('Export Width'), {
-      target: { value: '800' },
+    fireEvent.change(screen.getByLabelText('Export Max Size'), {
+      target: { value: '100' },
     });
 
-    expect(screen.getByLabelText('Export Height')).toHaveValue(400);
+    expect(screen.getByText('100 × 50 px')).toBeInTheDocument();
   });
 
   it('forces alpha off for JPG and updates path extension', () => {

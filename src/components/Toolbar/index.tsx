@@ -214,6 +214,7 @@ function AppMenu(): JSX.Element {
           <button className="menu-item" onClick={handleOpenQuickExport}>
             <Share size={16} />
             <span>Export</span>
+            <span className="shortcut">Ctrl+Shift+E</span>
           </button>
 
           <div className="menu-divider" />
@@ -331,7 +332,7 @@ export function Toolbar(): JSX.Element {
         <button onClick={handleOpenCanvasSizePanel} title="Canvas Size">
           <ImageUpscale {...ICON_PROPS} />
         </button>
-        <button onClick={handleOpenQuickExportPanel} title="Quick Export">
+        <button onClick={handleOpenQuickExportPanel} title="Quick Export (Ctrl+Shift+E)">
           <Share {...ICON_PROPS} />
         </button>
       </div>

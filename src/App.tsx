@@ -122,7 +122,7 @@ function App() {
   }, []);
 
   // Drawing shortcuts: D (reset colors), X (swap colors), I (eyedropper), Alt+Backspace (fill), F5 (brush panel), Ctrl+F5 (brush library), Ctrl+Alt+Shift+U (settings)
-  // File shortcuts: Ctrl+S (save), Ctrl+Shift+S (save as), Ctrl+O (open)
+  // File shortcuts: Ctrl+S (save), Ctrl+Shift+S (save as), Ctrl+O (open), Ctrl+Shift+E (quick export)
   const togglePanel = usePanelStore((s) => s.togglePanel);
   const isSettingsOpen = useSettingsStore((s) => s.isOpen);
   const openSettings = useSettingsStore((s) => s.openSettings);
@@ -151,6 +151,13 @@ function App() {
       if (e.ctrlKey && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         fileOpen();
+        return;
+      }
+
+      // Ctrl+Shift+E: Open quick export panel
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        setShowQuickExportPanel(true);
         return;
       }
 

@@ -3,6 +3,7 @@ import {
   buildDefaultQuickExportPath,
   isLikelyValidQuickExportPath,
   replacePathExtension,
+  resolveQuickExportOutputSize,
   resolveQuickExportBackgroundColor,
 } from './quickExport';
 
@@ -29,5 +30,11 @@ describe('quickExport utils', () => {
     expect(isLikelyValidQuickExportPath('C:\\Exports\\image.png')).toBe(true);
     expect(isLikelyValidQuickExportPath('')).toBe(false);
     expect(isLikelyValidQuickExportPath('C:\\Exports\\')).toBe(false);
+  });
+
+  it('resolves output size from max size while preserving aspect ratio', () => {
+    expect(resolveQuickExportOutputSize(4000, 3000, 2000)).toEqual({ width: 2000, height: 1500 });
+    expect(resolveQuickExportOutputSize(3000, 4000, 2000)).toEqual({ width: 1500, height: 2000 });
+    expect(resolveQuickExportOutputSize(1200, 800, 2000)).toEqual({ width: 1200, height: 800 });
   });
 });

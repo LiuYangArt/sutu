@@ -157,11 +157,15 @@ export function useKeyboardShortcuts({
             return;
           }
           case 'KeyE': {
-            e.preventDefault();
-            if (e.shiftKey) {
+            if (e.altKey && !e.shiftKey) {
+              e.preventDefault();
               handleMergeAllLayers?.();
-            } else {
+              return;
+            }
+            if (!e.altKey && !e.shiftKey) {
+              e.preventDefault();
               handleMergeSelectedLayers?.();
+              return;
             }
             return;
           }

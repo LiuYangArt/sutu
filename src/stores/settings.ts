@@ -202,8 +202,7 @@ export const DEFAULT_NEW_FILE_SETTINGS: NewFileSettings = {
 export const DEFAULT_QUICK_EXPORT_SETTINGS: QuickExportSettings = {
   lastPath: '',
   lastFormat: 'png',
-  lastWidth: 0,
-  lastHeight: 0,
+  maxSize: 0,
   transparentBackground: true,
   backgroundPreset: 'current-bg',
 };
@@ -258,13 +257,21 @@ function mergeLoadedQuickExportSettings(loadedQuickExport: unknown): QuickExport
     return defaults;
   }
 
-  const partial = loadedQuickExport as Partial<QuickExportSettings>;
+  const partial = loadedQuickExport as Partial<QuickExportSettings> & {
+    lastWidth?: unknown;
+    lastHeight?: unknown;
+  };
+  const legacyWidth = normalizePositiveDimension(partial.lastWidth, 0);
+  const legacyHeight = normalizePositiveDimension(partial.lastHeight, 0);
+  const legacyMaxSize = Math.max(legacyWidth, legacyHeight);
 
   return {
     lastPath: typeof partial.lastPath === 'string' ? partial.lastPath : defaults.lastPath,
     lastFormat: normalizeQuickExportFormat(partial.lastFormat),
-    lastWidth: normalizePositiveDimension(partial.lastWidth, defaults.lastWidth),
-    lastHeight: normalizePositiveDimension(partial.lastHeight, defaults.lastHeight),
+    maxSize: normalizePositiveDimension(
+      partial.maxSize,
+      legacyMaxSize > 0 ? legacyMaxSize : defaults.maxSize
+    ),
     transparentBackground:
       typeof partial.transparentBackground === 'boolean'
         ? partial.transparentBackground

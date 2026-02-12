@@ -165,8 +165,7 @@ describe('settings store newFile persistence', () => {
     useSettingsStore.getState().setQuickExport({
       lastPath: 'D:\\exports\\sample.png',
       lastFormat: 'png',
-      lastWidth: 1000,
-      lastHeight: 500,
+      maxSize: 1000,
       transparentBackground: false,
       backgroundPreset: 'black',
     });
@@ -191,8 +190,7 @@ describe('settings store newFile persistence', () => {
       quickExport?: {
         lastPath?: string;
         lastFormat?: string;
-        lastWidth?: number;
-        lastHeight?: number;
+        maxSize?: number;
         transparentBackground?: boolean;
         backgroundPreset?: string;
       };
@@ -211,11 +209,31 @@ describe('settings store newFile persistence', () => {
     ]);
     expect(parsed.quickExport?.lastPath).toBe('D:\\exports\\sample.png');
     expect(parsed.quickExport?.lastFormat).toBe('png');
-    expect(parsed.quickExport?.lastWidth).toBe(1000);
-    expect(parsed.quickExport?.lastHeight).toBe(500);
+    expect(parsed.quickExport?.maxSize).toBe(1000);
     expect(parsed.quickExport?.transparentBackground).toBe(false);
     expect(parsed.quickExport?.backgroundPreset).toBe('black');
     expect(parsed.brushLibrary?.selectedPresetByTool?.brush).toBe('preset-soft-round');
     expect(parsed.brushLibrary?.selectedPresetByTool?.eraser).toBe('preset-hard-eraser');
+  });
+
+  it('migrates legacy quickExport width/height into maxSize', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        quickExport: {
+          lastPath: 'D:\\exports\\legacy.png',
+          lastFormat: 'png',
+          lastWidth: 960,
+          lastHeight: 540,
+          transparentBackground: true,
+          backgroundPreset: 'current-bg',
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    const state = useSettingsStore.getState();
+
+    expect(state.quickExport.maxSize).toBe(960);
   });
 });

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Link2, Share, FolderOpen, ArrowUp } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { X, Share, FolderOpen, ArrowUp } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
@@ -13,6 +13,7 @@ import {
   getMimeTypeForQuickExportFormat,
   isLikelyValidQuickExportPath,
   replacePathExtension,
+  resolveQuickExportOutputSize,
   resolveQuickExportBackgroundColor,
   type QuickExportBackgroundPreset,
   type QuickExportFormat,
@@ -74,11 +75,17 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function resolveInitialDimension(value: number, fallback: number): number {
+function resolveInitialMaxSize(value: number, width: number, height: number): number {
   if (Number.isFinite(value) && value > 0) {
-    return value;
+    return Math.round(value);
   }
-  return fallback;
+  return Math.max(1, Math.max(width, height));
+}
+
+function normalizeExportPath(path: string, format: QuickExportFormat): string {
+  const trimmed = path.trim();
+  if (!trimmed) return '';
+  return replacePathExtension(trimmed, format);
 }
 
 interface QuickExportPanelProps {
@@ -96,9 +103,9 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
   const quickExport = useSettingsStore((s) => s.quickExport);
   const setQuickExport = useSettingsStore((s) => s.setQuickExport);
   const pushToast = useToastStore((s) => s.pushToast);
+  const documentMaxSize = Math.max(doc.width, doc.height);
 
-  const [widthInput, setWidthInput] = useState(String(doc.width));
-  const [heightInput, setHeightInput] = useState(String(doc.height));
+  const [maxSizeInput, setMaxSizeInput] = useState(String(documentMaxSize));
   const [format, setFormat] = useState<QuickExportFormat>('png');
   const [exportPath, setExportPath] = useState('');
   const [transparentBackground, setTransparentBackground] = useState(true);
@@ -106,67 +113,41 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
     useState<QuickExportBackgroundPreset>('current-bg');
   const [isExporting, setIsExporting] = useState(false);
 
-  const aspectRatioRef = useRef(doc.width / Math.max(1, doc.height));
-
   useEffect(() => {
     if (!isOpen) return;
 
-    const initialWidth = resolveInitialDimension(quickExport.lastWidth, doc.width);
-    const initialHeight = resolveInitialDimension(quickExport.lastHeight, doc.height);
+    const initialMaxSize = resolveInitialMaxSize(quickExport.maxSize, doc.width, doc.height);
     const initialFormat = quickExport.lastFormat;
 
-    let initialPath = quickExport.lastPath.trim();
-    if (!initialPath && doc.filePath) {
-      initialPath = buildDefaultQuickExportPath(doc.filePath, initialFormat);
-    }
-    if (initialPath) {
-      initialPath = replacePathExtension(initialPath, initialFormat);
-    }
+    const fallbackPath = doc.filePath
+      ? buildDefaultQuickExportPath(doc.filePath, initialFormat)
+      : '';
+    const initialPath = normalizeExportPath(quickExport.lastPath || fallbackPath, initialFormat);
 
-    setWidthInput(String(initialWidth));
-    setHeightInput(String(initialHeight));
+    setMaxSizeInput(String(initialMaxSize));
     setFormat(initialFormat);
     setExportPath(initialPath);
     setTransparentBackground(initialFormat === 'jpg' ? false : quickExport.transparentBackground);
     setBackgroundPreset(quickExport.backgroundPreset);
     setIsExporting(false);
-    aspectRatioRef.current = initialWidth / Math.max(1, initialHeight);
   }, [isOpen, doc.width, doc.height, doc.filePath, quickExport]);
 
-  const parsedSize = useMemo(
-    () => ({
-      width: parsePositiveInt(widthInput),
-      height: parsePositiveInt(heightInput),
-    }),
-    [widthInput, heightInput]
+  const parsedMaxSize = useMemo(() => parsePositiveInt(maxSizeInput), [maxSizeInput]);
+  const resolvedOutputSize = useMemo(
+    () => resolveQuickExportOutputSize(doc.width, doc.height, parsedMaxSize ?? documentMaxSize),
+    [doc.width, doc.height, parsedMaxSize, documentMaxSize]
   );
 
   const canUseTransparency = format !== 'jpg';
   const effectiveTransparentBackground = canUseTransparency && transparentBackground;
   const canExport =
-    !isExporting &&
-    parsedSize.width !== null &&
-    parsedSize.height !== null &&
-    isLikelyValidQuickExportPath(exportPath);
+    !isExporting && parsedMaxSize !== null && isLikelyValidQuickExportPath(exportPath);
 
-  const handleWidthChange = (value: string) => {
-    setWidthInput(value);
-    const width = parsePositiveInt(value);
-    if (!width || aspectRatioRef.current <= 0) return;
-
-    const height = Math.max(1, Math.round(width / aspectRatioRef.current));
-    setHeightInput(String(height));
-    setQuickExport({ lastWidth: width, lastHeight: height });
-  };
-
-  const handleHeightChange = (value: string) => {
-    setHeightInput(value);
-    const height = parsePositiveInt(value);
-    if (!height || aspectRatioRef.current <= 0) return;
-
-    const width = Math.max(1, Math.round(height * aspectRatioRef.current));
-    setWidthInput(String(width));
-    setQuickExport({ lastWidth: width, lastHeight: height });
+  const handleMaxSizeChange = (value: string) => {
+    setMaxSizeInput(value);
+    const maxSize = parsePositiveInt(value);
+    if (!maxSize) return;
+    setQuickExport({ maxSize });
   };
 
   const handleFormatChange = (nextFormat: QuickExportFormat) => {
@@ -194,13 +175,12 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
   };
 
   const handlePathBlur = () => {
-    const trimmed = exportPath.trim();
-    if (!trimmed) {
+    const normalized = normalizeExportPath(exportPath, format);
+    if (!normalized) {
       setExportPath('');
       setQuickExport({ lastPath: '' });
       return;
     }
-    const normalized = replacePathExtension(trimmed, format);
     setExportPath(normalized);
     setQuickExport({ lastPath: normalized });
   };
@@ -218,10 +198,13 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
         filters: getFilters(format),
       });
 
-      if (typeof selected !== 'string' || !selected.trim()) {
+      if (typeof selected !== 'string') {
         return;
       }
-      const normalized = replacePathExtension(selected, format);
+      const normalized = normalizeExportPath(selected, format);
+      if (!normalized) {
+        return;
+      }
       setExportPath(normalized);
       setQuickExport({ lastPath: normalized });
     } catch (error) {
@@ -243,15 +226,15 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
   };
 
   const handleExport = async () => {
-    const width = parsedSize.width;
-    const height = parsedSize.height;
+    const maxSize = parsedMaxSize;
     const path = exportPath.trim();
-    if (!width || !height || !isLikelyValidQuickExportPath(path)) {
-      pushToast('Please enter valid export size and path.', { variant: 'error' });
+    if (!maxSize || !isLikelyValidQuickExportPath(path)) {
+      pushToast('Please enter valid max size and path.', { variant: 'error' });
       return;
     }
 
     const outputPath = replacePathExtension(path, format);
+    const outputSize = resolveQuickExportOutputSize(doc.width, doc.height, maxSize);
     setIsExporting(true);
     try {
       const win = window as Window & {
@@ -269,8 +252,8 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
 
       const image = await loadImageFromDataUrl(flattenedDataUrl);
       const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = width;
-      exportCanvas.height = height;
+      exportCanvas.width = outputSize.width;
+      exportCanvas.height = outputSize.height;
       const ctx = exportCanvas.getContext('2d');
       if (!ctx) {
         throw new Error('Failed to create export canvas context');
@@ -278,14 +261,14 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
 
       if (!effectiveTransparentBackground) {
         ctx.fillStyle = resolveQuickExportBackgroundColor(backgroundPreset, backgroundColor);
-        ctx.fillRect(0, 0, width, height);
+        ctx.fillRect(0, 0, outputSize.width, outputSize.height);
       } else {
-        ctx.clearRect(0, 0, width, height);
+        ctx.clearRect(0, 0, outputSize.width, outputSize.height);
       }
 
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(image, 0, 0, width, height);
+      ctx.drawImage(image, 0, 0, outputSize.width, outputSize.height);
 
       const mimeType = getMimeTypeForQuickExportFormat(format);
       const bytes = await canvasToBytes(
@@ -300,8 +283,7 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
       setQuickExport({
         lastPath: outputPath,
         lastFormat: format,
-        lastWidth: width,
-        lastHeight: height,
+        maxSize,
         transparentBackground: effectiveTransparentBackground,
         backgroundPreset,
       });
@@ -368,40 +350,22 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
           </div>
 
           <div className="quick-export-field">
-            <label>Current</label>
+            <label>Output Size</label>
             <div className="quick-export-current">
-              {doc.width} × {doc.height} px
+              {resolvedOutputSize.width} × {resolvedOutputSize.height} px
             </div>
           </div>
 
-          <div className="quick-export-row">
-            <div className="quick-export-field">
-              <label>Width</label>
-              <input
-                type="number"
-                aria-label="Export Width"
-                min={1}
-                step={1}
-                value={widthInput}
-                onChange={(e) => handleWidthChange(e.target.value)}
-              />
-            </div>
-
-            <button className="quick-export-ratio-lock" type="button" title="Aspect ratio locked">
-              <Link2 size={16} />
-            </button>
-
-            <div className="quick-export-field">
-              <label>Height</label>
-              <input
-                type="number"
-                aria-label="Export Height"
-                min={1}
-                step={1}
-                value={heightInput}
-                onChange={(e) => handleHeightChange(e.target.value)}
-              />
-            </div>
+          <div className="quick-export-field">
+            <label>Max Size</label>
+            <input
+              type="number"
+              aria-label="Export Max Size"
+              min={1}
+              step={1}
+              value={maxSizeInput}
+              onChange={(e) => handleMaxSizeChange(e.target.value)}
+            />
           </div>
 
           <div className="quick-export-row">

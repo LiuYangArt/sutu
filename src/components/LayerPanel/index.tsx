@@ -843,7 +843,7 @@ export function LayerPanel(): JSX.Element {
             >
               <Layers size={14} />
               <span>Merge All Layers</span>
-              <span className="context-menu-shortcut">Ctrl+Shift+E</span>
+              <span className="context-menu-shortcut">Ctrl+Alt+E</span>
             </button>
             <div className="context-menu-divider" />
             <button
