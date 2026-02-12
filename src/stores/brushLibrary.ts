@@ -160,9 +160,6 @@ function buildTexturePrewarmCandidates(snapshot: BrushLibrarySnapshot): Array<{
     const textureId = preset.tipId ?? preset.id;
     const width = preset.textureWidth ?? 0;
     const height = preset.textureHeight ?? 0;
-    if (width <= 0 || height <= 0) {
-      continue;
-    }
     candidates.push({ id: textureId, width, height });
   }
 
@@ -172,9 +169,6 @@ function buildTexturePrewarmCandidates(snapshot: BrushLibrarySnapshot): Array<{
     }
     const width = tip.textureWidth ?? 0;
     const height = tip.textureHeight ?? 0;
-    if (width <= 0 || height <= 0) {
-      continue;
-    }
     candidates.push({ id: tip.id, width, height });
   }
 
@@ -322,7 +316,8 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
     }
     set(nextState);
     persistSelectionToSettings(sanitizedSelection);
-    prewarmBrushTextures(buildTexturePrewarmCandidates(snapshot), 12);
+    const prewarmCandidates = buildTexturePrewarmCandidates(snapshot);
+    prewarmBrushTextures(prewarmCandidates, prewarmCandidates.length);
   }
 
   async function reloadSnapshot(selection: BrushPresetSelectionByTool): Promise<void> {

@@ -170,11 +170,23 @@ export function prewarmBrushTextures(
 
   schedule(() => {
     void (async () => {
-      for (const candidate of unique) {
-        const width = candidate.width ?? 0;
-        const height = candidate.height ?? 0;
-        await loadBrushTexture(candidate.id, width, height);
-      }
+      const concurrency = Math.min(4, unique.length);
+      let cursor = 0;
+
+      const runWorker = async () => {
+        while (cursor < unique.length) {
+          const candidate = unique[cursor];
+          cursor += 1;
+          if (!candidate) {
+            continue;
+          }
+          const width = candidate.width ?? 0;
+          const height = candidate.height ?? 0;
+          await loadBrushTexture(candidate.id, width, height);
+        }
+      };
+
+      await Promise.all(Array.from({ length: concurrency }, () => runWorker()));
     })();
   });
 }
