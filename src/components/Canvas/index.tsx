@@ -53,6 +53,7 @@ import {
 import type {
   CurvesCommitRequest,
   CurvesCommitResult,
+  CurvesHistogramByChannel,
   CurvesPreviewPayload,
   CurvesPreviewResult,
   CurvesRuntimeError,
@@ -60,7 +61,7 @@ import type {
 } from '@/types/curves';
 import {
   applyCurvesToImageData,
-  computeLumaHistogram,
+  computeHistogramsByChannel,
   curvesPayloadToLuts,
 } from '@/utils/curvesRenderer';
 import {
@@ -262,6 +263,7 @@ interface CurvesSessionState {
   selectionMask: ImageData | null;
   selectionBounds: { x: number; y: number; width: number; height: number } | null;
   histogram: number[];
+  histogramByChannel: CurvesHistogramByChannel;
   previewCanvas: HTMLCanvasElement;
   previewRafId: number | null;
   pendingPayload: CurvesPreviewPayload | null;
@@ -2600,7 +2602,8 @@ export function Canvas() {
     previewCanvas.height = height;
     const renderMode: 'gpu' | 'cpu' = ENABLE_GPU_CURVES && gpuCurvesPathAvailable ? 'gpu' : 'cpu';
     const sessionId = createHistoryEntryId('curves');
-    const histogram = computeLumaHistogram(baseImageData, selectionMaskSnapshot);
+    const histogramByChannel = computeHistogramsByChannel(baseImageData, selectionMaskSnapshot);
+    const histogram = histogramByChannel.rgb;
 
     curvesSessionRef.current = {
       sessionId,
@@ -2610,6 +2613,7 @@ export function Canvas() {
       selectionMask: selectionMaskSnapshot,
       selectionBounds: selectionState.bounds ? { ...selectionState.bounds } : null,
       histogram,
+      histogramByChannel,
       previewCanvas,
       previewRafId: null,
       pendingPayload: null,
@@ -2630,6 +2634,7 @@ export function Canvas() {
       layerId: activeLayerId,
       hasSelection: !!selectionMaskSnapshot,
       histogram,
+      histogramByChannel,
       renderMode,
     };
   }, [activeLayerId, disposeCurvesSession, gpuCurvesPathAvailable, height, layers, width]);

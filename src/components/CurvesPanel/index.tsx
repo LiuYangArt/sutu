@@ -228,6 +228,14 @@ function formatCurvesRuntimeError(error: CurvesRuntimeError | undefined, fallbac
   return `GPU 曲线失败（${phaseLabel}）：${error.message} [${error.code}]${detail}`;
 }
 
+function resolveHistogramByChannel(
+  sessionInfo: CurvesSessionInfo | null,
+  selectedChannel: CurvesChannel
+): number[] {
+  if (!sessionInfo) return [];
+  return sessionInfo.histogramByChannel[selectedChannel] ?? sessionInfo.histogram;
+}
+
 export function CurvesPanel(): JSX.Element {
   const closePanel = usePanelStore((s) => s.closePanel);
   const pointIdRef = useRef(0);
@@ -285,7 +293,7 @@ export function CurvesPanel(): JSX.Element {
     };
   }, [pointsByChannel]);
 
-  const histogram = sessionInfo?.histogram ?? [];
+  const histogram = resolveHistogramByChannel(sessionInfo, selectedChannel);
   const histogramMax = histogram.reduce((max, value) => Math.max(max, value), 0);
 
   const evaluators = useMemo(

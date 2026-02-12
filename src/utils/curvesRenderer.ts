@@ -1,6 +1,7 @@
 import type {
   CurveKernel,
   CurvePoint,
+  CurvesHistogramByChannel,
   CurvesLuts,
   CurvesPointsByChannel,
   CurvesPreviewPayload,
@@ -405,7 +406,19 @@ export function computeLumaHistogram(
   imageData: ImageData,
   selectionMask?: ImageData | null
 ): number[] {
-  const histogram = new Array<number>(LUT_SIZE).fill(0);
+  return computeHistogramsByChannel(imageData, selectionMask).rgb;
+}
+
+export function computeHistogramsByChannel(
+  imageData: ImageData,
+  selectionMask?: ImageData | null
+): CurvesHistogramByChannel {
+  const histogramByChannel: CurvesHistogramByChannel = {
+    rgb: new Array<number>(LUT_SIZE).fill(0),
+    red: new Array<number>(LUT_SIZE).fill(0),
+    green: new Array<number>(LUT_SIZE).fill(0),
+    blue: new Array<number>(LUT_SIZE).fill(0),
+  };
   const src = imageData.data;
   const mask = selectionMask?.data ?? null;
 
@@ -420,8 +433,12 @@ export function computeLumaHistogram(
     const g = src[i + 1] ?? 0;
     const b = src[i + 2] ?? 0;
     const luma = clampByte(Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b));
-    histogram[luma] = (histogram[luma] ?? 0) + weight;
+
+    histogramByChannel.rgb[luma] = (histogramByChannel.rgb[luma] ?? 0) + weight;
+    histogramByChannel.red[r] = (histogramByChannel.red[r] ?? 0) + weight;
+    histogramByChannel.green[g] = (histogramByChannel.green[g] ?? 0) + weight;
+    histogramByChannel.blue[b] = (histogramByChannel.blue[b] ?? 0) + weight;
   }
 
-  return histogram;
+  return histogramByChannel;
 }
