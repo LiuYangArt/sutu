@@ -2,6 +2,7 @@ import { useCallback, useRef, type RefObject } from 'react';
 import { useSelectionStore } from '@/stores/selection';
 import type { SelectionPoint, SelectionSnapshot } from '@/stores/selection';
 import { useDocumentStore, type Layer, type ResizeCanvasOptions } from '@/stores/document';
+import { useToolStore } from '@/stores/tool';
 import {
   createHistoryEntryId,
   type LayerPropsChange,
@@ -1361,8 +1362,9 @@ export function useLayerOperations({
       // Capture state before clearing for undo
       await captureBeforeImage(false);
 
-      // Clear the layer
-      renderer.clearLayer(activeLayerId, useDocumentStore.getState().backgroundFillColor);
+      // Use current palette background color for background-layer clear behavior.
+      const backgroundColor = useToolStore.getState().backgroundColor;
+      renderer.clearLayer(activeLayerId, backgroundColor);
       setDocumentDirty(true);
       compositeAndRender();
 
