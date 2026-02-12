@@ -121,7 +121,9 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
   if (alpha_headroom <= 0.001) {
     // Keep color blending when alpha is saturated to match CPU/parametric behavior
     if (src_alpha > 0.001 && dst.a > 0.001) {
-      let blend_factor = min(1.0, src_alpha * ceiling);
+      // CPU parity: color-only blend still uses src_alpha directly.
+      // Multiplying by ceiling here exaggerates dab separation in low-ceiling modes (e.g. Subtract).
+      let blend_factor = src_alpha;
       let new_rgb = dst.rgb + (src_color - dst.rgb) * blend_factor;
       return vec4<f32>(new_rgb, dst.a);
     }
@@ -173,37 +175,33 @@ fn sample_texture_bilinear(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
 }
 
 // ============================================================================
-// Pattern Sampling with Tiling (Repeat)
+// Pattern Sampling (CPU parity):
+// - Canvas-space nearest sample
+// - floor(pixel * (100 / scale))
+// - repeat wrap
 // ============================================================================
-fn sample_pattern_tiled(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
-  let tex_dims = vec2<f32>(textureDimensions(tex));
+fn wrap_repeat_i32(v: i32, size: i32) -> i32 {
+  return (v % size + size) % size;
+}
 
-  // Wrap UV (Repeat)
-  let wrapped_uv = fract(uv);
+fn sample_pattern_cpu_parity(tex: texture_2d<f32>, pixel_xy: vec2<u32>, scale: f32) -> f32 {
+  let dims = textureDimensions(tex);
+  if (dims.x == 0u || dims.y == 0u) {
+    return 1.0;
+  }
 
-  // Reuse bilinear sampling logic but with wrapped UVs handled by fract()
-  // Note: Standard bilinear needs neighbors. Manual wrap:
-  let texel_coord = wrapped_uv * tex_dims - 0.5;
-  let texel_floor = floor(texel_coord);
-  let frac = texel_coord - texel_floor;
+  let safe_scale = max(1.0, scale);
+  let scale_factor = 100.0 / safe_scale;
 
-  // Custom wrap logic for neighbor sampling
-  let w = i32(tex_dims.x);
-  let h = i32(tex_dims.y);
+  let sx = i32(floor(f32(pixel_xy.x) * scale_factor));
+  let sy = i32(floor(f32(pixel_xy.y) * scale_factor));
 
-  let x0 = (i32(texel_floor.x) % w + w) % w;
-  let y0 = (i32(texel_floor.y) % h + h) % h;
-  let x1 = (x0 + 1) % w;
-  let y1 = (y0 + 1) % h;
+  let w = i32(dims.x);
+  let h = i32(dims.y);
+  let tx = wrap_repeat_i32(sx, w);
+  let ty = wrap_repeat_i32(sy, h);
 
-  let s00 = pattern_luma(textureLoad(tex, vec2<i32>(x0, y0), 0));
-  let s10 = pattern_luma(textureLoad(tex, vec2<i32>(x1, y0), 0));
-  let s01 = pattern_luma(textureLoad(tex, vec2<i32>(x0, y1), 0));
-  let s11 = pattern_luma(textureLoad(tex, vec2<i32>(x1, y1), 0));
-
-  let top = mix(s00, s10, frac.x);
-  let bottom = mix(s01, s11, frac.x);
-  return mix(top, bottom, frac.y);
+  return pattern_luma(textureLoad(tex, vec2<i32>(tx, ty), 0));
 }
 
 // ============================================================================
@@ -259,7 +257,7 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
 // Calculate Pattern Modulation (Returns Alpha Darken ceiling multiplier)
 // ============================================================================
 fn calculate_pattern_multiplier(
-  pixel: vec2<f32>,
+  pixel_xy: vec2<u32>,
   base_mask: f32
 ) -> f32 {
   let base = clamp(base_mask, 0.0, 1.0);
@@ -272,13 +270,8 @@ fn calculate_pattern_multiplier(
     return 1.0;
   }
 
-  // 1. Calculate Canvas Space UV
-  let scale = max(0.1, uniforms.pattern_scale);
-  let scale_factor = uniforms.pattern_size * (scale / 100.0);
-  let uv = pixel / scale_factor;
-
-  // 2. Sample Pattern (Tiled)
-  var tex_val = sample_pattern_tiled(pattern_texture, uv);
+  // 1. Sample Pattern (CPU parity nearest sampling in canvas space)
+  var tex_val = sample_pattern_cpu_parity(pattern_texture, pixel_xy, uniforms.pattern_scale);
 
   // 3. Apply Adjustments
   if (uniforms.pattern_invert > 0u) {
@@ -474,7 +467,7 @@ fn main(
     // A2. Texture: apply blend mode to Alpha Darken ceiling (not tip alpha)
     var pattern_mult = 1.0;
     if (uniforms.pattern_enabled != 0u) {
-       pattern_mult = calculate_pattern_multiplier(pixel, mask);
+       pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask);
     }
 
     // A3. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
