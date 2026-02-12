@@ -17,9 +17,7 @@
 ## 快速使用
 
 ```bash
-node scripts/debug/generate-texture-blend-compare.mjs ^
-  --texture debug_output/pat_decoded/pat5_sparthtex01.png ^
-  --output debug_output/texture_formula_compare/subtract_formula_compare_canvas_hires.png
+node scripts/debug/generate-texture-blend-compare.mjs --texture debug_output/pat_decoded/pat5_sparthtex01.png --output debug_output/texture_formula_compare/subtract_formula_compare_canvas_hires.png
 ```
 
 ## 常用参数
@@ -40,17 +38,10 @@ node scripts/debug/generate-texture-blend-compare.mjs ^
 
 ```bash
 # 线性笔触版本（更容易看边缘）
-node scripts/debug/generate-texture-blend-compare.mjs ^
-  --texture debug_output/pat_decoded/pat5_sparthtex01.png ^
-  --output debug_output/texture_formula_compare/subtract_formula_compare_line.png ^
-  --stroke line
+node scripts/debug/generate-texture-blend-compare.mjs --texture debug_output/pat_decoded/pat5_sparthtex01.png --output debug_output/texture_formula_compare/subtract_formula_compare_line.png --stroke line
 
 # 更高分辨率
-node scripts/debug/generate-texture-blend-compare.mjs ^
-  --texture debug_output/pat_decoded/pat5_sparthtex01.png ^
-  --output debug_output/texture_formula_compare/subtract_formula_compare_5k.png ^
-  --panel-width 1600 ^
-  --panel-height 1100
+node scripts/debug/generate-texture-blend-compare.mjs --texture debug_output/pat_decoded/pat5_sparthtex01.png --output debug_output/texture_formula_compare/subtract_formula_compare_5k.png --panel-width 1600 --panel-height 1100
 ```
 
 ## 复用到其它混合模式

@@ -26,6 +26,13 @@ function toNumber(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function toBoolean(value, fallback) {
+  if (value === undefined) return fallback;
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  return fallback;
+}
+
 function toPosix(filePath) {
   return filePath.replace(/\\/g, '/');
 }
@@ -73,6 +80,7 @@ const replaySpeed = Math.max(0.05, toNumber(cli.speed, 1));
 const label = safeName(cli.label ?? 'readback-compare');
 const capturePathArg = cli.capture ? path.resolve(repoRoot, cli.capture) : null;
 const capturePath = capturePathArg ?? resolveDefaultCapturePath();
+const headless = toBoolean(cli.headless, false);
 
 let captureFromFile = null;
 if (capturePath && fs.existsSync(capturePath)) {
@@ -81,7 +89,10 @@ if (capturePath && fs.existsSync(capturePath)) {
 
 ensureDir(outputDir);
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless,
+  args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan,UseSkiaRenderer'],
+});
 try {
   const page = await browser.newPage({
     viewport: { width: 1920, height: 1080 },
@@ -126,12 +137,51 @@ try {
       const clearLayer = window.__canvasClearLayer;
       const replay = window.__strokeCaptureReplay;
       const exportFlattened = window.__getFlattenedImage;
+      const m4Gate = window.__gpuM4ParityGate;
+
+      const canSwitchReadbackMode = async () => {
+        const trySwitch = async () => {
+          setMode('disabled');
+          await waitRaf();
+          const disabled = getMode() === 'disabled';
+          setMode('enabled');
+          await waitRaf();
+          const enabled = getMode() === 'enabled';
+          return disabled && enabled;
+        };
+
+        if (await trySwitch()) return true;
+
+        if (typeof m4Gate === 'function') {
+          try {
+            await m4Gate({ capture, seed: 24681357 });
+          } catch {
+            // Ignore warm-up failures; we only care about side effects.
+          }
+          await waitRaf();
+          await waitRaf();
+          if (await trySwitch()) return true;
+        }
+        return false;
+      };
+
+      const switchable = await canSwitchReadbackMode();
+      if (!switchable) {
+        throw new Error(
+          `Readback mode API unavailable in this runtime. navigator.gpu=${Boolean(navigator.gpu)}`
+        );
+      }
 
       const originalMode = getMode();
       const runOne = async (mode) => {
-        const ok = setMode(mode);
-        const actualMode = getMode();
-        if (!ok || actualMode !== mode) {
+        let actualMode = getMode();
+        for (let i = 0; i < 120; i += 1) {
+          setMode(mode);
+          actualMode = getMode();
+          if (actualMode === mode) break;
+          await wait(50);
+        }
+        if (actualMode !== mode) {
           throw new Error(`Failed to set readback mode: expected=${mode}, actual=${actualMode}`);
         }
 
