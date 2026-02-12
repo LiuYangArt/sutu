@@ -1,0 +1,80 @@
+name: Issue Triage
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+    - cron: '15 2 * * *'
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Triage mode'
+        required: true
+        default: incremental
+        type: choice
+        options:
+          - incremental
+          - full
+          - retry
+
+permissions:
+  issues: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: issue-triage
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    name: Run issue triage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure Git bot identity
+        run: |
+          git config user.name "issue-triage-bot"
+          git config user.email "issue-triage-bot@users.noreply.github.com"
+
+      - name: Resolve triage mode
+        id: resolve_mode
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            mode="${{ inputs.mode }}"
+          elif [[ "${{ github.event.schedule }}" == "*/30 * * * *" ]]; then
+            mode="retry"
+          elif [[ "${{ github.event.schedule }}" == "15 2 * * *" ]]; then
+            mode="full"
+          else
+            mode="incremental"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Resolved mode: $mode"
+
+      - name: Run issue triage script
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_TRIAGE_MODE: ${{ steps.resolve_mode.outputs.mode }}
+          ISSUE_LOOKBACK_HOURS: ${{ vars.ISSUE_LOOKBACK_HOURS || '8' }}
+          ISSUE_AI_TIMEOUT_MS: ${{ vars.ISSUE_AI_TIMEOUT_MS || '30000' }}
+          ISSUE_AI_RETRY_DELAYS_MS: ${{ vars.ISSUE_AI_RETRY_DELAYS_MS || '30000,120000,480000' }}
+          ISSUE_DUPLICATE_CONFIDENCE: ${{ vars.ISSUE_DUPLICATE_CONFIDENCE || '0.92' }}
+          ISSUE_DUPLICATE_SIMILARITY: ${{ vars.ISSUE_DUPLICATE_SIMILARITY || '0.78' }}
+          ISSUE_TRIAGE_DRY_RUN_CLOSE: ${{ vars.ISSUE_TRIAGE_DRY_RUN_CLOSE || 'true' }}
+          RELEASE_NOTES_API_KEY: ${{ secrets.RELEASE_NOTES_API_KEY || secrets.OPENAI_API_KEY }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'gpt-4.1-mini' }}
+          RELEASE_NOTES_API_BASE_URL: ${{ vars.RELEASE_NOTES_API_BASE_URL || 'https://api.openai.com' }}
+          RELEASE_NOTES_API_PATH: ${{ vars.RELEASE_NOTES_API_PATH || '/v1/chat/completions' }}
+        run: node scripts/issue-triage.mjs

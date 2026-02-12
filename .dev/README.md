@@ -38,7 +38,29 @@
 .dev\dev.bat install
 .dev\dev.bat dev
 .dev\dev.bat build
+.dev\issue.bat
+.dev\issue.bat today
+.dev\issue.bat workflow-full
 ```
+
+## Issue 自动化助手
+
+新增 `.dev\issue.bat`，支持菜单模式（双击）和命令模式。
+
+常用命令：
+
+```cmd
+.dev\issue.bat today
+.dev\issue.bat triage-readonly
+.dev\issue.bat workflow-incremental
+.dev\issue.bat workflow-full
+.dev\issue.bat workflow-retry
+```
+
+说明：
+
+- `triage-readonly` 是本地安全演练，不会改线上 issue。
+- `triage-incremental` / `triage-full` 会改线上 issue 标签/评论，脚本内有二次确认。
 
 ## 快捷方式
 

@@ -9,6 +9,7 @@
 import { execSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { extractFirstJsonObject, joinUrl, stripThinkingArtifacts } from './lib/ai-provider-client.mjs';
 
 function log(message) {
   process.stdout.write(`[release-notes] ${message}\n`);
@@ -79,21 +80,6 @@ function collectCommits(previousTag, currentTag) {
     .filter((item) => item.subject.length > 0);
 }
 
-function joinUrl(baseUrl, path) {
-  const base = (baseUrl || '').trim().replace(/\/+$/, '');
-  const suffix = (path || '').trim();
-  if (!base) {
-    throw new Error('AI API base URL 不能为空');
-  }
-  if (!suffix) {
-    throw new Error('AI API path 不能为空');
-  }
-  if (/^https?:\/\//i.test(suffix)) {
-    return suffix;
-  }
-  return `${base}/${suffix.replace(/^\/+/, '')}`;
-}
-
 function extractTextFromChatCompletions(payload) {
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content === 'string' && content.trim()) {
@@ -116,88 +102,6 @@ function extractTextFromChatCompletions(payload) {
       return text;
     }
   }
-  return '';
-}
-
-function stripThinkingArtifacts(text) {
-  if (!text) {
-    return '';
-  }
-
-  let output = text.replace(/\r\n/g, '\n');
-  output = output.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  output = output.replace(/```(?:thinking|analysis|reasoning)[\s\S]*?```/gi, '');
-
-  const headingBlockRegex = /^\s{0,3}#{1,6}\s*(thinking|analysis|reasoning|thoughts?|chain[- ]of[- ]thought|思考|推理|分析过程|思维链)\b/i;
-  const inlineThinkingRegex =
-    /^\s*(thinking|analysis|reasoning|chain[- ]of[- ]thought|thoughts?|思考过程|推理过程|分析过程)\s*[:：]/i;
-  const headingRegex = /^\s{0,3}#{1,6}\s+\S/;
-
-  const lines = output.split('\n');
-  const filtered = [];
-  let skippingThinkingBlock = false;
-
-  for (const line of lines) {
-    if (headingBlockRegex.test(line)) {
-      skippingThinkingBlock = true;
-      continue;
-    }
-    if (skippingThinkingBlock) {
-      if (headingRegex.test(line)) {
-        skippingThinkingBlock = false;
-      } else {
-        continue;
-      }
-    }
-    if (inlineThinkingRegex.test(line.trim())) {
-      continue;
-    }
-    filtered.push(line);
-  }
-
-  return filtered.join('\n').trim();
-}
-
-function extractFirstJsonObject(text) {
-  const source = text || '';
-  const start = source.indexOf('{');
-  if (start < 0) {
-    return '';
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let i = start; i < source.length; i += 1) {
-    const ch = source[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === '{') {
-      depth += 1;
-      continue;
-    }
-    if (ch === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return source.slice(start, i + 1);
-      }
-    }
-  }
-
   return '';
 }
 

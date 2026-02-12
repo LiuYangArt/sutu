@@ -9,6 +9,14 @@
 
 当前流程使用 OpenAI 兼容的 `chat/completions` 协议，但 API Base URL / Model / Key 全部可替换为第三方 Provider。
 
+## 1.1 新增复用入口（Issue 自动化）
+
+- `scripts/lib/ai-provider-client.mjs`
+- `scripts/issue-triage.mjs`
+- `scripts/local-daily-priority.mjs`
+
+以上脚本与 release notes 使用同一组 Provider 变量，保持统一配置与重试策略。
+
 ## 2. 统一环境变量约定（建议复用）
 
 以下变量已在 release 流程里使用，后续新脚本也建议沿用同名：

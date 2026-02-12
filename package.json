@@ -22,6 +22,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:coverage": "vitest run --coverage",
+    "issue:triage": "node scripts/issue-triage.mjs",
+    "task:today": "node scripts/local-daily-priority.mjs",
     "prepare": "husky",
     "version": "node scripts/sync-version.mjs && node scripts/sync-app-meta.mjs && git add app.meta.json package.json index.html src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/capabilities/default.json src/constants/appMeta.ts src-tauri/src/app_meta.rs"
   },
