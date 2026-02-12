@@ -101,6 +101,7 @@ export function useSelectionHandler({
 
   // Track drag in polygonal mode to switch back to freehand
   const polygonalDragStartRef = useRef<SelectionPoint | null>(null);
+  const isAltDragFreehandRef = useRef(false);
   const DRAG_THRESHOLD = 5; // pixels
 
   // Track if mouse is currently pressed (for Alt release handling)
@@ -131,6 +132,7 @@ export function useSelectionHandler({
     startPointRef.current = null;
     lastPointRef.current = null;
     polygonalDragStartRef.current = null;
+    isAltDragFreehandRef.current = false;
     isMouseDownRef.current = false;
     hasDraggedRef.current = false;
     startedOnSelectionRef.current = false;
@@ -203,6 +205,7 @@ export function useSelectionHandler({
         ) {
           // Anchoring a point when switching to polygonal mode
           addCreationPoint({ ...lastPointRef.current, type: 'polygonal' });
+          isAltDragFreehandRef.current = false;
         }
         prevAltRef.current = true;
         altPressedRef.current = true;
@@ -295,6 +298,7 @@ export function useSelectionHandler({
       if (currentTool === 'lasso' && isAltPressed && isCreating) {
         lastPointRef.current = point;
         polygonalDragStartRef.current = point;
+        isAltDragFreehandRef.current = false;
         return true;
       }
 
@@ -354,6 +358,7 @@ export function useSelectionHandler({
 
       setSelectionMode(mode);
       beginSelection(point);
+      isAltDragFreehandRef.current = false;
 
       return true;
     },
@@ -399,6 +404,11 @@ export function useSelectionHandler({
         if (isAltMode) {
           // Polygonal mode behavior
           if (isMouseDownRef.current) {
+            if (isAltDragFreehandRef.current) {
+              addCreationPoint({ ...point, type: 'freehand' });
+              isPurePolygonalRef.current = false;
+              return;
+            }
             // Mouse is pressed - detect drag to switch back to freehand
             if (!polygonalDragStartRef.current) {
               polygonalDragStartRef.current = point;
@@ -414,6 +424,7 @@ export function useSelectionHandler({
                 }
                 addCreationPoint({ ...point, type: 'freehand' });
                 polygonalDragStartRef.current = null;
+                isAltDragFreehandRef.current = true;
 
                 // User dragged, so it's no longer purely polygonal
                 isPurePolygonalRef.current = false;
@@ -423,10 +434,12 @@ export function useSelectionHandler({
             // Mouse is not pressed - update preview line to follow cursor
             updatePreviewPoint(point);
             polygonalDragStartRef.current = null; // Reset drag tracking
+            isAltDragFreehandRef.current = false;
           }
         } else {
           // Freehand mode: accumulate points continuously
           polygonalDragStartRef.current = null; // Reset drag tracking
+          isAltDragFreehandRef.current = false;
           updatePreviewPoint(null); // Clear preview point
           addCreationPoint({ ...point, type: 'freehand' });
 
@@ -442,6 +455,7 @@ export function useSelectionHandler({
     (canvasX: number, canvasY: number): void => {
       // Always reset mouse down state
       isMouseDownRef.current = false;
+      isAltDragFreehandRef.current = false;
 
       // Handle move mode completion
       if (isMoving) {
@@ -496,6 +510,7 @@ export function useSelectionHandler({
       commitMove,
       deselectAll,
       captureBeforeIfNeeded,
+      finalizeHistoryIfChanged,
       commitCreationIfNeeded,
     ]
   );
