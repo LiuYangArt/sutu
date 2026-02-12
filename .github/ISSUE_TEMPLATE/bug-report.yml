@@ -21,7 +21,7 @@ body:
     attributes:
       label: 问题描述 | Problem Description
       description: 简洁说明发生了什么问题 | Briefly describe what went wrong
-      placeholder: 例如：使用橡皮擦时画布出现明显卡顿 | Example: Noticeable lag appears on canvas when using the eraser
+      placeholder: 例如  使用橡皮擦时画布出现明显卡顿 | Example  Noticeable lag appears on canvas when using the eraser
     validations:
       required: true
   - type: textarea
