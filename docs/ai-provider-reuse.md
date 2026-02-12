@@ -8,6 +8,11 @@
 - Release 摘要脚本：`scripts/generate-release-notes.mjs`
 
 当前流程使用 OpenAI 兼容的 `chat/completions` 协议，但 API Base URL / Model / Key 全部可替换为第三方 Provider。
+Release 摘要已升级为“**commit + issue 双输入**”：
+
+- commit 维度：`previousTag..currentTag` 的代码变更
+- issue 维度：上一个 release 到当前 release 时间窗内 `closed` 的 GitHub Issue
+- AI 维度：将两侧信息合并后产出 features/fixes 双语摘要
 
 ## 1.1 新增复用入口（Issue 自动化）
 
@@ -25,6 +30,7 @@
 - `RELEASE_NOTES_MODEL`：模型名（放在 GitHub Repository Variable）
 - `RELEASE_NOTES_API_BASE_URL`：API 基础地址（Variable）
 - `RELEASE_NOTES_API_PATH`：接口路径（Variable），默认 `/v1/chat/completions`
+- `GITHUB_TOKEN`：用于读取 release 区间内关闭的 issue（Actions 中可直接用 `${{ github.token }}`）
 
 兼容兜底变量（可选）：
 
@@ -48,6 +54,9 @@
   - `RELEASE_NOTES_API_BASE_URL`
   - `RELEASE_NOTES_API_PATH`
   - `RELEASE_NOTES_MODEL`
+- Workflow permissions（`release.yml`）至少包含：
+  - `contents: write`
+  - `issues: read`
 
 ## 4. 请求协议模板（OpenAI 兼容）
 
@@ -117,6 +126,7 @@ $env:APP_NAME="Sutu"
 $env:RELEASE_TAG="v0.10.3"
 $env:RELEASE_VERSION="0.10.3"
 $env:GITHUB_REPOSITORY="LiuYangArt/PaintBoard"
+$env:GITHUB_TOKEN="<github-token>"
 $env:RELEASE_NOTES_API_KEY="<your-key>"
 $env:RELEASE_NOTES_MODEL="gemini-3-flash-preview"
 $env:RELEASE_NOTES_API_BASE_URL="https://yunwu.ai"

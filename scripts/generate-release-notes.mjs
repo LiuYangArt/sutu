@@ -80,6 +80,150 @@ function collectCommits(previousTag, currentTag) {
     .filter((item) => item.subject.length > 0);
 }
 
+function resolveTagCommitDate(tag) {
+  if (!tag) {
+    return '';
+  }
+  return safeRun(`git log -1 --format=%cI ${tag}`);
+}
+
+function tryParseDateMs(value) {
+  const ms = new Date(value || '').getTime();
+  if (!Number.isFinite(ms)) {
+    return Number.NaN;
+  }
+  return ms;
+}
+
+function normalizeIssueTitle(rawTitle) {
+  return normalizeSentence(String(rawTitle || '').replace(/\s*#\d+\s*$/g, '').trim());
+}
+
+function normalizeIssueLabels(labels) {
+  if (!Array.isArray(labels)) {
+    return [];
+  }
+  return labels
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item.trim().toLowerCase();
+      }
+      if (item && typeof item === 'object' && typeof item.name === 'string') {
+        return item.name.trim().toLowerCase();
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
+function normalizeIssueItem(item, repo) {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+  const number = Number.parseInt(String(item.number || ''), 10);
+  if (!Number.isFinite(number) || number <= 0) {
+    return null;
+  }
+
+  const title = normalizeIssueTitle(item.title);
+  if (!title) {
+    return null;
+  }
+
+  const closedAt = String(item.closed_at || item.closedAt || '').trim();
+  const closedAtMs = tryParseDateMs(closedAt);
+  if (!Number.isFinite(closedAtMs)) {
+    return null;
+  }
+
+  const fallbackUrl = repo ? `https://github.com/${repo}/issues/${number}` : '';
+  const url = String(item.html_url || item.url || fallbackUrl).trim() || fallbackUrl;
+  const labels = normalizeIssueLabels(item.labels);
+
+  return {
+    number,
+    title,
+    closedAt,
+    closedAtMs,
+    url,
+    labels,
+  };
+}
+
+async function fetchJson(url, token) {
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'paintboard-release-notes-bot',
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`GitHub API ${response.status}: ${errorText.slice(0, 200)}`);
+  }
+
+  return response.json();
+}
+
+async function collectResolvedIssuesBetweenTags({ repo, previousTagDate, currentTagDate, githubToken }) {
+  if (!repo || !previousTagDate || !currentTagDate) {
+    return [];
+  }
+
+  const fromMs = tryParseDateMs(previousTagDate);
+  const toMs = tryParseDateMs(currentTagDate);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+    return [];
+  }
+
+  const since = encodeURIComponent(new Date(fromMs).toISOString());
+  const maxPages = 10;
+  const result = [];
+  const seen = new Set();
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const url = `https://api.github.com/repos/${repo}/issues?state=closed&sort=updated&direction=desc&per_page=100&page=${page}&since=${since}`;
+    const payload = await fetchJson(url, githubToken);
+    if (!Array.isArray(payload) || payload.length === 0) {
+      break;
+    }
+
+    for (const issue of payload) {
+      // GitHub issues API mixes PRs; release notes should only include issues.
+      if (issue?.pull_request) {
+        continue;
+      }
+      const normalized = normalizeIssueItem(issue, repo);
+      if (!normalized) {
+        continue;
+      }
+      if (normalized.closedAtMs <= fromMs || normalized.closedAtMs > toMs) {
+        continue;
+      }
+      if (seen.has(normalized.number)) {
+        continue;
+      }
+      seen.add(normalized.number);
+      result.push(normalized);
+    }
+
+    const oldestUpdated = payload[payload.length - 1]?.updated_at || '';
+    const oldestUpdatedMs = tryParseDateMs(oldestUpdated);
+    if (Number.isFinite(oldestUpdatedMs) && oldestUpdatedMs <= fromMs) {
+      break;
+    }
+  }
+
+  return result.sort((left, right) => right.closedAtMs - left.closedAtMs);
+}
+
 function extractTextFromChatCompletions(payload) {
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content === 'string' && content.trim()) {
@@ -238,6 +382,31 @@ function buildChangesSectionByLanguage(summary, compareUrl) {
   };
 }
 
+function buildResolvedIssuesSectionByLanguage(issues) {
+  const list = Array.isArray(issues) ? issues.slice(0, 10) : [];
+  if (list.length === 0) {
+    return { zh: '', en: '' };
+  }
+
+  const zhLines = ['#### 本版本已关闭 Issues'];
+  const enLines = ['#### Resolved Issues in This Release'];
+  for (const issue of list) {
+    const label = `#${issue.number} ${issue.title}`;
+    const line = issue.url ? `- [${label}](${issue.url})` : `- ${label}`;
+    zhLines.push(line);
+    enLines.push(line);
+  }
+  if (issues.length > list.length) {
+    zhLines.push(`- 以及另外 ${issues.length - list.length} 个已关闭 Issue（见上方 Compare 链接）。`);
+    enLines.push(`- Plus ${issues.length - list.length} more resolved issues (see Compare link above).`);
+  }
+
+  return {
+    zh: zhLines.join('\n'),
+    en: enLines.join('\n'),
+  };
+}
+
 const IGNORE_PATTERNS = [
   /^v?\d+\.\d+\.\d+$/i,
   /(^|\s)(release|chore|ci|workflow|pipeline|lint|format|deps?)(\s|:|$)/i,
@@ -305,7 +474,7 @@ function isFeatureCommit(subject) {
   return FEATURE_PATTERNS.some((pattern) => pattern.test(subject));
 }
 
-function summarizeFallback(commits) {
+function summarizeFallback(commits, resolvedIssues) {
   const features = [];
   const fixes = [];
   const seenRuleIds = new Set();
@@ -370,6 +539,23 @@ function summarizeFallback(commits) {
     }
   }
 
+  for (const issue of resolvedIssues || []) {
+    const title = normalizeSentence(issue.title);
+    if (!title || shouldIgnoreCommit(title)) {
+      continue;
+    }
+
+    const labels = new Set(Array.isArray(issue.labels) ? issue.labels : []);
+    const forceFeature = labels.has('enhancement') || labels.has('feature');
+    const forceFix = labels.has('bug');
+
+    if (forceFeature || (!forceFix && isFeatureCommit(title))) {
+      pushFeature('根据社区反馈完成了若干可见功能改进。', 'Delivered several user-visible improvements based on community feedback.');
+      continue;
+    }
+    pushFix('修复并关闭了多项社区反馈问题。', 'Fixed and closed multiple community-reported issues.');
+  }
+
   return { features, fixes };
 }
 
@@ -379,6 +565,7 @@ async function generateAiSummary({
   currentTag,
   previousTag,
   commits,
+  resolvedIssues,
   aiApiKey,
   aiModel,
   aiApiBaseUrl,
@@ -390,6 +577,12 @@ async function generateAiSummary({
         .map((item, index) => `${index + 1}. ${item.subject} [${item.hash}] (${item.author})`)
         .join('\n')
     : '(no commits found)';
+  const issueBlock = resolvedIssues.length
+    ? resolvedIssues
+        .slice(0, 120)
+        .map((item, index) => `${index + 1}. #${item.number} ${item.title} (closed: ${item.closedAt})`)
+        .join('\n')
+    : '(no resolved issues found)';
 
   const prompt = [
     `App: ${appName}`,
@@ -400,10 +593,13 @@ async function generateAiSummary({
     'Commits in this release:',
     commitBlock,
     '',
+    'Resolved issues between releases:',
+    issueBlock,
+    '',
     '请输出用于 Release Notes 的精简摘要，严格遵守：',
     '1) 只保留用户真正需要关心的信息：功能更新（features）和问题修复（fixes）。',
-    '2) 忽略内部改动：发布流程、CI、文档、图标、重构、纯维护。',
-    '3) 将同一主题的多个 commit 合并成一条，避免重复和冗余。',
+    '2) 同时参考 commits 与 resolved issues，两者信息要融合，优先保留用户可感知变化。',
+    '3) 忽略内部改动：发布流程、CI、文档、图标、重构、纯维护。',
     '4) 每类最多 3 条，句子简洁、面向用户价值。',
     '5) 只返回一个 JSON 对象，不要 markdown，不要代码块，不要解释，不要 thinking/reasoning。',
     '6) JSON 结构必须是：',
@@ -465,13 +661,33 @@ async function main() {
   const outputPath = process.env.RELEASE_BODY_PATH || join(process.cwd(), 'release-body.md');
   const previousTag = resolvePreviousTag(currentTag);
   const commits = collectCommits(previousTag, currentTag);
+  const previousTagDate = resolveTagCommitDate(previousTag);
+  const currentTagDate = resolveTagCommitDate(currentTag);
   const repo = (process.env.GITHUB_REPOSITORY || '').trim();
   const compareUrl = previousTag && repo ? `https://github.com/${repo}/compare/${previousTag}...${currentTag}` : '';
+  const githubToken = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '').trim();
 
   const aiApiKey = (process.env.RELEASE_NOTES_API_KEY || process.env.OPENAI_API_KEY || '').trim();
   const aiModel = (process.env.RELEASE_NOTES_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini').trim();
   const aiApiBaseUrl = (process.env.RELEASE_NOTES_API_BASE_URL || process.env.OPENAI_API_BASE_URL || 'https://api.openai.com').trim();
   const aiApiPath = (process.env.RELEASE_NOTES_API_PATH || process.env.OPENAI_API_PATH || '/v1/chat/completions').trim();
+
+  let resolvedIssues = [];
+  if (repo && previousTag && previousTagDate && currentTagDate) {
+    try {
+      resolvedIssues = await collectResolvedIssuesBetweenTags({
+        repo,
+        previousTagDate,
+        currentTagDate,
+        githubToken,
+      });
+      log(`已收集 release 区间关闭 issues: ${resolvedIssues.length}`);
+    } catch (error) {
+      log(`收集 release 区间 issues 失败，继续仅基于 commits。原因: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } else {
+    log('当前缺少前一个 tag 或 tag 时间窗，跳过 issue 区间采集。');
+  }
 
   let summary = null;
   if (aiApiKey) {
@@ -482,6 +698,7 @@ async function main() {
         currentTag,
         previousTag,
         commits,
+        resolvedIssues,
         aiApiKey,
         aiModel,
         aiApiBaseUrl,
@@ -496,16 +713,20 @@ async function main() {
   }
 
   if (!summary) {
-    summary = summarizeFallback(commits);
+    summary = summarizeFallback(commits, resolvedIssues);
   }
 
   const changesByLanguage = buildChangesSectionByLanguage(summary, compareUrl);
+  const resolvedIssuesByLanguage = buildResolvedIssuesSectionByLanguage(resolvedIssues);
+  const zhResolvedIssuesSection = resolvedIssuesByLanguage.zh ? ['', resolvedIssuesByLanguage.zh] : [];
+  const enResolvedIssuesSection = resolvedIssuesByLanguage.en ? ['', resolvedIssuesByLanguage.en] : [];
 
   const body = [
     `## ${appName} v${version}`,
     '',
     '### 中文',
     changesByLanguage.zh,
+    ...zhResolvedIssuesSection,
     '',
     '#### 安装',
     '- Windows 下载 `.msi` 或 `.exe` 安装包；便携模式使用 `.zip`。',
@@ -518,6 +739,7 @@ async function main() {
     '',
     '### English',
     changesByLanguage.en,
+    ...enResolvedIssuesSection,
     '',
     '#### Installation',
     '- On Windows, download the `.msi` or `.exe` installer; use `.zip` for portable mode.',

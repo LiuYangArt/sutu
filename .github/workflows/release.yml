@@ -10,6 +10,7 @@ env:
 
 permissions:
   contents: write
+  issues: read
 
 jobs:
   # ============================================
@@ -266,6 +267,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ steps.get_version.outputs.VERSION }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
           RELEASE_NOTES_API_KEY: ${{ secrets.RELEASE_NOTES_API_KEY || secrets.OPENAI_API_KEY }}
           RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'gpt-4.1-mini' }}
           RELEASE_NOTES_API_BASE_URL: ${{ vars.RELEASE_NOTES_API_BASE_URL || 'https://api.openai.com' }}
