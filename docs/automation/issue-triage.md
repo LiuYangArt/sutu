@@ -83,6 +83,12 @@ AI 请求重试策略默认：
 命令：
 
 ```bash
+.dev\issue.bat today
+```
+
+等价底层命令：
+
+```bash
 pnpm task:today
 ```
 
@@ -91,6 +97,7 @@ pnpm task:today
 1. 通过 GitHub API 拉取远端最新 `docs/todo/issues.md`
 2. 按 `p0 > p1 > p2 > p3` 输出今日建议
 3. 同级内若 AI 可用，会做二次排序；AI 失败自动降级规则排序
+4. 若远端 `docs/todo/issues.md` 仍是旧版草稿格式，会自动回退为“按 open issues 直接排序”，不中断流程
 
 输出结构：
 
@@ -101,6 +108,12 @@ pnpm task:today
 ## 8.1 本地安全演练（不改线上 Issue）
 
 可用以下命令做只读演练：
+
+```powershell
+.dev\issue.bat triage-readonly
+```
+
+等价底层命令：
 
 ```powershell
 $env:ISSUE_TRIAGE_READONLY="true"
