@@ -12,7 +12,11 @@
 
 ## 下载
 
-在右侧Release中下载最新的安装包。
+在Release中下载最新的安装包。
+[https://github.com/LiuYangArt/sutu/releases](https://github.com/LiuYangArt/sutu/releases)
+
+## bug反馈和新功能需求
+在此提交issue [https://github.com/LiuYangArt/sutu/issues](https://github.com/LiuYangArt/sutu/issues)
 
 ## 许可证
 
