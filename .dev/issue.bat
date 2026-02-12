@@ -14,9 +14,9 @@ if "%1"=="" (
 )
 
 if /i "%1"=="today" goto today
-if /i "%1"=="triage-readonly" goto triage_readonly
-if /i "%1"=="triage-incremental" goto triage_incremental
-if /i "%1"=="triage-full" goto triage_full
+if /i "%1"=="triage-readonly" goto triage_readonly_safe
+if /i "%1"=="triage-incremental" goto triage_incremental_run
+if /i "%1"=="triage-full" goto triage_full_run
 if /i "%1"=="workflow-incremental" goto workflow_incremental
 if /i "%1"=="workflow-full" goto workflow_full
 if /i "%1"=="workflow-retry" goto workflow_retry
@@ -45,9 +45,9 @@ echo.
 set /p choice="  Enter choice [1-9, 0 to exit]: "
 
 if "%choice%"=="1" goto today
-if "%choice%"=="2" goto triage_readonly
-if "%choice%"=="3" goto triage_incremental
-if "%choice%"=="4" goto triage_full
+if "%choice%"=="2" goto triage_readonly_safe
+if "%choice%"=="3" goto triage_incremental_run
+if "%choice%"=="4" goto triage_full_run
 if "%choice%"=="5" goto workflow_incremental
 if "%choice%"=="6" goto workflow_full
 if "%choice%"=="7" goto workflow_retry
@@ -84,7 +84,7 @@ call pnpm task:today
 if errorlevel 1 goto error
 goto done
 
-:triage_readonly
+:triage_readonly_safe
 call :ensure_tools
 echo.
 echo [Issue Ops] Running local safe triage...
@@ -96,7 +96,7 @@ call node scripts/issue-triage.mjs
 if errorlevel 1 goto error
 goto done
 
-:triage_incremental
+:triage_incremental_run
 call :ensure_tools
 echo.
 echo [Issue Ops] WARNING: this command can modify GitHub issue labels/comments.
@@ -110,7 +110,7 @@ call node scripts/issue-triage.mjs
 if errorlevel 1 goto error
 goto done
 
-:triage_full
+:triage_full_run
 call :ensure_tools
 echo.
 echo [Issue Ops] WARNING: this command can modify GitHub issue labels/comments.

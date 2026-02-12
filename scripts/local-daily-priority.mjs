@@ -122,7 +122,7 @@ async function fallbackFromOpenIssues() {
       number: issue.number,
       title: issue.title,
       labels,
-      reason: 'todo 文件尚未切换到结构化格式，当前为 open issues 回退排序结果。',
+      reason: '基于当前 open issues 自动排序（可直接用于今日排期）。',
       url: issue.url,
     });
   }
@@ -235,7 +235,7 @@ async function main() {
   const parsedTaskCount = SECTION_KEYS.reduce((acc, key) => acc + (parsed.sections[key] || []).length, 0);
   const sourceSections = parsedTaskCount > 0 ? parsed.sections : await fallbackFromOpenIssues();
   if (parsedTaskCount === 0) {
-    log('Todo file has no structured entries yet; fallback to open issues ranking.');
+    log('GitHub 上的 docs/todo/issues.md 还没切到新模板，已直接按 open issues 生成优先级。');
   }
 
   const rankedSections = { p0: [], p1: [], p2: [], p3: [] };
