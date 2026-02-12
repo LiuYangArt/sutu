@@ -1,4 +1,5 @@
 import { useToolStore } from '@/stores/tool';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { RealisticInputSimulator } from './RealisticInputSimulator';
 import { LatencyProfiler } from './LatencyProfiler';
 import { FPSCounter } from './FPSCounter';
@@ -209,7 +210,6 @@ export async function downloadBenchmarkReport(report: BenchmarkReport): Promise<
   try {
     // Try Tauri dialog + fs API
     const { save } = await import('@tauri-apps/plugin-dialog');
-    const { writeTextFile } = await import('@tauri-apps/plugin-fs');
 
     const path = await save({
       defaultPath: filename,

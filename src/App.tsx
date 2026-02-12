@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -450,7 +451,6 @@ function App() {
 
     if (isTauri()) {
       try {
-        const { getCurrentWindow } = await import('@tauri-apps/api/window');
         tauriWindow = getCurrentWindow();
         await tauriWindow.hide();
         windowHidden = true;
@@ -515,7 +515,6 @@ function App() {
       const tauriReady = await waitForTauri();
       if (!tauriReady || disposed) return;
       try {
-        const { getCurrentWindow } = await import('@tauri-apps/api/window');
         if (disposed) return;
         const appWindow = getCurrentWindow();
         const teardown = await appWindow.onCloseRequested(async (event) => {

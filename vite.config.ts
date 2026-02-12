@@ -34,6 +34,35 @@ export default defineConfig({
     target: ['es2021', 'chrome100', 'safari13'],
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replace(/\\/g, '/');
+
+          if (normalizedId.includes('/node_modules/')) {
+            if (normalizedId.includes('/zustand/') || normalizedId.includes('/immer/')) {
+              return 'vendor-state';
+            }
+            if (normalizedId.includes('/@tauri-apps/')) {
+              return 'vendor-tauri';
+            }
+            if (normalizedId.includes('/lucide-react/') || normalizedId.includes('/react-colorful/')) {
+              return 'vendor-ui';
+            }
+            if (normalizedId.includes('/lz4js/')) {
+              return 'vendor-lz4';
+            }
+            return 'vendor';
+          }
+
+          if (normalizedId.includes('/src/gpu/')) {
+            return 'gpu-core';
+          }
+
+          return undefined;
+        },
+      },
+    },
     commonjsOptions: {
       include: [/lz4js/, /node_modules/],
     },

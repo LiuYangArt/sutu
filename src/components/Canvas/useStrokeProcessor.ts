@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
 import { ToolType } from '@/stores/tool';
 import { clearPointBuffer, useTabletStore } from '@/stores/tablet';
-import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
+import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
+import { LagometerMonitor } from '@/benchmark/LagometerMonitor';
+import { FPSCounter } from '@/benchmark/FPSCounter';
 import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import type { GpuStrokeCommitResult, RenderBackend, StrokeCompositeMode } from '@/gpu';

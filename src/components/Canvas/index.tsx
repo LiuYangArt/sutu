@@ -23,16 +23,20 @@ import { useGradientTool, type GradientPreviewPayload } from './useGradientTool'
 import { SelectionOverlay } from './SelectionOverlay';
 import { BrushQuickPanel } from './BrushQuickPanel';
 import { clientToCanvasPoint, getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
-import { LatencyProfiler, LagometerMonitor, FPSCounter } from '@/benchmark';
+import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
+import { LagometerMonitor } from '@/benchmark/LagometerMonitor';
+import { FPSCounter } from '@/benchmark/FPSCounter';
 import { LayerRenderer, type LayerMovePreview } from '@/utils/layerRenderer';
 import type { Rect } from '@/utils/strokeBuffer';
-import {
+import type {
   StrokeCaptureController,
-  type FixedStrokeCaptureLoadResult,
-  type FixedStrokeCaptureSaveResult,
-  type StrokeCaptureData,
-  type StrokeReplayOptions,
-} from '@/test';
+  StrokeCaptureData,
+  StrokeReplayOptions,
+} from '@/test/StrokeCapture';
+import type {
+  FixedStrokeCaptureLoadResult,
+  FixedStrokeCaptureSaveResult,
+} from '@/test/strokeCaptureFixedFile';
 import {
   GPUContext,
   GpuCanvasRenderer,
@@ -527,83 +531,96 @@ export function Canvas() {
   );
 
   useEffect(() => {
-    if (!strokeCaptureRef.current) {
-      strokeCaptureRef.current = new StrokeCaptureController({
-        getCanvas: () => canvasRef.current,
-        getCaptureRoot: () => containerRef.current,
-        getScale: () => useViewportStore.getState().scale,
-        getLiveInputOverride: (event) => {
-          // WinTab backend often reports PointerEvent pressure as a constant mouse-like value.
-          // For recording/replay fidelity, capture pressure/tilt from tablet stream when available.
-          if (!event.isTrusted) return null;
-          if (event.type !== 'pointerdown' && event.type !== 'pointermove') return null;
+    let disposed = false;
 
-          const tablet = useTabletStore.getState();
-          const isWinTabActive =
-            tablet.isStreaming &&
-            typeof tablet.backend === 'string' &&
-            tablet.backend.toLowerCase() === 'wintab';
-          if (!isWinTabActive) return null;
+    const setupStrokeCapture = async () => {
+      if (strokeCaptureRef.current) return;
+      try {
+        const { StrokeCaptureController } = await import('@/test/StrokeCapture');
+        if (disposed || strokeCaptureRef.current) return;
+        strokeCaptureRef.current = new StrokeCaptureController({
+          getCanvas: () => canvasRef.current,
+          getCaptureRoot: () => containerRef.current,
+          getScale: () => useViewportStore.getState().scale,
+          getLiveInputOverride: (event) => {
+            // WinTab backend often reports PointerEvent pressure as a constant mouse-like value.
+            // For recording/replay fidelity, capture pressure/tilt from tablet stream when available.
+            if (!event.isTrusted) return null;
+            if (event.type !== 'pointerdown' && event.type !== 'pointermove') return null;
 
-          const pt = tablet.currentPoint;
-          if (!pt) return null;
+            const tablet = useTabletStore.getState();
+            const isWinTabActive =
+              tablet.isStreaming &&
+              typeof tablet.backend === 'string' &&
+              tablet.backend.toLowerCase() === 'wintab';
+            if (!isWinTabActive) return null;
 
-          return {
-            pressure: pt.pressure,
-            tiltX: pt.tilt_x,
-            tiltY: pt.tilt_y,
-            pointerType: 'pen',
-          };
-        },
-        getMetadata: () => {
-          const docState = useDocumentStore.getState();
-          const toolState = useToolStore.getState();
-          const viewportState = useViewportStore.getState();
-          const { texture: _ignoredDualTexture, ...dualBrushWithoutTexture } = toolState.dualBrush;
-          return {
-            canvasWidth: docState.width,
-            canvasHeight: docState.height,
-            viewportScale: viewportState.scale,
-            viewportOffsetX: viewportState.offsetX,
-            viewportOffsetY: viewportState.offsetY,
-            activeLayerId: docState.activeLayerId,
-            tool: {
-              currentTool: toolState.currentTool,
-              brushColor: toolState.brushColor,
-              brushSize: toolState.brushSize,
-              brushFlow: toolState.brushFlow,
-              brushOpacity: toolState.brushOpacity,
-              brushHardness: toolState.brushHardness,
-              brushSpacing: toolState.brushSpacing,
-              pressureCurve: toolState.pressureCurve,
-              pressureSizeEnabled: toolState.pressureSizeEnabled,
-              pressureFlowEnabled: toolState.pressureFlowEnabled,
-              pressureOpacityEnabled: toolState.pressureOpacityEnabled,
-              scatterEnabled: toolState.scatterEnabled,
-              scatter: { ...toolState.scatter },
-              textureEnabled: toolState.textureEnabled,
-              textureSettings: {
-                patternId: toolState.textureSettings.patternId,
-                scale: toolState.textureSettings.scale,
-                brightness: toolState.textureSettings.brightness,
-                contrast: toolState.textureSettings.contrast,
-                mode: toolState.textureSettings.mode,
-                depth: toolState.textureSettings.depth,
-                invert: toolState.textureSettings.invert,
+            const pt = tablet.currentPoint;
+            if (!pt) return null;
+
+            return {
+              pressure: pt.pressure,
+              tiltX: pt.tilt_x,
+              tiltY: pt.tilt_y,
+              pointerType: 'pen',
+            };
+          },
+          getMetadata: () => {
+            const docState = useDocumentStore.getState();
+            const toolState = useToolStore.getState();
+            const viewportState = useViewportStore.getState();
+            const { texture: _ignoredDualTexture, ...dualBrushWithoutTexture } =
+              toolState.dualBrush;
+            return {
+              canvasWidth: docState.width,
+              canvasHeight: docState.height,
+              viewportScale: viewportState.scale,
+              viewportOffsetX: viewportState.offsetX,
+              viewportOffsetY: viewportState.offsetY,
+              activeLayerId: docState.activeLayerId,
+              tool: {
+                currentTool: toolState.currentTool,
+                brushColor: toolState.brushColor,
+                brushSize: toolState.brushSize,
+                brushFlow: toolState.brushFlow,
+                brushOpacity: toolState.brushOpacity,
+                brushHardness: toolState.brushHardness,
+                brushSpacing: toolState.brushSpacing,
+                pressureCurve: toolState.pressureCurve,
+                pressureSizeEnabled: toolState.pressureSizeEnabled,
+                pressureFlowEnabled: toolState.pressureFlowEnabled,
+                pressureOpacityEnabled: toolState.pressureOpacityEnabled,
+                scatterEnabled: toolState.scatterEnabled,
+                scatter: { ...toolState.scatter },
+                textureEnabled: toolState.textureEnabled,
+                textureSettings: {
+                  patternId: toolState.textureSettings.patternId,
+                  scale: toolState.textureSettings.scale,
+                  brightness: toolState.textureSettings.brightness,
+                  contrast: toolState.textureSettings.contrast,
+                  mode: toolState.textureSettings.mode,
+                  depth: toolState.textureSettings.depth,
+                  invert: toolState.textureSettings.invert,
+                },
+                dualBrushEnabled: toolState.dualBrushEnabled,
+                dualBrush: dualBrushWithoutTexture,
+                wetEdgeEnabled: toolState.wetEdgeEnabled,
+                wetEdge: toolState.wetEdge,
+                noiseEnabled: toolState.noiseEnabled,
+                buildupEnabled: toolState.buildupEnabled,
               },
-              dualBrushEnabled: toolState.dualBrushEnabled,
-              dualBrush: dualBrushWithoutTexture,
-              wetEdgeEnabled: toolState.wetEdgeEnabled,
-              wetEdge: toolState.wetEdge,
-              noiseEnabled: toolState.noiseEnabled,
-              buildupEnabled: toolState.buildupEnabled,
-            },
-          };
-        },
-      });
-    }
+            };
+          },
+        });
+      } catch (error) {
+        console.warn('[StrokeCapture] Failed to initialize controller', error);
+      }
+    };
+
+    void setupStrokeCapture();
 
     return () => {
+      disposed = true;
       strokeCaptureRef.current?.cancel();
     };
   }, []);

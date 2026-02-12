@@ -30,7 +30,7 @@ import {
 } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { RenderMode } from '@/stores/settings';
-import { LatencyProfiler } from '@/benchmark';
+import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import {
   GPUContext,
   GPUStrokeAccumulator,

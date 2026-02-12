@@ -2,7 +2,7 @@ import { useCallback, useRef, type RefObject, type MutableRefObject } from 'reac
 import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
-import { LatencyProfiler } from '@/benchmark';
+import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { getEffectiveInputData } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';

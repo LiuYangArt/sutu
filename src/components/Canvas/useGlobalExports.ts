@@ -1,4 +1,14 @@
 import { useEffect, type RefObject } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { join, tempDir } from '@tauri-apps/api/path';
+import {
+  BaseDirectory,
+  exists,
+  mkdir,
+  readTextFile,
+  writeFile,
+  writeTextFile,
+} from '@tauri-apps/plugin-fs';
 import { useDocumentStore, type BlendMode, type ResizeCanvasOptions } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { useSettingsStore } from '@/stores/settings';
@@ -11,30 +21,18 @@ import {
   parseScatterSettings,
   parseTextureSettings,
 } from './replayContextParsers';
-import {
-  DEBUG_CAPTURE_DIR,
-  DEBUG_CAPTURE_FILE_NAME,
-  DEBUG_CAPTURE_LOCAL_KEY,
-  DEBUG_CAPTURE_RELATIVE_PATH,
-  type FixedCaptureSource,
-  type FixedStrokeCaptureLoadResult,
-  type FixedStrokeCaptureSaveResult,
-  type StrokeCaptureData,
-  type StrokeReplayOptions,
-} from '@/test';
-import {
-  createM4ParityGate,
-  type M4ParityGateOptions,
-  type M4ParityGateResult,
-} from '@/test/m4FeatureParityGate';
-import { appHyphenStorageKey } from '@/constants/appMeta';
+import type { M4ParityGateOptions, M4ParityGateResult } from '@/test/m4FeatureParityGate';
+import type {
+  FixedCaptureSource,
+  FixedStrokeCaptureLoadResult,
+  FixedStrokeCaptureSaveResult,
+} from '@/test/strokeCaptureFixedFile';
+import type { StrokeCaptureData, StrokeReplayOptions } from '@/test/StrokeCapture';
+import { appDotStorageKey, appHyphenStorageKey } from '@/constants/appMeta';
 import {
   GPUContext,
   type GpuBrushCommitReadbackMode,
   persistResidencyBudgetFromProbe,
-  runFormatCompare,
-  runM0Baseline,
-  runTileSizeCompare,
   type GpuBrushCommitMetricsSnapshot,
 } from '@/gpu';
 
@@ -90,6 +88,10 @@ const TOOL_TYPES = new Set<ToolType>([
 ]);
 
 const PRESSURE_CURVES = new Set<PressureCurve>(['linear', 'soft', 'hard', 'sCurve']);
+const DEBUG_CAPTURE_DIR = 'debug-data';
+const DEBUG_CAPTURE_FILE_NAME = 'debug-stroke-capture.json';
+const DEBUG_CAPTURE_RELATIVE_PATH = `${DEBUG_CAPTURE_DIR}/${DEBUG_CAPTURE_FILE_NAME}`;
+const DEBUG_CAPTURE_LOCAL_KEY = appDotStorageKey('debug-data.debug-stroke-capture');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -297,6 +299,7 @@ export function useGlobalExports({
         console.warn('[M0Baseline] GPU device not available');
         return;
       }
+      const { runM0Baseline } = await import('@/gpu/benchmarks/m0Baseline');
       const result = await runM0Baseline(device);
       const residency = persistResidencyBudgetFromProbe(result.allocationProbe, 0.6);
       // eslint-disable-next-line no-console
@@ -310,6 +313,7 @@ export function useGlobalExports({
         return [];
       }
 
+      const { runFormatCompare } = await import('@/gpu/benchmarks/formatCompare');
       const result = await runFormatCompare(device, {
         includeLinearNoDither: options?.includeLinearNoDither ?? true,
         size: options?.size,
@@ -317,9 +321,6 @@ export function useGlobalExports({
       });
 
       try {
-        const { mkdir, writeFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
-        const { join, tempDir } = await import('@tauri-apps/api/path');
-
         const folder = appHyphenStorageKey('gpu-compare');
         await mkdir(folder, { baseDir: BaseDirectory.Temp, recursive: true });
         const tempRoot = await tempDir();
@@ -349,6 +350,7 @@ export function useGlobalExports({
         return null;
       }
 
+      const { runTileSizeCompare } = await import('@/gpu/benchmarks/tileSizeCompare');
       const result = await runTileSizeCompare(device, {
         canvasSize: options?.canvasSize,
         tileSizes: options?.tileSizes,
@@ -634,7 +636,6 @@ export function useGlobalExports({
 
       if (isTauriRuntime) {
         try {
-          const { BaseDirectory, mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs');
           await mkdir(DEBUG_CAPTURE_DIR, { baseDir: BaseDirectory.AppConfig, recursive: true });
           await writeTextFile(DEBUG_CAPTURE_RELATIVE_PATH, serialized, {
             baseDir: BaseDirectory.AppConfig,
@@ -677,7 +678,6 @@ export function useGlobalExports({
     win.__strokeCaptureLoadFixed = async (): Promise<FixedStrokeCaptureLoadResult | null> => {
       if (isTauriRuntime) {
         try {
-          const { BaseDirectory, exists, readTextFile } = await import('@tauri-apps/plugin-fs');
           const hasFile = await exists(DEBUG_CAPTURE_RELATIVE_PATH, {
             baseDir: BaseDirectory.AppConfig,
           });
@@ -720,42 +720,53 @@ export function useGlobalExports({
       }
     };
 
-    win.__gpuM4ParityGate = createM4ParityGate({
-      replay: async (capture, options): Promise<{ events: number; durationMs: number } | null> => {
-        const fn = win.__strokeCaptureReplay;
-        if (typeof fn !== 'function') {
-          throw new Error('Missing API: window.__strokeCaptureReplay');
-        }
-        return fn(capture, options);
-      },
-      clearLayer: () => {
-        const fn = win.__canvasClearLayer;
-        if (typeof fn !== 'function') {
-          throw new Error('Missing API: window.__canvasClearLayer');
-        }
-        fn();
-      },
-      getFlattenedImage: async () => {
-        const fn = win.__getFlattenedImage;
-        if (typeof fn !== 'function') {
-          throw new Error('Missing API: window.__getFlattenedImage');
-        }
-        return fn();
-      },
-      loadFixedCapture: async () => {
-        const fn = win.__strokeCaptureLoadFixed;
-        if (typeof fn !== 'function') {
-          throw new Error('Missing API: window.__strokeCaptureLoadFixed');
-        }
-        return fn();
-      },
-      parseStrokeCaptureInput,
-      getRenderMode: () => useSettingsStore.getState().brush.renderMode,
-      setRenderMode: (mode) => useSettingsStore.getState().setRenderMode(mode),
-      waitForAnimationFrame,
-      resetGpuDiagnostics,
-      getGpuDiagnosticsSnapshot,
-    });
+    let m4ParityGate: ((options?: M4ParityGateOptions) => Promise<M4ParityGateResult>) | null =
+      null;
+    win.__gpuM4ParityGate = async (options?: M4ParityGateOptions): Promise<M4ParityGateResult> => {
+      if (!m4ParityGate) {
+        const { createM4ParityGate } = await import('@/test/m4FeatureParityGate');
+        m4ParityGate = createM4ParityGate({
+          replay: async (
+            capture,
+            replayOptions
+          ): Promise<{ events: number; durationMs: number } | null> => {
+            const fn = win.__strokeCaptureReplay;
+            if (typeof fn !== 'function') {
+              throw new Error('Missing API: window.__strokeCaptureReplay');
+            }
+            return fn(capture, replayOptions);
+          },
+          clearLayer: () => {
+            const fn = win.__canvasClearLayer;
+            if (typeof fn !== 'function') {
+              throw new Error('Missing API: window.__canvasClearLayer');
+            }
+            fn();
+          },
+          getFlattenedImage: async () => {
+            const fn = win.__getFlattenedImage;
+            if (typeof fn !== 'function') {
+              throw new Error('Missing API: window.__getFlattenedImage');
+            }
+            return fn();
+          },
+          loadFixedCapture: async () => {
+            const fn = win.__strokeCaptureLoadFixed;
+            if (typeof fn !== 'function') {
+              throw new Error('Missing API: window.__strokeCaptureLoadFixed');
+            }
+            return fn();
+          },
+          parseStrokeCaptureInput,
+          getRenderMode: () => useSettingsStore.getState().brush.renderMode,
+          setRenderMode: (mode) => useSettingsStore.getState().setRenderMode(mode),
+          waitForAnimationFrame,
+          resetGpuDiagnostics,
+          getGpuDiagnosticsSnapshot,
+        });
+      }
+      return m4ParityGate(options);
+    };
 
     async function tryGpuLayerExportDataUrl(layerId: string): Promise<string | undefined> {
       if (!exportGpuLayerImageData) return undefined;
@@ -959,7 +970,6 @@ export function useGlobalExports({
 
       // Report benchmark phases to backend if session ID is provided
       if (benchmarkSessionId) {
-        const { invoke } = await import('@tauri-apps/api/core');
         await invoke('report_benchmark', {
           sessionId: benchmarkSessionId,
           phase: 'fetch',
