@@ -99,6 +99,7 @@ interface BrushLibraryState {
   groups: BrushLibraryGroup[];
   selectedPresetByTool: BrushPresetSelectionByTool;
   searchQuery: string;
+  hasLoaded: boolean;
   isLoading: boolean;
   error: string | null;
 
@@ -121,6 +122,8 @@ interface BrushLibraryState {
   setSearchQuery: (query: string) => void;
   clearError: () => void;
 }
+
+const BRUSH_TEXTURE_PREWARM_LIMIT = 24;
 
 function normalizePreset(preset: BrushLibraryPreset): BrushLibraryPreset {
   return {
@@ -310,6 +313,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
     const nextState: Partial<BrushLibraryState> = {
       ...snapshotState(snapshot),
       selectedPresetByTool: sanitizedSelection,
+      hasLoaded: true,
     };
     if (isLoading !== undefined) {
       nextState.isLoading = isLoading;
@@ -317,7 +321,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
     set(nextState);
     persistSelectionToSettings(sanitizedSelection);
     const prewarmCandidates = buildTexturePrewarmCandidates(snapshot);
-    prewarmBrushTextures(prewarmCandidates, prewarmCandidates.length);
+    prewarmBrushTextures(prewarmCandidates, BRUSH_TEXTURE_PREWARM_LIMIT);
   }
 
   async function reloadSnapshot(selection: BrushPresetSelectionByTool): Promise<void> {
@@ -331,10 +335,16 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
     groups: [],
     selectedPresetByTool: readSelectionFromSettings(),
     searchQuery: '',
+    hasLoaded: false,
     isLoading: false,
     error: null,
 
     loadLibrary: async () => {
+      const { hasLoaded, isLoading } = get();
+      if (hasLoaded || isLoading) {
+        return;
+      }
+
       set({ isLoading: true, error: null });
       try {
         const snapshot = await fetchLibrarySnapshot();

@@ -8,12 +8,14 @@
  * - Scatter/Count: Control distribution of secondary dabs
  */
 
+import { useMemo } from 'react';
 import { useToolStore, DualBlendMode } from '@/stores/tool';
-import { useBrushLibraryStore } from '@/stores/brushLibrary';
+import { useBrushLibraryStore, type BrushTipResource } from '@/stores/brushLibrary';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
+import { VirtualizedTipGrid } from '../VirtualizedTipGrid';
 
 // PS Dual Brush only supports these 8 blend modes
 const BLEND_MODE_OPTIONS: SelectOption[] = [
@@ -27,14 +29,34 @@ const BLEND_MODE_OPTIONS: SelectOption[] = [
   { value: 'linearHeight', label: 'Linear Height' },
 ];
 
+type DualTipListItem =
+  | { kind: 'default' }
+  | { kind: 'tip'; id: string; name: string; index: number; preset: BrushTipResource };
+
+function buildDualTipItems(tips: BrushTipResource[]): DualTipListItem[] {
+  const importedTips: DualTipListItem[] = tips.map((preset, index) => ({
+    kind: 'tip',
+    id: preset.id,
+    name: preset.name,
+    index,
+    preset,
+  }));
+
+  return [{ kind: 'default' }, ...importedTips];
+}
+
 export function DualBrushSettings(): JSX.Element {
   const { dualBrush, setDualBrush, dualBrushEnabled } = useToolStore();
   const importedTips = useBrushLibraryStore((state) => state.tips);
+  const tipItems = useMemo<DualTipListItem[]>(
+    () => buildDualTipItems(importedTips),
+    [importedTips]
+  );
 
   const disabled = !dualBrushEnabled;
   const ratioPercent = Math.round(dualBrush.sizeRatio * 100);
 
-  const handlePresetSelect = (preset: (typeof importedTips)[number], index: number) => {
+  const handlePresetSelect = (preset: BrushTipResource, index: number) => {
     const presetId = preset.id;
 
     // 1. Immediate UI update
@@ -84,6 +106,39 @@ export function DualBrushSettings(): JSX.Element {
     }
   };
 
+  function renderTipItem(item: DualTipListItem): JSX.Element {
+    if (item.kind === 'default') {
+      return (
+        <button
+          className={`abr-preset-item ${dualBrush.brushId === null ? 'selected' : ''}`}
+          onClick={() =>
+            setDualBrush({ brushId: null, brushName: 'Default Round', roundness: 100 })
+          }
+          title="Default Round Brush"
+          disabled={disabled}
+        >
+          <div className="abr-preset-round-icon" style={{ width: '24px', height: '24px' }} />
+        </button>
+      );
+    }
+
+    return (
+      <button
+        className={`abr-preset-item ${dualBrush.brushId === item.id ? 'selected' : ''}`}
+        onClick={() => handlePresetSelect(item.preset, item.index)}
+        title={item.name}
+        disabled={disabled}
+      >
+        <BrushPresetThumbnail
+          preset={item.preset}
+          size={32}
+          className="abr-preset-texture"
+          placeholderStyle={{ fontSize: '10px' }}
+        />
+      </button>
+    );
+  }
+
   return (
     <div className="brush-panel-section">
       {/* Section header */}
@@ -114,48 +169,15 @@ export function DualBrushSettings(): JSX.Element {
       {/* Secondary Brush Selector - Mini Grid */}
       <div className={`dual-brush-selector-group ${disabled ? 'disabled' : ''}`}>
         <label className="brush-setting-label">Secondary Brush Tip</label>
-        <div
+        <VirtualizedTipGrid
+          items={tipItems}
+          getItemKey={(item) =>
+            item.kind === 'default' ? 'dual-tip-default' : `dual-tip-${item.id}`
+          }
+          maxHeight={300}
           className="abr-preset-grid mini-grid"
-          style={{
-            maxHeight: '300px',
-            overflowY: 'auto',
-            marginTop: '8px',
-            border: '1px solid #333',
-            padding: '4px',
-          }}
-        >
-          {/* Default round brush option */}
-          <button
-            className={`abr-preset-item ${dualBrush.brushId === null ? 'selected' : ''}`}
-            onClick={() =>
-              setDualBrush({ brushId: null, brushName: 'Default Round', roundness: 100 })
-            }
-            title="Default Round Brush"
-            disabled={disabled}
-          >
-            <div className="abr-preset-round-icon" style={{ width: '24px', height: '24px' }} />
-          </button>
-
-          {/* Imported presets */}
-          {importedTips.map((preset, index) => {
-            return (
-              <button
-                key={`dual-${preset.id}`}
-                className={`abr-preset-item ${dualBrush.brushId === preset.id ? 'selected' : ''}`}
-                onClick={() => handlePresetSelect(preset, index)}
-                title={preset.name}
-                disabled={disabled}
-              >
-                <BrushPresetThumbnail
-                  preset={preset}
-                  size={32}
-                  className="abr-preset-texture"
-                  placeholderStyle={{ fontSize: '10px' }}
-                />
-              </button>
-            );
-          })}
-        </div>
+          renderItem={(item) => renderTipItem(item)}
+        />
         {dualBrush.brushName && (
           <div
             className="selected-brush-name"
