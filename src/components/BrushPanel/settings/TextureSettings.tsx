@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CirclePlus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { usePatternLibraryStore } from '@/stores/pattern';
 import { useToastStore } from '@/stores/toast';
 import { useToolStore, ControlSource } from '@/stores/tool';
@@ -54,6 +54,10 @@ export function TextureSettings(): JSX.Element {
     ? libraryPatterns.some((pattern) => pattern.id === patternId)
     : false;
   const canAddCurrentPattern = !disabled && !!patternId && !isPatternInLibrary;
+  const addButtonDisabled = !canAddCurrentPattern || isAddingPattern;
+  const addButtonTitle = canAddCurrentPattern
+    ? 'Add current brush pattern to library'
+    : 'Pattern already in library';
 
   // Controls related to individual tip variation are disabled unless Texture Each Tip is on
   const tipVariationDisabled = disabled || !textureSettings.textureEachTip;
@@ -132,16 +136,12 @@ export function TextureSettings(): JSX.Element {
           <button
             type="button"
             aria-label="Add pattern to library"
-            title={
-              canAddCurrentPattern
-                ? 'Add current brush pattern to library'
-                : 'Pattern already in library'
-            }
+            title={addButtonTitle}
             onClick={() => void handleAddCurrentPattern()}
-            disabled={!canAddCurrentPattern || isAddingPattern}
+            disabled={addButtonDisabled}
             style={{
-              width: 26,
-              height: 26,
+              width: 24,
+              height: 24,
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -149,13 +149,13 @@ export function TextureSettings(): JSX.Element {
               border: '1px solid var(--border, #5a6474)',
               background: 'var(--bg-secondary, #1b2432)',
               color: 'var(--text-primary, #f2f6ff)',
-              cursor: !canAddCurrentPattern || isAddingPattern ? 'not-allowed' : 'pointer',
-              opacity: !canAddCurrentPattern || isAddingPattern ? 0.5 : 1,
+              cursor: addButtonDisabled ? 'not-allowed' : 'pointer',
+              opacity: addButtonDisabled ? 0.5 : 1,
               padding: 0,
               lineHeight: 0,
             }}
           >
-            <CirclePlus size={14} strokeWidth={2.25} />
+            <Plus size={14} strokeWidth={2.5} />
           </button>
         </div>
       </div>
