@@ -239,6 +239,7 @@ pub fn run() {
             // Pattern Library
             commands::get_patterns,
             commands::import_pat_file,
+            commands::add_pattern_from_brush,
             commands::delete_pattern,
             commands::rename_pattern,
             commands::move_pattern_to_group,

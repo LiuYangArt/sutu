@@ -47,6 +47,14 @@ export interface PatternImportResult {
   patternIds: string[];
 }
 
+/** Add-from-brush result */
+export interface AddPatternFromBrushResult {
+  /** True when a new item is inserted; false when matched an existing duplicate */
+  added: boolean;
+  /** Resolved pattern in library (new or existing) */
+  pattern: PatternResource;
+}
+
 /** Pattern group with patterns */
 export interface PatternGroup {
   name: string;
@@ -72,6 +80,8 @@ interface PatternLibraryState {
   loadPatterns: () => Promise<void>;
   /** Import a .pat file */
   importPatFile: (path: string) => Promise<PatternImportResult>;
+  /** Add current brush-attached pattern to library */
+  addPatternFromBrush: (patternId: string, name?: string) => Promise<AddPatternFromBrushResult>;
   /** Delete a pattern */
   deletePattern: (id: string) => Promise<void>;
   /** Rename a pattern */
@@ -111,6 +121,30 @@ export const usePatternLibraryStore = create<PatternLibraryState>((set, get) => 
       return result;
     } catch (e) {
       set({ error: String(e), isLoading: false });
+      throw e;
+    }
+  },
+
+  addPatternFromBrush: async (patternId: string, name?: string) => {
+    try {
+      const result = await invoke<AddPatternFromBrushResult>('add_pattern_from_brush', {
+        patternId,
+        name,
+      });
+
+      set((state) => {
+        const index = state.patterns.findIndex((p) => p.id === result.pattern.id);
+        if (index >= 0) {
+          const next = state.patterns.slice();
+          next[index] = result.pattern;
+          return { patterns: next };
+        }
+        return { patterns: [...state.patterns, result.pattern] };
+      });
+
+      return result;
+    } catch (e) {
+      set({ error: String(e) });
       throw e;
     }
   },
