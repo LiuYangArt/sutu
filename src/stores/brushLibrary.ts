@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useToolStore } from '@/stores/tool';
+import { prewarmBrushTextures } from '@/utils/brushLoader';
 import {
   useSettingsStore,
   type BrushPresetSelectionByTool,
@@ -145,6 +146,41 @@ function snapshotState(snapshot: BrushLibrarySnapshot) {
   };
 }
 
+function buildTexturePrewarmCandidates(snapshot: BrushLibrarySnapshot): Array<{
+  id: string;
+  width: number;
+  height: number;
+}> {
+  const candidates: Array<{ id: string; width: number; height: number }> = [];
+
+  for (const preset of snapshot.presets) {
+    if (!preset.hasTexture) {
+      continue;
+    }
+    const textureId = preset.tipId ?? preset.id;
+    const width = preset.textureWidth ?? 0;
+    const height = preset.textureHeight ?? 0;
+    if (width <= 0 || height <= 0) {
+      continue;
+    }
+    candidates.push({ id: textureId, width, height });
+  }
+
+  for (const tip of snapshot.tips) {
+    if (!tip.hasTexture) {
+      continue;
+    }
+    const width = tip.textureWidth ?? 0;
+    const height = tip.textureHeight ?? 0;
+    if (width <= 0 || height <= 0) {
+      continue;
+    }
+    candidates.push({ id: tip.id, width, height });
+  }
+
+  return candidates;
+}
+
 function normalizePresetId(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
@@ -286,6 +322,7 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
     }
     set(nextState);
     persistSelectionToSettings(sanitizedSelection);
+    prewarmBrushTextures(buildTexturePrewarmCandidates(snapshot), 12);
   }
 
   async function reloadSnapshot(selection: BrushPresetSelectionByTool): Promise<void> {
