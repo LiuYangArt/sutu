@@ -112,12 +112,23 @@ fn pattern_luma(color: vec4<f32>) -> f32 {
 // Alpha Darken Blend (kept consistent with parametric compute path)
 // ============================================================================
 fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceiling: f32) -> vec4<f32> {
-  // Early stop: already at ceiling
-  if (dst.a >= ceiling - 0.001) {
+  // Each dab can only raise alpha up to its own ceiling
+  // Use max(dst.a, ceiling) as the effective ceiling for this dab
+  let effective_ceiling = max(dst.a, ceiling);
+  let alpha_headroom = effective_ceiling - dst.a;
+
+  // Early stop: this dab has no contribution space
+  if (alpha_headroom <= 0.001) {
+    // Keep color blending when alpha is saturated to match CPU/parametric behavior
+    if (src_alpha > 0.001 && dst.a > 0.001) {
+      let blend_factor = min(1.0, src_alpha * ceiling);
+      let new_rgb = dst.rgb + (src_color - dst.rgb) * blend_factor;
+      return vec4<f32>(new_rgb, dst.a);
+    }
     return dst;
   }
 
-  let new_alpha = min(1.0, dst.a + (ceiling - dst.a) * src_alpha);
+  let new_alpha = min(1.0, dst.a + alpha_headroom * src_alpha);
 
   var new_rgb: vec3<f32>;
   if (dst.a > 0.001) {
