@@ -25,10 +25,61 @@ export function BrushThumbnail({
   alt = 'Brush texture',
 }: BrushThumbnailProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInView, setIsInView] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+
+    return typeof window.IntersectionObserver === 'undefined';
+  });
+  const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
+    if (isInView) {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    if (
+      !canvas ||
+      typeof window === 'undefined' ||
+      typeof window.IntersectionObserver === 'undefined'
+    ) {
+      setIsInView(true);
+      return;
+    }
+
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        const matched = entries.some(
+          (entry) => entry.isIntersecting || entry.intersectionRatio > 0
+        );
+        if (!matched) {
+          return;
+        }
+        setIsInView(true);
+        observer.disconnect();
+      },
+      {
+        root: null,
+        rootMargin: '120px',
+        threshold: 0.01,
+      }
+    );
+
+    observer.observe(canvas);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [isInView]);
+
+  useEffect(() => {
+    if (!isInView) {
+      return;
+    }
+
     let cancelled = false;
 
     const loadTexture = async () => {
@@ -100,14 +151,14 @@ export function BrushThumbnail({
     return () => {
       cancelled = true;
     };
-  }, [brushId, size]);
+  }, [brushId, size, isInView]);
 
   return (
     <canvas
       ref={canvasRef}
       width={size}
       height={size}
-      className={`brush-thumbnail ${className} ${isLoading ? 'loading' : ''} ${hasError ? 'error' : ''}`}
+      className={`brush-thumbnail ${className} ${isLoading ? 'loading' : ''} ${hasError ? 'error' : ''} ${isInView ? '' : 'deferred'}`}
       title={alt}
       style={{
         width: size,
