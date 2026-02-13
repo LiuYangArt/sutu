@@ -429,11 +429,10 @@ export class MaskCache {
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
           // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
-          let textureMod = 1.0;
           if (activeTextureSettings && activePattern) {
             // TextureSettings.depth is 0-100
             const depth = activeTextureSettings.depth / 100.0;
-            textureMod = calculateTextureInfluence(
+            const textureMultiplier = calculateTextureInfluence(
               bufferLeft + mx,
               bufferTop + my,
               activeTextureSettings,
@@ -442,7 +441,7 @@ export class MaskCache {
               maskValue,
               0
             );
-            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
+            maskValue = MaskCache.clamp01(maskValue * textureMultiplier);
           }
 
           if (hasNoise) {
@@ -491,11 +490,10 @@ export class MaskCache {
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
 
           // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
-          let textureMod = 1.0;
           if (activeTextureSettings && activePattern) {
             // TextureSettings.depth is 0-100
             const depth = activeTextureSettings.depth / 100.0;
-            textureMod = calculateTextureInfluence(
+            const textureMultiplier = calculateTextureInfluence(
               bufferLeft + mx,
               bufferTop + my,
               activeTextureSettings,
@@ -504,7 +502,7 @@ export class MaskCache {
               maskValue,
               0
             );
-            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
+            maskValue = MaskCache.clamp01(maskValue * textureMultiplier);
           }
 
           if (hasNoise) {
@@ -646,10 +644,9 @@ export class MaskCache {
         const idx = (rowStart + px) * 4;
 
         // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
-        let textureMod = 1.0;
         if (activeTextureSettings && activePattern) {
           const depth = activeTextureSettings.depth / 100.0;
-          textureMod = calculateTextureInfluence(
+          const textureMultiplier = calculateTextureInfluence(
             px,
             py,
             activeTextureSettings,
@@ -658,7 +655,7 @@ export class MaskCache {
             maskValue,
             0
           );
-          maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
+          maskValue = MaskCache.clamp01(maskValue * textureMultiplier);
         }
 
         if (hasNoise) {

@@ -408,9 +408,8 @@ export class TextureMaskCache {
           const dstA = (buffer[idx + 3] ?? 0) / 255;
 
           // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
-          let textureMod = 1.0;
           if (hasTexturePerTip) {
-            textureMod = calculateTextureInfluence(
+            const textureMultiplier = calculateTextureInfluence(
               bufferX,
               bufferY,
               textureSettings!,
@@ -419,7 +418,7 @@ export class TextureMaskCache {
               maskValue,
               0
             );
-            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
+            maskValue = Math.max(0, Math.min(1, maskValue * textureMultiplier));
           }
 
           // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
@@ -484,9 +483,8 @@ export class TextureMaskCache {
           const dstA = (buffer[idx + 3] ?? 0) / 255;
 
           // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
-          let textureMod = 1.0;
           if (hasTexturePerTip) {
-            textureMod = calculateTextureInfluence(
+            const textureMultiplier = calculateTextureInfluence(
               bufferX,
               bufferY,
               textureSettings!,
@@ -495,7 +493,7 @@ export class TextureMaskCache {
               maskValue,
               0
             );
-            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
+            maskValue = Math.max(0, Math.min(1, maskValue * textureMultiplier));
           }
 
           // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1

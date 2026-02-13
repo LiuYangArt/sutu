@@ -533,9 +533,8 @@ fn main(
     // A2. Texture:
     // - textureEachTip=true  => per-dab texture modulation
     // - textureEachTip=false => stroke-level modulation (applied once after dab loop)
-    var pattern_mult = 1.0;
     if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip != 0u) {
-       pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask, 0.0);
+       let pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask, 0.0);
        mask = clamp(mask * pattern_mult, 0.0, 1.0);
     }
 
