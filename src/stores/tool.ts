@@ -1160,7 +1160,7 @@ export const useToolStore = create<ToolState>()(
     },
     {
       name: appHyphenStorageKey('brush-settings'),
-      version: 6,
+      version: 7,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
         if (!isRecord(persistedState)) {
@@ -1261,6 +1261,7 @@ export const useToolStore = create<ToolState>()(
             brushAngle: state.brushAngle,
             brushColor: state.brushColor,
             backgroundColor: state.backgroundColor,
+            brushTexture: serializeTexture(state.brushTexture),
             eraserSize: state.eraserSize,
             eraserBackgroundMode: state.eraserBackgroundMode,
             pressureSizeEnabled: state.pressureSizeEnabled,

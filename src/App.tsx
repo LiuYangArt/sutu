@@ -341,7 +341,8 @@ function App() {
       await initializeSettings();
       await initializeGradientStore();
 
-      // Restore brush preset selection from settings file and re-apply active tool preset.
+      // Restore brush preset selection metadata from settings file.
+      // Runtime brush params come from useToolStore persistence and should not be overridden here.
       await restoreStartupBrushPresetSelection();
 
       // Use ref to prevent double initialization in StrictMode

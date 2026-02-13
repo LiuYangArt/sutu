@@ -1,5 +1,6 @@
 import React from 'react';
 import { useToolStore } from '@/stores/tool';
+import { usePatternLibraryStore } from '@/stores/pattern';
 import { useShallow } from 'zustand/react/shallow';
 
 export interface TabConfig {
@@ -31,7 +32,8 @@ export function BrushSettingsSidebar({
     scatterEnabled,
     toggleScatter,
     textureEnabled,
-    toggleTexture,
+    texturePatternId,
+    setTextureEnabled,
     noiseEnabled,
     toggleNoise,
     dualBrushEnabled,
@@ -51,7 +53,8 @@ export function BrushSettingsSidebar({
       scatterEnabled: s.scatterEnabled,
       toggleScatter: s.toggleScatter,
       textureEnabled: s.textureEnabled,
-      toggleTexture: s.toggleTexture,
+      texturePatternId: s.textureSettings.patternId,
+      setTextureEnabled: s.setTextureEnabled,
       noiseEnabled: s.noiseEnabled,
       toggleNoise: s.toggleNoise,
       dualBrushEnabled: s.dualBrushEnabled,
@@ -66,11 +69,50 @@ export function BrushSettingsSidebar({
       toggleBuildup: s.toggleBuildup,
     }))
   );
+  const loadPatterns = usePatternLibraryStore((s) => s.loadPatterns);
+
+  const handleTextureToggle = async (): Promise<void> => {
+    const willEnable = !textureEnabled;
+    if (!willEnable) {
+      setTextureEnabled(false);
+      return;
+    }
+
+    setTextureEnabled(true);
+    if (texturePatternId) {
+      return;
+    }
+
+    let libraryPatterns = usePatternLibraryStore.getState().patterns;
+    if (libraryPatterns.length === 0) {
+      try {
+        await loadPatterns();
+      } catch (error) {
+        console.warn(
+          '[BrushSettingsSidebar] Failed to load patterns when enabling texture panel:',
+          error
+        );
+        return;
+      }
+      libraryPatterns = usePatternLibraryStore.getState().patterns;
+    }
+
+    const firstPatternId = libraryPatterns[0]?.id;
+    if (!firstPatternId) {
+      return;
+    }
+
+    const latestToolState = useToolStore.getState();
+    if (!latestToolState.textureEnabled || latestToolState.textureSettings.patternId) {
+      return;
+    }
+    latestToolState.setTextureSettings({ patternId: firstPatternId });
+  };
 
   const toggleMap: Record<string, { checked: boolean; onChange: () => void }> = {
     shape_dynamics: { checked: shapeDynamicsEnabled, onChange: toggleShapeDynamics },
     scattering: { checked: scatterEnabled, onChange: toggleScatter },
-    texture: { checked: textureEnabled, onChange: toggleTexture },
+    texture: { checked: textureEnabled, onChange: () => void handleTextureToggle() },
     noise: { checked: noiseEnabled, onChange: toggleNoise },
     dual_brush: { checked: dualBrushEnabled, onChange: toggleDualBrush },
     color_dynamics: { checked: colorDynamicsEnabled, onChange: toggleColorDynamics },

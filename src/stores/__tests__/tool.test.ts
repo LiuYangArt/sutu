@@ -1,5 +1,30 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useToolStore, DEFAULT_DUAL_BRUSH } from '../tool';
+import { appHyphenStorageKey } from '@/constants/appMeta';
+
+interface PersistedBrushSettingsPayload {
+  state?: {
+    brushTexture?: {
+      id?: string;
+      width?: number;
+      height?: number;
+    } | null;
+    brushProfile?: {
+      texture?: {
+        id?: string;
+        width?: number;
+        height?: number;
+      } | null;
+    };
+  };
+  version?: number;
+}
+
+function readPersistedBrushSettings(): PersistedBrushSettingsPayload {
+  const raw = window.localStorage.getItem(appHyphenStorageKey('brush-settings'));
+  if (!raw) return {};
+  return JSON.parse(raw) as PersistedBrushSettingsPayload;
+}
 
 describe('ToolStore', () => {
   const resetToolState = () => {
@@ -167,6 +192,51 @@ describe('ToolStore', () => {
       // Minimum opacity is 0.01 (not 0) to ensure brush is always visible
       store.setBrushOpacity(-0.5);
       expect(useToolStore.getState().brushOpacity).toBe(0.01);
+    });
+  });
+
+  describe('persistence', () => {
+    it('persists active brushTexture so startup restore can keep texture tips without preset re-apply', () => {
+      const store = useToolStore.getState();
+      store.setBrushTexture({
+        id: 'tip-texture-1',
+        data: '',
+        width: 64,
+        height: 96,
+      });
+
+      const parsed = readPersistedBrushSettings();
+
+      expect(parsed.state?.brushTexture?.id).toBe('tip-texture-1');
+      expect(parsed.state?.brushTexture?.width).toBe(64);
+      expect(parsed.state?.brushTexture?.height).toBe(96);
+    });
+
+    it('migrates v6 payload by restoring brushTexture from brushProfile.texture', async () => {
+      window.localStorage.setItem(
+        appHyphenStorageKey('brush-settings'),
+        JSON.stringify({
+          state: {
+            brushProfile: {
+              texture: {
+                id: 'legacy-texture-tip',
+                data: '',
+                width: 48,
+                height: 48,
+              },
+            },
+          },
+          version: 6,
+        })
+      );
+
+      await useToolStore.persist.rehydrate();
+
+      const state = useToolStore.getState();
+      expect(state.brushTexture?.id).toBe('legacy-texture-tip');
+      expect(state.brushTexture?.width).toBe(48);
+      expect(state.brushTexture?.height).toBe(48);
+      expect(state.brushProfile.texture?.id).toBe('legacy-texture-tip');
     });
   });
 
