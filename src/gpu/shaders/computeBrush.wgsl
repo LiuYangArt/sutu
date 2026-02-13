@@ -300,49 +300,42 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
 // ============================================================================
 // Compute Mask
 // ============================================================================
+const HARD_BRUSH_THRESHOLD: f32 = 0.99;
+const SOFT_MASK_MAX_EXTENT: f32 = 1.8;
+const SOFT_MASK_EXPONENT: f32 = 2.3;
+const SOFT_MASK_FEATHER_WIDTH: f32 = 0.3;
+
 fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
-  // =========================================================================
-  // SMALL BRUSH OPTIMIZATION (applies to ALL hardness levels)
-  // =========================================================================
-  // For very small brushes (radius < 3px), use Gaussian spot model
-  let SMALL_BRUSH_THRESHOLD = 3.0;
-
-  if (radius < SMALL_BRUSH_THRESHOLD) {
-    let base_sigma = max(radius, 0.5);
-    let softness_factor = 1.0 + (1.0 - hardness);
-    let sigma = base_sigma * softness_factor;
-
-    var alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
-
-    if (hardness >= 0.99 && radius >= 1.5) {
-      let blend = (radius - 1.5) / 1.5;
-      let edge_dist = radius;
-      let sharp_alpha = 1.0 - smoothstep(edge_dist - 0.5, edge_dist + 0.5, dist);
-      alpha = mix(alpha, sharp_alpha, blend * hardness);
-    }
-
-    return min(1.0, alpha);
-  }
-
-  // =========================================================================
-  // NORMAL SIZE BRUSHES (radius >= 3px)
-  // =========================================================================
-  if (hardness >= 0.99) {
+  // Keep hard-brush AA behavior unchanged.
+  if (hardness >= HARD_BRUSH_THRESHOLD) {
     return 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
-  } else {
-    let fade = (1.0 - hardness) * 2.0;
-    let safe_fade = max(0.001, fade);
-
-    let SQRT_2 = 1.41421356;
-    let center = (2.5 * (6761.0 * safe_fade - 10000.0)) / (SQRT_2 * 6761.0 * safe_fade);
-    let alphafactor = 1.0 / (2.0 * erf_approx(center));
-
-    let distfactor = (SQRT_2 * 12500.0) / (6761.0 * safe_fade * radius);
-
-    let scaled_dist = dist * distfactor;
-    let val = alphafactor * (erf_approx(scaled_dist + center) - erf_approx(scaled_dist - center));
-    return saturate(val);
   }
+
+  // Match CPU MaskCache gaussian profile:
+  // 1) hardness-controlled solid core
+  // 2) exponential falloff outside the core
+  // 3) terminal feather near max extent to avoid clipping
+  let safe_radius = max(radius, 1e-6);
+  let norm_dist = dist / safe_radius;
+
+  if (norm_dist > SOFT_MASK_MAX_EXTENT) {
+    return 0.0;
+  }
+  if (norm_dist <= hardness) {
+    return 1.0;
+  }
+
+  let denom = max(1e-6, 1.0 - hardness);
+  let t = (norm_dist - hardness) / denom;
+  var alpha = exp(-SOFT_MASK_EXPONENT * t * t);
+
+  let feather_start = max(1.0, SOFT_MASK_MAX_EXTENT - SOFT_MASK_FEATHER_WIDTH);
+  if (norm_dist > feather_start) {
+    let fade_out = 1.0 - smoothstep(feather_start, SOFT_MASK_MAX_EXTENT, norm_dist);
+    alpha = alpha * fade_out;
+  }
+
+  return saturate(alpha);
 }
 
 // ============================================================================
@@ -352,8 +345,11 @@ fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
   if (radius < 2.0) {
     return max(1.5, radius + 1.0);
   }
-  let geometric_fade = (1.0 - hardness) * 2.5;
-  return radius * max(1.1, 1.0 + geometric_fade);
+  if (hardness >= HARD_BRUSH_THRESHOLD) {
+    return radius * 1.1;
+  }
+  // Must track CPU soft-brush extent (MaskCache.SOFT_MAX_EXTENT).
+  return radius * SOFT_MASK_MAX_EXTENT;
 }
 
 // ============================================================================

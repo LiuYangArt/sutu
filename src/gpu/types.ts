@@ -283,6 +283,9 @@ export const TEXTURE_DAB_FLOATS_PER_INSTANCE = 12; // floats per instance
 export const BATCH_SIZE_THRESHOLD = 64; // Dabs per encoder submit (per-dab loop inside)
 export const BATCH_TIME_THRESHOLD_MS = 4; // Flush after N ms
 
+const HARD_BRUSH_THRESHOLD = 0.99;
+const SOFT_MASK_MAX_EXTENT = 1.8;
+
 /**
  * Calculate effective radius for bounding box and early culling.
  * Must match computeBrush.wgsl calculate_effective_radius logic.
@@ -293,10 +296,9 @@ export function calculateEffectiveRadius(radius: number, hardness: number): numb
     return Math.max(1.5, radius + 1.0);
   }
   // Hard brush: slight expansion for AA band
-  if (hardness >= 0.99) {
+  if (hardness >= HARD_BRUSH_THRESHOLD) {
     return radius * 1.1;
   }
-  // Soft brush: geometric fade expansion
-  const geometricFade = (1.0 - hardness) * 2.5;
-  return radius * Math.max(1.1, 1.0 + geometricFade);
+  // Soft brush: keep in sync with MaskCache.SOFT_MAX_EXTENT and computeBrush.wgsl
+  return radius * SOFT_MASK_MAX_EXTENT;
 }
