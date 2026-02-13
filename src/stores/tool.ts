@@ -20,7 +20,12 @@ export type ToolType =
 
 export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 
-export type BrushMaskType = 'gaussian' | 'default';
+export type BrushMaskType = 'gaussian';
+const FORCED_BRUSH_MASK_TYPE: BrushMaskType = 'gaussian';
+
+function normalizeBrushMaskType(_maskType: BrushMaskType): BrushMaskType {
+  return FORCED_BRUSH_MASK_TYPE;
+}
 
 /**
  * Control source for dynamic brush parameters (Photoshop-compatible)
@@ -423,7 +428,7 @@ function normalizeBrushProfile(profile: BrushToolProfile): BrushToolProfile {
     flow: Math.max(0.01, Math.min(1, profile.flow)),
     opacity: Math.max(0.01, Math.min(1, profile.opacity)),
     hardness: Math.max(0, Math.min(100, profile.hardness)),
-    maskType: profile.maskType,
+    maskType: normalizeBrushMaskType(profile.maskType),
     spacing: Math.max(0.01, Math.min(10, profile.spacing)),
     roundness: Math.max(1, Math.min(100, profile.roundness)),
     angle: ((profile.angle % 360) + 360) % 360,
@@ -461,7 +466,7 @@ function getDefaultBrushProfile(): BrushToolProfile {
     flow: 1,
     opacity: 1,
     hardness: 100,
-    maskType: 'default',
+    maskType: FORCED_BRUSH_MASK_TYPE,
     spacing: 0.25,
     roundness: 100,
     angle: 0,
@@ -499,7 +504,7 @@ interface ToolState {
   brushFlow: number; // Flow: per-dab opacity, accumulates within stroke
   brushOpacity: number; // Opacity: ceiling for entire stroke
   brushHardness: number;
-  brushMaskType: BrushMaskType; // Mask type: edge falloff algorithm
+  brushMaskType: BrushMaskType; // Legacy field, normalized to gaussian for runtime parity
   brushSpacing: number; // Spacing as fraction of tip short edge (0.01-10.0)
   brushRoundness: number; // Roundness: 0-100 (100 = circle, <100 = ellipse)
   brushAngle: number; // Angle: 0-360 degrees
@@ -805,7 +810,7 @@ export const useToolStore = create<ToolState>()(
         brushFlow: 1, // Default: full flow
         brushOpacity: 1, // Default: full opacity ceiling
         brushHardness: 100,
-        brushMaskType: 'default', // Default to simple Gaussian (perf preferred)
+        brushMaskType: FORCED_BRUSH_MASK_TYPE,
         brushSpacing: 0.25, // 25% of tip short edge
         brushRoundness: 100, // 100 = perfect circle
         brushAngle: 0, // 0 degrees
@@ -933,7 +938,8 @@ export const useToolStore = create<ToolState>()(
         setBrushHardness: (hardness) =>
           setWithActiveProfile(() => ({ brushHardness: Math.max(0, Math.min(100, hardness)) })),
 
-        setBrushMaskType: (maskType) => setWithActiveProfile(() => ({ brushMaskType: maskType })),
+        setBrushMaskType: (_maskType) =>
+          setWithActiveProfile(() => ({ brushMaskType: FORCED_BRUSH_MASK_TYPE })),
 
         setBrushSpacing: (spacing) =>
           setWithActiveProfile(() => ({ brushSpacing: Math.max(0.01, Math.min(10, spacing)) })),
@@ -1158,7 +1164,7 @@ export const useToolStore = create<ToolState>()(
     },
     {
       name: appHyphenStorageKey('brush-settings'),
-      version: 5,
+      version: 6,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
         if (!isRecord(persistedState)) {

@@ -113,7 +113,7 @@ export interface BrushRenderConfig {
   flow: number;
   opacity: number;
   hardness: number;
-  maskType: MaskType; // Mask type: 'gaussian' or 'default'
+  maskType: MaskType; // Unified soft-edge profile: gaussian
   spacing: number; // Fraction of tip short edge (0-10)
   roundness: number; // 0-100 (100 = circle, <100 = ellipse)
   angle: number; // 0-360 degrees

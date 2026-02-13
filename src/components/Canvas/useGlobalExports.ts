@@ -88,7 +88,7 @@ const TOOL_TYPES = new Set<ToolType>([
 ]);
 
 const PRESSURE_CURVES = new Set<PressureCurve>(['linear', 'soft', 'hard', 'sCurve']);
-const BRUSH_MASK_TYPES = new Set<BrushMaskType>(['gaussian', 'default']);
+const BRUSH_MASK_TYPES = new Set<BrushMaskType>(['gaussian']);
 const DEBUG_CAPTURE_DIR = 'debug-data';
 const DEBUG_CAPTURE_FILE_NAME = 'debug-stroke-capture.json';
 const DEBUG_CAPTURE_RELATIVE_PATH = `${DEBUG_CAPTURE_DIR}/${DEBUG_CAPTURE_FILE_NAME}`;

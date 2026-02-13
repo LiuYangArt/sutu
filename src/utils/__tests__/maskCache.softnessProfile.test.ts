@@ -17,14 +17,13 @@ function sampleAt(cache: MaskCache, x: number, y: number): number {
 }
 
 describe('MaskCache softness profile', () => {
-  it('default soft edge keeps fading beyond 1.5x radius to avoid hard clipping', () => {
+  it('soft edge keeps fading beyond 1.5x radius to avoid hard clipping', () => {
     const cache = new MaskCache();
     cache.generateMask({
       size: 100,
       hardness: 0,
       roundness: 1,
       angle: 0,
-      maskType: 'default',
     });
 
     const internal = cache as unknown as MaskCacheInternal;
@@ -47,7 +46,6 @@ describe('MaskCache softness profile', () => {
       hardness: 0.5,
       roundness: 1,
       angle: 0,
-      maskType: 'gaussian',
     });
 
     const internal = cache as unknown as MaskCacheInternal;

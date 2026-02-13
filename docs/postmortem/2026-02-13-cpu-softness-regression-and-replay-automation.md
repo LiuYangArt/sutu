@@ -98,3 +98,7 @@
 
 1. 用同一套 capture 基线，继续做 CPU vs GPU 的 softness 参数对齐（先 `hardness=50%`，再 `hardness=100%`）。
 2. 把 `replay-cpu-softness-compare` 纳入日常回归脚本集合，避免手工截图主导判断。
+
+## 后续补充（2026-02-13）
+
+为降低维护复杂度并避免参数语义漂移，主线运行时已统一为 `gaussian` 软边路径，Brush 面板移除了 Softness 模式切换 UI。旧工程配置中的 `default` 会在状态层归一化到 `gaussian`。

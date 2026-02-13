@@ -25,7 +25,7 @@ import { calculateTextureInfluence } from './textureRendering';
 import { applyScatter } from './scatterDynamics';
 import { getNoisePattern, NOISE_PATTERN_ID } from './noiseTexture';
 
-export type MaskType = 'gaussian' | 'default';
+export type MaskType = 'gaussian';
 
 export interface DabParams {
   x: number;
@@ -33,7 +33,7 @@ export interface DabParams {
   size: number;
   flow: number; // Per-dab accumulation rate (0-1)
   hardness: number; // Edge hardness (0-1)
-  maskType?: MaskType; // Mask type: 'gaussian' (erf-based, default) or 'default' (simple)
+  maskType?: MaskType; // Kept for compatibility, unified runtime profile is gaussian
   color: string; // Hex color
   dabOpacity?: number; // Krita-style: multiplier for entire dab (preserves gradient)
   roundness?: number; // Brush roundness (0-1, 1 = circle, <1 = ellipse)
@@ -740,7 +740,6 @@ export class StrokeAccumulator {
           hardness: isSquashedRoundness ? ROUNDNESS_AA_HARDNESS_CLAMP : 1.0,
           roundness,
           angle: randomAngle,
-          maskType: 'gaussian' as const,
         };
         if (this.secondaryMaskCache.needsUpdate(maskParams)) {
           this.secondaryMaskCache.generateMask(maskParams);
@@ -899,7 +898,6 @@ export class StrokeAccumulator {
       hardness,
       roundness: params.roundness ?? 1,
       angle: params.angle ?? 0,
-      maskType: params.maskType ?? 'gaussian',
     };
 
     // Only regenerate mask when parameters change (major performance win)

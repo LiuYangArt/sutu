@@ -170,6 +170,18 @@ describe('ToolStore', () => {
     });
   });
 
+  describe('setBrushMaskType', () => {
+    it('keeps unified gaussian mask type', () => {
+      const store = useToolStore.getState();
+
+      store.setBrushMaskType('gaussian');
+
+      const state = useToolStore.getState();
+      expect(state.brushMaskType).toBe('gaussian');
+      expect(state.brushProfile.maskType).toBe('gaussian');
+    });
+  });
+
   describe('swapColors', () => {
     it('setBrushColor should be idempotent for case-insensitive same value', () => {
       const store = useToolStore.getState();

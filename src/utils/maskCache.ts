@@ -6,7 +6,7 @@
  * settings. This reduces per-dab computation from ~50 ops/pixel to ~10 ops/pixel.
  *
  * Key insight: For soft brushes, the mask shape only depends on:
- * - size, hardness, roundness, angle, maskType
+ * - size, hardness, roundness, angle
  * If these don't change, the mask can be reused.
  */
 
@@ -16,14 +16,13 @@ import type { PatternData } from './patternManager';
 import { calculateTextureInfluence, sampleNoiseValue } from './textureRendering';
 import type { DualBlendMode } from '@/stores/tool';
 
-export type MaskType = 'gaussian' | 'default';
+export type MaskType = 'gaussian';
 
 export interface MaskCacheParams {
   size: number; // Brush diameter in pixels
   hardness: number; // 0-1 (0 = soft, 1 = hard)
   roundness: number; // 0-1 (1 = circle, <1 = ellipse)
   angle: number; // Rotation in degrees
-  maskType: MaskType;
 }
 
 // ============================================================================
@@ -57,8 +56,6 @@ export const erfLUT: Float32Array = new Float32Array(ERF_LUT_SIZE + 1);
 export class MaskCache {
   private static readonly HARD_EDGE_AA_WIDTH = 1.2;
   private static readonly SOFT_MAX_EXTENT = 1.8;
-  private static readonly DEFAULT_SOFT_EXPONENT = 2.5;
-  private static readonly DEFAULT_FEATHER_WIDTH = 0.25;
   private static readonly GAUSSIAN_SOFT_EXPONENT = 2.3;
   private static readonly GAUSSIAN_FEATHER_WIDTH = 0.3;
 
@@ -270,8 +267,7 @@ export class MaskCache {
       Math.abs(params.size - this.cachedParams.size) > sizeTolerance ||
       Math.abs(params.hardness - this.cachedParams.hardness) > 0.01 ||
       Math.abs(params.roundness - this.cachedParams.roundness) > 0.01 ||
-      Math.abs(params.angle - this.cachedParams.angle) > 0.5 ||
-      params.maskType !== this.cachedParams.maskType
+      Math.abs(params.angle - this.cachedParams.angle) > 0.5
     );
   }
 
@@ -280,7 +276,7 @@ export class MaskCache {
    * This is the expensive operation - only called when parameters change
    */
   generateMask(params: MaskCacheParams): void {
-    const { size, hardness, roundness, angle, maskType } = params;
+    const { size, hardness, roundness, angle } = params;
     const useEllipticalDistance = Math.abs(roundness - 1) > 1e-3;
 
     const radiusX = size / 2;
@@ -340,23 +336,14 @@ export class MaskCache {
             physicalDist = dist;
           }
           maskValue = MaskCache.calcHardEdgeAA(physicalDist, boundaryRadius);
-        } else if (maskType === 'gaussian') {
-          // Gaussian mode: default-style profile with slightly softer tail than default mode.
+        } else {
+          // Unified softness profile: keep core + exponential falloff + terminal feather.
           maskValue = MaskCache.calcSoftRoundMask(
             normDist,
             hardness,
             MaskCache.GAUSSIAN_SOFT_EXPONENT,
             MaskCache.SOFT_MAX_EXTENT,
             MaskCache.GAUSSIAN_FEATHER_WIDTH
-          );
-        } else {
-          // Default mode: preserve existing character, but add terminal feather to remove hard clipping.
-          maskValue = MaskCache.calcSoftRoundMask(
-            normDist,
-            hardness,
-            MaskCache.DEFAULT_SOFT_EXPONENT,
-            MaskCache.SOFT_MAX_EXTENT,
-            MaskCache.DEFAULT_FEATHER_WIDTH
           );
         }
 

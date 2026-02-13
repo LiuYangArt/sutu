@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useToolStore, BrushMaskType } from '@/stores/tool';
+import { useToolStore } from '@/stores/tool';
 import { useBrushLibraryStore, type BrushTipResource } from '@/stores/brushLibrary';
 import { SliderRow } from '../BrushPanelComponents';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
@@ -27,8 +27,6 @@ export function BrushTipShape(): JSX.Element {
     setBrushSize,
     brushHardness,
     setBrushHardness,
-    brushMaskType,
-    setBrushMaskType,
     brushRoundness,
     setBrushRoundness,
     brushAngle,
@@ -109,18 +107,6 @@ export function BrushTipShape(): JSX.Element {
         displayValue={`${brushHardness}%`}
         onChange={setBrushHardness}
       />
-
-      <div className="brush-setting-row">
-        <span className="brush-setting-label">Softness</span>
-        <select
-          value={brushMaskType}
-          onChange={(e) => setBrushMaskType(e.target.value as BrushMaskType)}
-          className="brush-select"
-        >
-          <option value="gaussian">Gaussian (Smooth)</option>
-          <option value="default">Default</option>
-        </select>
-      </div>
 
       <SliderRow
         label="Roundness"

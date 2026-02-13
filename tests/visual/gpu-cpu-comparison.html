@@ -145,6 +145,7 @@
 
       const CANVAS_W = 500;
       const CANVAS_H = 300;
+      const UNIFIED_MASK_TYPE = 'gaussian';
 
       // UI Elements
       const els = {
@@ -199,6 +200,7 @@
           flow: parseFloat(els.flow.value),
           opacity: parseFloat(els.opacity.value),
           spacing: parseFloat(els.spacing.value) / 100,
+          maskType: UNIFIED_MASK_TYPE,
           color: '#000000',
         };
 
@@ -224,7 +226,7 @@
           console.log('[Test] Dab Count:', dabPositions.length);
 
           // 4. Compare
-          performComparison(cpuResult, gpuResult, dabPositions.length);
+          performComparison(cpuResult, gpuResult, dabPositions.length, CONFIG.maskType);
         } catch (e) {
           console.error('[Test] Error:', e);
           els.results.innerHTML = `<span style="color:red">Error: ${e.message}</span>`;
@@ -268,15 +270,17 @@
 
       function stampDabs(accumulator, positions, config) {
         for (const pos of positions) {
-          accumulator.stampDab({
+          const dab = {
             x: pos.x,
             y: pos.y,
             size: config.size,
             flow: config.flow,
             hardness: config.hardness,
+            maskType: config.maskType,
             color: config.color,
             dabOpacity: 1.0,
-          });
+          };
+          accumulator.stampDab(dab);
         }
       }
 
@@ -286,7 +290,7 @@
         ctx.drawImage(sourceCanvas, 0, 0);
       }
 
-      function performComparison(cpuCanvas, gpuCanvas, dabCount) {
+      function performComparison(cpuCanvas, gpuCanvas, dabCount, maskType) {
         const diffCtx = document.getElementById('diffCanvas').getContext('2d');
         diffCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -297,6 +301,7 @@
 
         els.results.innerHTML = `
           <h3>Result (${dabCount} dabs)</h3>
+          <div>Unified Mask: <strong>${maskType}</strong></div>
           <div>Max Diff: <strong>${result.maxDiff}</strong></div>
           <div>Diff Pixels: ${result.diffPixels} (${result.diffPercent}%)</div>
           <div style="color: ${result.passed ? '#4CAF50' : '#F44336'}; font-weight: bold;">

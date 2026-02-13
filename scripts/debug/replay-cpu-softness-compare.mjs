@@ -84,8 +84,8 @@ const headless = toBoolean(cli.headless, false);
 const replaySeed = Math.max(1, Math.floor(toNumber(cli.seed, 20260213)));
 const label = safeName(cli.label ?? 'cpu-softness-compare');
 
-const maskTypeA = cli['mask-a'] ?? 'default';
-const maskTypeB = cli['mask-b'] ?? 'gaussian';
+const maskTypeA = 'gaussian';
+const maskTypeB = 'gaussian';
 const hardness = toOptionalNumber(cli.hardness);
 const spacing = toOptionalNumber(cli.spacing);
 const roundness = toOptionalNumber(cli.roundness);

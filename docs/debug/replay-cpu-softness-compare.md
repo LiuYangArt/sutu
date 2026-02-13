@@ -1,8 +1,10 @@
 # CPU Softness A/B 回放对比脚本
 
+> 更新（2026-02-13）：运行时 Softness 已统一为 `gaussian`，UI 不再提供模式切换。
+
 用于同一份笔触 capture 的 `CPU` 模式下 A/B 对比，快速观察：
 
-1. `maskType=default` 与 `maskType=gaussian` 的视觉差异。
+1. 同一笔触在固定 `gaussian` 软边下，不同 `hardness / spacing / roundness / angle` 的变化。
 2. 调整 `hardness / spacing / roundness / angle` 后的输出变化。
 3. 修改笔刷曲线后的回归情况（截图 + diff + 指标）。
 
@@ -29,13 +31,11 @@
 ## 快速使用
 
 ```bash
-node scripts/debug/replay-cpu-softness-compare.mjs --url http://localhost:1420 --capture "C:/Users/<you>/AppData/Roaming/com.paintboard/debug-data/debug-stroke-capture.json" --mask-a default --mask-b gaussian --hardness 50 --output "debug_output/brush_softness_compare" --label "h50-default-vs-gaussian"
+node scripts/debug/replay-cpu-softness-compare.mjs --url http://localhost:1420 --capture "C:/Users/<you>/AppData/Roaming/com.paintboard/debug-data/debug-stroke-capture.json" --hardness 50 --output "debug_output/brush_softness_compare" --label "h50-gaussian-baseline"
 ```
 
 ## 常用参数
 
-- `--mask-a`：A 组 mask 类型，默认 `default`
-- `--mask-b`：B 组 mask 类型，默认 `gaussian`
 - `--hardness`：覆盖 hardness（0~100），默认不覆盖（沿用 capture）
 - `--spacing`：覆盖 spacing（0~1）
 - `--roundness`：覆盖 roundness（0~100）
