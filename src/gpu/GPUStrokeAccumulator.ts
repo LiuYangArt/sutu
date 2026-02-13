@@ -1480,6 +1480,67 @@ export class GPUStrokeAccumulator {
     return outputTexture;
   }
 
+  private applyWetEdgeToDisplay(
+    encoder: GPUCommandEncoder,
+    inputTexture: GPUTexture,
+    context: 'primary' | 'primary-texture',
+    hardness: number
+  ): void {
+    const wetDebug = this.beginWetEdgeDebug(context);
+    this.wetEdgePipeline.dispatch(
+      encoder,
+      inputTexture,
+      this.pingPongBuffer.display,
+      this.dirtyRect,
+      hardness,
+      this.wetEdgeStrength,
+      this.currentRenderScale
+    );
+    this.endWetEdgeDebug(context, wetDebug.start, wetDebug.label);
+  }
+
+  private submitStrokeLevelPostProcess(args: {
+    runPostProcessPass: boolean;
+    wetEdgeActive: boolean;
+    context: 'primary' | 'primary-texture';
+    wetEdgeHardness: number;
+    postEncoderLabel: string;
+    submitLabel: string;
+    brushTexture?: GPUBrushTexture | null;
+  }): boolean {
+    if (!args.runPostProcessPass) {
+      return true;
+    }
+
+    const postEncoder = this.device.createCommandEncoder({
+      label: args.postEncoderLabel,
+    });
+    const strokePatternOutput = args.wetEdgeActive
+      ? this.dualBlendTexture
+      : this.pingPongBuffer.display;
+    const strokePatternInput = this.applyStrokeLevelPatternPass(
+      postEncoder,
+      this.pingPongBuffer.source,
+      strokePatternOutput,
+      this.dirtyRect,
+      args.brushTexture ?? null
+    );
+    if (!strokePatternInput) {
+      return false;
+    }
+
+    if (args.wetEdgeActive) {
+      this.applyWetEdgeToDisplay(
+        postEncoder,
+        strokePatternInput,
+        args.context,
+        args.wetEdgeHardness
+      );
+    }
+    this.submitEncoder(postEncoder, args.submitLabel);
+    return true;
+  }
+
   private getCombinedDirtyRect(): Rect {
     const primaryValid = this.hasDirtyRect(this.dirtyRect);
     const dualValid = this.dualMaskActive && this.hasDirtyRect(this.dualDirtyRect);
@@ -1898,18 +1959,12 @@ export class GPUStrokeAccumulator {
 
       // If no stroke-level pattern pass is needed, wet edge can run in the main encoder.
       if (!runPostProcessPass && wetEdgeActive) {
-        const wetDebug = this.beginWetEdgeDebug('primary');
-        this.wetEdgePipeline.dispatch(
+        this.applyWetEdgeToDisplay(
           encoder,
-          this.pingPongBuffer.source, // Raw buffer (input, read-only)
-          this.pingPongBuffer.display, // Display buffer (output)
-          this.dirtyRect,
-          this.wetEdgeHardness,
-          this.wetEdgeStrength,
-          this.currentRenderScale
+          this.pingPongBuffer.source,
+          'primary',
+          this.wetEdgeHardness
         );
-        this.endWetEdgeDebug('primary', wetDebug.start, wetDebug.label);
-        // Note: No swap here - display buffer is separate from ping-pong
       }
     } else {
       this.dualPostPending = true;
@@ -1922,37 +1977,18 @@ export class GPUStrokeAccumulator {
     // Stroke-level pattern pass reuses the same pipeline uniform buffer as primary pass.
     // Run it in a separate submit to prevent queue.writeBuffer from overwriting uniforms
     // before primary dispatch is consumed by GPU.
-    if (!deferPost && runPostProcessPass) {
-      const postEncoder = this.device.createCommandEncoder({
-        label: 'Brush Batch Post Encoder',
-      });
-      const strokePatternOutput = wetEdgeActive
-        ? this.dualBlendTexture
-        : this.pingPongBuffer.display;
-      const strokePatternInput = this.applyStrokeLevelPatternPass(
-        postEncoder,
-        this.pingPongBuffer.source,
-        strokePatternOutput,
-        this.dirtyRect
-      );
-      if (!strokePatternInput) {
-        return false;
-      }
-
-      if (wetEdgeActive) {
-        const wetDebug = this.beginWetEdgeDebug('primary');
-        this.wetEdgePipeline.dispatch(
-          postEncoder,
-          strokePatternInput,
-          this.pingPongBuffer.display,
-          this.dirtyRect,
-          this.wetEdgeHardness,
-          this.wetEdgeStrength,
-          this.currentRenderScale
-        );
-        this.endWetEdgeDebug('primary', wetDebug.start, wetDebug.label);
-      }
-      this.submitEncoder(postEncoder, 'Brush Batch Post Encoder');
+    if (
+      !deferPost &&
+      !this.submitStrokeLevelPostProcess({
+        runPostProcessPass,
+        wetEdgeActive,
+        context: 'primary',
+        wetEdgeHardness: this.wetEdgeHardness,
+        postEncoderLabel: 'Brush Batch Post Encoder',
+        submitLabel: 'Brush Batch Post Encoder',
+      })
+    ) {
+      return false;
     }
 
     const cpuTime = this.cpuTimer.stop();
@@ -2041,18 +2077,7 @@ export class GPUStrokeAccumulator {
 
       // If no stroke-level pattern pass is needed, wet edge can run in the main encoder.
       if (!runPostProcessPass && wetEdgeActive) {
-        const wetDebug = this.beginWetEdgeDebug('primary-texture');
-        this.wetEdgePipeline.dispatch(
-          encoder,
-          this.pingPongBuffer.source, // Raw buffer (input, read-only)
-          this.pingPongBuffer.display, // Display buffer (output)
-          this.dirtyRect,
-          0.0, // Texture brushes: always treat as soft to enable full wet edge effect
-          this.wetEdgeStrength,
-          this.currentRenderScale
-        );
-        this.endWetEdgeDebug('primary-texture', wetDebug.start, wetDebug.label);
-        // Note: No swap here - display buffer is separate from ping-pong
+        this.applyWetEdgeToDisplay(encoder, this.pingPongBuffer.source, 'primary-texture', 0.0);
       }
     } else {
       this.dualPostPending = true;
@@ -2065,38 +2090,19 @@ export class GPUStrokeAccumulator {
     // Stroke-level pattern pass reuses the same pipeline uniform buffer as primary pass.
     // Run it in a separate submit to prevent queue.writeBuffer from overwriting uniforms
     // before primary dispatch is consumed by GPU.
-    if (!deferPost && runPostProcessPass) {
-      const postEncoder = this.device.createCommandEncoder({
-        label: 'Texture Brush Batch Post Encoder',
-      });
-      const strokePatternOutput = wetEdgeActive
-        ? this.dualBlendTexture
-        : this.pingPongBuffer.display;
-      const strokePatternInput = this.applyStrokeLevelPatternPass(
-        postEncoder,
-        this.pingPongBuffer.source,
-        strokePatternOutput,
-        this.dirtyRect,
-        currentTexture
-      );
-      if (!strokePatternInput) {
-        return false;
-      }
-
-      if (wetEdgeActive) {
-        const wetDebug = this.beginWetEdgeDebug('primary-texture');
-        this.wetEdgePipeline.dispatch(
-          postEncoder,
-          strokePatternInput,
-          this.pingPongBuffer.display,
-          this.dirtyRect,
-          0.0,
-          this.wetEdgeStrength,
-          this.currentRenderScale
-        );
-        this.endWetEdgeDebug('primary-texture', wetDebug.start, wetDebug.label);
-      }
-      this.submitEncoder(postEncoder, 'Texture Brush Batch Post Encoder');
+    if (
+      !deferPost &&
+      !this.submitStrokeLevelPostProcess({
+        runPostProcessPass,
+        wetEdgeActive,
+        context: 'primary-texture',
+        wetEdgeHardness: 0.0,
+        postEncoderLabel: 'Texture Brush Batch Post Encoder',
+        submitLabel: 'Texture Brush Batch Post Encoder',
+        brushTexture: currentTexture,
+      })
+    ) {
+      return false;
     }
 
     const cpuTime = this.cpuTimer.stop();
