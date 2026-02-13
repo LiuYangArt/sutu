@@ -171,7 +171,7 @@ fn sample_pattern_cpu_parity(tex: texture_2d<f32>, pixel_xy: vec2<u32>, scale: f
 // Base: Tip alpha (mask)
 // Blend: Pattern texture value
 // ============================================================================
-fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
+fn apply_blend_mode(base: f32, blend: f32, mode: u32, depth: f32) -> f32 {
   switch (mode) {
     case 0u: { // Multiply
       return base * blend;
@@ -202,14 +202,23 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
       return max(0.0, base + blend - 1.0);
     }
     case 7u: { // Hard Mix
-      if (base + blend >= 1.0) { return 1.0; }
-      return 0.0;
+      // Krita Hard Mix Softer (Photoshop), non-soft-texturing branch:
+      // out = clamp(3 * (base * depth) - 2 * (1 - blend), 0, 1)
+      return clamp(3.0 * base * depth - 2.0 * (1.0 - blend), 0.0, 1.0);
     }
     case 8u: { // Linear Height
-      return base * (0.5 + blend * 0.5);
+      // Krita Linear Height (Photoshop):
+      // M = 10 * depth * base
+      // out = clamp(max((1 - blend) * M, M - blend), 0, 1)
+      let m = 10.0 * depth * base;
+      let multiply = (1.0 - blend) * m;
+      let height = m - blend;
+      return clamp(max(multiply, height), 0.0, 1.0);
     }
     case 9u: { // Height
-      return min(1.0, base * 2.0 * blend);
+      // Krita Height (Photoshop):
+      // out = clamp(10 * depth * base - blend, 0, 1)
+      return clamp(10.0 * depth * base - blend, 0.0, 1.0);
     }
     default: { // Default / Multiply
       return base * blend;
@@ -259,10 +268,15 @@ fn calculate_pattern_multiplier(
   tex_val = clamp(tex_val, 0.0, 1.0);
 
   // 4. Apply Blend Mode
-  let blended_mask = apply_blend_mode(base, tex_val, uniforms.pattern_mode);
+  let blended_mask = apply_blend_mode(base, tex_val, uniforms.pattern_mode, depth);
 
   // 5. Apply Depth (Strength)
-  let target_mask = clamp(mix(base, blended_mask, depth), 0.0, 1.0);
+  // Hard Mix Softer / Linear Height / Height already include depth in the formula.
+  let target_mask = select(
+    clamp(mix(base, blended_mask, depth), 0.0, 1.0),
+    blended_mask,
+    uniforms.pattern_mode == 7u || uniforms.pattern_mode == 8u || uniforms.pattern_mode == 9u
+  );
 
   // Return multiplier relative to base mask (may exceed 1.0 for some modes)
   return target_mask / base;

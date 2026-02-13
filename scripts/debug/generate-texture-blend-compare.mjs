@@ -38,14 +38,37 @@ function toBoolean(value, fallback) {
   return fallback;
 }
 
+function normalizeMode(value) {
+  const raw = String(value ?? '')
+    .trim()
+    .toLowerCase();
+  switch (raw) {
+    case 'subtract':
+      return 'subtract';
+    case 'linearheight':
+    case 'linear-height':
+    case 'linear_height':
+      return 'linearHeight';
+    case 'height':
+      return 'height';
+    default:
+      throw new Error(`Unsupported --mode "${value}". Expected subtract|linearHeight|height`);
+  }
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..');
 const cli = parseArgs(process.argv.slice(2));
 
+const mode = normalizeMode(cli.mode ?? 'subtract');
 const textureInput = cli.texture ?? 'debug_output/pat_decoded/pat5_sparthtex01.png';
-const outputInput =
-  cli.output ?? 'debug_output/texture_formula_compare/subtract_formula_compare_canvas_hires.png';
+const defaultOutputByMode = {
+  subtract: 'debug_output/texture_formula_compare/subtract_formula_compare_canvas_hires.png',
+  linearHeight: 'debug_output/texture_formula_compare/linear_height_formula_compare_canvas_hires.png',
+  height: 'debug_output/texture_formula_compare/height_formula_compare_canvas_hires.png',
+};
+const outputInput = cli.output ?? defaultOutputByMode[mode];
 const panelWidth = Math.max(320, Math.floor(toNumber(cli['panel-width'], 1280)));
 const panelHeight = Math.max(240, Math.floor(toNumber(cli['panel-height'], 920)));
 const gap = Math.max(8, Math.floor(toNumber(cli.gap, 48)));
@@ -155,12 +178,14 @@ try {
       contrast,
       invert,
       stroke,
+      mode,
     }) => {
       const clamp01 = (v) => Math.max(0, Math.min(1, v));
       const smoothstep = (edge0, edge1, x) => {
         const t = clamp01((x - edge0) / Math.max(1e-6, edge1 - edge0));
         return t * t * (3 - 2 * t);
       };
+      const mix = (a, b, t) => a + (b - a) * t;
 
       const image = new Image();
       image.src = textureUrl;
@@ -277,20 +302,89 @@ try {
       }
 
       const baseAlpha = buildStrokeAlpha();
-      const formulas = [
-        {
-          title: "1) A' = clamp(A - d*T, 0, 1)",
-          fn: (a, t) => clamp01(a - depth * t),
-        },
-        {
-          title: "2) A' = A * clamp(1 - d*T, 0, 1)",
-          fn: (a, t) => a * clamp01(1 - depth * t),
-        },
-        {
-          title: `3) A' = clamp(A - d*T*A^g, 0, 1), g=${gamma.toFixed(2)}`,
-          fn: (a, t) => clamp01(a - depth * t * Math.pow(Math.max(a, 1e-6), gamma)),
-        },
-      ];
+
+      function buildFormulaSet(currentMode) {
+        if (currentMode === 'linearHeight') {
+          return {
+            title: 'Texture Linear Height Formula Candidates',
+            subtitle: `mode=linearHeight  depth=${depth.toFixed(2)}  stroke=${stroke}  texture=${image.width}x${image.height}`,
+            formulas: [
+              {
+                title: "1) Current: mix(A, A*(0.5+0.5*T), d)",
+                fn: (a, t) => {
+                  const blended = a * (0.5 + 0.5 * t);
+                  return clamp01(mix(a, blended, depth));
+                },
+              },
+              {
+                title: "2) Krita PS: clamp(max((1-T)*M, M-T), 0, 1), M=10*d*A",
+                fn: (a, t) => {
+                  const m = 10 * depth * a;
+                  const multiply = (1 - t) * m;
+                  const height = m - t;
+                  return clamp01(Math.max(multiply, height));
+                },
+              },
+              {
+                title: "3) Krita PS Soft: clamp(max(M*(1-Td), M-Td), 0, 1), M=A*(1+9d)",
+                fn: (a, t) => {
+                  const m = a * (1 + 9 * depth);
+                  const td = t * depth;
+                  const multiply = m * (1 - td);
+                  const height = m - td;
+                  return clamp01(Math.max(multiply, height));
+                },
+              },
+            ],
+          };
+        }
+
+        if (currentMode === 'height') {
+          return {
+            title: 'Texture Height Formula Candidates',
+            subtitle: `mode=height  depth=${depth.toFixed(2)}  stroke=${stroke}  texture=${image.width}x${image.height}`,
+            formulas: [
+              {
+                title: "1) Current: mix(A, min(1, A*2*T), d)",
+                fn: (a, t) => {
+                  const blended = Math.min(1, a * 2 * t);
+                  return clamp01(mix(a, blended, depth));
+                },
+              },
+              {
+                title: "2) Krita PS: clamp(10*d*A - T, 0, 1)",
+                fn: (a, t) => clamp01(10 * depth * a - t),
+              },
+              {
+                title: "3) Krita PS Soft: clamp(A*(1+9d) - T*d, 0, 1)",
+                fn: (a, t) => clamp01(a * (1 + 9 * depth) - t * depth),
+              },
+            ],
+          };
+        }
+
+        return {
+          title: 'Texture Subtract Formula Candidates',
+          subtitle: `mode=subtract  depth=${depth.toFixed(2)}  gamma=${gamma.toFixed(2)}  stroke=${stroke}  texture=${image.width}x${image.height}`,
+          formulas: [
+            {
+              title: "1) A' = clamp(A - d*T, 0, 1)",
+              fn: (a, t) => clamp01(a - depth * t),
+            },
+            {
+              title: "2) A' = A * clamp(1 - d*T, 0, 1)",
+              fn: (a, t) => a * clamp01(1 - depth * t),
+            },
+            {
+              title: `3) A' = clamp(A - d*T*A^g, 0, 1), g=${gamma.toFixed(2)}`,
+              fn: (a, t) => clamp01(a - depth * t * Math.pow(Math.max(a, 1e-6), gamma)),
+            },
+          ],
+        };
+      }
+
+      const formulaSet = buildFormulaSet(mode);
+      const formulas = formulaSet.formulas;
 
       const canvas = document.createElement('canvas');
       canvas.id = 'compare-canvas';
@@ -304,14 +398,10 @@ try {
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
       ctx.fillStyle = '#d5d5dd';
       ctx.font = 'bold 32px Segoe UI';
-      ctx.fillText('Texture Subtract Formula Candidates', padding, padding + 36);
+      ctx.fillText(formulaSet.title, padding, padding + 36);
       ctx.font = '20px Segoe UI';
       ctx.fillStyle = '#a9a9b2';
-      ctx.fillText(
-        `depth=${depth.toFixed(2)}  gamma=${gamma.toFixed(2)}  stroke=${stroke}  texture=${image.width}x${image.height}`,
-        padding,
-        padding + 76
-      );
+      ctx.fillText(formulaSet.subtitle, padding, padding + 76);
 
       const top = padding + headerHeight;
       for (let panel = 0; panel < formulas.length; panel++) {
@@ -364,6 +454,7 @@ try {
       contrast,
       invert,
       stroke,
+      mode,
     }
   );
 

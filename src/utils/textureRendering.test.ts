@@ -66,9 +66,21 @@ describe('calculateTextureInfluence', () => {
         expectedMultiplier: (1 - Math.min(1, (1 - baseAlpha) / blend)) / baseAlpha,
       },
       { mode: 'linearBurn', expectedMultiplier: Math.max(0, baseAlpha + blend - 1) / baseAlpha },
-      { mode: 'hardMix', expectedMultiplier: 1.0 / baseAlpha },
-      { mode: 'linearHeight', expectedMultiplier: 0.5 + blend * 0.5 },
-      { mode: 'height', expectedMultiplier: Math.min(1.0, baseAlpha * 2.0 * blend) / baseAlpha },
+      {
+        mode: 'hardMix',
+        expectedMultiplier:
+          Math.min(1.0, Math.max(0.0, 3.0 * baseAlpha - 2.0 * (1.0 - blend))) / baseAlpha,
+      },
+      {
+        mode: 'linearHeight',
+        expectedMultiplier:
+          Math.min(1.0, Math.max((1.0 - blend) * 10.0 * baseAlpha, 10.0 * baseAlpha - blend)) /
+          baseAlpha,
+      },
+      {
+        mode: 'height',
+        expectedMultiplier: Math.min(1.0, Math.max(0.0, 10.0 * baseAlpha - blend)) / baseAlpha,
+      },
     ];
 
     for (const c of cases) {
@@ -78,6 +90,57 @@ describe('calculateTextureInfluence', () => {
         5
       );
     }
+  });
+
+  it('should use Krita Photoshop depth semantics for linearHeight/height', () => {
+    const baseAlpha = 0.25;
+    const depth = 0.5;
+    const blendByte = 242; // 0.949..., avoid full clamp to expose depth behavior
+    const blend = blendByte / 255;
+
+    const pattern: PatternData = {
+      id: 'flat-pattern-krita-height-depth',
+      width: 1,
+      height: 1,
+      data: new Uint8Array([blendByte, blendByte, blendByte, 255]),
+    };
+
+    const linearHeightSettings = { ...defaultSettings, mode: 'linearHeight' as const };
+    const heightSettings = { ...defaultSettings, mode: 'height' as const };
+
+    const expectedAlpha = Math.max(0, Math.min(1, 10.0 * depth * baseAlpha - blend));
+    const expectedMultiplier = expectedAlpha / baseAlpha;
+
+    expect(
+      calculateTextureInfluence(0, 0, linearHeightSettings, pattern, depth, baseAlpha)
+    ).toBeCloseTo(expectedMultiplier, 5);
+    expect(calculateTextureInfluence(0, 0, heightSettings, pattern, depth, baseAlpha)).toBeCloseTo(
+      expectedMultiplier,
+      5
+    );
+  });
+
+  it('should use Krita Photoshop depth semantics for hardMix softer', () => {
+    const baseAlpha = 0.4;
+    const depth = 0.5;
+    const blendByte = 242; // 0.949...
+    const blend = blendByte / 255;
+
+    const pattern: PatternData = {
+      id: 'flat-pattern-krita-hardmix-depth',
+      width: 1,
+      height: 1,
+      data: new Uint8Array([blendByte, blendByte, blendByte, 255]),
+    };
+
+    const settings = { ...defaultSettings, mode: 'hardMix' as const };
+    const expectedAlpha = Math.max(0, Math.min(1, 3.0 * baseAlpha * depth - 2.0 * (1.0 - blend)));
+    const expectedMultiplier = expectedAlpha / baseAlpha;
+
+    expect(calculateTextureInfluence(0, 0, settings, pattern, depth, baseAlpha)).toBeCloseTo(
+      expectedMultiplier,
+      5
+    );
   });
 
   it('should handle Overlay mode correctly when base alpha >= 0.5', () => {

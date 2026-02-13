@@ -85,6 +85,7 @@ export function calculateTextureInfluence(
   // 4. Apply Blend Mode (match GPU apply_blend_mode)
   // Base: current tip alpha (maskValue)
   // Blend: pattern texture value
+  let blendIncludesDepth = false;
   const blendedAlpha = (() => {
     switch (settings.mode) {
       case 'multiply':
@@ -106,20 +107,35 @@ export function calculateTextureInfluence(
       case 'linearBurn':
         return Math.max(0.0, base + blend - 1.0);
       case 'hardMix':
-        return base + blend >= 1.0 ? 1.0 : 0.0;
+        // Krita Hard Mix Softer (Photoshop), non-soft-texturing branch:
+        // out = clamp(3 * (base * depth) - 2 * (1 - blend), 0, 1)
+        blendIncludesDepth = true;
+        return Math.max(0, Math.min(1, 3.0 * base * depth01 - 2.0 * (1.0 - blend)));
       case 'linearHeight':
-        return base * (0.5 + blend * 0.5);
+        // Krita Linear Height (Photoshop):
+        // M = 10 * depth * base
+        // out = clamp(max((1 - blend) * M, M - blend), 0, 1)
+        blendIncludesDepth = true;
+        {
+          const m = 10.0 * depth01 * base;
+          const multiply = (1.0 - blend) * m;
+          const height = m - blend;
+          return Math.max(0, Math.min(1, Math.max(multiply, height)));
+        }
       case 'height':
-        // Height: treat texture as height map (neutral at 0.5), allowing lift (alpha increase)
-        // Full depth (depth=1) => influence = 2 * blend, final alpha = base * influence (clamped)
-        return Math.min(1.0, base * 2.0 * blend);
+        // Krita Height (Photoshop):
+        // out = clamp(10 * depth * base - blend, 0, 1)
+        blendIncludesDepth = true;
+        return Math.max(0, Math.min(1, 10.0 * depth01 * base - blend));
       default:
         return base * blend;
     }
   })();
 
   // 5. Apply Depth (Strength)
-  const finalAlpha = base * (1.0 - depth01) + blendedAlpha * depth01;
+  const finalAlpha = blendIncludesDepth
+    ? blendedAlpha
+    : base * (1.0 - depth01) + blendedAlpha * depth01;
   const clampedFinalAlpha = Math.max(0, Math.min(1, finalAlpha));
 
   // Return alpha multiplier relative to the original base alpha.
