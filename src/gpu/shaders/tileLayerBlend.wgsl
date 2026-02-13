@@ -97,6 +97,13 @@ fn hash_noise_01(x: u32, y: u32) -> f32 {
   return f32(t & 0x00ffffffu) / 16777215.0;
 }
 
+fn channel_overlay(base: f32, blend: f32) -> f32 {
+  if (base < 0.5) {
+    return 2.0 * base * blend;
+  }
+  return 1.0 - 2.0 * (1.0 - base) * (1.0 - blend);
+}
+
 fn rgb_to_hsl(color: vec3<f32>) -> vec3<f32> {
   let cmax = max(color.r, max(color.g, color.b));
   let cmin = min(color.r, min(color.g, color.b));
@@ -342,7 +349,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   if (uniforms.blend_mode == 1u) {
     let global_xy = uniforms.tile_origin + vec2<u32>(u32(local.x), u32(local.y));
     let noise = hash_noise_01(global_xy.x, global_xy.y);
-    src_alpha = select(0.0, 1.0, noise < src_alpha);
+    src_alpha = clamp(channel_overlay(src_alpha, noise), 0.0, 1.0);
   }
   if (src_alpha <= 0.0001) {
     return dst;
