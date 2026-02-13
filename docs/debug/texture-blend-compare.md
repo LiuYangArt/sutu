@@ -4,6 +4,8 @@
 
 使用同一张纹理、同一条 procedural 软边圆笔笔触，生成多公式并排对比图，用于快速判断混合模式是否接近 Photoshop 预期。
 
+> 说明：该对比图默认对应 `Texture Each Tip = Off` 的“连续 stroke alpha 语义”分析；如果要验证 `Texture Each Tip = On`，需要单独按 per-dab 语义建脚本对照。
+
 当前脚本默认输出 `Subtract` 的三个候选公式：
 
 1. `A' = clamp(A - d*T, 0, 1)`

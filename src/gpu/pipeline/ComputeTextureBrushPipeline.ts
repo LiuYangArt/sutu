@@ -262,7 +262,7 @@ export class ComputeTextureBrushPipeline {
       view.setFloat32(byteOffset + 48, patternSettings.brightness, true);
       view.setFloat32(byteOffset + 52, patternSettings.contrast, true);
       view.setFloat32(byteOffset + 56, patternSettings.depth, true);
-      view.setUint32(byteOffset + 60, 0, true); // padding
+      view.setUint32(byteOffset + 60, patternSettings.textureEachTip ? 1 : 0, true);
 
       // Block 4
       view.setFloat32(byteOffset + 64, patternTexture.width, true);

@@ -54,7 +54,7 @@ struct Uniforms {
   pattern_brightness: f32,
   pattern_contrast: f32,
   pattern_depth: f32,
-  pattern_padding: u32,
+  pattern_each_tip: u32,
 
   // Block 4
   pattern_size: vec2<f32>,
@@ -469,9 +469,11 @@ fn main(
       continue;
     }
 
-    // A2. Texture: apply blend mode to Alpha Darken ceiling (not tip alpha)
+    // A2. Texture:
+    // - textureEachTip=true  => per-dab texture modulation
+    // - textureEachTip=false => stroke-level modulation (applied once after dab loop)
     var pattern_mult = 1.0;
-    if (uniforms.pattern_enabled != 0u) {
+    if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip != 0u) {
        pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask, color.a);
     }
 
@@ -490,6 +492,17 @@ fn main(
 
     // Alpha Darken blend
     color = alpha_darken_blend(color, dab_color, src_alpha, ceiling);
+  }
+
+  // Stroke-level texture blend (Photoshop-like when Texture Each Tip is OFF):
+  // apply texture modulation once to the accumulated stroke alpha.
+  if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip == 0u) {
+    let stroke_pattern_mult = calculate_pattern_multiplier(
+      vec2<u32>(pixel_x, pixel_y),
+      color.a,
+      color.a
+    );
+    color = vec4<f32>(color.rgb, clamp(color.a * stroke_pattern_mult, 0.0, 1.0));
   }
 
   // -------------------------------------------------------------------------

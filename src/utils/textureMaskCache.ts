@@ -372,7 +372,7 @@ export class TextureMaskCache {
     const offsetX = cx - (bufferLeft + halfWidth);
     const offsetY = cy - (bufferTop + halfHeight);
     const useSubpixel = Math.abs(offsetX) > 1e-3 || Math.abs(offsetY) > 1e-3;
-    const hasTexturePattern = Boolean(textureSettings && pattern);
+    const hasTexturePerTip = Boolean(textureSettings && pattern && textureSettings.textureEachTip);
     const textureDepth = textureSettings ? textureSettings.depth / 100.0 : 0;
     const noiseStrength = noiseSettings ? noiseSettings.depth / 100.0 : 0;
 
@@ -409,7 +409,7 @@ export class TextureMaskCache {
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
-          if (hasTexturePattern) {
+          if (hasTexturePerTip) {
             textureMod = calculateTextureInfluence(
               bufferX,
               bufferY,
@@ -484,7 +484,7 @@ export class TextureMaskCache {
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
-          if (hasTexturePattern) {
+          if (hasTexturePerTip) {
             textureMod = calculateTextureInfluence(
               bufferX,
               bufferY,

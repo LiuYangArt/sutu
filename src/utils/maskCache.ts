@@ -425,6 +425,9 @@ export class MaskCache {
 
     const hasNoise = Boolean(noiseSettings && noisePattern);
     const noiseStrength = noiseSettings ? noiseSettings.depth / 100.0 : 0;
+    const hasTexturePerTip = Boolean(textureSettings && pattern && textureSettings.textureEachTip);
+    const activeTextureSettings = hasTexturePerTip ? textureSettings : null;
+    const activePattern = hasTexturePerTip ? pattern : null;
 
     // Fast blending loop
     if (!useSubpixel) {
@@ -441,14 +444,14 @@ export class MaskCache {
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
-          if (textureSettings && pattern) {
+          if (activeTextureSettings && activePattern) {
             // TextureSettings.depth is 0-100
-            const depth = textureSettings.depth / 100.0;
+            const depth = activeTextureSettings.depth / 100.0;
             textureMod = calculateTextureInfluence(
               bufferLeft + mx,
               bufferTop + my,
-              textureSettings,
-              pattern,
+              activeTextureSettings,
+              activePattern,
               depth,
               maskValue,
               dstAlpha
@@ -503,14 +506,14 @@ export class MaskCache {
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
-          if (textureSettings && pattern) {
+          if (activeTextureSettings && activePattern) {
             // TextureSettings.depth is 0-100
-            const depth = textureSettings.depth / 100.0;
+            const depth = activeTextureSettings.depth / 100.0;
             textureMod = calculateTextureInfluence(
               bufferLeft + mx,
               bufferTop + my,
-              textureSettings,
-              pattern,
+              activeTextureSettings,
+              activePattern,
               depth,
               maskValue,
               dstAlpha
@@ -619,6 +622,9 @@ export class MaskCache {
 
     const hasNoise = Boolean(noiseSettings && noisePattern);
     const noiseStrength = noiseSettings ? noiseSettings.depth / 100.0 : 0;
+    const hasTexturePerTip = Boolean(textureSettings && pattern && textureSettings.textureEachTip);
+    const activeTextureSettings = hasTexturePerTip ? textureSettings : null;
+    const activePattern = hasTexturePerTip ? pattern : null;
 
     // Inverse radius squared for fast distance check
     const invRx2 = 1 / (radiusX * radiusX);
@@ -655,13 +661,13 @@ export class MaskCache {
 
         // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
         let textureMod = 1.0;
-        if (textureSettings && pattern) {
-          const depth = textureSettings.depth / 100.0;
+        if (activeTextureSettings && activePattern) {
+          const depth = activeTextureSettings.depth / 100.0;
           textureMod = calculateTextureInfluence(
             px,
             py,
-            textureSettings,
-            pattern,
+            activeTextureSettings,
+            activePattern,
             depth,
             maskValue,
             dstAlpha

@@ -243,6 +243,7 @@ export interface GPUPatternSettings {
   depth: number;
   invert: boolean;
   mode: TextureBlendMode;
+  textureEachTip: boolean;
 }
 
 /**

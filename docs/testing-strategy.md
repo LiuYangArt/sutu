@@ -556,6 +556,21 @@ if (snapshot.readbackBypassedCount <= 0) throw new Error('readback was not bypas
 if (snapshot.avgReadbackMs > 2) throw new Error(`readback regression: ${snapshot.avgReadbackMs}ms`);
 ```
 
+### 6.4 Texture Each Tip=Off 回归检查
+
+当涉及 Texture 混合模式（特别是 `darken / colorBurn / linearBurn`）改动时，额外执行以下回归：
+
+1. 固定同一笔刷与纹理，关闭 `Texture Each Tip`。
+2. 使用同一条长笔触，分别切换 `darken / colorBurn / linearBurn`，观察是否出现串珠（dab）感。
+3. 开启 `Texture Each Tip` 后重复一次，确认仅语义切换，不出现异常闪烁或断裂。
+4. GPU 与 CPU fallback 各跑一轮，确保两条链路趋势一致。
+
+建议记录产物：
+
+1. 参数截图（Scale/Brightness/Contrast/Depth/Invert/Texture Each Tip）。
+2. 三个模式的画布截图（至少各 1 张）。
+3. 如有脚本对比，附 `report.json` 和 diff 图。
+
 ---
 
 ## 7. CI/CD 质量门禁

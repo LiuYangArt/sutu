@@ -57,3 +57,8 @@
 
 1. 继续按同方法对齐剩余 texture blend mode（先公式候选，再 capture 回放，再实笔手感确认）。
 2. 为 `subtract` 增加固定 capture 的基线快照，作为后续 shader 调整的防回归锚点。
+
+## 相关后续
+
+`textureEachTip=false` 在非线性模式（如 `darken / colorBurn / linearBurn`）上的作用域修复见：  
+`docs/postmortem/2026-02-13-texture-each-tip-off-stroke-level-alignment.md`。

@@ -2833,6 +2833,7 @@ export class GPUStrokeAccumulator {
       depth: settings.depth, // Note: Pressure control not yet supported on CPU/GPU
       invert: settings.invert,
       mode: settings.mode,
+      textureEachTip: settings.textureEachTip,
     };
   }
 
@@ -2857,7 +2858,8 @@ export class GPUStrokeAccumulator {
       current.contrast !== newSettings.contrast ||
       current.depth !== newSettings.depth ||
       current.invert !== newSettings.invert ||
-      current.mode !== newSettings.mode
+      current.mode !== newSettings.mode ||
+      current.textureEachTip !== newSettings.textureEachTip
     );
   }
 }
