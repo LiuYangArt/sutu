@@ -76,4 +76,19 @@ describe('computeTextureDepth semantics', () => {
     const result = computeTextureDepth(settings.depth, settings, input, () => 1);
     expect(result).toBeCloseTo(55, 6);
   });
+
+  it('control=off 时 minimumDepth 不生效，但 jitter 仍会作用', () => {
+    const settings = {
+      ...DEFAULT_TEXTURE_SETTINGS,
+      textureEachTip: true,
+      depth: 80,
+      minimumDepth: 60,
+      depthJitter: 25,
+      depthControl: 0, // off
+    };
+    const input = createInput({ pressure: 0.1 });
+    // control=off => base 80 unchanged, jitter +25% => +20
+    const result = computeTextureDepth(settings.depth, settings, input, () => 1);
+    expect(result).toBeCloseTo(100, 6);
+  });
 });

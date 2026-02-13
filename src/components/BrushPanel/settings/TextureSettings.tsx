@@ -61,6 +61,7 @@ export function TextureSettings(): JSX.Element {
 
   // Controls related to individual tip variation are disabled unless Texture Each Tip is on
   const tipVariationDisabled = disabled || !textureSettings.textureEachTip;
+  const minimumDepthDisabled = tipVariationDisabled || depthControlSource === 'off';
 
   const handlePatternSelect = (newPatternId: string | null) => {
     setTextureSettings({ patternId: newPatternId });
@@ -229,7 +230,7 @@ export function TextureSettings(): JSX.Element {
           max={100}
           displayValue={`${Math.round(textureSettings.minimumDepth)}%`}
           onChange={(v) => setTextureSettings({ minimumDepth: v })}
-          disabled={tipVariationDisabled}
+          disabled={minimumDepthDisabled}
         />
 
         <SliderRow

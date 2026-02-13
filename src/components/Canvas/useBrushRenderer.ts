@@ -675,27 +675,27 @@ export function useBrushRenderer({
             )
           : [{ x: dab.x, y: dab.y }];
 
-        const effectiveTextureSettings =
-          config.textureEnabled && config.textureSettings
-            ? (() => {
-                const settings = config.textureSettings!;
-                const dynamicDepth = computeTextureDepth(settings.depth, settings, dynamicsInput);
-                if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
-                  return settings;
-                }
-                return {
-                  ...settings,
-                  depth: dynamicDepth,
-                };
-              })()
-            : undefined;
-
         if (config.dualBrushEnabled && config.dualBrush?.texture?.imageData) {
           // console.log('[useBrushRenderer] DualBrush has imageData prepared');
         }
 
         // Stamp dab at each scattered position
         for (const pos of scatteredPositions) {
+          const effectiveTextureSettings =
+            config.textureEnabled && config.textureSettings
+              ? (() => {
+                  const settings = config.textureSettings!;
+                  const dynamicDepth = computeTextureDepth(settings.depth, settings, dynamicsInput);
+                  if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
+                    return settings;
+                  }
+                  return {
+                    ...settings,
+                    depth: dynamicDepth,
+                  };
+                })()
+              : undefined;
+
           const dabParams: DabParams = {
             x: pos.x,
             y: pos.y,
