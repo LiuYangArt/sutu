@@ -171,6 +171,30 @@ fn sample_pattern_cpu_parity(tex: texture_2d<f32>, pixel_xy: vec2<u32>, scale: f
 // Base: Tip alpha (mask)
 // Blend: Pattern texture value
 // ============================================================================
+fn is_depth_embedded_mode(mode: u32) -> bool {
+  return mode == 7u || mode == 8u || mode == 9u;
+}
+
+fn blend_hard_mix_softer_photoshop(base: f32, blend: f32, depth: f32) -> f32 {
+  // Krita Hard Mix Softer (Photoshop), non-soft-texturing branch:
+  // out = clamp(3 * (base * depth) - 2 * (1 - blend), 0, 1)
+  return clamp(3.0 * base * depth - 2.0 * (1.0 - blend), 0.0, 1.0);
+}
+
+fn blend_linear_height_photoshop(base: f32, blend: f32, depth: f32) -> f32 {
+  // Krita Linear Height (Photoshop):
+  // M = 10 * depth * base
+  // out = clamp(max((1 - blend) * M, M - blend), 0, 1)
+  let m = 10.0 * depth * base;
+  return clamp(max((1.0 - blend) * m, m - blend), 0.0, 1.0);
+}
+
+fn blend_height_photoshop(base: f32, blend: f32, depth: f32) -> f32 {
+  // Krita Height (Photoshop):
+  // out = clamp(10 * depth * base - blend, 0, 1)
+  return clamp(10.0 * depth * base - blend, 0.0, 1.0);
+}
+
 fn apply_blend_mode(base: f32, blend: f32, mode: u32, depth: f32) -> f32 {
   switch (mode) {
     case 0u: { // Multiply
@@ -202,23 +226,13 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32, depth: f32) -> f32 {
       return max(0.0, base + blend - 1.0);
     }
     case 7u: { // Hard Mix
-      // Krita Hard Mix Softer (Photoshop), non-soft-texturing branch:
-      // out = clamp(3 * (base * depth) - 2 * (1 - blend), 0, 1)
-      return clamp(3.0 * base * depth - 2.0 * (1.0 - blend), 0.0, 1.0);
+      return blend_hard_mix_softer_photoshop(base, blend, depth);
     }
     case 8u: { // Linear Height
-      // Krita Linear Height (Photoshop):
-      // M = 10 * depth * base
-      // out = clamp(max((1 - blend) * M, M - blend), 0, 1)
-      let m = 10.0 * depth * base;
-      let multiply = (1.0 - blend) * m;
-      let height = m - blend;
-      return clamp(max(multiply, height), 0.0, 1.0);
+      return blend_linear_height_photoshop(base, blend, depth);
     }
     case 9u: { // Height
-      // Krita Height (Photoshop):
-      // out = clamp(10 * depth * base - blend, 0, 1)
-      return clamp(10.0 * depth * base - blend, 0.0, 1.0);
+      return blend_height_photoshop(base, blend, depth);
     }
     default: { // Default / Multiply
       return base * blend;
@@ -275,7 +289,7 @@ fn calculate_pattern_multiplier(
   let target_mask = select(
     clamp(mix(base, blended_mask, depth), 0.0, 1.0),
     blended_mask,
-    uniforms.pattern_mode == 7u || uniforms.pattern_mode == 8u || uniforms.pattern_mode == 9u
+    is_depth_embedded_mode(uniforms.pattern_mode)
   );
 
   // Return multiplier relative to base mask (may exceed 1.0 for some modes)
