@@ -32,7 +32,6 @@ export interface MaskCacheParams {
 
 export const ERF_LUT_SIZE = 1024;
 export const ERF_LUT_MAX = 4.0;
-const ERF_LUT_SCALE = ERF_LUT_SIZE / ERF_LUT_MAX;
 export const erfLUT: Float32Array = new Float32Array(ERF_LUT_SIZE + 1);
 
 // Initialize LUT at module load time
@@ -51,17 +50,6 @@ export const erfLUT: Float32Array = new Float32Array(ERF_LUT_SIZE + 1);
     erfLUT[i] = y;
   }
 })();
-
-function erfFast(x: number): number {
-  const sign = x >= 0 ? 1 : -1;
-  const ax = Math.abs(x);
-  if (ax >= ERF_LUT_MAX) return sign;
-  const idx = ax * ERF_LUT_SCALE;
-  const i = idx | 0;
-  const frac = idx - i;
-  const y = erfLUT[i]! + frac * (erfLUT[i + 1]! - erfLUT[i]!);
-  return sign * y;
-}
 
 /**
  * MaskCache class for pre-computed brush masks
@@ -89,13 +77,58 @@ export class MaskCache {
 
   /**
    * Calculate hard edge anti-aliasing using Inner Mode (Krita-style)
-   * AA band is at [radius-1.0, radius], where radius is the absolute boundary
+   * AA band is at [radius-aaWidth, radius], where radius is the absolute boundary.
+   * Slightly wider than 1px to better match PS hard-round softness.
    */
   private static calcHardEdgeAA(physicalDist: number, radius: number): number {
-    const aaStart = radius - 1.0;
+    const aaWidth = 1.2;
+    const aaStart = radius - aaWidth;
     if (physicalDist <= aaStart) return 1.0;
     if (physicalDist >= radius) return 0;
-    return 1.0 - (physicalDist - aaStart);
+    return 1.0 - (physicalDist - aaStart) / aaWidth;
+  }
+
+  private static clamp01(v: number): number {
+    if (v <= 0) return 0;
+    if (v >= 1) return 1;
+    return v;
+  }
+
+  private static smoothStep(edge0: number, edge1: number, x: number): number {
+    if (edge1 <= edge0) return x < edge0 ? 0 : 1;
+    const t = MaskCache.clamp01((x - edge0) / (edge1 - edge0));
+    return t * t * (3.0 - 2.0 * t);
+  }
+
+  /**
+   * PS-like soft round profile:
+   * - Keeps hardness-controlled solid core
+   * - Uses exponential falloff outside core
+   * - Adds terminal feather near max extent to avoid hard clipping
+   */
+  private static calcSoftRoundMask(
+    normDist: number,
+    hardness: number,
+    exponent: number,
+    maxExtent: number,
+    featherWidth: number
+  ): number {
+    if (normDist > maxExtent) return 0;
+    if (normDist <= hardness) return 1;
+
+    const denom = Math.max(1e-6, 1 - hardness);
+    const t = (normDist - hardness) / denom;
+    let alpha = Math.exp(-exponent * t * t);
+
+    if (featherWidth > 1e-6) {
+      const featherStart = Math.max(1.0, maxExtent - featherWidth);
+      if (normDist > featherStart) {
+        const fadeOut = 1.0 - MaskCache.smoothStep(featherStart, maxExtent, normDist);
+        alpha *= fadeOut;
+      }
+    }
+
+    return MaskCache.clamp01(alpha);
   }
 
   private static sampleBilinear(
@@ -247,15 +280,13 @@ export class MaskCache {
     const radiusY = radiusX * roundness;
     const maxRadius = Math.max(radiusX, radiusY);
 
-    // Calculate extent multiplier based on hardness and mask type
-    const fade = maskType === 'gaussian' ? (1.0 - hardness) * 2.0 : 0;
+    // Expanded soft extent avoids low-hardness edge clipping in procedural tips.
+    const SOFT_EXTENT_MULTIPLIER = 1.8;
     let extentMultiplier: number;
     if (hardness >= 0.99) {
       extentMultiplier = 1.0;
-    } else if (maskType === 'gaussian') {
-      extentMultiplier = 1.0 + fade;
     } else {
-      extentMultiplier = 1.5;
+      extentMultiplier = SOFT_EXTENT_MULTIPLIER;
     }
 
     const effectiveRadius = maxRadius * extentMultiplier + 1;
@@ -274,13 +305,6 @@ export class MaskCache {
     const cosA = Math.cos(-angleRad);
     const sinA = Math.sin(-angleRad);
 
-    // Pre-calculate Gaussian parameters (only for gaussian mask type)
-    const safeFade = Math.max(1e-6, Math.min(2.0, fade));
-    const SQRT_2 = Math.SQRT2;
-    const center = (2.5 * (6761.0 * safeFade - 10000.0)) / (SQRT_2 * 6761.0 * safeFade);
-    const alphafactor = 255.0 / (2.0 * erfFast(center));
-    const distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX);
-
     // Generate mask
     for (let py = 0; py < this.maskHeight; py++) {
       const dy = py + 0.5 - this.centerY;
@@ -296,56 +320,27 @@ export class MaskCache {
         const normX = localX / radiusX;
         const normY = localY / radiusY;
         const normDist = Math.sqrt(normX * normX + normY * normY);
-        let boundaryRadius = radiusX;
-        let physicalDist = normDist * radiusX;
-        let distfactorLocal = distfactor;
-
-        if (useEllipticalDistance) {
-          const dist = Math.hypot(localX, localY);
-          if (normDist > 1e-6) {
-            boundaryRadius = dist / normDist;
-          }
-          physicalDist = dist;
-          distfactorLocal =
-            (SQRT_2 * 12500.0) / (6761.0 * safeFade * Math.max(1e-3, boundaryRadius));
-        }
 
         // Calculate mask shape
         let maskValue: number;
 
         if (hardness >= 0.99) {
-          // Inner Mode (Krita-style): AA band at [radiusX-1.0, radiusX]
+          let boundaryRadius = radiusX;
+          let physicalDist = normDist * radiusX;
+          if (useEllipticalDistance) {
+            const dist = Math.hypot(localX, localY);
+            if (normDist > 1e-6) {
+              boundaryRadius = dist / normDist;
+            }
+            physicalDist = dist;
+          }
           maskValue = MaskCache.calcHardEdgeAA(physicalDist, boundaryRadius);
         } else if (maskType === 'gaussian') {
-          // Krita-style Gaussian (erf-based) mask
-          const aaStart = boundaryRadius - 1.0;
-
-          if (hardness > 0.5 && physicalDist > aaStart) {
-            if (physicalDist > boundaryRadius) {
-              maskValue = 0;
-            } else {
-              const distAtStart = aaStart * distfactorLocal;
-              const valAtStart =
-                alphafactor * (erfFast(distAtStart + center) - erfFast(distAtStart - center));
-              const baseAlphaAtStart = Math.max(0, Math.min(1, valAtStart / 255.0));
-              maskValue = baseAlphaAtStart * (1.0 - (physicalDist - aaStart));
-            }
-          } else {
-            const scaledDist = physicalDist * distfactorLocal;
-            const val = alphafactor * (erfFast(scaledDist + center) - erfFast(scaledDist - center));
-            maskValue = Math.max(0, Math.min(1, val / 255.0));
-          }
+          // Gaussian mode: default-style profile with slightly softer tail than default mode.
+          maskValue = MaskCache.calcSoftRoundMask(normDist, hardness, 2.3, 1.8, 0.3);
         } else {
-          // Simple Gaussian exp(-k*t²)
-          const maxExtent = 1.5;
-          if (normDist > maxExtent) {
-            maskValue = 0;
-          } else if (normDist <= hardness) {
-            maskValue = 1.0;
-          } else {
-            const t = (normDist - hardness) / (1 - hardness);
-            maskValue = Math.exp(-2.5 * t * t);
-          }
+          // Default mode: preserve existing character, but add terminal feather to remove hard clipping.
+          maskValue = MaskCache.calcSoftRoundMask(normDist, hardness, 2.5, 1.8, 0.25);
         }
 
         this.mask[py * this.maskWidth + px] = maskValue;

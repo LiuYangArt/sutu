@@ -12,7 +12,7 @@ import {
 import { useDocumentStore, type BlendMode, type ResizeCanvasOptions } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { useSettingsStore } from '@/stores/settings';
-import { useToolStore, type ToolType, type PressureCurve } from '@/stores/tool';
+import { useToolStore, type ToolType, type PressureCurve, type BrushMaskType } from '@/stores/tool';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
@@ -88,6 +88,7 @@ const TOOL_TYPES = new Set<ToolType>([
 ]);
 
 const PRESSURE_CURVES = new Set<PressureCurve>(['linear', 'soft', 'hard', 'sCurve']);
+const BRUSH_MASK_TYPES = new Set<BrushMaskType>(['gaussian', 'default']);
 const DEBUG_CAPTURE_DIR = 'debug-data';
 const DEBUG_CAPTURE_FILE_NAME = 'debug-stroke-capture.json';
 const DEBUG_CAPTURE_RELATIVE_PATH = `${DEBUG_CAPTURE_DIR}/${DEBUG_CAPTURE_FILE_NAME}`;
@@ -496,6 +497,23 @@ export function useGlobalExports({
       const brushSpacing = asFiniteNumber(toolMeta.brushSpacing);
       if (brushSpacing !== null) {
         toolStore.setBrushSpacing(brushSpacing);
+      }
+      const brushRoundness = asFiniteNumber(toolMeta.brushRoundness);
+      if (brushRoundness !== null) {
+        toolStore.setBrushRoundness(brushRoundness);
+      }
+      const brushAngle = asFiniteNumber(toolMeta.brushAngle);
+      if (brushAngle !== null) {
+        toolStore.setBrushAngle(brushAngle);
+      }
+      const capturedMaskTypeRaw =
+        typeof toolMeta.brushMaskType === 'string'
+          ? toolMeta.brushMaskType
+          : typeof toolMeta.maskType === 'string'
+            ? toolMeta.maskType
+            : null;
+      if (capturedMaskTypeRaw && BRUSH_MASK_TYPES.has(capturedMaskTypeRaw as BrushMaskType)) {
+        toolStore.setBrushMaskType(capturedMaskTypeRaw as BrushMaskType);
       }
 
       const pressureCurve = toolMeta.pressureCurve;
