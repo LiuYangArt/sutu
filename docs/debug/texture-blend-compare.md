@@ -28,6 +28,25 @@
 
 `scripts/debug/generate-texture-blend-compare.mjs`
 
+## GPU 空笔画回归检查（Texture Each Tip Off + Dual Off）
+
+用于防回归检查“GPU 在 `Texture Each Tip=Off` 且 `Dual Brush=Off` 时是否出现空笔画”。
+
+脚本位置：
+
+`scripts/debug/replay-texture-eachtip-off-nonempty.mjs`
+
+示例：
+
+```bash
+node scripts/debug/replay-texture-eachtip-off-nonempty.mjs --url http://localhost:1420 --capture debug_output/texture_formula_compare/tmp-dual-capture.json --texture debug_output/pat_decoded/pat5_sparthtex01.png
+```
+
+通过条件（可调）：
+
+1. `nonZeroAlphaPixels >= --min-nonzero-pixels`（默认 `200`）
+2. `alphaSum >= --min-alpha-sum`（默认 `5000`）
+
 ## 快速使用
 
 ```bash
