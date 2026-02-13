@@ -85,7 +85,8 @@ export function calculateTextureInfluence(
       case 'multiply':
         return base * blend;
       case 'subtract':
-        return Math.max(0, base - blend);
+        // Keep subtract proportional to base alpha to avoid dab-shaped clipping.
+        return base * (1.0 - blend);
       case 'darken':
         return Math.min(base, blend);
       case 'overlay':

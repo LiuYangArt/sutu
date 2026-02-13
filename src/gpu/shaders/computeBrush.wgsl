@@ -177,7 +177,9 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
       return base * blend;
     }
     case 1u: { // Subtract
-      return max(0.0, base - blend);
+      // Use proportional subtraction (base * (1 - blend)) to avoid
+      // low-alpha dab regions being over-subtracted and revealing dab seams.
+      return base * (1.0 - blend);
     }
     case 2u: { // Darken
       return min(base, blend);

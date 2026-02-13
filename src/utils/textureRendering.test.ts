@@ -57,7 +57,7 @@ describe('calculateTextureInfluence', () => {
 
     const cases: Array<{ mode: TextureSettings['mode']; expectedMultiplier: number }> = [
       { mode: 'multiply', expectedMultiplier: blend },
-      { mode: 'subtract', expectedMultiplier: Math.max(0, baseAlpha - blend) / baseAlpha },
+      { mode: 'subtract', expectedMultiplier: 1.0 - blend },
       { mode: 'darken', expectedMultiplier: Math.min(baseAlpha, blend) / baseAlpha },
       { mode: 'overlay', expectedMultiplier: (2 * baseAlpha * blend) / baseAlpha },
       { mode: 'colorDodge', expectedMultiplier: 1.0 / baseAlpha },
@@ -131,12 +131,9 @@ describe('calculateTextureInfluence', () => {
   it('should handle Subtract mode correctly', () => {
     const settings = { ...defaultSettings, mode: 'subtract' as const };
 
-    // Subtract: mix(1.0, 1.0 - tex, depth)
-    // (0,0) Black (0). Tex=0. Result = mix(1.0, 1.0, 1.0) = 1.0 ... Wait.
-    // Subtract in Photoshop usually means output = input - texture.
-    // My implementation: multiplier = 1.0 * (1-depth) + (1.0 - texVal) * depth
-    // If texVal=0, multiplier = 1.0. (No subtraction)
-    // If texVal=1, multiplier = 0.0. (Subtracted full value)
+    // Subtract uses proportional reduction:
+    // blended = base * (1 - tex), so multiplier = mix(1, 1 - tex, depth).
+    // This keeps texture influence continuous and independent of per-dab base alpha.
 
     // (0,0) Black (0) -> Multiplier 1.0
     expect(calculateTextureInfluence(0, 0, settings, mockPattern, 1.0, 1.0)).toBe(1.0);
