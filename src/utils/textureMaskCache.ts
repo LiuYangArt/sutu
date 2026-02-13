@@ -407,7 +407,7 @@ export class TextureMaskCache {
           const idx = (bufferRowStart + bufferX) * 4;
           const dstA = (buffer[idx + 3] ?? 0) / 255;
 
-          // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
+          // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
           let textureMod = 1.0;
           if (hasTexturePerTip) {
             textureMod = calculateTextureInfluence(
@@ -417,8 +417,9 @@ export class TextureMaskCache {
               pattern!,
               textureDepth,
               maskValue,
-              dstA
+              0
             );
+            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
           }
 
           // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
@@ -447,8 +448,8 @@ export class TextureMaskCache {
           const dstG = buffer[idx + 1]!;
           const dstB = buffer[idx + 2]!;
 
-          // Alpha Darken blending - texture/dual brush affect opacity ceiling, not flow
-          const effectiveOpacity = dabOpacity * dualMod * textureMod;
+          // Alpha Darken blending - dual brush affects opacity ceiling, texture already modified tip alpha.
+          const effectiveOpacity = dabOpacity * dualMod;
           const outA =
             dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
 
@@ -482,7 +483,7 @@ export class TextureMaskCache {
           const idx = (bufferRowStart + bufferX) * 4;
           const dstA = (buffer[idx + 3] ?? 0) / 255;
 
-          // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
+          // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
           let textureMod = 1.0;
           if (hasTexturePerTip) {
             textureMod = calculateTextureInfluence(
@@ -492,8 +493,9 @@ export class TextureMaskCache {
               pattern!,
               textureDepth,
               maskValue,
-              dstA
+              0
             );
+            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
           }
 
           // Noise affects tip alpha via overlay (PS-like): only meaningful when 0 < alpha < 1
@@ -528,8 +530,8 @@ export class TextureMaskCache {
           const dstG = buffer[idx + 1]!;
           const dstB = buffer[idx + 2]!;
 
-          // Alpha Darken blending - texture/dual brush affect opacity ceiling, not flow
-          const effectiveOpacity = dabOpacity * dualMod * textureMod;
+          // Alpha Darken blending - dual brush affects opacity ceiling, texture already modified tip alpha.
+          const effectiveOpacity = dabOpacity * dualMod;
           const outA =
             dstA >= effectiveOpacity - 0.001 ? dstA : dstA + (effectiveOpacity - dstA) * srcAlpha;
 

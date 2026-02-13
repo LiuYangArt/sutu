@@ -517,7 +517,8 @@ fn main(
     // - textureEachTip=false => stroke-level modulation (applied once after dab loop)
     var pattern_mult = 1.0;
     if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip != 0u) {
-       pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask, color.a);
+       pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask, 0.0);
+       mask = clamp(mask * pattern_mult, 0.0, 1.0);
     }
 
     // A3. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
@@ -527,7 +528,7 @@ fn main(
       mask = mix(mask, over, clamp(uniforms.noise_strength, 0.0, 1.0));
     }
 
-    let ceiling = dab.dab_opacity * pattern_mult;
+    let ceiling = dab.dab_opacity;
     let src_alpha = mask * dab.flow;
 
     // Alpha Darken blend

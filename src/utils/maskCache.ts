@@ -427,9 +427,8 @@ export class MaskCache {
           if (maskValue < 0.001) continue;
 
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
-          const dstAlpha = (buffer[idx + 3] ?? 0) / 255;
 
-          // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
+          // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
           let textureMod = 1.0;
           if (activeTextureSettings && activePattern) {
             // TextureSettings.depth is 0-100
@@ -441,8 +440,9 @@ export class MaskCache {
               activePattern,
               depth,
               maskValue,
-              dstAlpha
+              0
             );
+            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
           }
 
           if (hasNoise) {
@@ -469,7 +469,7 @@ export class MaskCache {
           }
 
           srcAlpha *= flow;
-          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod * textureMod, r, g, b);
+          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod, r, g, b);
         }
       }
     } else {
@@ -489,9 +489,8 @@ export class MaskCache {
           if (maskValue < 0.001) continue;
 
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
-          const dstAlpha = (buffer[idx + 3] ?? 0) / 255;
 
-          // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
+          // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
           let textureMod = 1.0;
           if (activeTextureSettings && activePattern) {
             // TextureSettings.depth is 0-100
@@ -503,8 +502,9 @@ export class MaskCache {
               activePattern,
               depth,
               maskValue,
-              dstAlpha
+              0
             );
+            maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
           }
 
           if (hasNoise) {
@@ -537,7 +537,7 @@ export class MaskCache {
           }
 
           srcAlpha *= flow;
-          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod * textureMod, r, g, b);
+          this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod, r, g, b);
         }
       }
     }
@@ -644,9 +644,8 @@ export class MaskCache {
         if (maskValue < 0.001) continue;
 
         const idx = (rowStart + px) * 4;
-        const dstAlpha = (buffer[idx + 3] ?? 0) / 255;
 
-        // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
+        // Texture modulation for Each Tip ON: modulate tip alpha before Alpha Darken accumulation.
         let textureMod = 1.0;
         if (activeTextureSettings && activePattern) {
           const depth = activeTextureSettings.depth / 100.0;
@@ -657,8 +656,9 @@ export class MaskCache {
             activePattern,
             depth,
             maskValue,
-            dstAlpha
+            0
           );
+          maskValue = Math.max(0, Math.min(1, maskValue * textureMod));
         }
 
         if (hasNoise) {
@@ -693,7 +693,7 @@ export class MaskCache {
 
         // Standard Alpha Darken blend (wet edge is handled at stroke buffer level)
         const srcAlpha = maskValue * flow;
-        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod * textureMod, r, g, b);
+        this.blendPixel(buffer, idx, srcAlpha, dabOpacity * dualMod, r, g, b);
       }
     }
 
