@@ -26,6 +26,12 @@ function toNumber(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function toOptionalNumber(value) {
+  if (value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function toBoolean(value, fallback) {
   if (value === undefined) return fallback;
   if (value === true || value === 'true' || value === '1') return true;
@@ -80,10 +86,10 @@ const label = safeName(cli.label ?? 'cpu-softness-compare');
 
 const maskTypeA = cli['mask-a'] ?? 'default';
 const maskTypeB = cli['mask-b'] ?? 'gaussian';
-const hardness = cli.hardness !== undefined ? toNumber(cli.hardness, 50) : null;
-const spacing = cli.spacing !== undefined ? toNumber(cli.spacing, null) : null;
-const roundness = cli.roundness !== undefined ? toNumber(cli.roundness, null) : null;
-const angle = cli.angle !== undefined ? toNumber(cli.angle, null) : null;
+const hardness = toOptionalNumber(cli.hardness);
+const spacing = toOptionalNumber(cli.spacing);
+const roundness = toOptionalNumber(cli.roundness);
+const angle = toOptionalNumber(cli.angle);
 
 if (!fs.existsSync(capturePath)) {
   throw new Error(`Capture not found: ${capturePath}`);
@@ -251,10 +257,26 @@ try {
         }
 
         const hasCoverage = maxX >= minX && maxY >= minY;
-        const bbox =
-          hasCoverage
-            ? { left: minX, top: minY, right: maxX + 1, bottom: maxY + 1, width: maxX - minX + 1, height: maxY - minY + 1 }
-            : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+        let bbox;
+        if (hasCoverage) {
+          bbox = {
+            left: minX,
+            top: minY,
+            right: maxX + 1,
+            bottom: maxY + 1,
+            width: maxX - minX + 1,
+            height: maxY - minY + 1,
+          };
+        } else {
+          bbox = {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: 0,
+            height: 0,
+          };
+        }
 
         let edgeGradientSum = 0;
         let edgeGradientCount = 0;

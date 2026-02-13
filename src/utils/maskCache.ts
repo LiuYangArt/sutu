@@ -55,6 +55,13 @@ export const erfLUT: Float32Array = new Float32Array(ERF_LUT_SIZE + 1);
  * MaskCache class for pre-computed brush masks
  */
 export class MaskCache {
+  private static readonly HARD_EDGE_AA_WIDTH = 1.2;
+  private static readonly SOFT_MAX_EXTENT = 1.8;
+  private static readonly DEFAULT_SOFT_EXPONENT = 2.5;
+  private static readonly DEFAULT_FEATHER_WIDTH = 0.25;
+  private static readonly GAUSSIAN_SOFT_EXPONENT = 2.3;
+  private static readonly GAUSSIAN_FEATHER_WIDTH = 0.3;
+
   // Cached mask data (normalized 0-1 values)
   private mask: Float32Array | null = null;
   private maskWidth: number = 0;
@@ -81,7 +88,7 @@ export class MaskCache {
    * Slightly wider than 1px to better match PS hard-round softness.
    */
   private static calcHardEdgeAA(physicalDist: number, radius: number): number {
-    const aaWidth = 1.2;
+    const aaWidth = MaskCache.HARD_EDGE_AA_WIDTH;
     const aaStart = radius - aaWidth;
     if (physicalDist <= aaStart) return 1.0;
     if (physicalDist >= radius) return 0;
@@ -280,13 +287,11 @@ export class MaskCache {
     const radiusY = radiusX * roundness;
     const maxRadius = Math.max(radiusX, radiusY);
 
-    // Expanded soft extent avoids low-hardness edge clipping in procedural tips.
-    const SOFT_EXTENT_MULTIPLIER = 1.8;
     let extentMultiplier: number;
     if (hardness >= 0.99) {
       extentMultiplier = 1.0;
     } else {
-      extentMultiplier = SOFT_EXTENT_MULTIPLIER;
+      extentMultiplier = MaskCache.SOFT_MAX_EXTENT;
     }
 
     const effectiveRadius = maxRadius * extentMultiplier + 1;
@@ -337,10 +342,22 @@ export class MaskCache {
           maskValue = MaskCache.calcHardEdgeAA(physicalDist, boundaryRadius);
         } else if (maskType === 'gaussian') {
           // Gaussian mode: default-style profile with slightly softer tail than default mode.
-          maskValue = MaskCache.calcSoftRoundMask(normDist, hardness, 2.3, 1.8, 0.3);
+          maskValue = MaskCache.calcSoftRoundMask(
+            normDist,
+            hardness,
+            MaskCache.GAUSSIAN_SOFT_EXPONENT,
+            MaskCache.SOFT_MAX_EXTENT,
+            MaskCache.GAUSSIAN_FEATHER_WIDTH
+          );
         } else {
           // Default mode: preserve existing character, but add terminal feather to remove hard clipping.
-          maskValue = MaskCache.calcSoftRoundMask(normDist, hardness, 2.5, 1.8, 0.25);
+          maskValue = MaskCache.calcSoftRoundMask(
+            normDist,
+            hardness,
+            MaskCache.DEFAULT_SOFT_EXPONENT,
+            MaskCache.SOFT_MAX_EXTENT,
+            MaskCache.DEFAULT_FEATHER_WIDTH
+          );
         }
 
         this.mask[py * this.maskWidth + px] = maskValue;

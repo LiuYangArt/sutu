@@ -106,6 +106,12 @@ function asBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
 }
 
+function asBrushMaskType(value: unknown): BrushMaskType | null {
+  if (typeof value !== 'string') return null;
+  if (!BRUSH_MASK_TYPES.has(value as BrushMaskType)) return null;
+  return value as BrushMaskType;
+}
+
 function isCssColor(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const s = value.trim();
@@ -506,14 +512,10 @@ export function useGlobalExports({
       if (brushAngle !== null) {
         toolStore.setBrushAngle(brushAngle);
       }
-      const capturedMaskTypeRaw =
-        typeof toolMeta.brushMaskType === 'string'
-          ? toolMeta.brushMaskType
-          : typeof toolMeta.maskType === 'string'
-            ? toolMeta.maskType
-            : null;
-      if (capturedMaskTypeRaw && BRUSH_MASK_TYPES.has(capturedMaskTypeRaw as BrushMaskType)) {
-        toolStore.setBrushMaskType(capturedMaskTypeRaw as BrushMaskType);
+      const capturedMaskType =
+        asBrushMaskType(toolMeta.brushMaskType) ?? asBrushMaskType(toolMeta.maskType);
+      if (capturedMaskType) {
+        toolStore.setBrushMaskType(capturedMaskType);
       }
 
       const pressureCurve = toolMeta.pressureCurve;
