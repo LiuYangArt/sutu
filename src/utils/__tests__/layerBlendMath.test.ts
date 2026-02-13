@@ -36,6 +36,23 @@ const BLEND_MODES: BlendMode[] = [
   'luminosity',
 ];
 
+function hashNoise01ForTest(x: number, y: number): number {
+  const xi = x >>> 0;
+  const yi = y >>> 0;
+  const n = (Math.imul(xi, 1973) + Math.imul(yi, 9277) + 89173) >>> 0;
+  const m = ((n << 13) ^ n) >>> 0;
+  const mm = Math.imul(m, m);
+  const t = (Math.imul(m, (Math.imul(mm, 15731) + 789221) >>> 0) + 1376312589) >>> 0;
+  return (t & 0x00ffffff) / 0x00ffffff;
+}
+
+function overlayAlpha(base: number, blend: number): number {
+  if (base < 0.5) {
+    return 2 * base * blend;
+  }
+  return 1 - 2 * (1 - base) * (1 - blend);
+}
+
 describe('layerBlendMath', () => {
   it('blendRgb 支持全部 27 种模式并且结果在合法范围', () => {
     const dst: readonly [number, number, number] = [0.82, 0.17, 0.36];
@@ -68,6 +85,44 @@ describe('layerBlendMath', () => {
     expect(first.rgb[0]).toBe(second.rgb[0]);
     expect(first.rgb[1]).toBe(second.rgb[1]);
     expect(first.rgb[2]).toBe(second.rgb[2]);
+  });
+
+  it('dissolve 对全不透明像素不应引入噪点', () => {
+    const out = compositePixelWithTransparentFallback({
+      blendMode: 'dissolve',
+      dstRgb: [0.1, 0.2, 0.3],
+      dstAlpha: 0,
+      srcRgb: [0.8, 0.4, 0.2],
+      srcAlpha: 1,
+      pixelX: 512,
+      pixelY: 256,
+    });
+
+    expect(out.alpha).toBe(1);
+    expect(out.rgb[0]).toBeCloseTo(0.8, 8);
+    expect(out.rgb[1]).toBeCloseTo(0.4, 8);
+    expect(out.rgb[2]).toBeCloseTo(0.2, 8);
+  });
+
+  it('dissolve 应使用 overlay(noise, alpha) 调制半透明 alpha（非二值）', () => {
+    const pixelX = 128;
+    const pixelY = 64;
+    const srcAlpha = 0.42;
+    const expectedAlpha = overlayAlpha(srcAlpha, hashNoise01ForTest(pixelX, pixelY));
+
+    const out = compositePixelWithTransparentFallback({
+      blendMode: 'dissolve',
+      dstRgb: [0.1, 0.2, 0.3],
+      dstAlpha: 0,
+      srcRgb: [0.8, 0.4, 0.2],
+      srcAlpha,
+      pixelX,
+      pixelY,
+    });
+
+    expect(out.alpha).toBeCloseTo(expectedAlpha, 8);
+    expect(out.alpha).toBeGreaterThan(0);
+    expect(out.alpha).toBeLessThan(1);
   });
 
   it('当下方 alpha 为 0 时，非 normal 模式应回退为 normal', () => {

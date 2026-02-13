@@ -84,7 +84,8 @@ function hashNoise01(x: number, y: number): number {
 function resolveDissolveAlpha(srcAlpha: number, pixelX: number, pixelY: number): number {
   if (srcAlpha <= 0.0001) return 0;
   if (srcAlpha >= 0.9999) return 1;
-  return hashNoise01(pixelX, pixelY) < srcAlpha ? 1 : 0;
+  const noise = hashNoise01(pixelX, pixelY);
+  return clampUnit(channelOverlay(srcAlpha, noise));
 }
 
 function rgbToHsl(color: Rgb): [number, number, number] {
