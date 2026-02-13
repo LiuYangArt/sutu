@@ -46,7 +46,6 @@ node scripts/debug/replay-texture-eachtip-off-nonempty.mjs --url http://localhos
 
 1. `nonZeroAlphaPixels >= --min-nonzero-pixels`（默认 `200`）
 2. `alphaSum >= --min-alpha-sum`（默认 `5000`）
-
 ## 快速使用
 
 ```bash
