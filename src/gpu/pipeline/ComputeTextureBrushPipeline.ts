@@ -476,7 +476,9 @@ export class ComputeTextureBrushPipeline {
 
     for (const dab of dabs) {
       // Calculate effective radius (considering aspect ratio and rotation)
-      const texAspect = dab.texWidth / dab.texHeight;
+      const safeTexW = Math.max(1, dab.texWidth);
+      const safeTexH = Math.max(1, dab.texHeight);
+      const texAspect = safeTexW / safeTexH;
       let halfWidth: number;
       let halfHeight: number;
 

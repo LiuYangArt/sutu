@@ -62,7 +62,9 @@ fn sample_texture_bilinear(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
 }
 
 fn calculate_half_dimensions(dab: TextureDabData) -> vec2<f32> {
-  let tex_aspect = dab.tex_width / dab.tex_height;
+  let safe_tex_w = max(dab.tex_width, 1.0);
+  let safe_tex_h = max(dab.tex_height, 1.0);
+  let tex_aspect = safe_tex_w / safe_tex_h;
   let diameter = max(1.0, dab.size);
 
   var half_width = diameter * 0.5;

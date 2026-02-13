@@ -309,11 +309,27 @@ export class ComputeDualTextureMaskPipeline {
     let maxY = -Infinity;
 
     for (const dab of dabs) {
+      // Keep bbox logic consistent with computeDualTextureMask.wgsl:
+      // effective radius = diagonal(half_width, half_height) after aspect+roundness.
+      const safeTexW = Math.max(1, dab.texWidth);
+      const safeTexH = Math.max(1, dab.texHeight);
+      const texAspect = safeTexW / safeTexH;
       const halfSize = dab.size / 2;
-      minX = Math.min(minX, dab.x - halfSize);
-      minY = Math.min(minY, dab.y - halfSize);
-      maxX = Math.max(maxX, dab.x + halfSize);
-      maxY = Math.max(maxY, dab.y + halfSize);
+
+      let halfWidth = halfSize;
+      let halfHeight = halfSize;
+      if (texAspect >= 1.0) {
+        halfHeight = halfWidth / texAspect;
+      } else {
+        halfWidth = halfHeight * texAspect;
+      }
+      halfHeight *= Math.max(0.01, dab.roundness);
+
+      const effectiveRadius = Math.sqrt(halfWidth * halfWidth + halfHeight * halfHeight);
+      minX = Math.min(minX, dab.x - effectiveRadius);
+      minY = Math.min(minY, dab.y - effectiveRadius);
+      maxX = Math.max(maxX, dab.x + effectiveRadius);
+      maxY = Math.max(maxY, dab.y + effectiveRadius);
     }
 
     const margin = 2;

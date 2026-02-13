@@ -338,7 +338,9 @@ fn calculate_pattern_multiplier(
 // Calculate half dimensions considering texture aspect ratio and roundness
 // ============================================================================
 fn calculate_half_dimensions(dab: TextureDabData) -> vec2<f32> {
-  let tex_aspect = dab.tex_width / dab.tex_height;
+  let safe_tex_w = max(dab.tex_width, 1.0);
+  let safe_tex_h = max(dab.tex_height, 1.0);
+  let tex_aspect = safe_tex_w / safe_tex_h;
   var half_width: f32;
   var half_height: f32;
 
