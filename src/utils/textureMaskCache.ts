@@ -18,7 +18,7 @@ import { loadBrushTexture } from './brushLoader';
 import { decodeBase64ToImageData, decodeBase64ToImageDataSync } from './imageUtils';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
-import { calculateTextureInfluence, sampleTextureValue } from './textureRendering';
+import { calculateTextureInfluence, sampleNoiseValue } from './textureRendering';
 import type { DualBlendMode } from '@/stores/tool';
 
 // PS Dual Brush blend modes (only 8 supported)
@@ -128,7 +128,7 @@ export class TextureMaskCache {
     if (strength <= 0.001) return maskAlpha;
     if (maskAlpha <= 0.001 || maskAlpha >= 0.999) return maskAlpha;
 
-    const noiseVal = sampleTextureValue(canvasX, canvasY, noiseSettings, noisePattern);
+    const noiseVal = sampleNoiseValue(canvasX, canvasY, noiseSettings, noisePattern);
     const over = blendOverlay(maskAlpha, noiseVal);
     return maskAlpha + (over - maskAlpha) * strength;
   }

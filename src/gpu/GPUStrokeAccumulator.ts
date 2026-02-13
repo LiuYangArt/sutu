@@ -168,6 +168,9 @@ export class GPUStrokeAccumulator {
   private currentPatternSettings: GPUPatternSettings | null = null;
   private strokeLevelPatternPreviewActive: boolean = false;
   private currentNoiseEnabled: boolean = false;
+  private currentNoiseSize: number = 100;
+  private currentNoiseSizeJitter: number = 0;
+  private currentNoiseDensityJitter: number = 0;
   private noiseTexture: GPUTexture;
 
   private width: number;
@@ -790,6 +793,11 @@ export class GPUStrokeAccumulator {
 
     // Sync noise state from store (used as compute shader uniform)
     this.currentNoiseEnabled = Boolean(toolState.noiseEnabled);
+    this.currentNoiseSize = this.normalizeNoiseSize(toolState.noiseSettings?.size);
+    this.currentNoiseSizeJitter = this.normalizeNoiseJitter(toolState.noiseSettings?.sizeJitter);
+    this.currentNoiseDensityJitter = this.normalizeNoiseJitter(
+      toolState.noiseSettings?.densityJitter
+    );
 
     // Pre-warm display texture if wet edge is enabled
     // This moves the lazy initialization cost from the first flushBatch to beginStroke
@@ -913,6 +921,9 @@ export class GPUStrokeAccumulator {
     this.currentPatternSettings = null;
     this.strokeLevelPatternPreviewActive = false;
     this.currentNoiseEnabled = false;
+    this.currentNoiseSize = 100;
+    this.currentNoiseSizeJitter = 0;
+    this.currentNoiseDensityJitter = 0;
     this.patternCache.update(null);
     this.dualBrushEnabled = false;
     this.dualMaskActive = false;
@@ -1191,6 +1202,13 @@ export class GPUStrokeAccumulator {
     const rgb = this.hexToRgb(params.color);
     const scale = this.currentRenderScale;
     const nextNoiseEnabled = Boolean(params.noiseEnabled);
+    const nextNoiseSize = this.normalizeNoiseSize(params.noiseSize);
+    const nextNoiseSizeJitter = this.normalizeNoiseJitter(params.noiseSizeJitter);
+    const nextNoiseDensityJitter = this.normalizeNoiseJitter(params.noiseDensityJitter);
+    const noiseSettingsChanged =
+      nextNoiseSize !== this.currentNoiseSize ||
+      nextNoiseSizeJitter !== this.currentNoiseSizeJitter ||
+      nextNoiseDensityJitter !== this.currentNoiseDensityJitter;
 
     // Texture brush path - completely separate from parametric brush
     if (params.texture) {
@@ -1209,12 +1227,18 @@ export class GPUStrokeAccumulator {
       // Pattern Handling
       // If texture settings changed (e.g. depth, scale, id), we must flush current batch
       // because these are passed as Uniforms to the compute shader.
-      if (this.dabsSinceLastFlush > 0 && nextNoiseEnabled !== this.currentNoiseEnabled) {
+      if (
+        this.dabsSinceLastFlush > 0 &&
+        (nextNoiseEnabled !== this.currentNoiseEnabled || noiseSettingsChanged)
+      ) {
         this.flushTextureBatch(this.dualMaskActive);
         this.flushBatch(this.dualMaskActive);
         this.dabsSinceLastFlush = 0; // Reset counter after flush
       }
       this.currentNoiseEnabled = nextNoiseEnabled;
+      this.currentNoiseSize = nextNoiseSize;
+      this.currentNoiseSizeJitter = nextNoiseSizeJitter;
+      this.currentNoiseDensityJitter = nextNoiseDensityJitter;
 
       const newPatternSettings = this.extractPatternSettings(params.textureSettings);
 
@@ -1274,12 +1298,18 @@ export class GPUStrokeAccumulator {
 
     // Parametric brush path
     // Pattern Handling for Parametric Brush
-    if (this.dabsSinceLastFlush > 0 && nextNoiseEnabled !== this.currentNoiseEnabled) {
+    if (
+      this.dabsSinceLastFlush > 0 &&
+      (nextNoiseEnabled !== this.currentNoiseEnabled || noiseSettingsChanged)
+    ) {
       this.flushTextureBatch(this.dualMaskActive); // Flush texture batch too to be safe (shared state)
       this.flushBatch(this.dualMaskActive);
       this.dabsSinceLastFlush = 0;
     }
     this.currentNoiseEnabled = nextNoiseEnabled;
+    this.currentNoiseSize = nextNoiseSize;
+    this.currentNoiseSizeJitter = nextNoiseSizeJitter;
+    this.currentNoiseDensityJitter = nextNoiseDensityJitter;
 
     const newPatternSettings = this.extractPatternSettings(params.textureSettings);
 
@@ -1939,7 +1969,10 @@ export class GPUStrokeAccumulator {
       this.currentPatternSettings,
       this.noiseTexture,
       this.currentNoiseEnabled,
-      1.0
+      1.0,
+      this.currentNoiseSize,
+      this.currentNoiseSizeJitter,
+      this.currentNoiseDensityJitter
     );
 
     if (!success) {
@@ -2057,7 +2090,10 @@ export class GPUStrokeAccumulator {
       this.currentPatternSettings,
       this.noiseTexture,
       this.currentNoiseEnabled,
-      1.0
+      1.0,
+      this.currentNoiseSize,
+      this.currentNoiseSizeJitter,
+      this.currentNoiseDensityJitter
     );
 
     if (!success) {
@@ -3000,6 +3036,20 @@ export class GPUStrokeAccumulator {
       g: parseInt(result[2]!, 16),
       b: parseInt(result[3]!, 16),
     };
+  }
+
+  private normalizeNoiseSize(value: number | undefined): number {
+    if (!Number.isFinite(value)) return 80;
+    const clampedPercent = Math.max(1, Math.min(100, value as number));
+    // Mapping aligned with CPU noise path:
+    // - UI 100 -> previous 80
+    // - UI 1 -> previous 0.8
+    return (clampedPercent / 100) * 80;
+  }
+
+  private normalizeNoiseJitter(value: number | undefined): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, (value as number) / 100));
   }
 
   /**

@@ -13,7 +13,7 @@
 import type { Rect } from './strokeBuffer';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
-import { calculateTextureInfluence, sampleTextureValue } from './textureRendering';
+import { calculateTextureInfluence, sampleNoiseValue } from './textureRendering';
 import type { DualBlendMode } from '@/stores/tool';
 
 export type MaskType = 'gaussian' | 'default';
@@ -251,7 +251,7 @@ export class MaskCache {
     // PS-like: only meaningful on soft edge (0<alpha<1)
     if (maskAlpha <= 0.001 || maskAlpha >= 0.999) return maskAlpha;
 
-    const noiseVal = sampleTextureValue(canvasX, canvasY, noiseSettings, noisePattern);
+    const noiseVal = sampleNoiseValue(canvasX, canvasY, noiseSettings, noisePattern);
     const over = MaskCache.blendOverlay(maskAlpha, noiseVal);
     return maskAlpha + (over - maskAlpha) * noiseStrength;
   }

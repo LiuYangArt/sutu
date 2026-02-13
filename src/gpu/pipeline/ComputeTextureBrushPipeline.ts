@@ -25,14 +25,8 @@ const MAX_DABS_PER_BATCH = 128;
 const DAB_DATA_SIZE = 48;
 const DAB_DATA_FLOATS = 12;
 
-// Uniform buffer size (expanded for pattern settings)
-// Block 0: bbox_offset(8) + bbox_size(8) = 16
-// Block 1: canvas_size(8) + dab_count(4) + blend_mode(4) = 16
-// Block 2: pattern_enabled(4) + invert(4) + mode(4) + scale(4) = 16
-// Block 3: brightness(4) + contrast(4) + depth(4) + padding(4) = 16
-// Block 4: pattern_size(8) + padding(8) = 16
-// Total = 80 bytes
-const UNIFORM_BUFFER_SIZE = 80;
+// Uniform buffer size (expanded for pattern + noise settings)
+const UNIFORM_BUFFER_SIZE = 128;
 
 // Keep a fixed-capacity uniform buffer to avoid unbounded growth on pathological inputs.
 const MAX_TILES_PER_BATCH = 256;
@@ -237,7 +231,10 @@ export class ComputeTextureBrushPipeline {
     patternTexture: GPUTexture | null,
     patternSettings: GPUPatternSettings | null,
     noiseEnabled: boolean,
-    noiseStrength: number
+    noiseStrength: number,
+    noiseScale: number = 100,
+    noiseSizeJitter: number = 0,
+    noiseDensityJitter: number = 0
   ): void {
     // Block 0
     view.setUint32(byteOffset + 0, bbox.x, true);
@@ -276,6 +273,9 @@ export class ComputeTextureBrushPipeline {
     // Block 5: Noise (overlay on tip alpha)
     view.setUint32(byteOffset + 72, noiseEnabled ? 1 : 0, true);
     view.setFloat32(byteOffset + 76, noiseEnabled ? noiseStrength : 0.0, true);
+    view.setFloat32(byteOffset + 80, noiseEnabled ? noiseScale : 100.0, true);
+    view.setFloat32(byteOffset + 84, noiseEnabled ? noiseSizeJitter : 0.0, true);
+    view.setFloat32(byteOffset + 88, noiseEnabled ? noiseDensityJitter : 0.0, true);
   }
 
   /**
@@ -322,7 +322,10 @@ export class ComputeTextureBrushPipeline {
     patternSettings: GPUPatternSettings | null = null,
     noiseTexture: GPUTexture | null = null,
     noiseEnabled: boolean = false,
-    noiseStrength: number = 1.0
+    noiseStrength: number = 1.0,
+    noiseScale: number = 100,
+    noiseSizeJitter: number = 0,
+    noiseDensityJitter: number = 0
   ): boolean {
     if (dabs.length === 0) return true;
 
@@ -388,7 +391,10 @@ export class ComputeTextureBrushPipeline {
         patternTexture,
         patternSettings,
         noiseEnabled,
-        noiseStrength
+        noiseStrength,
+        noiseScale,
+        noiseSizeJitter,
+        noiseDensityJitter
       );
     }
 

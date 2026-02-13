@@ -6,6 +6,7 @@ import {
   DEFAULT_SCATTER_SETTINGS,
   DEFAULT_SHAPE_DYNAMICS,
   DEFAULT_DUAL_BRUSH,
+  DEFAULT_NOISE_SETTINGS,
   DEFAULT_TRANSFER_SETTINGS,
   useToolStore,
 } from '@/stores/tool';
@@ -43,6 +44,7 @@ describe('applyPresetToToolStore', () => {
       wetEdgeEnabled: true,
       buildupEnabled: true,
       noiseEnabled: true,
+      noiseSettings: { size: 90, sizeJitter: 45, densityJitter: 33 },
       dualBrushEnabled: true,
       dualBrush: { ...DEFAULT_DUAL_BRUSH, enabled: true, brushId: 'leak', size: 80, sizeRatio: 2 },
     });
@@ -67,6 +69,7 @@ describe('applyPresetToToolStore', () => {
     expect(s.wetEdgeEnabled).toBe(false);
     expect(s.buildupEnabled).toBe(false);
     expect(s.noiseEnabled).toBe(false);
+    expect(s.noiseSettings).toEqual(DEFAULT_NOISE_SETTINGS);
 
     expect(s.dualBrushEnabled).toBe(false);
     expect(s.dualBrush).toEqual(DEFAULT_DUAL_BRUSH);
@@ -124,6 +127,11 @@ describe('applyPresetToToolStore', () => {
       wetEdgeEnabled: true,
       buildupEnabled: false,
       noiseEnabled: true,
+      noiseSettings: {
+        size: 88,
+        sizeJitter: 25,
+        densityJitter: 40,
+      },
     };
 
     applyPresetToToolStore(preset, []);
@@ -155,6 +163,11 @@ describe('applyPresetToToolStore', () => {
     expect(s.wetEdgeEnabled).toBe(true);
     expect(s.buildupEnabled).toBe(false);
     expect(s.noiseEnabled).toBe(true);
+    expect(s.noiseSettings).toEqual({
+      size: 88,
+      sizeJitter: 25,
+      densityJitter: 40,
+    });
   });
 
   it('主笔刷纹理优先使用 tipId 而不是 preset.id', () => {

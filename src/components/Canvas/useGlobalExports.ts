@@ -580,6 +580,16 @@ export function useGlobalExports({
       if (noiseEnabled !== null) {
         toolStore.setNoiseEnabled(noiseEnabled);
       }
+      if (isRecord(toolMeta.noiseSettings)) {
+        const noiseSize = asFiniteNumber(toolMeta.noiseSettings.size);
+        const noiseSizeJitter = asFiniteNumber(toolMeta.noiseSettings.sizeJitter);
+        const noiseDensityJitter = asFiniteNumber(toolMeta.noiseSettings.densityJitter);
+        toolStore.setNoiseSettings({
+          ...(noiseSize !== null ? { size: noiseSize } : {}),
+          ...(noiseSizeJitter !== null ? { sizeJitter: noiseSizeJitter } : {}),
+          ...(noiseDensityJitter !== null ? { densityJitter: noiseDensityJitter } : {}),
+        });
+      }
       const buildupEnabled = asBoolean(toolMeta.buildupEnabled);
       if (buildupEnabled !== null) {
         toolStore.setBuildupEnabled(buildupEnabled);

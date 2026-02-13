@@ -60,6 +60,10 @@ struct Uniforms {
   pattern_size: vec2<f32>,
   noise_enabled: u32,
   noise_strength: f32,
+  noise_scale: f32,
+  noise_size_jitter: f32,
+  noise_density_jitter: f32,
+  _noise_padding: f32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -94,14 +98,37 @@ fn blend_overlay(base: f32, blend: f32) -> f32 {
   return 1.0 - 2.0 * (1.0 - base) * (1.0 - blend);
 }
 
-fn sample_noise(pixel_x: u32, pixel_y: u32) -> f32 {
+fn hash12(p: vec2<f32>) -> f32 {
+  let h = dot(p, vec2<f32>(127.1, 311.7));
+  return fract(sin(h) * 43758.5453123);
+}
+
+fn sample_noise(pixel_x: u32, pixel_y: u32, dab_center: vec2<f32>) -> f32 {
   let dims = textureDimensions(noise_texture);
   if (dims.x == 0u || dims.y == 0u) {
     return 0.5;
   }
-  let nx = pixel_x % dims.x;
-  let ny = pixel_y % dims.y;
-  return textureLoad(noise_texture, vec2<i32>(i32(nx), i32(ny)), 0).r;
+
+  let base_scale = max(0.1, uniforms.noise_scale);
+  let size_jitter = clamp(uniforms.noise_size_jitter, 0.0, 1.0);
+  let density_jitter = clamp(uniforms.noise_density_jitter, 0.0, 1.0);
+
+  let size_rand = hash12(dab_center + vec2<f32>(17.0, 53.0)) * 2.0 - 1.0;
+  let density_rand = hash12(dab_center + vec2<f32>(71.0, 19.0)) * 2.0 - 1.0;
+
+  let jittered_scale = clamp(base_scale * (1.0 + size_rand * size_jitter), 0.1, 1000.0);
+  let grain_px = max(1.0, jittered_scale / 10.0);
+
+  let sx = i32(floor(f32(pixel_x) / grain_px) * grain_px);
+  let sy = i32(floor(f32(pixel_y) / grain_px) * grain_px);
+  let w = i32(dims.x);
+  let h = i32(dims.y);
+  let nx = wrap_repeat_i32(sx, w);
+  let ny = wrap_repeat_i32(sy, h);
+
+  let sampled = textureLoad(noise_texture, vec2<i32>(nx, ny), 0).r;
+  let density_shift = density_rand * density_jitter * 0.2;
+  return clamp(sampled + density_shift, 0.0, 1.0);
 }
 
 fn pattern_luma(color: vec4<f32>) -> f32 {
@@ -509,7 +536,7 @@ fn main(
 
     // A3. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
     if (uniforms.noise_enabled != 0u && mask > 0.001 && mask < 0.999) {
-      let noise_val = sample_noise(pixel_x, pixel_y);
+      let noise_val = sample_noise(pixel_x, pixel_y, vec2<f32>(dab.center_x, dab.center_y));
       let over = blend_overlay(mask, noise_val);
       mask = mix(mask, over, clamp(uniforms.noise_strength, 0.0, 1.0));
     }

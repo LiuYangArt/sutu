@@ -146,6 +146,9 @@ export interface BrushRenderConfig {
   textureSettings?: TextureSettings | null;
   // Noise settings (Photoshop-compatible)
   noiseEnabled: boolean;
+  noiseSize?: number; // 1-100 (%)
+  noiseSizeJitter?: number; // 0-100 (%)
+  noiseDensityJitter?: number; // 0-100 (%)
   // Dual Brush settings (Photoshop-compatible)
   dualBrushEnabled: boolean;
   dualBrush?: DualBrushSettings;
@@ -710,6 +713,9 @@ export function useBrushRenderer({
             wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
             textureSettings: effectiveTextureSettings,
             noiseEnabled: config.noiseEnabled,
+            noiseSize: config.noiseSize ?? 100,
+            noiseSizeJitter: config.noiseSizeJitter ?? 0,
+            noiseDensityJitter: config.noiseDensityJitter ?? 0,
             dualBrush:
               config.dualBrushEnabled && config.dualBrush
                 ? {

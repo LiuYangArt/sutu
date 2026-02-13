@@ -608,6 +608,11 @@ describe('useGlobalExports', () => {
           wetEdgeEnabled: true,
           wetEdge: 0.66,
           noiseEnabled: true,
+          noiseSettings: {
+            size: 95,
+            sizeJitter: 35,
+            densityJitter: 20,
+          },
           buildupEnabled: true,
         },
       },
@@ -686,6 +691,11 @@ describe('useGlobalExports', () => {
     expect(tool.wetEdgeEnabled).toBe(true);
     expect(tool.wetEdge).toBeCloseTo(0.66);
     expect(tool.noiseEnabled).toBe(true);
+    expect(tool.noiseSettings).toEqual({
+      size: 95,
+      sizeJitter: 35,
+      densityJitter: 20,
+    });
     expect(tool.buildupEnabled).toBe(true);
 
     expect(replayStrokeCapture).toHaveBeenCalledWith(replayCapture, undefined);
