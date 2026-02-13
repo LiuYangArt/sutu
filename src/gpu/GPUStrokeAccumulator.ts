@@ -17,6 +17,8 @@ import type {
   DabInstanceData,
   TextureDabInstanceData,
   StrokeCompositeMode,
+  BoundingBox,
+  GPUPatternSettings,
 } from './types';
 import { calculateEffectiveRadius } from './types';
 import { PingPongBuffer } from './resources/PingPongBuffer';
@@ -30,7 +32,7 @@ import { ComputeDualMaskPipeline } from './pipeline/ComputeDualMaskPipeline';
 import { ComputeDualTextureMaskPipeline } from './pipeline/ComputeDualTextureMaskPipeline';
 import { ComputeDualBlendPipeline } from './pipeline/ComputeDualBlendPipeline';
 import { GPUPatternCache } from './resources/GPUPatternCache';
-import { TextureAtlas } from './resources/TextureAtlas';
+import { TextureAtlas, type GPUBrushTexture } from './resources/TextureAtlas';
 import { GPUProfiler, CPUTimer } from './profiler';
 import { useToolStore } from '@/stores/tool';
 import type { BrushTexture, DualBlendMode, DualBrushSettings } from '@/stores/tool';
@@ -163,7 +165,8 @@ export class GPUStrokeAccumulator {
   private strokeMode: 'parametric' | 'texture' = 'parametric';
 
   // Track current pattern settings to detect changes and trigger flush
-  private currentPatternSettings: import('./types').GPUPatternSettings | null = null;
+  private currentPatternSettings: GPUPatternSettings | null = null;
+  private strokeLevelPatternPreviewActive: boolean = false;
   private currentNoiseEnabled: boolean = false;
   private noiseTexture: GPUTexture;
 
@@ -908,6 +911,7 @@ export class GPUStrokeAccumulator {
     this.previewCtx.clearRect(0, 0, this.width, this.height);
     this.dabsSinceLastFlush = 0;
     this.currentPatternSettings = null;
+    this.strokeLevelPatternPreviewActive = false;
     this.currentNoiseEnabled = false;
     this.patternCache.update(null);
     this.dualBrushEnabled = false;
@@ -1220,6 +1224,9 @@ export class GPUStrokeAccumulator {
       }
 
       this.currentPatternSettings = newPatternSettings;
+      if (!this.shouldUseStrokeLevelPatternPass()) {
+        this.strokeLevelPatternPreviewActive = false;
+      }
       if (this.currentPatternSettings && this.currentPatternSettings.patternId) {
         // Trigger async load if pattern not yet in cache
         if (!patternManager.hasPattern(this.currentPatternSettings.patternId)) {
@@ -1283,6 +1290,9 @@ export class GPUStrokeAccumulator {
     }
 
     this.currentPatternSettings = newPatternSettings;
+    if (!this.shouldUseStrokeLevelPatternPass()) {
+      this.strokeLevelPatternPreviewActive = false;
+    }
     if (this.currentPatternSettings?.patternId) {
       // Trigger async load if pattern not yet in cache
       const patternId = this.currentPatternSettings.patternId;
@@ -1363,6 +1373,111 @@ export class GPUStrokeAccumulator {
 
   private hasDirtyRect(rect: Rect): boolean {
     return rect.right > rect.left && rect.bottom > rect.top;
+  }
+
+  private shouldUseStrokeLevelPatternPass(): boolean {
+    const settings = this.currentPatternSettings;
+    return Boolean(settings && settings.patternId && !settings.textureEachTip);
+  }
+
+  private getStrokeLevelPatternResources(): {
+    settings: GPUPatternSettings;
+    texture: GPUTexture;
+  } | null {
+    if (!this.shouldUseStrokeLevelPatternPass()) {
+      return null;
+    }
+    const settings = this.currentPatternSettings;
+    const texture = this.patternCache.getTexture();
+    if (!settings || !texture) {
+      return null;
+    }
+    return { settings, texture };
+  }
+
+  private buildScaledBoundingBoxFromRect(rect: Rect, padTexels: number = 0): BoundingBox | null {
+    if (!this.hasDirtyRect(rect)) {
+      return null;
+    }
+    const copyRect = computeTextureCopyRectFromLogicalRect(
+      rect,
+      this.currentRenderScale,
+      this.pingPongBuffer.textureWidth,
+      this.pingPongBuffer.textureHeight,
+      padTexels
+    );
+    if (copyRect.width <= 0 || copyRect.height <= 0) {
+      return null;
+    }
+    return {
+      x: copyRect.originX,
+      y: copyRect.originY,
+      width: copyRect.width,
+      height: copyRect.height,
+    };
+  }
+
+  /**
+   * Apply stroke-level texture blend in a dedicated post pass.
+   * Returns:
+   * - output texture when pass is applied,
+   * - input texture when skipped,
+   * - null when dispatch fails (CPU fallback requested).
+   */
+  private applyStrokeLevelPatternPass(
+    encoder: GPUCommandEncoder,
+    inputTexture: GPUTexture,
+    outputTexture: GPUTexture,
+    logicalRect: Rect,
+    brushTexture: GPUBrushTexture | null = null
+  ): GPUTexture | null {
+    const resources = this.getStrokeLevelPatternResources();
+    if (!resources) {
+      this.strokeLevelPatternPreviewActive = false;
+      return inputTexture;
+    }
+
+    const bbox = this.buildScaledBoundingBoxFromRect(logicalRect);
+    if (!bbox) {
+      this.strokeLevelPatternPreviewActive = false;
+      return inputTexture;
+    }
+
+    let success = false;
+    if (this.strokeMode === 'texture') {
+      const activeBrushTexture = brushTexture ?? this.textureAtlas.getCurrentTexture();
+      if (!activeBrushTexture) {
+        this.strokeLevelPatternPreviewActive = false;
+        return inputTexture;
+      }
+      success = this.computeTextureBrushPipeline.dispatchStrokeLevelPattern(
+        encoder,
+        inputTexture,
+        outputTexture,
+        activeBrushTexture,
+        resources.texture,
+        resources.settings,
+        bbox
+      );
+    } else {
+      success = this.computeBrushPipeline.dispatchStrokeLevelPattern(
+        encoder,
+        inputTexture,
+        outputTexture,
+        resources.texture,
+        resources.settings,
+        bbox
+      );
+    }
+
+    if (!success) {
+      this.requestCpuFallback('GPU stroke-level texture post-process failed');
+      this.strokeLevelPatternPreviewActive = false;
+      return null;
+    }
+
+    this.strokeLevelPatternPreviewActive = true;
+    return outputTexture;
   }
 
   private getCombinedDirtyRect(): Rect {
@@ -1776,14 +1891,28 @@ export class GPUStrokeAccumulator {
     this.pingPongBuffer.swap();
 
     if (!deferPost) {
+      const wetEdgeActive = this.wetEdgeEnabled && this.wetEdgeStrength > 0.01;
+      const strokePatternOutput = wetEdgeActive
+        ? this.dualBlendTexture
+        : this.pingPongBuffer.display;
+      const strokePatternInput = this.applyStrokeLevelPatternPass(
+        encoder,
+        this.pingPongBuffer.source,
+        strokePatternOutput,
+        this.dirtyRect
+      );
+      if (!strokePatternInput) {
+        return false;
+      }
+
       // Apply wet edge post-processing if enabled
       // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
       // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
-      if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+      if (wetEdgeActive) {
         const wetDebug = this.beginWetEdgeDebug('primary');
         this.wetEdgePipeline.dispatch(
           encoder,
-          this.pingPongBuffer.source, // Raw buffer (input, read-only)
+          strokePatternInput, // Raw or stroke-level-textured buffer (input, read-only)
           this.pingPongBuffer.display, // Display buffer (output)
           this.dirtyRect,
           this.wetEdgeHardness,
@@ -1879,14 +2008,29 @@ export class GPUStrokeAccumulator {
     this.pingPongBuffer.swap();
 
     if (!deferPost) {
+      const wetEdgeActive = this.wetEdgeEnabled && this.wetEdgeStrength > 0.01;
+      const strokePatternOutput = wetEdgeActive
+        ? this.dualBlendTexture
+        : this.pingPongBuffer.display;
+      const strokePatternInput = this.applyStrokeLevelPatternPass(
+        encoder,
+        this.pingPongBuffer.source,
+        strokePatternOutput,
+        this.dirtyRect,
+        currentTexture
+      );
+      if (!strokePatternInput) {
+        return false;
+      }
+
       // Apply wet edge post-processing if enabled
       // IMPORTANT: Wet edge reads from raw buffer (source) and writes to display buffer
       // It does NOT modify the raw buffer to avoid idempotency issues (Alpha = f(f(Alpha)))
-      if (this.wetEdgeEnabled && this.wetEdgeStrength > 0.01) {
+      if (wetEdgeActive) {
         const wetDebug = this.beginWetEdgeDebug('primary-texture');
         this.wetEdgePipeline.dispatch(
           encoder,
-          this.pingPongBuffer.source, // Raw buffer (input, read-only)
+          strokePatternInput, // Raw or stroke-level-textured buffer (input, read-only)
           this.pingPongBuffer.display, // Display buffer (output)
           this.dirtyRect,
           0.0, // Texture brushes: always treat as soft to enable full wet edge effect
@@ -2081,6 +2225,16 @@ export class GPUStrokeAccumulator {
       label: 'Dual Blend Encoder',
     });
 
+    const primaryInputTexture = this.applyStrokeLevelPatternPass(
+      encoder,
+      this.pingPongBuffer.source,
+      this.pingPongBuffer.display,
+      rect
+    );
+    if (!primaryInputTexture) {
+      return;
+    }
+
     this.pushDiagnosticEvent('dual-blend-dispatch', {
       mode: this.dualBrushMode,
       rectWidth: Math.max(0, rect.right - rect.left),
@@ -2090,7 +2244,7 @@ export class GPUStrokeAccumulator {
 
     this.computeDualBlendPipeline.dispatch(
       encoder,
-      this.pingPongBuffer.source,
+      primaryInputTexture,
       this.dualMaskBuffer.source,
       this.dualBlendTexture,
       rect,
@@ -2769,6 +2923,9 @@ export class GPUStrokeAccumulator {
     if (this.dualMaskActive) {
       return this.dualBlendTexture;
     }
+    if (this.strokeLevelPatternPreviewActive) {
+      return this.pingPongBuffer.display; // Stroke-level pattern post-process output
+    }
     return this.pingPongBuffer.source; // Raw accumulator texture
   }
 
@@ -2819,7 +2976,7 @@ export class GPUStrokeAccumulator {
    */
   private extractPatternSettings(
     settings?: import('@/components/BrushPanel/types').TextureSettings | null
-  ): import('./types').GPUPatternSettings | null {
+  ): GPUPatternSettings | null {
     // The caller (useBrushRenderer) gates with config.textureEnabled,
     // so we only need to check for valid patternId here.
     if (!settings || !settings.patternId) {
@@ -2840,9 +2997,7 @@ export class GPUStrokeAccumulator {
   /**
    * Check if pattern settings have changed
    */
-  private hasPatternSettingsChanged(
-    newSettings: import('./types').GPUPatternSettings | null
-  ): boolean {
+  private hasPatternSettingsChanged(newSettings: GPUPatternSettings | null): boolean {
     const current = this.currentPatternSettings;
 
     // Both null

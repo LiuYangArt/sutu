@@ -414,6 +414,87 @@ export class ComputeBrushPipeline {
   }
 
   /**
+   * Execute stroke-level pattern blend as a dedicated post pass.
+   * Uses dab_count=0 to skip dab loop in shader and apply pattern once over accumulated alpha.
+   */
+  dispatchStrokeLevelPattern(
+    encoder: GPUCommandEncoder,
+    inputTexture: GPUTexture,
+    outputTexture: GPUTexture,
+    patternTexture: GPUTexture,
+    patternSettings: GPUPatternSettings,
+    bbox: BoundingBox
+  ): boolean {
+    if (patternSettings.textureEachTip) {
+      return true;
+    }
+
+    if (bbox.width <= 0 || bbox.height <= 0) {
+      return true;
+    }
+
+    const tiles = this.buildTiles(bbox);
+    if (tiles.length === 0) {
+      return true;
+    }
+
+    if (tiles.length > MAX_TILES_PER_BATCH) {
+      if (shouldLogUploadDebug()) {
+        console.warn('[ComputeBrushPipeline] Too many tiles for stroke-level pattern pass', {
+          tiles: tiles.length,
+          max: MAX_TILES_PER_BATCH,
+          bbox,
+        });
+      }
+      return false;
+    }
+
+    for (let t = 0; t < tiles.length; t++) {
+      const tile = tiles[t]!;
+      this.writeUniformData(
+        this.uniformScratchView,
+        t * this.uniformStride,
+        tile,
+        0, // dab_count=0 => shader runs dedicated stroke-level pattern branch only
+        true,
+        patternTexture,
+        patternSettings,
+        false,
+        0.0
+      );
+    }
+
+    safeWriteBuffer({
+      device: this.device,
+      dstBuffer: this.uniformBuffer,
+      dstOffset: 0,
+      src: this.uniformScratch,
+      srcOffset: 0,
+      size: tiles.length * this.uniformStride,
+      label: 'ComputeBrush stroke-level pattern uniforms',
+    });
+
+    const bindGroup = this.getOrCreateBindGroup(
+      inputTexture,
+      outputTexture,
+      patternTexture,
+      this.dummyNoiseTexture
+    );
+    const pass = encoder.beginComputePass({ label: 'Compute Brush Stroke-Level Pattern Pass' });
+    pass.setPipeline(this.pipeline);
+
+    for (let t = 0; t < tiles.length; t++) {
+      const tile = tiles[t]!;
+      const uniformOffset = t * this.uniformStride;
+      pass.setBindGroup(0, bindGroup, [uniformOffset, 0]);
+      pass.dispatchWorkgroups(Math.ceil(tile.width / 8), Math.ceil(tile.height / 8));
+    }
+
+    pass.end();
+    return true;
+  }
+
+  /**
    * Get or create BindGroup (with caching for performance)
    */
   private getOrCreateBindGroup(

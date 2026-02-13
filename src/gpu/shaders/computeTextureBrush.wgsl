@@ -524,9 +524,10 @@ fn main(
     color = alpha_darken_blend(color, dab_color, src_alpha, ceiling);
   }
 
-  // Stroke-level texture blend (Photoshop-like when Texture Each Tip is OFF):
-  // apply texture modulation once to the accumulated stroke alpha.
-  if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip == 0u) {
+  // Stroke-level texture blend (Texture Each Tip = OFF):
+  // run only in dedicated post pass (dab_count == 0) to avoid destructive re-modulation
+  // across multiple flushes within a single stroke.
+  if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip == 0u && uniforms.dab_count == 0u) {
     let stroke_pattern_mult = calculate_pattern_multiplier(
       vec2<u32>(pixel_x, pixel_y),
       color.a,
