@@ -65,9 +65,14 @@ export function calculateTextureInfluence(
   settings: TextureSettings,
   pattern: PatternData,
   depth: number,
-  baseAlpha: number
+  baseAlpha: number,
+  accumulatedAlpha: number = 0
 ): number {
-  const base = Math.max(0, Math.min(1, baseAlpha));
+  const baseMask = Math.max(0, Math.min(1, baseAlpha));
+  const accum = Math.max(0, Math.min(1, accumulatedAlpha));
+  // Use the larger of tip mask and already accumulated stroke alpha
+  // to reduce per-dab clipping artifacts in non-linear blend modes.
+  const base = Math.max(baseMask, accum);
   if (base <= 0.001) return 0.0;
 
   const depth01 = Math.max(0, Math.min(1, depth));

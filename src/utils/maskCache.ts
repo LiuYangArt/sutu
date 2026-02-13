@@ -437,6 +437,7 @@ export class MaskCache {
           if (maskValue < 0.001) continue;
 
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
+          const dstAlpha = (buffer[idx + 3] ?? 0) / 255;
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
@@ -449,7 +450,8 @@ export class MaskCache {
               textureSettings,
               pattern,
               depth,
-              maskValue
+              maskValue,
+              dstAlpha
             );
           }
 
@@ -497,6 +499,7 @@ export class MaskCache {
           if (maskValue < 0.001) continue;
 
           const idx = (bufferRowStart + bufferLeft + mx) * 4;
+          const dstAlpha = (buffer[idx + 3] ?? 0) / 255;
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
@@ -509,7 +512,8 @@ export class MaskCache {
               textureSettings,
               pattern,
               depth,
-              maskValue
+              maskValue,
+              dstAlpha
             );
           }
 
@@ -647,6 +651,7 @@ export class MaskCache {
         if (maskValue < 0.001) continue;
 
         const idx = (rowStart + px) * 4;
+        const dstAlpha = (buffer[idx + 3] ?? 0) / 255;
 
         // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
         let textureMod = 1.0;
@@ -658,7 +663,8 @@ export class MaskCache {
             textureSettings,
             pattern,
             depth,
-            maskValue
+            maskValue,
+            dstAlpha
           );
         }
 

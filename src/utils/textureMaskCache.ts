@@ -405,6 +405,7 @@ export class TextureMaskCache {
           const bufferX = bufferLeft + mx;
           const bufferY = bufferTop + my;
           const idx = (bufferRowStart + bufferX) * 4;
+          const dstA = (buffer[idx + 3] ?? 0) / 255;
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
@@ -415,7 +416,8 @@ export class TextureMaskCache {
               textureSettings!,
               pattern!,
               textureDepth,
-              maskValue
+              maskValue,
+              dstA
             );
           }
 
@@ -444,7 +446,6 @@ export class TextureMaskCache {
           const dstR = buffer[idx]!;
           const dstG = buffer[idx + 1]!;
           const dstB = buffer[idx + 2]!;
-          const dstA = buffer[idx + 3]! / 255;
 
           // Alpha Darken blending - texture/dual brush affect opacity ceiling, not flow
           const effectiveOpacity = dabOpacity * dualMod * textureMod;
@@ -479,6 +480,7 @@ export class TextureMaskCache {
           const bufferX = bufferLeft + mx;
           const bufferY = bufferTop + my;
           const idx = (bufferRowStart + bufferX) * 4;
+          const dstA = (buffer[idx + 3] ?? 0) / 255;
 
           // Texture modulation (applied to Alpha Darken opacity ceiling, not tip alpha)
           let textureMod = 1.0;
@@ -489,7 +491,8 @@ export class TextureMaskCache {
               textureSettings!,
               pattern!,
               textureDepth,
-              maskValue
+              maskValue,
+              dstA
             );
           }
 
@@ -524,7 +527,6 @@ export class TextureMaskCache {
           const dstR = buffer[idx]!;
           const dstG = buffer[idx + 1]!;
           const dstB = buffer[idx + 2]!;
-          const dstA = buffer[idx + 3]! / 255;
 
           // Alpha Darken blending - texture/dual brush affect opacity ceiling, not flow
           const effectiveOpacity = dabOpacity * dualMod * textureMod;

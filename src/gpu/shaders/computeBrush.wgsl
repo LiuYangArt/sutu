@@ -222,9 +222,12 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
 // ============================================================================
 fn calculate_pattern_multiplier(
   pixel_xy: vec2<u32>,
-  base_mask: f32
+  base_mask: f32,
+  accumulated_alpha: f32
 ) -> f32 {
-  let base = clamp(base_mask, 0.0, 1.0);
+  // Use accumulated alpha as an additional base so non-linear blend modes
+  // follow continuous stroke buildup instead of isolated dab masks.
+  let base = max(clamp(base_mask, 0.0, 1.0), clamp(accumulated_alpha, 0.0, 1.0));
   if (base <= 0.001) {
     return 0.0;
   }
@@ -454,7 +457,7 @@ fn main(
     // A2. Texture: apply blend mode to Alpha Darken ceiling (not tip alpha)
     var pattern_mult = 1.0;
     if (uniforms.pattern_enabled != 0u) {
-       pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask);
+       pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask, color.a);
     }
 
     // A3. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)

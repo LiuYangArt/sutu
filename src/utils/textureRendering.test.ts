@@ -106,6 +106,22 @@ describe('calculateTextureInfluence', () => {
     expect(result).toBe(1.0);
   });
 
+  it('should use accumulated alpha as base to reduce per-dab clipping in non-linear modes', () => {
+    const settings = { ...defaultSettings, mode: 'darken' as const };
+    const pattern: PatternData = {
+      id: 'flat-pattern-darken',
+      width: 1,
+      height: 1,
+      data: new Uint8Array([204, 204, 204, 255]), // blend = 0.8
+    };
+
+    const withoutAccum = calculateTextureInfluence(0, 0, settings, pattern, 1.0, 0.2);
+    const withAccum = calculateTextureInfluence(0, 0, settings, pattern, 1.0, 0.2, 0.9);
+
+    expect(withoutAccum).toBeCloseTo(1.0, 5);
+    expect(withAccum).toBeCloseTo(0.8 / 0.9, 5);
+  });
+
   it('should handle Multiply mode correctly at 100% depth', () => {
     // (0,0) is Black (0)
     expect(calculateTextureInfluence(0, 0, defaultSettings, mockPattern, 1.0, 1.0)).toBe(0.0);
