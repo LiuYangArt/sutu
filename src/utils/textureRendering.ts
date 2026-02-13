@@ -31,7 +31,7 @@ export function sampleTextureValue(
   pattern: PatternData
 ): number {
   // 1. Calculate Pattern UV (Canvas Space) with Tiling
-  const scale = Math.max(1, settings.scale);
+  const scale = Math.max(0.1, settings.scale);
   const scaleFactor = 100.0 / scale;
 
   let patternX = Math.floor(canvasX * scaleFactor);
@@ -69,6 +69,25 @@ export function sampleTextureValue(
 
   // Clamp to valid range
   return clamp01(textureValue);
+}
+
+/**
+ * Sample value for Noise panel with explicit grain-cell quantization.
+ * This makes grain-size changes visually obvious.
+ */
+export function sampleNoiseValue(
+  canvasX: number,
+  canvasY: number,
+  settings: TextureSettings,
+  pattern: PatternData
+): number {
+  // Use direct scale-to-cell mapping for clear visual separation across 1-100%.
+  const grainPx = Math.max(1, settings.scale);
+  const quantizedX = Math.floor(canvasX / grainPx) * grainPx;
+  const quantizedY = Math.floor(canvasY / grainPx) * grainPx;
+
+  // Use neutral scale after coordinate quantization to avoid double scaling.
+  return sampleTextureValue(quantizedX, quantizedY, { ...settings, scale: 100 }, pattern);
 }
 
 /**

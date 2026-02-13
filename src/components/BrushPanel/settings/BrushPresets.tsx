@@ -90,6 +90,8 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
     setWetEdgeEnabled,
     setBuildupEnabled,
     setNoiseEnabled,
+    setNoiseSettings,
+    resetNoiseSettings,
     resetDualBrush,
     setDualBrushEnabled,
     setDualBrush,
@@ -120,6 +122,10 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
   setTransferEnabled(false);
   setWetEdgeEnabled(preset.wetEdgeEnabled === true);
   setBuildupEnabled(preset.buildupEnabled === true);
+  resetNoiseSettings();
+  if (preset.noiseSettings) {
+    setNoiseSettings(preset.noiseSettings);
+  }
   setNoiseEnabled(preset.noiseEnabled === true);
 
   if (preset.shapeDynamicsEnabled === true) {

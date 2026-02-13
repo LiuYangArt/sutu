@@ -41,6 +41,9 @@ export interface DabParams {
   texture?: BrushTexture; // Texture for sampled brushes (from ABR import)
   textureSettings?: TextureSettings | null; // Texture pattern settings (Mode, Scale, Depth, etc.)
   noiseEnabled?: boolean; // Procedural noise (Photoshop Noise panel compatible)
+  noiseSize?: number; // 1-100 (%)
+  noiseSizeJitter?: number; // 0-100 (%)
+  noiseDensityJitter?: number; // 0-100 (%)
   // Shape Dynamics: flip flags for sampled/texture brushes
   flipX?: boolean; // Flip horizontally
   flipY?: boolean; // Flip vertically
@@ -103,19 +106,54 @@ const HARD_BRUSH_THRESHOLD = 0.99;
 const ROUNDNESS_HARD_PATH_THRESHOLD = 0.999;
 const ROUNDNESS_AA_HARDNESS_CLAMP = 0.98;
 
-const NOISE_TEXTURE_SETTINGS: TextureSettings = {
-  patternId: NOISE_PATTERN_ID,
-  scale: 100,
-  brightness: 0,
-  contrast: 0,
-  textureEachTip: false,
-  mode: 'overlay',
-  depth: 100, // Strength for overlay mix (0-100)
-  minimumDepth: 0,
-  depthJitter: 0,
-  invert: false,
-  depthControl: 0,
-};
+function clampNoiseScalePercent(scale: number): number {
+  if (!Number.isFinite(scale)) return 100;
+  return Math.max(1, Math.min(100, scale));
+}
+
+function mapNoiseScalePercentToLegacyScale(percent: number): number {
+  // Requested mapping:
+  // - UI 100 -> previous 80
+  // - UI 1 -> previous 0.8 (smaller than previous minimum 1)
+  return (percent / 100) * 80;
+}
+
+function clampNoiseJitter(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
+function hash01(x: number, y: number, salt: number): number {
+  const v = Math.sin(x * 12.9898 + y * 78.233 + salt * 37.719) * 43758.5453123;
+  return v - Math.floor(v);
+}
+
+function createNoiseTextureSettings(params: DabParams): TextureSettings {
+  const baseScalePercent = clampNoiseScalePercent(params.noiseSize ?? 100);
+  const baseScale = mapNoiseScalePercentToLegacyScale(baseScalePercent);
+  const sizeJitter = clampNoiseJitter(params.noiseSizeJitter ?? 0) / 100;
+  const densityJitter = clampNoiseJitter(params.noiseDensityJitter ?? 0) / 100;
+
+  const sizeSigned = hash01(params.x, params.y, 0.37) * 2 - 1;
+  const densitySigned = hash01(params.x, params.y, 1.73) * 2 - 1;
+
+  const jitteredScale = Math.max(0.1, Math.min(1000, baseScale * (1 + sizeSigned * sizeJitter)));
+  const jitteredContrast = densitySigned * densityJitter * 50;
+
+  return {
+    patternId: NOISE_PATTERN_ID,
+    scale: jitteredScale,
+    brightness: 0,
+    contrast: jitteredContrast,
+    textureEachTip: false,
+    mode: 'overlay',
+    depth: 100, // Keep strength parity with existing Noise behavior
+    minimumDepth: 0,
+    depthJitter: 0,
+    invert: false,
+    depthControl: 0,
+  };
+}
 
 /**
  * Parse hex color to RGB components (0-255)
@@ -501,7 +539,7 @@ export class StrokeAccumulator {
 
     // Resolve built-in noise pattern (independent from Texture patterns)
     const noisePattern = params.noiseEnabled ? getNoisePattern() : undefined;
-    const noiseSettings = params.noiseEnabled ? NOISE_TEXTURE_SETTINGS : undefined;
+    const noiseSettings = params.noiseEnabled ? createNoiseTextureSettings(params) : undefined;
 
     // Initialize stroke-level dual brush state if enabled
     if (params.dualBrush?.enabled && !this.dualBrushEnabled) {

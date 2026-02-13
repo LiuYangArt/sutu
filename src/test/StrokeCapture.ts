@@ -34,6 +34,7 @@ export interface StrokeCaptureToolMetadata extends Record<string, unknown> {
   wetEdgeEnabled?: boolean;
   wetEdge?: number;
   noiseEnabled?: boolean;
+  noiseSettings?: Record<string, unknown>;
   buildupEnabled?: boolean;
 }
 

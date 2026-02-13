@@ -44,6 +44,8 @@ export interface BrushPreset {
   buildupEnabled?: boolean | null;
   /** Noise panel enabled state */
   noiseEnabled?: boolean | null;
+  /** Noise panel parameter overrides */
+  noiseSettings?: NoiseSettingsPreset | null;
 
   /** Base opacity (0..1) */
   baseOpacity?: number | null;
@@ -213,6 +215,15 @@ export interface TransferSettings {
   flowJitter: number; // 0-100 (%)
   flowControl: ControlSource;
   minimumFlow: number; // 0-100 (%)
+}
+
+/**
+ * Noise settings (Brush Noise panel extension)
+ */
+export interface NoiseSettingsPreset {
+  size: number; // 1-100 (%)
+  sizeJitter: number; // 0-100 (%)
+  densityJitter: number; // 0-100 (%)
 }
 
 /** Default texture settings */

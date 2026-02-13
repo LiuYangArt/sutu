@@ -282,6 +282,11 @@ function buildPresetFromToolState(
     wetEdgeEnabled: tool.wetEdgeEnabled,
     buildupEnabled: tool.buildupEnabled,
     noiseEnabled: tool.noiseEnabled,
+    noiseSettings: {
+      size: tool.noiseSettings.size,
+      sizeJitter: tool.noiseSettings.sizeJitter,
+      densityJitter: tool.noiseSettings.densityJitter,
+    },
     baseOpacity: tool.brushOpacity,
     baseFlow: tool.brushFlow,
   };

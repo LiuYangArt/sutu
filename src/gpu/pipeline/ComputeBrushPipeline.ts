@@ -25,7 +25,7 @@ const MAX_PIXELS_PER_BATCH = 2_000_000; // ~1400x1400 area
 const MAX_DABS_PER_BATCH = 128;
 
 // Uniform buffer size in bytes (must match shader layout)
-const UNIFORM_BUFFER_SIZE = 112;
+const UNIFORM_BUFFER_SIZE = 128;
 
 // Dab data size in bytes (12 floats * 4 bytes = 48 bytes per dab)
 const DAB_DATA_SIZE = 48;
@@ -250,7 +250,10 @@ export class ComputeBrushPipeline {
     patternTexture: GPUTexture | null,
     patternSettings: GPUPatternSettings | null,
     noiseEnabled: boolean,
-    noiseStrength: number
+    noiseStrength: number,
+    noiseScale: number = 100,
+    noiseSizeJitter: number = 0,
+    noiseDensityJitter: number = 0
   ): void {
     // Block 0: Bounding Box
     view.setUint32(byteOffset + 0, bbox.x, true);
@@ -299,6 +302,9 @@ export class ComputeBrushPipeline {
     }
     view.setUint32(byteOffset + 72, noiseEnabled ? 1 : 0, true);
     view.setFloat32(byteOffset + 76, noiseEnabled ? noiseStrength : 0.0, true);
+    view.setFloat32(byteOffset + 80, noiseEnabled ? noiseScale : 100.0, true);
+    view.setFloat32(byteOffset + 84, noiseEnabled ? noiseSizeJitter : 0.0, true);
+    view.setFloat32(byteOffset + 88, noiseEnabled ? noiseDensityJitter : 0.0, true);
   }
 
   /**
@@ -314,7 +320,10 @@ export class ComputeBrushPipeline {
     patternSettings: GPUPatternSettings | null = null,
     noiseTexture: GPUTexture | null = null,
     noiseEnabled: boolean = false,
-    noiseStrength: number = 1.0
+    noiseStrength: number = 1.0,
+    noiseScale: number = 100,
+    noiseSizeJitter: number = 0,
+    noiseDensityJitter: number = 0
   ): boolean {
     if (dabs.length === 0) return true;
 
@@ -379,7 +388,10 @@ export class ComputeBrushPipeline {
         patternTexture,
         patternSettings,
         noiseEnabled,
-        noiseStrength
+        noiseStrength,
+        noiseScale,
+        noiseSizeJitter,
+        noiseDensityJitter
       );
     }
 

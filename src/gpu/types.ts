@@ -230,6 +230,12 @@ export interface GPUDabParams {
   textureSettings?: TextureSettings | null;
   /** Noise toggle (applied as overlay on tip alpha) */
   noiseEnabled?: boolean;
+  /** Base grain size (1-100%) */
+  noiseSize?: number;
+  /** Grain size jitter (0-100%) */
+  noiseSizeJitter?: number;
+  /** Grain density jitter (0-100%) */
+  noiseDensityJitter?: number;
 }
 
 /**

@@ -168,6 +168,28 @@ export const DEFAULT_TRANSFER_SETTINGS: TransferSettings = {
 };
 
 /**
+ * Noise settings (Photoshop-compatible Noise panel extension)
+ */
+export interface NoiseSettings {
+  /** Base grain size (1-100%) */
+  size: number;
+  /** Random variation range for grain size (0-100%) */
+  sizeJitter: number;
+  /** Random variation range for grain density (0-100%) */
+  densityJitter: number;
+}
+
+/** Locked Noise settings (temporary: aligned to current Photoshop parity target) */
+export const LOCKED_NOISE_SETTINGS: NoiseSettings = {
+  size: 1,
+  sizeJitter: 100,
+  densityJitter: 100,
+};
+
+/** Default Noise settings */
+export const DEFAULT_NOISE_SETTINGS: NoiseSettings = { ...LOCKED_NOISE_SETTINGS };
+
+/**
  * Dual Blend Mode (Photoshop Dual Brush panel compatible)
  * Only 8 modes are available: Multiply, Darken, Overlay,
  * Color Dodge, Color Burn, Linear Burn, Hard Mix, Linear Height
@@ -351,6 +373,7 @@ export interface BrushToolProfile {
   textureEnabled: boolean;
   textureSettings: TextureSettings;
   noiseEnabled: boolean;
+  noiseSettings: NoiseSettings;
   dualBrushEnabled: boolean;
   dualBrush: DualBrushSettings;
 }
@@ -426,6 +449,7 @@ function normalizeBrushProfile(profile: BrushToolProfile): BrushToolProfile {
     textureEnabled: profile.textureEnabled,
     textureSettings: { ...profile.textureSettings },
     noiseEnabled: profile.noiseEnabled,
+    noiseSettings: { ...LOCKED_NOISE_SETTINGS },
     dualBrushEnabled: profile.dualBrushEnabled,
     dualBrush,
   };
@@ -460,6 +484,7 @@ function getDefaultBrushProfile(): BrushToolProfile {
     textureEnabled: false,
     textureSettings: { ...DEFAULT_TEXTURE_SETTINGS },
     noiseEnabled: false,
+    noiseSettings: { ...DEFAULT_NOISE_SETTINGS },
     dualBrushEnabled: false,
     dualBrush: { ...DEFAULT_DUAL_BRUSH },
   });
@@ -526,6 +551,7 @@ interface ToolState {
 
   // Noise settings (Photoshop-compatible)
   noiseEnabled: boolean;
+  noiseSettings: NoiseSettings;
 
   // Dual Brush settings (Photoshop-compatible)
   dualBrushEnabled: boolean;
@@ -573,6 +599,8 @@ interface ToolState {
   // Noise actions
   setNoiseEnabled: (enabled: boolean) => void;
   toggleNoise: () => void;
+  setNoiseSettings: (settings: Partial<NoiseSettings>) => void;
+  resetNoiseSettings: () => void;
   // Shape Dynamics actions
   setShapeDynamicsEnabled: (enabled: boolean) => void;
   toggleShapeDynamics: () => void;
@@ -642,6 +670,7 @@ function snapshotProfileFromLiveState(state: ToolState): BrushToolProfile {
     textureEnabled: state.textureEnabled,
     textureSettings: state.textureSettings,
     noiseEnabled: state.noiseEnabled,
+    noiseSettings: { ...state.noiseSettings },
     dualBrushEnabled: state.dualBrushEnabled,
     dualBrush: state.dualBrush,
   });
@@ -676,6 +705,7 @@ function applyProfileToLiveState(profile: BrushToolProfile): Partial<ToolState> 
     textureEnabled: profile.textureEnabled,
     textureSettings: { ...profile.textureSettings },
     noiseEnabled: profile.noiseEnabled,
+    noiseSettings: { ...profile.noiseSettings },
     dualBrushEnabled: profile.dualBrushEnabled,
     dualBrush: cloneDualBrushSettings(profile.dualBrush),
   };
@@ -746,6 +776,9 @@ function coerceBrushProfile(value: unknown, fallback: BrushToolProfile): BrushTo
     textureSettings: isRecord(raw.textureSettings)
       ? { ...fallback.textureSettings, ...raw.textureSettings }
       : { ...fallback.textureSettings },
+    noiseSettings: isRecord(raw.noiseSettings)
+      ? { ...fallback.noiseSettings, ...raw.noiseSettings }
+      : { ...fallback.noiseSettings },
     dualBrush: isRecord(raw.dualBrush)
       ? normalizeDualBrush(
           typeof raw.size === 'number' ? raw.size : fallback.size,
@@ -816,6 +849,7 @@ export const useToolStore = create<ToolState>()(
 
         // Noise (default: disabled)
         noiseEnabled: false,
+        noiseSettings: { ...DEFAULT_NOISE_SETTINGS },
 
         // Dual Brush (default: disabled)
         dualBrushEnabled: false,
@@ -1024,6 +1058,15 @@ export const useToolStore = create<ToolState>()(
 
         toggleNoise: () => setWithActiveProfile((state) => ({ noiseEnabled: !state.noiseEnabled })),
 
+        // Noise parameters are temporarily product-locked for PS parity validation.
+        setNoiseSettings: (_settings) =>
+          setWithActiveProfile(() => ({
+            noiseSettings: { ...LOCKED_NOISE_SETTINGS },
+          })),
+
+        resetNoiseSettings: () =>
+          setWithActiveProfile(() => ({ noiseSettings: { ...DEFAULT_NOISE_SETTINGS } })),
+
         // Shape Dynamics actions
         setShapeDynamicsEnabled: (enabled) =>
           setWithActiveProfile(() => ({ shapeDynamicsEnabled: enabled })),
@@ -1115,7 +1158,7 @@ export const useToolStore = create<ToolState>()(
     },
     {
       name: appHyphenStorageKey('brush-settings'),
-      version: 4,
+      version: 5,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
         if (!isRecord(persistedState)) {
@@ -1154,6 +1197,7 @@ export const useToolStore = create<ToolState>()(
             textureEnabled: state.textureEnabled,
             textureSettings: state.textureSettings,
             noiseEnabled: state.noiseEnabled,
+            noiseSettings: state.noiseSettings,
             dualBrushEnabled: state.dualBrushEnabled,
             dualBrush: state.dualBrush,
           },
@@ -1200,6 +1244,7 @@ export const useToolStore = create<ToolState>()(
             colorDynamics: { ...profile.colorDynamics },
             transfer: { ...profile.transfer },
             textureSettings: { ...profile.textureSettings },
+            noiseSettings: { ...profile.noiseSettings },
             dualBrush: serializeDualBrush(profile.dualBrush),
           });
 
@@ -1234,6 +1279,7 @@ export const useToolStore = create<ToolState>()(
             textureEnabled: state.textureEnabled,
             textureSettings: state.textureSettings,
             noiseEnabled: state.noiseEnabled,
+            noiseSettings: state.noiseSettings,
             dualBrushEnabled: state.dualBrushEnabled,
             brushProfile: serializeProfile(state.brushProfile),
             eraserProfile: serializeProfile(state.eraserProfile),
