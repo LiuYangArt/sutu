@@ -105,6 +105,7 @@
 
 /* Brush Settings */
 .brush-settings {
+  --toolbar-setting-value-width: 42px;
   gap: 16px;
 }
 
@@ -341,8 +342,34 @@
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--text-secondary);
-  min-width: 40px;
+  width: var(--toolbar-setting-value-width);
+  min-width: var(--toolbar-setting-value-width);
+  flex: 0 0 var(--toolbar-setting-value-width);
   text-align: right;
+  line-height: 20px;
+  box-sizing: border-box;
+}
+
+.setting-value.editable {
+  cursor: text;
+}
+
+.setting-value-input {
+  width: var(--toolbar-setting-value-width);
+  min-width: var(--toolbar-setting-value-width);
+  flex: 0 0 var(--toolbar-setting-value-width);
+  height: 20px;
+  font-size: 8px;
+  line-height: 18px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  text-align: right;
+  outline: none;
+  box-sizing: border-box;
 }
 
 /* Pressure Curve Select */

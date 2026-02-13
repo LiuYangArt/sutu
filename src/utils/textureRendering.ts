@@ -1,6 +1,29 @@
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import type { PatternData } from './patternManager';
 
+const EPSILON = 0.001;
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function isDepthEmbeddedMode(mode: TextureSettings['mode']): boolean {
+  return mode === 'hardMix' || mode === 'linearHeight' || mode === 'height';
+}
+
+function blendHardMixSofterPhotoshop(base: number, blend: number, depth: number): number {
+  return clamp01(3.0 * base * depth - 2.0 * (1.0 - blend));
+}
+
+function blendLinearHeightPhotoshop(base: number, blend: number, depth: number): number {
+  const m = 10.0 * depth * base;
+  return clamp01(Math.max((1.0 - blend) * m, m - blend));
+}
+
+function blendHeightPhotoshop(base: number, blend: number, depth: number): number {
+  return clamp01(10.0 * depth * base - blend);
+}
+
 export function sampleTextureValue(
   canvasX: number,
   canvasY: number,
@@ -45,7 +68,7 @@ export function sampleTextureValue(
   }
 
   // Clamp to valid range
-  return Math.max(0, Math.min(1, textureValue));
+  return clamp01(textureValue);
 }
 
 /**
@@ -65,17 +88,21 @@ export function calculateTextureInfluence(
   settings: TextureSettings,
   pattern: PatternData,
   depth: number,
-  baseAlpha: number
+  baseAlpha: number,
+  accumulatedAlpha: number = 0
 ): number {
-  const base = Math.max(0, Math.min(1, baseAlpha));
-  if (base <= 0.001) return 0.0;
+  const baseMask = clamp01(baseAlpha);
+  const accum = clamp01(accumulatedAlpha);
+  // Use the larger of tip mask and already accumulated stroke alpha
+  // to reduce per-dab clipping artifacts in non-linear blend modes.
+  const base = Math.max(baseMask, accum);
+  if (base <= EPSILON) return 0.0;
 
-  const depth01 = Math.max(0, Math.min(1, depth));
-  if (depth01 <= 0.001) return 1.0;
+  const depth01 = clamp01(depth);
+  if (depth01 <= EPSILON) return 1.0;
 
   const textureValue = sampleTextureValue(canvasX, canvasY, settings, pattern);
-
-  const blend = Math.max(0, Math.min(1, textureValue));
+  const blend = clamp01(textureValue);
 
   // 4. Apply Blend Mode (match GPU apply_blend_mode)
   // Base: current tip alpha (maskValue)
@@ -85,7 +112,8 @@ export function calculateTextureInfluence(
       case 'multiply':
         return base * blend;
       case 'subtract':
-        return Math.max(0, base - blend);
+        // Keep subtract proportional to base alpha to avoid dab-shaped clipping.
+        return base * (1.0 - blend);
       case 'darken':
         return Math.min(base, blend);
       case 'overlay':
@@ -100,21 +128,21 @@ export function calculateTextureInfluence(
       case 'linearBurn':
         return Math.max(0.0, base + blend - 1.0);
       case 'hardMix':
-        return base + blend >= 1.0 ? 1.0 : 0.0;
+        return blendHardMixSofterPhotoshop(base, blend, depth01);
       case 'linearHeight':
-        return base * (0.5 + blend * 0.5);
+        return blendLinearHeightPhotoshop(base, blend, depth01);
       case 'height':
-        // Height: treat texture as height map (neutral at 0.5), allowing lift (alpha increase)
-        // Full depth (depth=1) => influence = 2 * blend, final alpha = base * influence (clamped)
-        return Math.min(1.0, base * 2.0 * blend);
+        return blendHeightPhotoshop(base, blend, depth01);
       default:
         return base * blend;
     }
   })();
 
   // 5. Apply Depth (Strength)
-  const finalAlpha = base * (1.0 - depth01) + blendedAlpha * depth01;
-  const clampedFinalAlpha = Math.max(0, Math.min(1, finalAlpha));
+  const finalAlpha = isDepthEmbeddedMode(settings.mode)
+    ? blendedAlpha
+    : base * (1.0 - depth01) + blendedAlpha * depth01;
+  const clampedFinalAlpha = clamp01(finalAlpha);
 
   // Return alpha multiplier relative to the original base alpha.
   // NOTE: Can exceed 1.0 for some blend modes (e.g. Overlay/Color Dodge/Height).

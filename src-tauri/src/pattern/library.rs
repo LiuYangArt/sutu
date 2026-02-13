@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::pat::{parse_pat_file, ParsedPattern};
-use super::types::{ImportResult, PatternMode, PatternResource};
+use super::types::{AddPatternFromBrushResult, ImportResult, PatternMode, PatternResource};
 use crate::app_meta::APP_CONFIG_DIR_NAME;
 use crate::brush::pattern_cache;
 
@@ -237,7 +237,7 @@ impl PatternLibrary {
         width: u32,
         height: u32,
         mode: PatternMode,
-    ) -> Result<PatternResource, String> {
+    ) -> Result<AddPatternFromBrushResult, String> {
         // Calculate content hash
         let mut hasher = Sha256::new();
         hasher.update(&rgba_data);
@@ -247,12 +247,27 @@ impl PatternLibrary {
         // Check for duplicate
         for existing in self.index.patterns.values() {
             if existing.content_hash == content_hash {
-                return Err(format!("Pattern already exists: {}", existing.name));
+                return Ok(AddPatternFromBrushResult {
+                    added: false,
+                    pattern: existing.clone(),
+                });
             }
         }
 
         // Use brush ID as pattern ID
-        let id = format!("brush_{}", brush_id);
+        let base_id = format!("brush_{}", brush_id);
+        let mut id = base_id.clone();
+        if let Some(existing) = self.index.patterns.get(&id) {
+            if existing.content_hash != content_hash {
+                let short_hash = &content_hash[..8];
+                id = format!("{}_{}", base_id, short_hash);
+                let mut suffix: u32 = 1;
+                while self.index.patterns.contains_key(&id) {
+                    id = format!("{}_{}_{}", base_id, short_hash, suffix);
+                    suffix += 1;
+                }
+            }
+        }
 
         // Store image data
         pattern_cache::cache_pattern_rgba(
@@ -285,7 +300,10 @@ impl PatternLibrary {
         self.dirty = true;
         let _ = self.save();
 
-        Ok(resource)
+        Ok(AddPatternFromBrushResult {
+            added: true,
+            pattern: resource,
+        })
     }
 
     /// Delete a pattern
@@ -432,7 +450,7 @@ pub fn add_from_brush(
     width: u32,
     height: u32,
     mode: PatternMode,
-) -> Result<PatternResource, String> {
+) -> Result<AddPatternFromBrushResult, String> {
     let mut guard = LIBRARY.write();
     let lib = guard
         .as_mut()
@@ -474,4 +492,103 @@ pub fn rename_group(old_name: &str, new_name: String) -> Result<(), String> {
         .as_mut()
         .ok_or_else(|| "Library not initialized".to_string())?;
     lib.rename_group(old_name, new_name)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn create_test_dir(name: &str) -> PathBuf {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("paintboard_pattern_library_{}_{}", name, now))
+    }
+
+    #[test]
+    fn add_from_brush_returns_existing_pattern_when_content_is_duplicate() {
+        let test_root = create_test_dir("duplicate");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+
+        let mut library = PatternLibrary::new(test_root.join("patterns"));
+        let rgba = vec![128u8; 2 * 2 * 4];
+
+        let first = library
+            .add_from_brush(
+                &format!("brush_a_{}", unique),
+                "Brush A".to_string(),
+                rgba.clone(),
+                2,
+                2,
+                PatternMode::RGB,
+            )
+            .unwrap();
+        let second = library
+            .add_from_brush(
+                &format!("brush_b_{}", unique),
+                "Brush B".to_string(),
+                rgba,
+                2,
+                2,
+                PatternMode::RGB,
+            )
+            .unwrap();
+
+        assert!(first.added);
+        assert!(!second.added);
+        assert_eq!(first.pattern.id, second.pattern.id);
+
+        let _ = std::fs::remove_dir_all(&test_root);
+    }
+
+    #[test]
+    fn add_from_brush_appends_suffix_when_base_id_conflicts_with_different_content() {
+        let test_root = create_test_dir("id_conflict");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let base = format!("same_id_{}", unique);
+
+        let mut library = PatternLibrary::new(test_root.join("patterns"));
+        let rgba_a = vec![32u8; 2 * 2 * 4];
+        let rgba_b = vec![220u8; 2 * 2 * 4];
+
+        let first = library
+            .add_from_brush(
+                &base,
+                "Pattern A".to_string(),
+                rgba_a,
+                2,
+                2,
+                PatternMode::RGB,
+            )
+            .unwrap();
+        let second = library
+            .add_from_brush(
+                &base,
+                "Pattern B".to_string(),
+                rgba_b,
+                2,
+                2,
+                PatternMode::RGB,
+            )
+            .unwrap();
+
+        assert!(first.added);
+        assert!(second.added);
+        assert_eq!(first.pattern.id, format!("brush_{}", base));
+        assert_ne!(first.pattern.id, second.pattern.id);
+        assert!(second.pattern.id.starts_with(&format!("brush_{}_", base)));
+
+        let _ = std::fs::remove_dir_all(&test_root);
+    }
 }

@@ -54,7 +54,7 @@ struct Uniforms {
   pattern_brightness: f32,
   pattern_contrast: f32,
   pattern_depth: f32,
-  pattern_padding: u32,
+  pattern_each_tip: u32,
 
   // Block 4
   pattern_size: vec2<f32>,
@@ -137,37 +137,33 @@ fn pattern_luma(color: vec4<f32>) -> f32 {
 }
 
 // ============================================================================
-// Pattern Sampling with Tiling (Repeat)
+// Pattern Sampling (CPU parity):
+// - Canvas-space nearest sample
+// - floor(pixel * (100 / scale))
+// - repeat wrap
 // ============================================================================
-fn sample_pattern_tiled(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
-  let tex_dims = vec2<f32>(textureDimensions(tex));
+fn wrap_repeat_i32(v: i32, size: i32) -> i32 {
+  return (v % size + size) % size;
+}
 
-  // Wrap UV (Repeat)
-  let wrapped_uv = fract(uv);
+fn sample_pattern_cpu_parity(tex: texture_2d<f32>, pixel_xy: vec2<u32>, scale: f32) -> f32 {
+  let dims = textureDimensions(tex);
+  if (dims.x == 0u || dims.y == 0u) {
+    return 1.0;
+  }
 
-  // Reuse bilinear sampling logic but with wrapped UVs handled by fract()
-  // Note: Standard bilinear needs neighbors. Manual wrap:
-  let texel_coord = wrapped_uv * tex_dims - 0.5;
-  let texel_floor = floor(texel_coord);
-  let frac = texel_coord - texel_floor;
+  let safe_scale = max(1.0, scale);
+  let scale_factor = 100.0 / safe_scale;
 
-  // Custom wrap logic for neighbor sampling
-  let w = i32(tex_dims.x);
-  let h = i32(tex_dims.y);
+  let sx = i32(floor(f32(pixel_xy.x) * scale_factor));
+  let sy = i32(floor(f32(pixel_xy.y) * scale_factor));
 
-  let x0 = (i32(texel_floor.x) % w + w) % w;
-  let y0 = (i32(texel_floor.y) % h + h) % h;
-  let x1 = (x0 + 1) % w;
-  let y1 = (y0 + 1) % h;
+  let w = i32(dims.x);
+  let h = i32(dims.y);
+  let tx = wrap_repeat_i32(sx, w);
+  let ty = wrap_repeat_i32(sy, h);
 
-  let s00 = pattern_luma(textureLoad(tex, vec2<i32>(x0, y0), 0));
-  let s10 = pattern_luma(textureLoad(tex, vec2<i32>(x1, y0), 0));
-  let s01 = pattern_luma(textureLoad(tex, vec2<i32>(x0, y1), 0));
-  let s11 = pattern_luma(textureLoad(tex, vec2<i32>(x1, y1), 0));
-
-  let top = mix(s00, s10, frac.x);
-  let bottom = mix(s01, s11, frac.x);
-  return mix(top, bottom, frac.y);
+  return pattern_luma(textureLoad(tex, vec2<i32>(tx, ty), 0));
 }
 
 // ============================================================================
@@ -175,13 +171,39 @@ fn sample_pattern_tiled(tex: texture_2d<f32>, uv: vec2<f32>) -> f32 {
 // Base: Tip alpha (mask)
 // Blend: Pattern texture value
 // ============================================================================
-fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
+fn is_depth_embedded_mode(mode: u32) -> bool {
+  return mode == 7u || mode == 8u || mode == 9u;
+}
+
+fn blend_hard_mix_softer_photoshop(base: f32, blend: f32, depth: f32) -> f32 {
+  // Krita Hard Mix Softer (Photoshop), non-soft-texturing branch:
+  // out = clamp(3 * (base * depth) - 2 * (1 - blend), 0, 1)
+  return clamp(3.0 * base * depth - 2.0 * (1.0 - blend), 0.0, 1.0);
+}
+
+fn blend_linear_height_photoshop(base: f32, blend: f32, depth: f32) -> f32 {
+  // Krita Linear Height (Photoshop):
+  // M = 10 * depth * base
+  // out = clamp(max((1 - blend) * M, M - blend), 0, 1)
+  let m = 10.0 * depth * base;
+  return clamp(max((1.0 - blend) * m, m - blend), 0.0, 1.0);
+}
+
+fn blend_height_photoshop(base: f32, blend: f32, depth: f32) -> f32 {
+  // Krita Height (Photoshop):
+  // out = clamp(10 * depth * base - blend, 0, 1)
+  return clamp(10.0 * depth * base - blend, 0.0, 1.0);
+}
+
+fn apply_blend_mode(base: f32, blend: f32, mode: u32, depth: f32) -> f32 {
   switch (mode) {
     case 0u: { // Multiply
       return base * blend;
     }
     case 1u: { // Subtract
-      return max(0.0, base - blend);
+      // Use proportional subtraction (base * (1 - blend)) to avoid
+      // low-alpha dab regions being over-subtracted and revealing dab seams.
+      return base * (1.0 - blend);
     }
     case 2u: { // Darken
       return min(base, blend);
@@ -204,14 +226,13 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
       return max(0.0, base + blend - 1.0);
     }
     case 7u: { // Hard Mix
-      if (base + blend >= 1.0) { return 1.0; }
-      return 0.0;
+      return blend_hard_mix_softer_photoshop(base, blend, depth);
     }
     case 8u: { // Linear Height
-      return base * (0.5 + blend * 0.5);
+      return blend_linear_height_photoshop(base, blend, depth);
     }
     case 9u: { // Height
-      return min(1.0, base * 2.0 * blend);
+      return blend_height_photoshop(base, blend, depth);
     }
     default: { // Default / Multiply
       return base * blend;
@@ -223,10 +244,13 @@ fn apply_blend_mode(base: f32, blend: f32, mode: u32) -> f32 {
 // Calculate Pattern Modulation (Returns Alpha Darken ceiling multiplier)
 // ============================================================================
 fn calculate_pattern_multiplier(
-  pixel: vec2<f32>,
-  base_mask: f32
+  pixel_xy: vec2<u32>,
+  base_mask: f32,
+  accumulated_alpha: f32
 ) -> f32 {
-  let base = clamp(base_mask, 0.0, 1.0);
+  // Use accumulated alpha as an additional base so non-linear blend modes
+  // follow continuous stroke buildup instead of isolated dab masks.
+  let base = max(clamp(base_mask, 0.0, 1.0), clamp(accumulated_alpha, 0.0, 1.0));
   if (base <= 0.001) {
     return 0.0;
   }
@@ -236,13 +260,8 @@ fn calculate_pattern_multiplier(
     return 1.0;
   }
 
-  // 1. Calculate Canvas Space UV
-  let scale = max(0.1, uniforms.pattern_scale);
-  let scale_factor = uniforms.pattern_size * (scale / 100.0);
-  let uv = pixel / scale_factor;
-
-  // 2. Sample Pattern (Tiled)
-  var tex_val = sample_pattern_tiled(pattern_texture, uv);
+  // 1. Sample Pattern (CPU parity nearest sampling in canvas space)
+  var tex_val = sample_pattern_cpu_parity(pattern_texture, pixel_xy, uniforms.pattern_scale);
 
   // 3. Apply Adjustments
   if (uniforms.pattern_invert > 0u) {
@@ -263,10 +282,15 @@ fn calculate_pattern_multiplier(
   tex_val = clamp(tex_val, 0.0, 1.0);
 
   // 4. Apply Blend Mode
-  let blended_mask = apply_blend_mode(base, tex_val, uniforms.pattern_mode);
+  let blended_mask = apply_blend_mode(base, tex_val, uniforms.pattern_mode, depth);
 
   // 5. Apply Depth (Strength)
-  let target_mask = clamp(mix(base, blended_mask, depth), 0.0, 1.0);
+  // Hard Mix Softer / Linear Height / Height already include depth in the formula.
+  let target_mask = select(
+    clamp(mix(base, blended_mask, depth), 0.0, 1.0),
+    blended_mask,
+    is_depth_embedded_mode(uniforms.pattern_mode)
+  );
 
   // Return multiplier relative to base mask (may exceed 1.0 for some modes)
   return target_mask / base;
@@ -285,8 +309,9 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
   if (alpha_headroom <= 0.001) {
     // But we still need to blend the color ON TOP even if alpha doesn't increase
     if (src_alpha > 0.001 && dst.a > 0.001) {
-      // Color-only blend: new dab paints on top
-      let blend_factor = min(1.0, src_alpha * ceiling);  // Weighted by dab's opacity
+      // CPU parity: color-only blend still uses src_alpha directly.
+      // Multiplying by ceiling here exaggerates dab separation in low-ceiling modes (e.g. Subtract).
+      let blend_factor = src_alpha;
       let new_rgb = dst.rgb + (src_color - dst.rgb) * blend_factor;
       return vec4<f32>(new_rgb, dst.a);
     }
@@ -308,49 +333,42 @@ fn alpha_darken_blend(dst: vec4<f32>, src_color: vec3<f32>, src_alpha: f32, ceil
 // ============================================================================
 // Compute Mask
 // ============================================================================
+const HARD_BRUSH_THRESHOLD: f32 = 0.99;
+const SOFT_MASK_MAX_EXTENT: f32 = 1.8;
+const SOFT_MASK_EXPONENT: f32 = 2.3;
+const SOFT_MASK_FEATHER_WIDTH: f32 = 0.3;
+
 fn compute_mask(dist: f32, radius: f32, hardness: f32) -> f32 {
-  // =========================================================================
-  // SMALL BRUSH OPTIMIZATION (applies to ALL hardness levels)
-  // =========================================================================
-  // For very small brushes (radius < 3px), use Gaussian spot model
-  let SMALL_BRUSH_THRESHOLD = 3.0;
-
-  if (radius < SMALL_BRUSH_THRESHOLD) {
-    let base_sigma = max(radius, 0.5);
-    let softness_factor = 1.0 + (1.0 - hardness);
-    let sigma = base_sigma * softness_factor;
-
-    var alpha = exp(-(dist * dist) / (2.0 * sigma * sigma));
-
-    if (hardness >= 0.99 && radius >= 1.5) {
-      let blend = (radius - 1.5) / 1.5;
-      let edge_dist = radius;
-      let sharp_alpha = 1.0 - smoothstep(edge_dist - 0.5, edge_dist + 0.5, dist);
-      alpha = mix(alpha, sharp_alpha, blend * hardness);
-    }
-
-    return min(1.0, alpha);
-  }
-
-  // =========================================================================
-  // NORMAL SIZE BRUSHES (radius >= 3px)
-  // =========================================================================
-  if (hardness >= 0.99) {
+  // Keep hard-brush AA behavior unchanged.
+  if (hardness >= HARD_BRUSH_THRESHOLD) {
     return 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
-  } else {
-    let fade = (1.0 - hardness) * 2.0;
-    let safe_fade = max(0.001, fade);
-
-    let SQRT_2 = 1.41421356;
-    let center = (2.5 * (6761.0 * safe_fade - 10000.0)) / (SQRT_2 * 6761.0 * safe_fade);
-    let alphafactor = 1.0 / (2.0 * erf_approx(center));
-
-    let distfactor = (SQRT_2 * 12500.0) / (6761.0 * safe_fade * radius);
-
-    let scaled_dist = dist * distfactor;
-    let val = alphafactor * (erf_approx(scaled_dist + center) - erf_approx(scaled_dist - center));
-    return saturate(val);
   }
+
+  // Match CPU MaskCache gaussian profile:
+  // 1) hardness-controlled solid core
+  // 2) exponential falloff outside the core
+  // 3) terminal feather near max extent to avoid clipping
+  let safe_radius = max(radius, 1e-6);
+  let norm_dist = dist / safe_radius;
+
+  if (norm_dist > SOFT_MASK_MAX_EXTENT) {
+    return 0.0;
+  }
+  if (norm_dist <= hardness) {
+    return 1.0;
+  }
+
+  let denom = max(1e-6, 1.0 - hardness);
+  let t = (norm_dist - hardness) / denom;
+  var alpha = exp(-SOFT_MASK_EXPONENT * t * t);
+
+  let feather_start = max(1.0, SOFT_MASK_MAX_EXTENT - SOFT_MASK_FEATHER_WIDTH);
+  if (norm_dist > feather_start) {
+    let fade_out = 1.0 - smoothstep(feather_start, SOFT_MASK_MAX_EXTENT, norm_dist);
+    alpha = alpha * fade_out;
+  }
+
+  return saturate(alpha);
 }
 
 // ============================================================================
@@ -360,8 +378,11 @@ fn calculate_effective_radius(radius: f32, hardness: f32) -> f32 {
   if (radius < 2.0) {
     return max(1.5, radius + 1.0);
   }
-  let geometric_fade = (1.0 - hardness) * 2.5;
-  return radius * max(1.1, 1.0 + geometric_fade);
+  if (hardness >= HARD_BRUSH_THRESHOLD) {
+    return radius * 1.1;
+  }
+  // Must track CPU soft-brush extent (MaskCache.SOFT_MAX_EXTENT).
+  return radius * SOFT_MASK_MAX_EXTENT;
 }
 
 // ============================================================================
@@ -461,10 +482,12 @@ fn main(
       continue;
     }
 
-    // A2. Texture: apply blend mode to Alpha Darken ceiling (not tip alpha)
+    // A2. Texture:
+    // - textureEachTip=true  => per-dab texture modulation
+    // - textureEachTip=false => stroke-level modulation (applied once after dab loop)
     var pattern_mult = 1.0;
-    if (uniforms.pattern_enabled != 0u) {
-       pattern_mult = calculate_pattern_multiplier(pixel, mask);
+    if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip != 0u) {
+       pattern_mult = calculate_pattern_multiplier(vec2<u32>(pixel_x, pixel_y), mask, color.a);
     }
 
     // A3. Noise: overlay on tip alpha, only meaningful on soft edge (0<alpha<1)
@@ -479,6 +502,17 @@ fn main(
 
     // Alpha Darken blend
     color = alpha_darken_blend(color, dab_color, src_alpha, ceiling);
+  }
+
+  // Stroke-level texture blend (Photoshop-like when Texture Each Tip is OFF):
+  // apply texture modulation once to the accumulated stroke alpha.
+  if (uniforms.pattern_enabled != 0u && uniforms.pattern_each_tip == 0u) {
+    let stroke_pattern_mult = calculate_pattern_multiplier(
+      vec2<u32>(pixel_x, pixel_y),
+      color.a,
+      color.a
+    );
+    color = vec4<f32>(color.rgb, clamp(color.a * stroke_pattern_mult, 0.0, 1.0));
   }
 
   // -------------------------------------------------------------------------

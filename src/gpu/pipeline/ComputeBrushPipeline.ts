@@ -287,7 +287,7 @@ export class ComputeBrushPipeline {
     view.setFloat32(byteOffset + 48, hasPattern ? patternSettings!.brightness : 0.0, true);
     view.setFloat32(byteOffset + 52, hasPattern ? patternSettings!.contrast : 0.0, true);
     view.setFloat32(byteOffset + 56, hasPattern ? patternSettings!.depth : 0.0, true);
-    view.setUint32(byteOffset + 60, 0, true); // padding
+    view.setUint32(byteOffset + 60, hasPattern && patternSettings!.textureEachTip ? 1 : 0, true); // pattern_each_tip
 
     // Block 4: Pattern Size
     if (hasPattern && patternTexture) {

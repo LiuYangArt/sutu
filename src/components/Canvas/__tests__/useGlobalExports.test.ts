@@ -558,6 +558,9 @@ describe('useGlobalExports', () => {
           brushOpacity: 0.7,
           brushHardness: 55,
           brushSpacing: 0.4,
+          brushMaskType: 'gaussian',
+          brushRoundness: 82,
+          brushAngle: 17,
           pressureCurve: 'hard',
           pressureSizeEnabled: true,
           pressureFlowEnabled: true,
@@ -657,6 +660,9 @@ describe('useGlobalExports', () => {
     expect(tool.brushOpacity).toBeCloseTo(0.7);
     expect(tool.brushHardness).toBe(55);
     expect(tool.brushSpacing).toBeCloseTo(0.4);
+    expect(tool.brushMaskType).toBe('gaussian');
+    expect(tool.brushRoundness).toBeCloseTo(82);
+    expect(tool.brushAngle).toBeCloseTo(17);
     expect(tool.pressureCurve).toBe('hard');
     expect(tool.pressureSizeEnabled).toBe(true);
     expect(tool.pressureFlowEnabled).toBe(true);

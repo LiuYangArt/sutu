@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { LZ4Image } from '@/components/common/LZ4Image';
-import { getPatternThumbnailUrl } from '@/stores/pattern';
+import { Plus } from 'lucide-react';
+import { usePatternLibraryStore } from '@/stores/pattern';
+import { useToastStore } from '@/stores/toast';
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { TEXTURE_SCALE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { depthControlToSource, sourceToDepthControl } from '@/utils/textureDynamics';
@@ -32,15 +33,31 @@ const BLEND_MODE_OPTIONS: { value: TextureBlendMode; label: string }[] = [
 ];
 
 export function TextureSettings(): JSX.Element {
-  const { textureEnabled, textureSettings, setTextureSettings } = useToolStore();
-  const [showPreview, setShowPreview] = useState(false);
+  const {
+    textureEnabled,
+    textureSettings,
+    setTextureSettings,
+    patterns: brushPatterns,
+  } = useToolStore();
+  const [isAddingPattern, setIsAddingPattern] = useState(false);
+  const libraryPatterns = usePatternLibraryStore((s) => s.patterns);
+  const addPatternFromBrush = usePatternLibraryStore((s) => s.addPatternFromBrush);
+  const pushToast = useToastStore((s) => s.pushToast);
   const patternId = textureSettings?.patternId;
-  const previewSize = 40;
-  const patternThumbUrl = patternId ? getPatternThumbnailUrl(patternId, previewSize) : null;
-  const patternFullUrl = patternId ? getPatternThumbnailUrl(patternId) : null;
 
   const disabled = !textureEnabled;
   const depthControlSource = depthControlToSource(textureSettings.depthControl);
+  const brushPatternFallback = patternId
+    ? (brushPatterns.find((pattern) => pattern.id === patternId) ?? null)
+    : null;
+  const isPatternInLibrary = patternId
+    ? libraryPatterns.some((pattern) => pattern.id === patternId)
+    : false;
+  const canAddCurrentPattern = !disabled && !!patternId && !isPatternInLibrary;
+  const addButtonDisabled = !canAddCurrentPattern || isAddingPattern;
+  const addButtonTitle = canAddCurrentPattern
+    ? 'Add current brush pattern to library'
+    : 'Pattern already in library';
 
   // Controls related to individual tip variation are disabled unless Texture Each Tip is on
   const tipVariationDisabled = disabled || !textureSettings.textureEachTip;
@@ -49,82 +66,34 @@ export function TextureSettings(): JSX.Element {
     setTextureSettings({ patternId: newPatternId });
   };
 
+  const handleAddCurrentPattern = async () => {
+    if (!canAddCurrentPattern || !patternId) return;
+    setIsAddingPattern(true);
+    try {
+      const result = await addPatternFromBrush(patternId, brushPatternFallback?.name);
+      setTextureSettings({ patternId: result.pattern.id });
+      pushToast(
+        result.added
+          ? 'Pattern added to library'
+          : 'Pattern already exists, switched to existing item',
+        {
+          variant: result.added ? 'success' : 'info',
+        }
+      );
+    } catch (error) {
+      console.error('[TextureSettings] Failed to add pattern from brush:', error);
+      pushToast('Failed to add pattern', { variant: 'error' });
+    } finally {
+      setIsAddingPattern(false);
+    }
+  };
+
   return (
     <div className="brush-panel-section">
       {/* Section header */}
       <div className="section-header-row">
         <div className="section-checkbox-label">
           <h4>Texture</h4>
-        </div>
-
-        {/* Pattern Preview with hover popup */}
-        <div
-          style={{
-            position: 'relative',
-            marginLeft: 'auto',
-          }}
-          onMouseEnter={() => patternFullUrl && setShowPreview(true)}
-          onMouseLeave={() => setShowPreview(false)}
-        >
-          {/* Thumbnail container */}
-          <div
-            className="pattern-preview"
-            title={patternId ? 'Hover for preview' : 'No Pattern'}
-            style={{
-              width: previewSize,
-              height: previewSize,
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-bg-tertiary)',
-              overflow: 'hidden',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '4px',
-              cursor: patternThumbUrl ? 'pointer' : 'default',
-            }}
-          >
-            {patternThumbUrl ? (
-              <LZ4Image
-                src={patternThumbUrl}
-                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                alt="Pattern"
-              />
-            ) : (
-              <span style={{ fontSize: 10, color: 'var(--color-text-secondary)', opacity: 0.5 }}>
-                None
-              </span>
-            )}
-          </div>
-
-          {/* Hover preview popup - outside overflow container */}
-          {showPreview && patternFullUrl && (
-            <div
-              style={{
-                position: 'fixed',
-                left: 'calc(100vw - 600px)',
-                top: 100,
-                padding: 8,
-                background: 'var(--color-bg-primary)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 8,
-                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                zIndex: 9999,
-                pointerEvents: 'none',
-              }}
-            >
-              <LZ4Image
-                src={patternFullUrl}
-                style={{
-                  width: 'auto',
-                  height: 'auto',
-                  maxWidth: 496,
-                  maxHeight: 496,
-                  display: 'block',
-                }}
-                alt="Pattern Preview"
-              />
-            </div>
-          )}
         </div>
       </div>
 
@@ -139,7 +108,55 @@ export function TextureSettings(): JSX.Element {
             onSelect={handlePatternSelect}
             disabled={disabled}
             thumbnailSize={32}
+            fallbackPattern={
+              brushPatternFallback
+                ? {
+                    id: brushPatternFallback.id,
+                    name: brushPatternFallback.name,
+                    width: brushPatternFallback.width,
+                    height: brushPatternFallback.height,
+                  }
+                : null
+            }
           />
+
+          <label
+            className={`flip-checkbox ${disabled ? 'disabled' : ''}`}
+            style={{ marginLeft: 8 }}
+          >
+            <input
+              type="checkbox"
+              checked={textureSettings.invert}
+              onChange={(e) => setTextureSettings({ invert: e.target.checked })}
+              disabled={disabled}
+            />
+            <span>Invert</span>
+          </label>
+
+          <button
+            type="button"
+            aria-label="Add pattern to library"
+            title={addButtonTitle}
+            onClick={() => void handleAddCurrentPattern()}
+            disabled={addButtonDisabled}
+            style={{
+              width: 24,
+              height: 24,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 4,
+              border: '1px solid var(--border, #5a6474)',
+              background: 'var(--bg-secondary, #1b2432)',
+              color: 'var(--text-primary, #f2f6ff)',
+              cursor: addButtonDisabled ? 'not-allowed' : 'pointer',
+              opacity: addButtonDisabled ? 0.5 : 1,
+              padding: 0,
+              lineHeight: 0,
+            }}
+          >
+            <Plus size={14} strokeWidth={2.5} />
+          </button>
         </div>
       </div>
 
@@ -234,18 +251,6 @@ export function TextureSettings(): JSX.Element {
           }
           disabled={tipVariationDisabled}
         />
-
-        <div className="setting-checkbox-row" style={{ marginTop: '8px' }}>
-          <label className={`flip-checkbox ${disabled ? 'disabled' : ''}`}>
-            <input
-              type="checkbox"
-              checked={textureSettings.invert}
-              onChange={(e) => setTextureSettings({ invert: e.target.checked })}
-              disabled={disabled}
-            />
-            <span>Invert</span>
-          </label>
-        </div>
       </div>
     </div>
   );

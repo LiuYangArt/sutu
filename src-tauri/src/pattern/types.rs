@@ -82,3 +82,12 @@ pub struct ImportResult {
     /// Imported pattern IDs
     pub pattern_ids: Vec<String>,
 }
+
+/// Result for adding a brush-attached pattern into library
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddPatternFromBrushResult {
+    /// True if a new pattern is added; false if an existing duplicate is reused
+    pub added: bool,
+    /// The resolved pattern in the library (new or existing)
+    pub pattern: PatternResource,
+}

@@ -21,6 +21,7 @@ import { TextureMaskCache } from './textureMaskCache';
 import type { BrushTexture, DualBrushSettings, DualBlendMode } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
 import { patternManager, type PatternData } from './patternManager';
+import { calculateTextureInfluence } from './textureRendering';
 import { applyScatter } from './scatterDynamics';
 import { getNoisePattern, NOISE_PATTERN_ID } from './noiseTexture';
 
@@ -197,6 +198,9 @@ export class StrokeAccumulator {
   // Dual brush settings for stroke-level blending
   private dualBrushMode: import('@/stores/tool').DualBlendMode | null = null;
   private dualBrushEnabled: boolean = false;
+  // Texture settings for stroke-level blending when textureEachTip is OFF
+  private strokeTextureSettings: TextureSettings | null = null;
+  private strokeTexturePattern: PatternData | null = null;
 
   // Canvas sync throttling - sync every N dabs instead of every dab
   private syncCounter: number = 0;
@@ -374,6 +378,8 @@ export class StrokeAccumulator {
     };
     this.dualBrushEnabled = false;
     this.dualBrushMode = null;
+    this.strokeTextureSettings = null;
+    this.strokeTexturePattern = null;
 
     // Don't clear syncImageData - it can be reused across strokes
   }
@@ -491,6 +497,7 @@ export class StrokeAccumulator {
     if (params.textureSettings?.patternId) {
       pattern = patternManager.getPattern(params.textureSettings.patternId);
     }
+    this.updateStrokeTextureBlendState(params.textureSettings, pattern);
 
     // Resolve built-in noise pattern (independent from Texture patterns)
     const noisePattern = params.noiseEnabled ? getNoisePattern() : undefined;
@@ -534,6 +541,23 @@ export class StrokeAccumulator {
 
     this.accumulateDirtyRect(dabDirtyRect);
     this.checkAutoSync();
+  }
+
+  private updateStrokeTextureBlendState(
+    textureSettings: TextureSettings | null | undefined,
+    pattern: PatternData | undefined
+  ): void {
+    const useStrokeLevelTexture = Boolean(
+      textureSettings && pattern && !textureSettings.textureEachTip
+    );
+    if (useStrokeLevelTexture) {
+      this.strokeTextureSettings = textureSettings!;
+      this.strokeTexturePattern = pattern!;
+      return;
+    }
+
+    this.strokeTextureSettings = null;
+    this.strokeTexturePattern = null;
   }
 
   /**
@@ -957,6 +981,9 @@ export class StrokeAccumulator {
       regionData.data.set(this.bufferData.subarray(srcStart, srcStart + width * 4), dstStart);
     }
 
+    // Apply texture blend at stroke level when Texture Each Tip is OFF.
+    this.applyTextureBlendStrokeLevel(regionData, left, top, width, height);
+
     // Apply dual brush blend on the preview region (do not mutate bufferData)
     if (this.dualBrushEnabled) {
       this.applyDualBrushBlend(regionData, left, top, width, height);
@@ -984,6 +1011,43 @@ export class StrokeAccumulator {
         right: 0,
         bottom: 0,
       };
+    }
+  }
+
+  private applyTextureBlendStrokeLevel(
+    regionData: ImageData,
+    left: number,
+    top: number,
+    width: number,
+    height: number
+  ): void {
+    const settings = this.strokeTextureSettings;
+    const pattern = this.strokeTexturePattern;
+    if (!settings || !pattern || settings.textureEachTip) return;
+
+    const depth = Math.max(0, Math.min(1, settings.depth / 100));
+    if (depth <= 0.001) return;
+
+    const data = regionData.data;
+    for (let py = 0; py < height; py++) {
+      const y = top + py;
+      const rowStart = py * width * 4;
+      for (let px = 0; px < width; px++) {
+        const x = left + px;
+        const alphaIdx = rowStart + px * 4 + 3;
+        const baseAlpha = (data[alphaIdx] ?? 0) / 255;
+        if (baseAlpha <= 0.001) continue;
+        const multiplier = calculateTextureInfluence(
+          x,
+          y,
+          settings,
+          pattern,
+          depth,
+          baseAlpha,
+          baseAlpha
+        );
+        data[alphaIdx] = Math.round(Math.max(0, Math.min(255, baseAlpha * multiplier * 255)));
+      }
     }
   }
 

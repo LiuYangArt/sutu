@@ -11,4 +11,4 @@ pub mod types;
 
 pub use library::PatternLibrary;
 pub use pat::parse_pat_file;
-pub use types::{ImportResult, PatternMode, PatternResource};
+pub use types::{AddPatternFromBrushResult, ImportResult, PatternMode, PatternResource};

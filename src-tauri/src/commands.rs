@@ -1311,7 +1311,10 @@ pub fn save_brush_preset_as(
 // Pattern Library Commands
 // ============================================================================
 
-use crate::pattern::{self, ImportResult as PatternImportResult, PatternResource};
+use crate::pattern::{
+    self, AddPatternFromBrushResult, ImportResult as PatternImportResult, PatternMode,
+    PatternResource,
+};
 
 /// Get all patterns from the library
 #[tauri::command]
@@ -1324,6 +1327,48 @@ pub fn get_patterns() -> Vec<PatternResource> {
 pub async fn import_pat_file(path: String) -> Result<PatternImportResult, String> {
     let path_ref = std::path::Path::new(&path);
     pattern::library::import_pat_file(path_ref)
+}
+
+/// Add current brush-attached pattern into the pattern library
+#[tauri::command]
+pub fn add_pattern_from_brush(
+    pattern_id: String,
+    name: Option<String>,
+) -> Result<AddPatternFromBrushResult, String> {
+    let cached = crate::brush::get_cached_pattern(&pattern_id)
+        .ok_or_else(|| format!("Pattern not found in cache: {}", pattern_id))?;
+
+    let rgba_data = lz4_flex::decompress_size_prepended(&cached.data)
+        .map_err(|e| format!("Failed to decompress pattern {}: {}", pattern_id, e))?;
+
+    let mode = match cached.mode.as_str() {
+        "Grayscale" => PatternMode::Grayscale,
+        "RGB" => PatternMode::RGB,
+        "Indexed" => PatternMode::Indexed,
+        other => return Err(format!("Unsupported pattern mode '{}'", other)),
+    };
+
+    let resolved_name = name
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            if cached.name.trim().is_empty() {
+                format!("Brush Pattern {}", pattern_id)
+            } else {
+                cached.name.clone()
+            }
+        });
+
+    pattern::library::add_from_brush(
+        &pattern_id,
+        resolved_name,
+        rgba_data,
+        cached.width,
+        cached.height,
+        mode,
+    )
 }
 
 /// Delete a pattern from the library

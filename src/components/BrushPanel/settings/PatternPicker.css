@@ -161,6 +161,58 @@
   line-height: 1.5;
 }
 
+/* Current selected brush pattern row (not in library list) */
+.pattern-picker-current-row-wrap {
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.pattern-picker-current-row-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.pattern-picker-current-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 6px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.pattern-picker-current-row:hover {
+  border-color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+.pattern-picker-current-row.selected {
+  border-color: var(--accent);
+  background: var(--primary-bg);
+}
+
+.pattern-picker-current-thumb {
+  flex-shrink: 0;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.pattern-picker-current-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Compact preview button */
 .pattern-preview-button {
   display: flex;

@@ -1,8 +1,25 @@
+import { useMemo } from 'react';
 import { useToolStore, BrushMaskType } from '@/stores/tool';
-import { useBrushLibraryStore } from '@/stores/brushLibrary';
+import { useBrushLibraryStore, type BrushTipResource } from '@/stores/brushLibrary';
 import { SliderRow } from '../BrushPanelComponents';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
+import { VirtualizedTipGrid } from '../VirtualizedTipGrid';
+
+type MainTipListItem =
+  | { kind: 'default' }
+  | { kind: 'tip'; id: string; name: string; preset: BrushTipResource };
+
+function buildMainTipItems(tips: BrushTipResource[]): MainTipListItem[] {
+  const importedTips: MainTipListItem[] = tips.map((tip) => ({
+    kind: 'tip',
+    id: tip.id,
+    name: tip.name,
+    preset: tip,
+  }));
+
+  return [{ kind: 'default' }, ...importedTips];
+}
 
 export function BrushTipShape(): JSX.Element {
   const {
@@ -26,6 +43,36 @@ export function BrushTipShape(): JSX.Element {
   const applyMainTip = useBrushLibraryStore((state) => state.applyMainTip);
 
   const activeTipId = brushTexture?.id ?? null;
+  const tipItems = useMemo<MainTipListItem[]>(() => buildMainTipItems(tips), [tips]);
+
+  function renderTipItem(item: MainTipListItem): JSX.Element {
+    if (item.kind === 'default') {
+      return (
+        <button
+          className={`abr-preset-item ${activeTipId === null ? 'selected' : ''}`}
+          onClick={() => clearBrushTexture()}
+          title="Default Round"
+        >
+          <div className="abr-preset-round-icon" style={{ width: '24px', height: '24px' }} />
+        </button>
+      );
+    }
+
+    return (
+      <button
+        className={`abr-preset-item ${activeTipId === item.id ? 'selected' : ''}`}
+        onClick={() => applyMainTip(item.id)}
+        title={item.name}
+      >
+        <BrushPresetThumbnail
+          preset={item.preset}
+          size={32}
+          className="abr-preset-texture"
+          placeholderStyle={{ fontSize: '10px' }}
+        />
+      </button>
+    );
+  }
 
   return (
     <div className="brush-panel-section">
@@ -33,40 +80,15 @@ export function BrushTipShape(): JSX.Element {
 
       <div className="dual-brush-selector-group" style={{ marginTop: '8px' }}>
         <label className="brush-setting-label">Main Tip</label>
-        <div
+        <VirtualizedTipGrid
+          items={tipItems}
+          getItemKey={(item) =>
+            item.kind === 'default' ? 'main-tip-default' : `main-tip-${item.id}`
+          }
+          maxHeight={220}
           className="abr-preset-grid mini-grid"
-          style={{
-            maxHeight: '220px',
-            overflowY: 'auto',
-            marginTop: '8px',
-            border: '1px solid #333',
-            padding: '4px',
-          }}
-        >
-          <button
-            className={`abr-preset-item ${activeTipId === null ? 'selected' : ''}`}
-            onClick={() => clearBrushTexture()}
-            title="Default Round"
-          >
-            <div className="abr-preset-round-icon" style={{ width: '24px', height: '24px' }} />
-          </button>
-
-          {tips.map((tip) => (
-            <button
-              key={`main-tip-${tip.id}`}
-              className={`abr-preset-item ${activeTipId === tip.id ? 'selected' : ''}`}
-              onClick={() => applyMainTip(tip.id)}
-              title={tip.name}
-            >
-              <BrushPresetThumbnail
-                preset={tip}
-                size={32}
-                className="abr-preset-texture"
-                placeholderStyle={{ fontSize: '10px' }}
-              />
-            </button>
-          ))}
-        </div>
+          renderItem={(item) => renderTipItem(item)}
+        />
       </div>
 
       <SliderRow

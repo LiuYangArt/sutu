@@ -346,11 +346,11 @@ function App() {
       brushLibraryStore.hydrateSelectionFromSettings();
       const activeSelectionTool =
         useToolStore.getState().currentTool === 'eraser' ? 'eraser' : 'brush';
-      const selectedPresetId =
-        useBrushLibraryStore.getState().selectedPresetByTool[activeSelectionTool];
+      const selectedPresetId = brushLibraryStore.selectedPresetByTool[activeSelectionTool];
+      const libraryLoadPromise = brushLibraryStore.loadLibrary();
       if (selectedPresetId) {
-        await brushLibraryStore.loadLibrary();
-        useBrushLibraryStore.getState().applyPresetById(selectedPresetId);
+        await libraryLoadPromise;
+        brushLibraryStore.applyPresetById(selectedPresetId);
       }
 
       // Use ref to prevent double initialization in StrictMode

@@ -26,6 +26,13 @@ interface PatternPickerProps {
   disabled?: boolean;
   /** Size of thumbnails (default: 48) */
   thumbnailSize?: number;
+  /** Brush-attached pattern fallback (not yet in library) */
+  fallbackPattern?: {
+    id: string;
+    name: string;
+    width?: number;
+    height?: number;
+  } | null;
 }
 
 export function PatternPicker({
@@ -33,12 +40,14 @@ export function PatternPicker({
   onSelect,
   disabled = false,
   thumbnailSize = 48,
+  fallbackPattern = null,
 }: PatternPickerProps): JSX.Element {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const { loadPatterns, isLoading, setSearchQuery, searchQuery } = usePatternLibraryStore();
-  const patterns = useFilteredPatterns();
+  const allPatterns = usePatternLibraryStore((s) => s.patterns);
+  const filteredPatterns = useFilteredPatterns();
 
   // Load patterns on mount
   useEffect(() => {
@@ -58,20 +67,43 @@ export function PatternPicker({
     }
   }, [isOpen]);
 
-  // Get selected pattern
-  const selectedPattern = patterns.find((p) => p.id === selectedId);
+  const selectedPattern = allPatterns.find((p) => p.id === selectedId);
+  const isUnlistedSelectedPattern = !!selectedId && !selectedPattern;
+  const displayedPattern =
+    selectedPattern ??
+    (isUnlistedSelectedPattern
+      ? {
+          id: selectedId,
+          name:
+            fallbackPattern && fallbackPattern.id === selectedId
+              ? fallbackPattern.name
+              : 'Current Pattern',
+          width:
+            fallbackPattern && fallbackPattern.id === selectedId
+              ? fallbackPattern.width
+              : undefined,
+          height:
+            fallbackPattern && fallbackPattern.id === selectedId
+              ? fallbackPattern.height
+              : undefined,
+        }
+      : null);
 
   const handlePatternClick = (pattern: PatternResource) => {
-    onSelect(pattern.id);
-    setIsOpen(false);
-    // Pre-load pattern immediately to avoid delay on first stroke
-    void patternManager.loadPattern(pattern.id);
+    handlePatternSelectById(pattern.id);
   };
 
   const handleClear = () => {
     onSelect(null);
     setIsOpen(false);
   };
+
+  const handleCurrentBrushPatternClick = () => {
+    if (!displayedPattern) return;
+    handlePatternSelectById(displayedPattern.id);
+  };
+
+  const shouldShowCurrentBrushPatternRow = isUnlistedSelectedPattern;
 
   return (
     <div className={`pattern-picker ${disabled ? 'disabled' : ''}`} ref={dropdownRef}>
@@ -86,17 +118,17 @@ export function PatternPicker({
           className="pattern-picker-preview"
           style={{ width: thumbnailSize, height: thumbnailSize }}
         >
-          {selectedPattern ? (
+          {displayedPattern ? (
             <LZ4Image
-              src={getPatternThumbnailUrl(selectedPattern.id, thumbnailSize)}
-              alt={selectedPattern.name}
+              src={getPatternThumbnailUrl(displayedPattern.id, thumbnailSize)}
+              alt={displayedPattern.name}
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
           ) : (
             <span className="pattern-picker-empty">None</span>
           )}
         </div>
-        <span className="pattern-picker-name">{selectedPattern?.name || 'Select Pattern'}</span>
+        <span className="pattern-picker-name">{displayedPattern?.name || 'Select Pattern'}</span>
         <ChevronDown size={14} className="pattern-picker-chevron" />
       </button>
 
@@ -130,17 +162,51 @@ export function PatternPicker({
 
             {renderGridContent()}
           </div>
+
+          {shouldShowCurrentBrushPatternRow && displayedPattern && (
+            <div className="pattern-picker-current-row-wrap">
+              <div className="pattern-picker-current-row-label">Current Brush Pattern</div>
+              <button
+                className={`pattern-picker-current-row ${selectedId === displayedPattern.id ? 'selected' : ''}`}
+                onClick={handleCurrentBrushPatternClick}
+                title={
+                  displayedPattern.width && displayedPattern.height
+                    ? `${displayedPattern.name} (${displayedPattern.width}×${displayedPattern.height})`
+                    : displayedPattern.name
+                }
+              >
+                <div
+                  className="pattern-picker-current-thumb"
+                  style={{ width: thumbnailSize, height: thumbnailSize }}
+                >
+                  <LZ4Image
+                    src={getPatternThumbnailUrl(displayedPattern.id, thumbnailSize)}
+                    alt={displayedPattern.name}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  />
+                </div>
+                <span className="pattern-picker-current-name">{displayedPattern.name}</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
+
+  function handlePatternSelectById(patternId: string): void {
+    onSelect(patternId);
+    setIsOpen(false);
+    // Pre-load pattern immediately to avoid delay on first stroke
+    void patternManager.loadPattern(patternId);
+  }
 
   function renderGridContent(): JSX.Element | JSX.Element[] {
     if (isLoading) {
       return <div className="pattern-picker-loading">Loading...</div>;
     }
 
-    if (patterns.length === 0) {
+    if (filteredPatterns.length === 0) {
       return (
         <div className="pattern-picker-empty-state">
           No patterns found.
@@ -150,7 +216,7 @@ export function PatternPicker({
       );
     }
 
-    return patterns.map((pattern) => (
+    return filteredPatterns.map((pattern) => (
       <button
         key={pattern.id}
         className={`pattern-grid-item ${pattern.id === selectedId ? 'selected' : ''}`}

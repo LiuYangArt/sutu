@@ -160,6 +160,7 @@
  * ========================= */
 
 .brush-setting-row {
+  --brush-panel-value-width: 64px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -186,14 +187,22 @@
 .brush-setting-value {
   font-size: 12px;
   color: var(--text-primary);
-  min-width: 45px;
+  width: var(--brush-panel-value-width);
+  min-width: var(--brush-panel-value-width);
   text-align: right;
-  flex-shrink: 0;
+  flex: 0 0 var(--brush-panel-value-width);
+  line-height: 20px;
+  box-sizing: border-box;
 }
 
 .brush-setting-value-input {
-  width: 45px;
-  font-size: 12px;
+  width: var(--brush-panel-value-width);
+  min-width: var(--brush-panel-value-width);
+  flex: 0 0 var(--brush-panel-value-width);
+  height: 20px;
+  font-size: 10px;
+  line-height: 16px;
+  font-family: var(--font-mono);
   color: var(--text-primary);
   background: var(--bg-primary);
   border: 1px solid var(--accent);
@@ -201,7 +210,7 @@
   padding: 0 4px;
   text-align: right;
   outline: none;
-  flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 /* Select dropdown */
