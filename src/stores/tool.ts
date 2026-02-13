@@ -23,10 +23,6 @@ export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 export type BrushMaskType = 'gaussian';
 const FORCED_BRUSH_MASK_TYPE: BrushMaskType = 'gaussian';
 
-function normalizeBrushMaskType(_maskType: BrushMaskType): BrushMaskType {
-  return FORCED_BRUSH_MASK_TYPE;
-}
-
 /**
  * Control source for dynamic brush parameters (Photoshop-compatible)
  */
@@ -428,7 +424,7 @@ function normalizeBrushProfile(profile: BrushToolProfile): BrushToolProfile {
     flow: Math.max(0.01, Math.min(1, profile.flow)),
     opacity: Math.max(0.01, Math.min(1, profile.opacity)),
     hardness: Math.max(0, Math.min(100, profile.hardness)),
-    maskType: normalizeBrushMaskType(profile.maskType),
+    maskType: FORCED_BRUSH_MASK_TYPE,
     spacing: Math.max(0.01, Math.min(10, profile.spacing)),
     roundness: Math.max(1, Math.min(100, profile.roundness)),
     angle: ((profile.angle % 360) + 360) % 360,
