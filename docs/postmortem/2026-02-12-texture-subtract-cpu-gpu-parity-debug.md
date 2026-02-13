@@ -1,7 +1,7 @@
 # Texture Subtract CPU/GPU 一致性排查复盘（2026-02-12）
 
 **日期**：2026-02-12  
-**状态**：定位完成，业务修复待续（次日继续）
+**状态**：定位完成；修复已在 2026-02-13 落地（见 `2026-02-13-texture-subtract-photoshop-alignment.md`）
 
 ## 背景
 
@@ -65,3 +65,9 @@
 1. 基于已稳定的对比脚本，继续定位 `Subtract` 在 GPU shader 与 CPU 公式的逐步差异点。  
 2. 对照同一 capture 做分阶段 A/B（单 dab -> 多 dab -> 累积提交）定位偏差来源。  
 3. 完成业务修复后，再用脚本回归 `Subtract` 与 `Multiply` 两组基线。
+
+## 后续进展（2026-02-13）
+
+1. 已完成业务修复，核心改动是将 `Subtract` 从 `max(0, base - blend)` 改为 `base * (1 - blend)`。
+2. CPU/WGSL 双路径同步改动，并更新 `textureRendering` 单测。
+3. 详见：`docs/postmortem/2026-02-13-texture-subtract-photoshop-alignment.md`。
