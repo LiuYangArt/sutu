@@ -34,6 +34,9 @@ export const ERF_LUT_SIZE = 1024;
 export const ERF_LUT_MAX = 4.0;
 const ERF_LUT_SCALE = ERF_LUT_SIZE / ERF_LUT_MAX;
 export const erfLUT: Float32Array = new Float32Array(ERF_LUT_SIZE + 1);
+const HARD_BRUSH_THRESHOLD = 0.99;
+const FULL_HARDNESS_THRESHOLD = 0.999;
+const EPSILON = 1e-6;
 
 // Initialize LUT at module load time
 (function initErfLUT() {
@@ -61,6 +64,111 @@ function erfFast(x: number): number {
   const frac = idx - i;
   const y = erfLUT[i]! + frac * (erfLUT[i + 1]! - erfLUT[i]!);
   return sign * y;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  if (Math.abs(edge1 - edge0) < EPSILON) {
+    return x < edge0 ? 0 : 1;
+  }
+  const t = clamp01((x - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Must match computeBrush.wgsl / computeDualMask.wgsl calculate_effective_radius().
+ */
+export function calculateEffectiveRadiusGpuParity(radius: number, hardness: number): number {
+  if (radius < 2.0) {
+    return Math.max(1.5, radius + 1.0);
+  }
+  const geometricFade = (1.0 - hardness) * 2.5;
+  return radius * Math.max(1.1, 1.0 + geometricFade);
+}
+
+function computeErfSoftMask(dist: number, radius: number, safeFade: number): number {
+  const center = (2.5 * (6761.0 * safeFade - 10000.0)) / (Math.SQRT2 * 6761.0 * safeFade);
+  const alphaFactor = 1.0 / (2.0 * erfFast(center));
+  const distFactor = (Math.SQRT2 * 12500.0) / (6761.0 * safeFade * radius);
+
+  const scaledDist = dist * distFactor;
+  const val = alphaFactor * (erfFast(scaledDist + center) - erfFast(scaledDist - center));
+  return clamp01(val);
+}
+
+/**
+ * Must match computeBrush.wgsl compute_mask().
+ */
+function computeGaussianMaskGpuParity(dist: number, radius: number, hardness: number): number {
+  const SMALL_BRUSH_THRESHOLD = 3.0;
+
+  if (radius < SMALL_BRUSH_THRESHOLD) {
+    const baseSigma = Math.max(radius, 0.5);
+    const softnessFactor = 1.0 + (1.0 - hardness);
+    const sigma = baseSigma * softnessFactor;
+
+    let alpha = Math.exp(-(dist * dist) / (2.0 * sigma * sigma));
+
+    if (hardness >= HARD_BRUSH_THRESHOLD && radius >= 1.5) {
+      const blend = (radius - 1.5) / 1.5;
+      const sharpAlpha = 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
+      alpha = alpha + (sharpAlpha - alpha) * (blend * hardness);
+    }
+
+    return Math.min(1.0, alpha);
+  }
+
+  if (hardness >= HARD_BRUSH_THRESHOLD) {
+    return 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
+  }
+
+  const safeFade = Math.max(0.001, (1.0 - hardness) * 2.0);
+  return computeErfSoftMask(dist, radius, safeFade);
+}
+
+/**
+ * Must match computeDualMask.wgsl compute_mask().
+ */
+function computeDefaultMaskGpuParity(dist: number, radius: number, hardness: number): number {
+  if (radius < 1.5) {
+    const sigma = Math.max(0.5, radius * 0.75);
+    return Math.exp(-(dist * dist) / (2.0 * sigma * sigma));
+  }
+
+  if (hardness >= HARD_BRUSH_THRESHOLD && radius >= 1.5) {
+    const sharpAlpha = 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
+    if (hardness >= FULL_HARDNESS_THRESHOLD) {
+      return sharpAlpha;
+    }
+
+    const baseSigma = Math.max(0.5, radius * 0.75);
+    const softnessFactor = Math.max(0.1, 1.0 - hardness);
+    const sigma = baseSigma * softnessFactor;
+    const softAlpha = Math.exp(-(dist * dist) / (2.0 * sigma * sigma));
+    const blend = (radius - 1.5) / 1.5;
+    return softAlpha + (sharpAlpha - softAlpha) * (blend * hardness);
+  }
+
+  const safeFade = Math.max(1e-6, Math.min(2.0, (1.0 - hardness) * 2.0));
+  return computeErfSoftMask(dist, radius, safeFade);
+}
+
+/**
+ * Select GPU-parity soft mask implementation by mode.
+ */
+export function computeSoftMaskGpuParity(
+  dist: number,
+  radius: number,
+  hardness: number,
+  maskType: MaskType
+): number {
+  if (maskType === 'gaussian') {
+    return computeGaussianMaskGpuParity(dist, radius, hardness);
+  }
+  return computeDefaultMaskGpuParity(dist, radius, hardness);
 }
 
 /**
@@ -222,15 +330,11 @@ export class MaskCache {
   needsUpdate(params: MaskCacheParams): boolean {
     if (!this.cachedParams || !this.mask) return true;
 
-    // Size tolerance: allow small variations to improve cache hit rate
-    // Krita uses precision levels; we use a simpler percentage-based approach
-    const sizeTolerance = this.cachedParams.size * 0.02; // 2% tolerance
-
     return (
-      Math.abs(params.size - this.cachedParams.size) > sizeTolerance ||
-      Math.abs(params.hardness - this.cachedParams.hardness) > 0.01 ||
-      Math.abs(params.roundness - this.cachedParams.roundness) > 0.01 ||
-      Math.abs(params.angle - this.cachedParams.angle) > 0.5 ||
+      Math.abs(params.size - this.cachedParams.size) > EPSILON ||
+      Math.abs(params.hardness - this.cachedParams.hardness) > EPSILON ||
+      Math.abs(params.roundness - this.cachedParams.roundness) > EPSILON ||
+      Math.abs(params.angle - this.cachedParams.angle) > EPSILON ||
       params.maskType !== this.cachedParams.maskType
     );
   }
@@ -241,24 +345,10 @@ export class MaskCache {
    */
   generateMask(params: MaskCacheParams): void {
     const { size, hardness, roundness, angle, maskType } = params;
-    const useEllipticalDistance = Math.abs(roundness - 1) > 1e-3;
-
-    const radiusX = size / 2;
-    const radiusY = radiusX * roundness;
-    const maxRadius = Math.max(radiusX, radiusY);
-
-    // Calculate extent multiplier based on hardness and mask type
-    const fade = maskType === 'gaussian' ? (1.0 - hardness) * 2.0 : 0;
-    let extentMultiplier: number;
-    if (hardness >= 0.99) {
-      extentMultiplier = 1.0;
-    } else if (maskType === 'gaussian') {
-      extentMultiplier = 1.0 + fade;
-    } else {
-      extentMultiplier = 1.5;
-    }
-
-    const effectiveRadius = maxRadius * extentMultiplier + 1;
+    const safeRoundness = Math.max(0.01, Math.min(1, roundness));
+    const safeHardness = clamp01(hardness);
+    const radius = size / 2;
+    const effectiveRadius = calculateEffectiveRadiusGpuParity(radius, safeHardness) + 1;
 
     // Mask dimensions (always odd for centered pixel)
     this.maskWidth = Math.ceil(effectiveRadius * 2) | 1;
@@ -271,15 +361,8 @@ export class MaskCache {
 
     // Pre-calculate rotation
     const angleRad = (angle * Math.PI) / 180;
-    const cosA = Math.cos(-angleRad);
-    const sinA = Math.sin(-angleRad);
-
-    // Pre-calculate Gaussian parameters (only for gaussian mask type)
-    const safeFade = Math.max(1e-6, Math.min(2.0, fade));
-    const SQRT_2 = Math.SQRT2;
-    const center = (2.5 * (6761.0 * safeFade - 10000.0)) / (SQRT_2 * 6761.0 * safeFade);
-    const alphafactor = 255.0 / (2.0 * erfFast(center));
-    const distfactor = (SQRT_2 * 12500.0) / (6761.0 * safeFade * radiusX);
+    const cosA = Math.cos(angleRad);
+    const sinA = Math.sin(angleRad);
 
     // Generate mask
     for (let py = 0; py < this.maskHeight; py++) {
@@ -288,67 +371,13 @@ export class MaskCache {
       for (let px = 0; px < this.maskWidth; px++) {
         const dx = px + 0.5 - this.centerX;
 
-        // Apply inverse rotation
-        const localX = dx * cosA - dy * sinA;
-        const localY = dx * sinA + dy * cosA;
+        // Must match WGSL compute_ellipse_distance() in compute shaders
+        const rotatedX = dx * cosA + dy * sinA;
+        const rotatedY = dy * cosA - dx * sinA;
+        const dist = Math.hypot(rotatedX, rotatedY / safeRoundness);
+        const maskValue = computeSoftMaskGpuParity(dist, radius, safeHardness, maskType);
 
-        // Normalized distance for ellipse
-        const normX = localX / radiusX;
-        const normY = localY / radiusY;
-        const normDist = Math.sqrt(normX * normX + normY * normY);
-        let boundaryRadius = radiusX;
-        let physicalDist = normDist * radiusX;
-        let distfactorLocal = distfactor;
-
-        if (useEllipticalDistance) {
-          const dist = Math.hypot(localX, localY);
-          if (normDist > 1e-6) {
-            boundaryRadius = dist / normDist;
-          }
-          physicalDist = dist;
-          distfactorLocal =
-            (SQRT_2 * 12500.0) / (6761.0 * safeFade * Math.max(1e-3, boundaryRadius));
-        }
-
-        // Calculate mask shape
-        let maskValue: number;
-
-        if (hardness >= 0.99) {
-          // Inner Mode (Krita-style): AA band at [radiusX-1.0, radiusX]
-          maskValue = MaskCache.calcHardEdgeAA(physicalDist, boundaryRadius);
-        } else if (maskType === 'gaussian') {
-          // Krita-style Gaussian (erf-based) mask
-          const aaStart = boundaryRadius - 1.0;
-
-          if (hardness > 0.5 && physicalDist > aaStart) {
-            if (physicalDist > boundaryRadius) {
-              maskValue = 0;
-            } else {
-              const distAtStart = aaStart * distfactorLocal;
-              const valAtStart =
-                alphafactor * (erfFast(distAtStart + center) - erfFast(distAtStart - center));
-              const baseAlphaAtStart = Math.max(0, Math.min(1, valAtStart / 255.0));
-              maskValue = baseAlphaAtStart * (1.0 - (physicalDist - aaStart));
-            }
-          } else {
-            const scaledDist = physicalDist * distfactorLocal;
-            const val = alphafactor * (erfFast(scaledDist + center) - erfFast(scaledDist - center));
-            maskValue = Math.max(0, Math.min(1, val / 255.0));
-          }
-        } else {
-          // Simple Gaussian exp(-k*t²)
-          const maxExtent = 1.5;
-          if (normDist > maxExtent) {
-            maskValue = 0;
-          } else if (normDist <= hardness) {
-            maskValue = 1.0;
-          } else {
-            const t = (normDist - hardness) / (1 - hardness);
-            maskValue = Math.exp(-2.5 * t * t);
-          }
-        }
-
-        this.mask[py * this.maskWidth + px] = maskValue;
+        this.mask[py * this.maskWidth + px] = clamp01(maskValue);
       }
     }
 
