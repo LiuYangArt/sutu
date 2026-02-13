@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useGlobalExports } from '../useGlobalExports';
 import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
-import { useToolStore } from '@/stores/tool';
+import { LOCKED_NOISE_SETTINGS, useToolStore } from '@/stores/tool';
 import { patternManager } from '@/utils/patternManager';
 
 function cleanupGlobals(): void {
@@ -691,11 +691,7 @@ describe('useGlobalExports', () => {
     expect(tool.wetEdgeEnabled).toBe(true);
     expect(tool.wetEdge).toBeCloseTo(0.66);
     expect(tool.noiseEnabled).toBe(true);
-    expect(tool.noiseSettings).toEqual({
-      size: 95,
-      sizeJitter: 35,
-      densityJitter: 20,
-    });
+    expect(tool.noiseSettings).toEqual(LOCKED_NOISE_SETTINGS);
     expect(tool.buildupEnabled).toBe(true);
 
     expect(replayStrokeCapture).toHaveBeenCalledWith(replayCapture, undefined);

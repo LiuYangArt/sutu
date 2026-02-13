@@ -144,7 +144,8 @@ fn sample_noise(pixel_x: u32, pixel_y: u32, dab_center: vec2<f32>) -> f32 {
   let density_rand = hash12(dab_center + vec2<f32>(71.0, 19.0)) * 2.0 - 1.0;
 
   let jittered_scale = clamp(base_scale * (1.0 + size_rand * size_jitter), 0.1, 1000.0);
-  let grain_px = max(1.0, jittered_scale / 10.0);
+  // Keep grain-size mapping consistent with CPU noise path.
+  let grain_px = max(1.0, jittered_scale);
 
   let sx = i32(floor(f32(pixel_x) / grain_px) * grain_px);
   let sy = i32(floor(f32(pixel_y) / grain_px) * grain_px);
@@ -154,8 +155,11 @@ fn sample_noise(pixel_x: u32, pixel_y: u32, dab_center: vec2<f32>) -> f32 {
   let ny = wrap_repeat_i32(sy, h);
 
   let sampled = textureLoad(noise_texture, vec2<i32>(nx, ny), 0).r;
-  let density_shift = density_rand * density_jitter * 0.2;
-  return clamp(sampled + density_shift, 0.0, 1.0);
+  // Match CPU density jitter: randomize contrast per dab instead of linear bias.
+  let jittered_contrast = density_rand * density_jitter * 50.0;
+  let factor = pow((jittered_contrast + 100.0) / 100.0, 2.0);
+  let contrasted = (sampled - 0.5) * factor + 0.5;
+  return clamp(contrasted, 0.0, 1.0);
 }
 
 fn pattern_luma(color: vec4<f32>) -> f32 {

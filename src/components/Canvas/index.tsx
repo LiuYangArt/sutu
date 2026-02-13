@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
-import { useToolStore, ToolType } from '@/stores/tool';
+import { LOCKED_NOISE_SETTINGS, useToolStore, ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
 import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
@@ -480,7 +480,6 @@ export function Canvas() {
     textureEnabled,
     textureSettings,
     noiseEnabled,
-    noiseSettings,
     dualBrush,
     dualBrushEnabled,
     showCrosshair,
@@ -614,9 +613,9 @@ export function Canvas() {
                 wetEdge: toolState.wetEdge,
                 noiseEnabled: toolState.noiseEnabled,
                 noiseSettings: {
-                  size: toolState.noiseSettings.size,
-                  sizeJitter: toolState.noiseSettings.sizeJitter,
-                  densityJitter: toolState.noiseSettings.densityJitter,
+                  size: LOCKED_NOISE_SETTINGS.size,
+                  sizeJitter: LOCKED_NOISE_SETTINGS.sizeJitter,
+                  densityJitter: LOCKED_NOISE_SETTINGS.densityJitter,
                 },
                 buildupEnabled: toolState.buildupEnabled,
               },
@@ -1930,9 +1929,9 @@ export function Canvas() {
       textureEnabled,
       textureSettings,
       noiseEnabled,
-      noiseSize: noiseSettings.size,
-      noiseSizeJitter: noiseSettings.sizeJitter,
-      noiseDensityJitter: noiseSettings.densityJitter,
+      noiseSize: LOCKED_NOISE_SETTINGS.size,
+      noiseSizeJitter: LOCKED_NOISE_SETTINGS.sizeJitter,
+      noiseDensityJitter: LOCKED_NOISE_SETTINGS.densityJitter,
       dualBrushEnabled,
       dualBrush,
       strokeCompositeMode,
@@ -1977,7 +1976,6 @@ export function Canvas() {
     textureEnabled,
     textureSettings,
     noiseEnabled,
-    noiseSettings,
     dualBrushEnabled,
     dualBrush,
     gpuDisplayActive,

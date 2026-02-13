@@ -179,12 +179,15 @@ export interface NoiseSettings {
   densityJitter: number;
 }
 
-/** Default Noise settings */
-export const DEFAULT_NOISE_SETTINGS: NoiseSettings = {
-  size: 100,
-  sizeJitter: 0,
-  densityJitter: 0,
+/** Locked Noise settings (temporary: aligned to current Photoshop parity target) */
+export const LOCKED_NOISE_SETTINGS: NoiseSettings = {
+  size: 1,
+  sizeJitter: 100,
+  densityJitter: 100,
 };
+
+/** Default Noise settings */
+export const DEFAULT_NOISE_SETTINGS: NoiseSettings = { ...LOCKED_NOISE_SETTINGS };
 
 /**
  * Dual Blend Mode (Photoshop Dual Brush panel compatible)
@@ -266,10 +269,6 @@ const clampSize = (size: number): number => Math.max(1, Math.min(1000, size));
 const clampTextureScale = (scale: number): number => Math.max(1, Math.min(1000, scale));
 /** Clamp dual brush size ratio to valid range */
 const clampDualSizeRatio = (ratio: number): number => Math.max(0, Math.min(10, ratio));
-/** Clamp noise grain size to valid range */
-const clampNoiseSize = (size: number): number => Math.max(1, Math.min(100, size));
-/** Clamp noise jitter percentage to valid range */
-const clampNoiseJitter = (jitter: number): number => Math.max(0, Math.min(100, jitter));
 
 function computeDualSizeFromRatio(brushSize: number, ratio: number): number {
   return clampSize(brushSize * clampDualSizeRatio(ratio));
@@ -450,15 +449,7 @@ function normalizeBrushProfile(profile: BrushToolProfile): BrushToolProfile {
     textureEnabled: profile.textureEnabled,
     textureSettings: { ...profile.textureSettings },
     noiseEnabled: profile.noiseEnabled,
-    noiseSettings: {
-      size: clampNoiseSize(profile.noiseSettings?.size ?? DEFAULT_NOISE_SETTINGS.size),
-      sizeJitter: clampNoiseJitter(
-        profile.noiseSettings?.sizeJitter ?? DEFAULT_NOISE_SETTINGS.sizeJitter
-      ),
-      densityJitter: clampNoiseJitter(
-        profile.noiseSettings?.densityJitter ?? DEFAULT_NOISE_SETTINGS.densityJitter
-      ),
-    },
+    noiseSettings: { ...LOCKED_NOISE_SETTINGS },
     dualBrushEnabled: profile.dualBrushEnabled,
     dualBrush,
   };
@@ -1067,22 +1058,10 @@ export const useToolStore = create<ToolState>()(
 
         toggleNoise: () => setWithActiveProfile((state) => ({ noiseEnabled: !state.noiseEnabled })),
 
-        setNoiseSettings: (settings) =>
-          setWithActiveProfile((state) => ({
-            noiseSettings: {
-              size:
-                settings.size === undefined
-                  ? state.noiseSettings.size
-                  : clampNoiseSize(settings.size),
-              sizeJitter:
-                settings.sizeJitter === undefined
-                  ? state.noiseSettings.sizeJitter
-                  : clampNoiseJitter(settings.sizeJitter),
-              densityJitter:
-                settings.densityJitter === undefined
-                  ? state.noiseSettings.densityJitter
-                  : clampNoiseJitter(settings.densityJitter),
-            },
+        // Noise parameters are temporarily product-locked for PS parity validation.
+        setNoiseSettings: (_settings) =>
+          setWithActiveProfile(() => ({
+            noiseSettings: { ...LOCKED_NOISE_SETTINGS },
           })),
 
         resetNoiseSettings: () =>

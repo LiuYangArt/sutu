@@ -163,11 +163,7 @@ describe('applyPresetToToolStore', () => {
     expect(s.wetEdgeEnabled).toBe(true);
     expect(s.buildupEnabled).toBe(false);
     expect(s.noiseEnabled).toBe(true);
-    expect(s.noiseSettings).toEqual({
-      size: 88,
-      sizeJitter: 25,
-      densityJitter: 40,
-    });
+    expect(s.noiseSettings).toEqual(DEFAULT_NOISE_SETTINGS);
   });
 
   it('主笔刷纹理优先使用 tipId 而不是 preset.id', () => {
