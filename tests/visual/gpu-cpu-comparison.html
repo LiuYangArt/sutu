@@ -54,6 +54,14 @@
         color: #eee;
         border: 1px solid #555;
       }
+      input[type='text'] {
+        width: 360px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: #333;
+        color: #eee;
+        border: 1px solid #555;
+      }
       select {
         padding: 6px 10px;
         border-radius: 4px;
@@ -176,6 +184,14 @@
           Seed:
           <input type="number" id="textureSeed" min="1" step="1" value="424242" />
         </label>
+        <label>
+          Texture Path:
+          <input
+            type="text"
+            id="texturePath"
+            value="debug_output/correct_decode/p11_SI080_Ljpg.png"
+          />
+        </label>
       </div>
 
       <div class="control-group">
@@ -225,6 +241,7 @@
         textureJitter: document.getElementById('textureJitter'),
         textureScale: document.getElementById('textureScale'),
         textureSeed: document.getElementById('textureSeed'),
+        texturePath: document.getElementById('texturePath'),
         sizeValue: document.getElementById('sizeValue'),
         hardnessValue: document.getElementById('hardnessValue'),
         flowValue: document.getElementById('flowValue'),
@@ -354,7 +371,10 @@
       }
 
       async function runTextureEachTipExperiment(config) {
-        ensureDebugPattern(Number.parseInt(els.textureSeed.value || '424242', 10));
+        const textureLoadResult = await ensureExperimentPattern(
+          String(els.texturePath.value || ''),
+          Number.parseInt(els.textureSeed.value || '424242', 10)
+        );
 
         const dabPositions = generateDabPositions('stroke', config.size, config.spacing);
         const backend = els.textureBackend.value;
@@ -424,6 +444,7 @@
           <h3>Texture Each Tip 轻量实验 (${backend.toUpperCase()})</h3>
           <div>固定轨迹: stroke / dabs=${dabPositions.length}</div>
           <div>mode=${mode}, depth=${depth.toFixed(0)}, jitter=${jitter.toFixed(0)}, scale=${scale.toFixed(0)}, seed=${seed}</div>
+          <div>texture=${textureLoadResult.ok ? `${textureLoadResult.source} (${textureLoadResult.width}x${textureLoadResult.height})` : `${textureLoadResult.source} (load failed, fallback generated pattern)`}</div>
           <div class="metric-row">OFF: alphaSum=${offMetrics.alphaSum}, nonZero=${offMetrics.nonZeroPixels}, meanAlpha=${offMetrics.meanAlpha.toFixed(4)}</div>
           <div class="metric-row">ON: alphaSum=${onMetrics.alphaSum}, nonZero=${onMetrics.nonZeroPixels}, meanAlpha=${onMetrics.meanAlpha.toFixed(4)}</div>
           <div class="metric-row">JITTER: alphaSum=${jitterMetrics.alphaSum}, nonZero=${jitterMetrics.nonZeroPixels}, meanAlpha=${jitterMetrics.meanAlpha.toFixed(4)}</div>
@@ -433,9 +454,88 @@
         `;
       }
 
-      function ensureDebugPattern(seed) {
-        if (patternManager.hasPattern(DEBUG_PATTERN_ID)) return;
+      async function ensureExperimentPattern(texturePathInput, seed) {
+        const normalizedPath = normalizeTexturePath(texturePathInput);
+        if (normalizedPath) {
+          try {
+            const image = await loadImage(normalizedPath);
+            registerImagePattern(DEBUG_PATTERN_ID, image);
+            return {
+              ok: true,
+              source: normalizedPath,
+              width: image.width,
+              height: image.height,
+            };
+          } catch (error) {
+            console.warn(
+              '[TextureEachTip] Failed to load texture path, fallback to generated pattern',
+              {
+                normalizedPath,
+                error,
+              }
+            );
+          }
+        }
 
+        generateFallbackPattern(seed);
+        const fallback = patternManager.getPattern(DEBUG_PATTERN_ID);
+        return {
+          ok: false,
+          source: normalizedPath || '(empty)',
+          width: fallback?.width ?? 0,
+          height: fallback?.height ?? 0,
+        };
+      }
+
+      function normalizeTexturePath(input) {
+        const raw = String(input ?? '').trim();
+        if (!raw) return '';
+
+        const slashNormalized = raw.replace(/\\/g, '/');
+        if (slashNormalized.startsWith('http://') || slashNormalized.startsWith('https://')) {
+          return slashNormalized;
+        }
+
+        const lower = slashNormalized.toLowerCase();
+        const marker = '/paintboard/';
+        const markerIdx = lower.indexOf(marker);
+        if (markerIdx >= 0) {
+          const rel = slashNormalized.slice(markerIdx + marker.length);
+          return `/${rel.replace(/^\/+/, '')}`;
+        }
+
+        if (slashNormalized.startsWith('/')) {
+          return slashNormalized;
+        }
+
+        return `/${slashNormalized.replace(/^\/+/, '')}`;
+      }
+
+      function loadImage(path) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = (error) => reject(error);
+          image.src = `${encodeURI(path)}?t=${Date.now()}`;
+        });
+      }
+
+      function registerImagePattern(patternId, image) {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(image, 0, 0);
+        const imageData = ctx.getImageData(0, 0, image.width, image.height);
+        patternManager.registerPattern({
+          id: patternId,
+          width: image.width,
+          height: image.height,
+          data: new Uint8Array(imageData.data),
+        });
+      }
+
+      function generateFallbackPattern(seed) {
         const width = 128;
         const height = 128;
         const data = new Uint8Array(width * height * 4);
