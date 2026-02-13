@@ -1143,6 +1143,28 @@ impl AbrParser {
         settings
     }
 
+    fn parse_texture_blend_mode_code(value: &str) -> super::types::TextureBlendMode {
+        match value {
+            "Mltp" => super::types::TextureBlendMode::Multiply,
+            "Sbt " => super::types::TextureBlendMode::Subtract,
+            "Drkn" => super::types::TextureBlendMode::Darken,
+            "Ovrl" => super::types::TextureBlendMode::Overlay,
+            "CldD" | "CDdg" => super::types::TextureBlendMode::ColorDodge,
+            "CldB" | "CBrn" => super::types::TextureBlendMode::ColorBurn,
+            "LnrB" | "LBrn" => super::types::TextureBlendMode::LinearBurn,
+            "HrdM" => super::types::TextureBlendMode::HardMix,
+            "LnrH" => super::types::TextureBlendMode::LinearHeight,
+            "Hght" => super::types::TextureBlendMode::Height,
+            other => {
+                tracing::debug!(
+                    "[ABR] Unknown textureBlendMode enum: {}, fallback to Multiply",
+                    other
+                );
+                super::types::TextureBlendMode::Multiply
+            }
+        }
+    }
+
     /// Apply texture parameters from root descriptor (not from Txtr sub-object)
     /// These fields are stored at the brush descriptor root level in ABR files:
     /// - textureScale, textureBrightness, textureContrast
@@ -1182,20 +1204,10 @@ impl AbrParser {
         }
 
         // Blend Mode (textureBlendMode) - Enum
+        // Different ABR exporters may emit slightly different 4-char codes
+        // for the same visual mode (e.g. CDdg/CldD). Keep mapping tolerant.
         if let Some(DescriptorValue::Enum { value, .. }) = brush_desc.get("textureBlendMode") {
-            settings.mode = match value.as_str() {
-                "Mltp" => super::types::TextureBlendMode::Multiply,
-                "Sbt " => super::types::TextureBlendMode::Subtract,
-                "Drkn" => super::types::TextureBlendMode::Darken,
-                "Ovrl" => super::types::TextureBlendMode::Overlay,
-                "CldD" => super::types::TextureBlendMode::ColorDodge,
-                "CldB" => super::types::TextureBlendMode::ColorBurn,
-                "LnrB" => super::types::TextureBlendMode::LinearBurn,
-                "HrdM" => super::types::TextureBlendMode::HardMix,
-                "LnrH" => super::types::TextureBlendMode::LinearHeight,
-                "Hght" => super::types::TextureBlendMode::Height,
-                _ => super::types::TextureBlendMode::Multiply,
-            };
+            settings.mode = Self::parse_texture_blend_mode_code(value);
         }
 
         // Invert (InvT) - Boolean
@@ -1937,6 +1949,58 @@ mod tests {
         let settings = AbrParser::parse_dual_brush_settings(&brush_desc).expect("dual settings");
         assert_eq!(settings.size, 50.0);
         assert_eq!(settings.size_ratio, 1.0);
+    }
+
+    #[test]
+    fn test_apply_texture_params_maps_legacy_and_modern_blend_mode_codes() {
+        let mut brush_desc: indexmap::IndexMap<String, DescriptorValue> = indexmap::IndexMap::new();
+        let mut settings = TextureSettings::default();
+
+        let assert_mode = |mode_code: &str,
+                           expected: crate::abr::types::TextureBlendMode,
+                           brush_desc: &mut indexmap::IndexMap<String, DescriptorValue>,
+                           settings: &mut TextureSettings| {
+            brush_desc.insert(
+                "textureBlendMode".to_string(),
+                DescriptorValue::Enum {
+                    type_id: "BlnM".to_string(),
+                    value: mode_code.to_string(),
+                },
+            );
+            AbrParser::apply_texture_params_from_root(brush_desc, settings);
+            assert_eq!(settings.mode, expected);
+        };
+
+        assert_mode(
+            "CDdg",
+            crate::abr::types::TextureBlendMode::ColorDodge,
+            &mut brush_desc,
+            &mut settings,
+        );
+        assert_mode(
+            "CBrn",
+            crate::abr::types::TextureBlendMode::ColorBurn,
+            &mut brush_desc,
+            &mut settings,
+        );
+        assert_mode(
+            "LBrn",
+            crate::abr::types::TextureBlendMode::LinearBurn,
+            &mut brush_desc,
+            &mut settings,
+        );
+        assert_mode(
+            "CldD",
+            crate::abr::types::TextureBlendMode::ColorDodge,
+            &mut brush_desc,
+            &mut settings,
+        );
+        assert_mode(
+            "CldB",
+            crate::abr::types::TextureBlendMode::ColorBurn,
+            &mut brush_desc,
+            &mut settings,
+        );
     }
 
     #[test]

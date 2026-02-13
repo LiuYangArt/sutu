@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyPresetToToolStore } from './BrushPresets';
-import { BrushPreset, DEFAULT_ROUND_BRUSH } from '../types';
+import { BrushPreset, DEFAULT_ROUND_BRUSH, DEFAULT_TEXTURE_SETTINGS } from '../types';
 import {
   DEFAULT_COLOR_DYNAMICS,
   DEFAULT_SCATTER_SETTINGS,
@@ -9,6 +9,23 @@ import {
   DEFAULT_TRANSFER_SETTINGS,
   useToolStore,
 } from '@/stores/tool';
+
+function createTextureModePreset(
+  id: string,
+  name: string,
+  mode: 'overlay' | 'colorBurn'
+): BrushPreset {
+  return {
+    ...DEFAULT_ROUND_BRUSH,
+    id,
+    name,
+    textureSettings: {
+      ...DEFAULT_TEXTURE_SETTINGS,
+      patternId: null,
+      mode,
+    },
+  };
+}
 
 describe('applyPresetToToolStore', () => {
   it('重置并禁用动态面板，避免 preset 泄漏', () => {
@@ -207,5 +224,20 @@ describe('applyPresetToToolStore', () => {
     expect(s.dualBrush.roundness).toBe(80);
     expect(s.dualBrush.sizeRatio).toBeCloseTo(0.5);
     expect(s.dualBrush.size).toBe(50);
+  });
+
+  it('切换不同 preset 时应同步切换 Texture blend mode', () => {
+    const overlayPreset = createTextureModePreset('texture-overlay', 'Texture Overlay', 'overlay');
+    const colorBurnPreset = createTextureModePreset(
+      'texture-color-burn',
+      'Texture Color Burn',
+      'colorBurn'
+    );
+
+    applyPresetToToolStore(overlayPreset, []);
+    expect(useToolStore.getState().textureSettings.mode).toBe('overlay');
+
+    applyPresetToToolStore(colorBurnPreset, []);
+    expect(useToolStore.getState().textureSettings.mode).toBe('colorBurn');
   });
 });
