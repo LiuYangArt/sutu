@@ -47,6 +47,70 @@ node scripts/debug/replay-texture-eachtip-off-nonempty.mjs --url http://localhos
 1. `nonZeroAlphaPixels >= --min-nonzero-pixels`（默认 `200`）
 2. `alphaSum >= --min-alpha-sum`（默认 `5000`）
 
+## Texture Each Tip=On / Depth Jitter 对照回放
+
+用于固定同一 capture + 同一种子，直接输出 `off / on / jitter` 三列对照，验证：
+
+1. `Texture Each Tip` 语义切换是否生效；
+2. `Depth Jitter` 是否体现为每个最终 stamp 的深浅变化；
+3. `off-on` 与 `on-jitter` 的差异是否为非零且趋势符合预期。
+
+脚本位置：
+
+`scripts/debug/replay-texture-eachtip-compare.mjs`
+
+快速示例：
+
+```bash
+node scripts/debug/replay-texture-eachtip-compare.mjs --url http://localhost:1420 --capture "C:/Users/<you>/AppData/Roaming/com.sutu/debug-data/debug-stroke-capture.json" --texture "debug_output/pat_decoded/pat5_sparthtex01.png" --mode subtract --depth 100 --depth-control 0 --minimum-depth 0 --depth-jitter 35 --seed 424242 --output "debug_output/texture_formula_compare/eachtip_compare"
+```
+
+常用参数（新增脚本）：
+
+- `--render-mode`：`gpu | cpu`，默认 `gpu`
+- `--mode`：纹理混合模式（如 `subtract/darken/linearHeight`）
+- `--depth`：0~100，默认 `100`
+- `--depth-control`：Depth Control 枚举（`0=off,1=fade,2=penPressure...`）
+- `--minimum-depth`：0~100，默认 `0`
+- `--depth-jitter`：0~100，默认 `35`（仅 jitter 场景）
+- `--seed`：固定随机种子，保证可重复
+- `--diff-threshold`：像素 mismatch 阈值，默认 `4`
+
+输出文件：
+
+1. `*-off.png`
+2. `*-on.png`
+3. `*-jitter.png`
+4. `*-panel.png`（三列拼图）
+5. `*-off-on-diff.png`
+6. `*-on-jitter-diff.png`
+7. `*-report.json`（含 `alphaSum/nonZeroAlphaPixels` 与两组 diff 指标）
+
+## 轻量交互实验（不走 replay）
+
+如果 replay 链路太重，可以直接用可视化页面做快速 A/B：
+
+文件：
+
+`tests/visual/gpu-cpu-comparison.html`
+
+新增模式：
+
+`Texture Each Tip 实验 (off/on/jitter)`
+
+使用步骤：
+
+1. 打开该页面，模式切到 `Texture Each Tip 实验 (off/on/jitter)`。
+2. 选择实验后端（建议先 `GPU`），设置 `mode/depth/jitter/scale/seed`。
+3. 点击 `运行测试`，页面会输出三列：`Each Tip Off`、`Each Tip On`、`Each Tip On + Jitter`。
+4. 查看结果区指标：`alphaSum / nonZero / meanAlpha`，重点看 `off→on ΔalphaSum` 是否显著为正（更深趋势）。
+
+说明：
+
+1. 该模式内置了测试纹理（内存注册），不依赖 ABR/replay 资源。
+2. `Jitter` 场景会按 dab 调用 `computeTextureDepth(...)`，用于观察每 dab 深浅抖动趋势。
+3. 这是趋势验证工具，不是像素级 Photoshop 对齐证明。
+
 ## 快速使用
 
 ```bash

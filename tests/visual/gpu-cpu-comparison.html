@@ -35,6 +35,7 @@
         display: flex;
         gap: 15px;
         align-items: center;
+        flex-wrap: wrap;
       }
       label {
         display: flex;
@@ -43,7 +44,23 @@
         font-size: 13px;
       }
       input[type='range'] {
-        width: 100px;
+        width: 120px;
+      }
+      input[type='number'] {
+        width: 90px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: #333;
+        color: #eee;
+        border: 1px solid #555;
+      }
+      input[type='text'] {
+        width: 360px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: #333;
+        color: #eee;
+        border: 1px solid #555;
       }
       select {
         padding: 6px 10px;
@@ -78,6 +95,20 @@
         color: #888;
         margin-top: 5px;
       }
+      .hidden {
+        display: none;
+      }
+      .metric-row {
+        margin-top: 8px;
+      }
+      .metric-good {
+        color: #4caf50;
+        font-weight: bold;
+      }
+      .metric-bad {
+        color: #f44336;
+        font-weight: bold;
+      }
     </style>
   </head>
   <body>
@@ -92,6 +123,7 @@
             <option value="point">Single Point (5 dabs)</option>
             <option value="stroke" selected>Stroke Line (笔触)</option>
             <option value="realtime">Realtime Simulation (模拟实时)</option>
+            <option value="textureEachTip">Texture Each Tip 实验 (off/on/jitter)</option>
           </select>
         </label>
         <label>
@@ -103,6 +135,7 @@
           <input type="range" id="hardness" min="0" max="1" step="0.01" value="0.5" />
         </label>
       </div>
+
       <div class="control-group">
         <label>
           Flow: <span id="flowValue">0.3</span>
@@ -116,21 +149,67 @@
           Spacing: <span id="spacingValue">25</span>%
           <input type="range" id="spacing" min="10" max="1000" step="5" value="25" />
         </label>
+      </div>
+
+      <div class="control-group hidden" id="textureControls">
+        <label>
+          实验后端:
+          <select id="textureBackend">
+            <option value="gpu" selected>GPU</option>
+            <option value="cpu">CPU</option>
+          </select>
+        </label>
+        <label>
+          纹理模式:
+          <select id="textureMode">
+            <option value="subtract" selected>Subtract</option>
+            <option value="darken">Darken</option>
+            <option value="linearHeight">Linear Height</option>
+            <option value="height">Height</option>
+          </select>
+        </label>
+        <label>
+          Depth: <span id="textureDepthValue">100</span>
+          <input type="range" id="textureDepth" min="0" max="100" step="1" value="100" />
+        </label>
+        <label>
+          Jitter: <span id="textureJitterValue">35</span>
+          <input type="range" id="textureJitter" min="0" max="100" step="1" value="35" />
+        </label>
+        <label>
+          Scale: <span id="textureScaleValue">81</span>
+          <input type="range" id="textureScale" min="10" max="300" step="1" value="81" />
+        </label>
+        <label>
+          Seed:
+          <input type="number" id="textureSeed" min="1" step="1" value="424242" />
+        </label>
+        <label>
+          Texture Path:
+          <input
+            type="text"
+            id="texturePath"
+            value="debug_output/correct_decode/p11_SI080_Ljpg.png"
+          />
+        </label>
+      </div>
+
+      <div class="control-group">
         <button id="runTest">运行测试 (Run Test)</button>
       </div>
     </div>
 
     <div class="canvas-container">
       <div class="canvas-wrapper">
-        <h3>CPU 渲染 (Reference)</h3>
+        <h3 id="panel1Title">CPU 渲染 (Reference)</h3>
         <canvas id="cpuCanvas" width="500" height="300"></canvas>
       </div>
       <div class="canvas-wrapper">
-        <h3>GPU 渲染 (Target)</h3>
+        <h3 id="panel2Title">GPU 渲染 (Target)</h3>
         <canvas id="gpuCanvas" width="500" height="300"></canvas>
       </div>
       <div class="canvas-wrapper">
-        <h3>差异 (Diff > 2)</h3>
+        <h3 id="panel3Title">差异 (Diff > 2)</h3>
         <canvas id="diffCanvas" width="500" height="300"></canvas>
       </div>
     </div>
@@ -140,14 +219,14 @@
     <script type="module">
       import { StrokeAccumulator, BrushStamper } from '../../src/utils/strokeBuffer.ts';
       import { GPUContext, GPUStrokeAccumulator } from '../../src/gpu/index.ts';
-
-      // Import BrushStamper directly instead of duplicating code
+      import { patternManager } from '../../src/utils/patternManager.ts';
+      import { computeTextureDepth } from '../../src/utils/textureDynamics.ts';
 
       const CANVAS_W = 500;
       const CANVAS_H = 300;
       const UNIFIED_MASK_TYPE = 'gaussian';
+      const DEBUG_PATTERN_ID = '__texture_each_tip_debug_pattern__';
 
-      // UI Elements
       const els = {
         testMode: document.getElementById('testMode'),
         size: document.getElementById('size'),
@@ -155,17 +234,30 @@
         flow: document.getElementById('flow'),
         opacity: document.getElementById('opacity'),
         spacing: document.getElementById('spacing'),
+        textureControls: document.getElementById('textureControls'),
+        textureBackend: document.getElementById('textureBackend'),
+        textureMode: document.getElementById('textureMode'),
+        textureDepth: document.getElementById('textureDepth'),
+        textureJitter: document.getElementById('textureJitter'),
+        textureScale: document.getElementById('textureScale'),
+        textureSeed: document.getElementById('textureSeed'),
+        texturePath: document.getElementById('texturePath'),
         sizeValue: document.getElementById('sizeValue'),
         hardnessValue: document.getElementById('hardnessValue'),
         flowValue: document.getElementById('flowValue'),
         opacityValue: document.getElementById('opacityValue'),
         spacingValue: document.getElementById('spacingValue'),
+        textureDepthValue: document.getElementById('textureDepthValue'),
+        textureJitterValue: document.getElementById('textureJitterValue'),
+        textureScaleValue: document.getElementById('textureScaleValue'),
         modeDescription: document.getElementById('modeDescription'),
+        panel1Title: document.getElementById('panel1Title'),
+        panel2Title: document.getElementById('panel2Title'),
+        panel3Title: document.getElementById('panel3Title'),
         runBtn: document.getElementById('runTest'),
         results: document.getElementById('results'),
       };
 
-      // Event Listeners
       const linkInputToLabel = (input, label) => {
         input.addEventListener('input', (e) => (label.textContent = e.target.value));
       };
@@ -175,9 +267,21 @@
       linkInputToLabel(els.flow, els.flowValue);
       linkInputToLabel(els.opacity, els.opacityValue);
       linkInputToLabel(els.spacing, els.spacingValue);
+      linkInputToLabel(els.textureDepth, els.textureDepthValue);
+      linkInputToLabel(els.textureJitter, els.textureJitterValue);
+      linkInputToLabel(els.textureScale, els.textureScaleValue);
 
-      els.testMode.addEventListener('change', updateModeDescription);
+      els.testMode.addEventListener('change', handleModeChange);
       els.runBtn.addEventListener('click', runTest);
+
+      handleModeChange();
+
+      function handleModeChange() {
+        updateModeDescription();
+        updatePanelTitles();
+        toggleTextureControls();
+        clearPanels();
+      }
 
       function updateModeDescription() {
         const mode = els.testMode.value;
@@ -185,15 +289,38 @@
           point: '测试 5 个重叠 dab 的累积效果（用于验证 Alpha Darken）',
           stroke: '测试理想笔触绘制效果（BrushStamper + 正弦波轨迹）',
           realtime: '模拟真实输入（随机丢点 15%、位置抖动 ±3px、压感噪声）',
+          textureEachTip:
+            '轻量 Texture Each Tip 对照：off / on / on+jitter（不用 replay，可快速看“是否明显变深”）',
         };
         els.modeDescription.textContent = descriptions[mode] || '';
       }
 
-      // Initialize
-      updateModeDescription();
+      function updatePanelTitles() {
+        if (els.testMode.value === 'textureEachTip') {
+          els.panel1Title.textContent = 'Each Tip Off';
+          els.panel2Title.textContent = 'Each Tip On';
+          els.panel3Title.textContent = 'Each Tip On + Jitter';
+        } else {
+          els.panel1Title.textContent = 'CPU 渲染 (Reference)';
+          els.panel2Title.textContent = 'GPU 渲染 (Target)';
+          els.panel3Title.textContent = '差异 (Diff > 2)';
+        }
+      }
+
+      function toggleTextureControls() {
+        const show = els.testMode.value === 'textureEachTip';
+        els.textureControls.classList.toggle('hidden', !show);
+      }
+
+      function clearPanels() {
+        for (const id of ['cpuCanvas', 'gpuCanvas', 'diffCanvas']) {
+          const ctx = document.getElementById(id).getContext('2d');
+          ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+        }
+      }
 
       async function runTest() {
-        const CONFIG = {
+        const config = {
           mode: els.testMode.value,
           size: parseFloat(els.size.value),
           hardness: parseFloat(els.hardness.value),
@@ -207,33 +334,239 @@
         els.results.innerHTML = '<span style="color:#888">Running...</span>';
 
         try {
-          const dabPositions = generateDabPositions(CONFIG.mode, CONFIG.size, CONFIG.spacing);
-
-          // 1. CPU Reference
-          const cpuResult = await renderCPU(CONFIG, dabPositions);
-
-          // 2. GPU Target
-          const gpuResult = await renderGPU(CONFIG, dabPositions);
-          if (!gpuResult) {
-            els.results.innerHTML = '<span style="color:red">WebGPU not supported</span>';
-            return;
+          if (config.mode === 'textureEachTip') {
+            await runTextureEachTipExperiment(config);
+          } else {
+            await runCpuGpuComparison(config);
           }
-
-          // 3. Display Results
-          displayResult('cpuCanvas', cpuResult);
-          displayResult('gpuCanvas', gpuResult);
-
-          console.log('[Test] Dab Count:', dabPositions.length);
-
-          // 4. Compare
-          performComparison(cpuResult, gpuResult, dabPositions.length, CONFIG.maskType);
         } catch (e) {
           console.error('[Test] Error:', e);
           els.results.innerHTML = `<span style="color:red">Error: ${e.message}</span>`;
         }
       }
 
-      function renderCPU(config, positions) {
+      async function runCpuGpuComparison(config) {
+        const dabPositions = generateDabPositions(config.mode, config.size, config.spacing);
+        const cpuResult = await renderCPU(config, dabPositions);
+        const gpuResult = await renderGPU(config, dabPositions);
+
+        if (!gpuResult) {
+          els.results.innerHTML = '<span style="color:red">WebGPU not supported</span>';
+          return;
+        }
+
+        displayResult('cpuCanvas', cpuResult);
+        displayResult('gpuCanvas', gpuResult);
+
+        const result = performComparison(cpuResult, gpuResult);
+        els.results.innerHTML = `
+          <h3>Result (${dabPositions.length} dabs)</h3>
+          <div>Unified Mask: <strong>${config.maskType}</strong></div>
+          <div>Max Diff: <strong>${result.maxDiff}</strong></div>
+          <div>Diff Pixels: ${result.diffPixels} (${result.diffPercent}%)</div>
+          <div style="color: ${result.passed ? '#4CAF50' : '#F44336'}; font-weight: bold;">
+            ${result.passed ? '✓ PASSED (Diff ≤ 2)' : '✗ FAILED'}
+          </div>
+        `;
+      }
+
+      async function runTextureEachTipExperiment(config) {
+        const textureLoadResult = await ensureExperimentPattern(
+          String(els.texturePath.value || ''),
+          Number.parseInt(els.textureSeed.value || '424242', 10)
+        );
+
+        const dabPositions = generateDabPositions('stroke', config.size, config.spacing);
+        const backend = els.textureBackend.value;
+        const depth = parseFloat(els.textureDepth.value);
+        const jitter = parseFloat(els.textureJitter.value);
+        const scale = parseFloat(els.textureScale.value);
+        const mode = els.textureMode.value;
+        const seed = Number.parseInt(els.textureSeed.value || '424242', 10);
+
+        const baseSettings = {
+          patternId: DEBUG_PATTERN_ID,
+          scale,
+          brightness: 0,
+          contrast: 0,
+          textureEachTip: true,
+          mode,
+          depth,
+          minimumDepth: 0,
+          depthJitter: 0,
+          invert: false,
+          depthControl: 0,
+        };
+
+        const scenarios = [
+          {
+            key: 'off',
+            settings: { ...baseSettings, textureEachTip: false, depthJitter: 0 },
+            seed,
+          },
+          { key: 'on', settings: { ...baseSettings, textureEachTip: true, depthJitter: 0 }, seed },
+          {
+            key: 'jitter',
+            settings: { ...baseSettings, textureEachTip: true, depthJitter: jitter },
+            seed: seed + 17,
+          },
+        ];
+
+        const rendered = {};
+        for (const scenario of scenarios) {
+          const result =
+            backend === 'gpu'
+              ? await renderGPU(config, dabPositions, scenario)
+              : await renderCPU(config, dabPositions, scenario);
+          if (!result) {
+            els.results.innerHTML =
+              '<span style="color:red">WebGPU not supported, 请切换实验后端到 CPU</span>';
+            return;
+          }
+          rendered[scenario.key] = result;
+        }
+
+        displayResult('cpuCanvas', rendered.off);
+        displayResult('gpuCanvas', rendered.on);
+        displayResult('diffCanvas', rendered.jitter);
+
+        const offMetrics = computeAlphaMetrics(rendered.off);
+        const onMetrics = computeAlphaMetrics(rendered.on);
+        const jitterMetrics = computeAlphaMetrics(rendered.jitter);
+
+        const deltaOffOn = onMetrics.alphaSum - offMetrics.alphaSum;
+        const deltaOnJitter = jitterMetrics.alphaSum - onMetrics.alphaSum;
+        const trendClass = deltaOffOn > 0 ? 'metric-good' : 'metric-bad';
+        const trendText =
+          deltaOffOn > 0 ? 'ON 比 OFF 更深（符合预期趋势）' : 'ON 没有比 OFF 更深（需继续调公式）';
+
+        els.results.innerHTML = `
+          <h3>Texture Each Tip 轻量实验 (${backend.toUpperCase()})</h3>
+          <div>固定轨迹: stroke / dabs=${dabPositions.length}</div>
+          <div>mode=${mode}, depth=${depth.toFixed(0)}, jitter=${jitter.toFixed(0)}, scale=${scale.toFixed(0)}, seed=${seed}</div>
+          <div>texture=${textureLoadResult.ok ? `${textureLoadResult.source} (${textureLoadResult.width}x${textureLoadResult.height})` : `${textureLoadResult.source} (load failed, fallback generated pattern)`}</div>
+          <div class="metric-row">OFF: alphaSum=${offMetrics.alphaSum}, nonZero=${offMetrics.nonZeroPixels}, meanAlpha=${offMetrics.meanAlpha.toFixed(4)}</div>
+          <div class="metric-row">ON: alphaSum=${onMetrics.alphaSum}, nonZero=${onMetrics.nonZeroPixels}, meanAlpha=${onMetrics.meanAlpha.toFixed(4)}</div>
+          <div class="metric-row">JITTER: alphaSum=${jitterMetrics.alphaSum}, nonZero=${jitterMetrics.nonZeroPixels}, meanAlpha=${jitterMetrics.meanAlpha.toFixed(4)}</div>
+          <div class="metric-row">off→on ΔalphaSum=${deltaOffOn.toFixed(1)}</div>
+          <div class="metric-row">on→jitter ΔalphaSum=${deltaOnJitter.toFixed(1)}</div>
+          <div class="metric-row ${trendClass}">${trendText}</div>
+        `;
+      }
+
+      async function ensureExperimentPattern(texturePathInput, seed) {
+        const normalizedPath = normalizeTexturePath(texturePathInput);
+        if (normalizedPath) {
+          try {
+            const image = await loadImage(normalizedPath);
+            registerImagePattern(DEBUG_PATTERN_ID, image);
+            return {
+              ok: true,
+              source: normalizedPath,
+              width: image.width,
+              height: image.height,
+            };
+          } catch (error) {
+            console.warn(
+              '[TextureEachTip] Failed to load texture path, fallback to generated pattern',
+              {
+                normalizedPath,
+                error,
+              }
+            );
+          }
+        }
+
+        generateFallbackPattern(seed);
+        const fallback = patternManager.getPattern(DEBUG_PATTERN_ID);
+        return {
+          ok: false,
+          source: normalizedPath || '(empty)',
+          width: fallback?.width ?? 0,
+          height: fallback?.height ?? 0,
+        };
+      }
+
+      function normalizeTexturePath(input) {
+        const raw = String(input ?? '').trim();
+        if (!raw) return '';
+
+        const slashNormalized = raw.replace(/\\/g, '/');
+        if (slashNormalized.startsWith('http://') || slashNormalized.startsWith('https://')) {
+          return slashNormalized;
+        }
+
+        const lower = slashNormalized.toLowerCase();
+        const marker = '/paintboard/';
+        const markerIdx = lower.indexOf(marker);
+        if (markerIdx >= 0) {
+          const rel = slashNormalized.slice(markerIdx + marker.length);
+          return `/${rel.replace(/^\/+/, '')}`;
+        }
+
+        if (slashNormalized.startsWith('/')) {
+          return slashNormalized;
+        }
+
+        return `/${slashNormalized.replace(/^\/+/, '')}`;
+      }
+
+      function loadImage(path) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = (error) => reject(error);
+          image.src = `${encodeURI(path)}?t=${Date.now()}`;
+        });
+      }
+
+      function registerImagePattern(patternId, image) {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(image, 0, 0);
+        const imageData = ctx.getImageData(0, 0, image.width, image.height);
+        patternManager.registerPattern({
+          id: patternId,
+          width: image.width,
+          height: image.height,
+          data: new Uint8Array(imageData.data),
+        });
+      }
+
+      function generateFallbackPattern(seed) {
+        const width = 128;
+        const height = 128;
+        const data = new Uint8Array(width * height * 4);
+        const random = createSeededRandom(seed);
+
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const idx = (y * width + x) * 4;
+            const sx = Math.sin((x / width) * Math.PI * 10.0) * 0.22;
+            const sy = Math.cos((y / height) * Math.PI * 9.0) * 0.18;
+            const diag = Math.sin(((x + y) / (width + height)) * Math.PI * 14.0) * 0.15;
+            const grain = (random() - 0.5) * 0.35;
+            const v = clamp01(0.52 + sx + sy + diag + grain);
+            const gray = Math.round(v * 255);
+
+            data[idx] = gray;
+            data[idx + 1] = gray;
+            data[idx + 2] = gray;
+            data[idx + 3] = 255;
+          }
+        }
+
+        patternManager.registerPattern({
+          id: DEBUG_PATTERN_ID,
+          width,
+          height,
+          data,
+        });
+      }
+
+      function renderCPU(config, positions, textureScenario = null) {
         const canvas = document.createElement('canvas');
         canvas.width = CANVAS_W;
         canvas.height = CANVAS_H;
@@ -242,13 +575,13 @@
         const accumulator = new StrokeAccumulator(CANVAS_W, CANVAS_H);
         accumulator.beginStroke(config.hardness);
 
-        stampDabs(accumulator, positions, config);
+        stampDabs(accumulator, positions, config, textureScenario);
         accumulator.endStroke(ctx, config.opacity);
 
         return canvas;
       }
 
-      async function renderGPU(config, positions) {
+      async function renderGPU(config, positions, textureScenario = null) {
         const ctxInstance = GPUContext.getInstance();
         await ctxInstance.initialize();
         if (!ctxInstance.device) return null;
@@ -262,15 +595,45 @@
         accumulator.clear();
         accumulator.beginStroke();
 
-        stampDabs(accumulator, positions, config);
+        stampDabs(accumulator, positions, config, textureScenario);
         await accumulator.endStroke(ctx, config.opacity);
+        accumulator.destroy();
 
         return canvas;
       }
 
-      function stampDabs(accumulator, positions, config) {
+      function stampDabs(accumulator, positions, config, textureScenario) {
+        const scenarioSettings = textureScenario?.settings ?? null;
+        const random = createSeededRandom(textureScenario?.seed ?? 1);
+
         for (const pos of positions) {
-          const dab = {
+          let textureSettings = undefined;
+
+          if (scenarioSettings) {
+            let depth = scenarioSettings.depth;
+            if (scenarioSettings.textureEachTip) {
+              depth = computeTextureDepth(
+                scenarioSettings.depth,
+                scenarioSettings,
+                {
+                  pressure: clamp01(pos.pressure ?? 1),
+                  tiltX: 0,
+                  tiltY: 0,
+                  rotation: 0,
+                  direction: 0,
+                  initialDirection: 0,
+                  fadeProgress: 0,
+                },
+                random
+              );
+            }
+            textureSettings = {
+              ...scenarioSettings,
+              depth,
+            };
+          }
+
+          accumulator.stampDab({
             x: pos.x,
             y: pos.y,
             size: config.size,
@@ -279,8 +642,8 @@
             maskType: config.maskType,
             color: config.color,
             dabOpacity: 1.0,
-          };
-          accumulator.stampDab(dab);
+            textureSettings,
+          });
         }
       }
 
@@ -290,113 +653,29 @@
         ctx.drawImage(sourceCanvas, 0, 0);
       }
 
-      function performComparison(cpuCanvas, gpuCanvas, dabCount, maskType) {
+      function performComparison(cpuCanvas, gpuCanvas) {
         const diffCtx = document.getElementById('diffCanvas').getContext('2d');
         diffCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
         const cpuCtx = cpuCanvas.getContext('2d');
         const gpuCtx = gpuCanvas.getContext('2d');
-
-        const result = compareCanvases(cpuCtx, gpuCtx, diffCtx);
-
-        els.results.innerHTML = `
-          <h3>Result (${dabCount} dabs)</h3>
-          <div>Unified Mask: <strong>${maskType}</strong></div>
-          <div>Max Diff: <strong>${result.maxDiff}</strong></div>
-          <div>Diff Pixels: ${result.diffPixels} (${result.diffPercent}%)</div>
-          <div style="color: ${result.passed ? '#4CAF50' : '#F44336'}; font-weight: bold;">
-            ${result.passed ? '✓ PASSED (Diff ≤ 2)' : '✗ FAILED'}
-          </div>
-        `;
-      }
-
-      function generateDabPositions(mode, size, spacingPercent) {
-        const spacingPx = size * spacingPercent;
-        if (mode === 'point') {
-          // 5 overlapping points at center
-          return [
-            { x: 250, y: 150 },
-            { x: 250, y: 150 },
-            { x: 250, y: 150 },
-            { x: 250, y: 150 },
-            { x: 250, y: 150 },
-          ];
-        } else if (mode === 'realtime') {
-          // Simulate realistic real-time input with random drops and jitter
-          const stamper = new BrushStamper();
-          const dabs = [];
-          stamper.beginStroke();
-
-          const dropRate = 0.15; // 15% of points are dropped
-          const jitterAmount = 3; // Random position jitter in pixels
-          const startX = 50;
-          const endX = 450;
-          const steps = 80; // Fewer steps than stroke mode
-
-          for (let i = 0; i <= steps; i++) {
-            // Random drop simulation
-            if (Math.random() < dropRate) continue;
-
-            const t = i / steps;
-            // Add random jitter to position
-            const jitterX = (Math.random() - 0.5) * jitterAmount;
-            const jitterY = (Math.random() - 0.5) * jitterAmount;
-            const x = startX + (endX - startX) * t + jitterX;
-            const y = 150 + Math.sin(t * Math.PI * 2) * 50 + jitterY;
-            // Pressure with random noise
-            const basePressure = 0.5 + Math.sin(t * Math.PI) * 0.4;
-            const pressure = Math.max(
-              0.1,
-              Math.min(1.0, basePressure + (Math.random() - 0.5) * 0.2)
-            );
-
-            const newDabs = stamper.processPoint(x, y, pressure, spacingPx);
-            dabs.push(...newDabs);
-          }
-
-          return dabs;
-        } else {
-          // Use BrushStamper for ideal simulation (Stroke Line mode)
-          const stamper = new BrushStamper();
-          const dabs = [];
-          stamper.beginStroke();
-
-          const startX = 50;
-          const endX = 450;
-          const steps = 100;
-
-          for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const x = startX + (endX - startX) * t;
-            const y = 150 + Math.sin(t * Math.PI * 2) * 50;
-            const pressure = 0.5 + Math.sin(t * Math.PI) * 0.5;
-
-            const newDabs = stamper.processPoint(x, y, pressure, spacingPx);
-            dabs.push(...newDabs);
-          }
-
-          return dabs;
-        }
-      }
-
-      function compareCanvases(cpuCtx, gpuCtx, diffCtx) {
         const cpuData = cpuCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
         const gpuData = gpuCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
         const diffImageData = diffCtx.createImageData(CANVAS_W, CANVAS_H);
 
-        let maxDiff = 0,
-          diffPixels = 0;
+        let maxDiff = 0;
+        let diffPixels = 0;
         const threshold = 2;
 
         for (let i = 0; i < cpuData.data.length; i += 4) {
-          const r1 = cpuData.data[i],
-            g1 = cpuData.data[i + 1],
-            b1 = cpuData.data[i + 2],
-            a1 = cpuData.data[i + 3];
-          const r2 = gpuData.data[i],
-            g2 = gpuData.data[i + 1],
-            b2 = gpuData.data[i + 2],
-            a2 = gpuData.data[i + 3];
+          const r1 = cpuData.data[i];
+          const g1 = cpuData.data[i + 1];
+          const b1 = cpuData.data[i + 2];
+          const a1 = cpuData.data[i + 3];
+          const r2 = gpuData.data[i];
+          const g2 = gpuData.data[i + 1];
+          const b2 = gpuData.data[i + 2];
+          const a2 = gpuData.data[i + 3];
 
           const localMax = Math.max(
             Math.abs(r1 - r2),
@@ -408,10 +687,9 @@
 
           if (localMax > threshold) {
             diffPixels++;
-            diffImageData.data[i] = 255; // R
-            diffImageData.data[i + 3] = 255; // A
+            diffImageData.data[i] = 255;
+            diffImageData.data[i + 3] = 255;
           } else {
-            // Background for matching pixels
             diffImageData.data[i] = r1;
             diffImageData.data[i + 1] = g1;
             diffImageData.data[i + 2] = b1;
@@ -426,6 +704,93 @@
           diffPercent: ((diffPixels / (CANVAS_W * CANVAS_H)) * 100).toFixed(4),
           passed: maxDiff <= threshold,
         };
+      }
+
+      function generateDabPositions(mode, size, spacingPercent) {
+        const spacingPx = size * spacingPercent;
+        if (mode === 'point') {
+          return [
+            { x: 250, y: 150, pressure: 1 },
+            { x: 250, y: 150, pressure: 1 },
+            { x: 250, y: 150, pressure: 1 },
+            { x: 250, y: 150, pressure: 1 },
+            { x: 250, y: 150, pressure: 1 },
+          ];
+        }
+
+        const stamper = new BrushStamper();
+        const dabs = [];
+        stamper.beginStroke();
+
+        if (mode === 'realtime') {
+          const dropRate = 0.15;
+          const jitterAmount = 3;
+          const startX = 50;
+          const endX = 450;
+          const steps = 80;
+
+          for (let i = 0; i <= steps; i++) {
+            if (Math.random() < dropRate) continue;
+            const t = i / steps;
+            const jitterX = (Math.random() - 0.5) * jitterAmount;
+            const jitterY = (Math.random() - 0.5) * jitterAmount;
+            const x = startX + (endX - startX) * t + jitterX;
+            const y = 150 + Math.sin(t * Math.PI * 2) * 50 + jitterY;
+            const basePressure = 0.5 + Math.sin(t * Math.PI) * 0.4;
+            const pressure = Math.max(
+              0.1,
+              Math.min(1.0, basePressure + (Math.random() - 0.5) * 0.2)
+            );
+            dabs.push(...stamper.processPoint(x, y, pressure, spacingPx));
+          }
+          return dabs;
+        }
+
+        const startX = 50;
+        const endX = 450;
+        const steps = 100;
+
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const x = startX + (endX - startX) * t;
+          const y = 150 + Math.sin(t * Math.PI * 2) * 50;
+          const pressure = 0.5 + Math.sin(t * Math.PI) * 0.5;
+          dabs.push(...stamper.processPoint(x, y, pressure, spacingPx));
+        }
+
+        return dabs;
+      }
+
+      function computeAlphaMetrics(canvas) {
+        const ctx = canvas.getContext('2d');
+        const data = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H).data;
+        let alphaSum = 0;
+        let nonZeroPixels = 0;
+        for (let i = 3; i < data.length; i += 4) {
+          const alpha = data[i];
+          alphaSum += alpha;
+          if (alpha > 0) nonZeroPixels++;
+        }
+        return {
+          alphaSum,
+          nonZeroPixels,
+          meanAlpha: alphaSum / (CANVAS_W * CANVAS_H * 255),
+        };
+      }
+
+      function createSeededRandom(seedInput) {
+        let seed = seedInput >>> 0 || 1;
+        return () => {
+          seed = (seed + 0x6d2b79f5) >>> 0;
+          let t = seed;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function clamp01(v) {
+        return Math.max(0, Math.min(1, v));
       }
     </script>
   </body>

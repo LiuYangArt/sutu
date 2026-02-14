@@ -112,4 +112,79 @@ describe('TextureSettings', () => {
       'Pattern already exists, switched to existing item'
     );
   });
+
+  function getSliderRange(label: string): HTMLInputElement {
+    const row = screen.getByText(label).closest('.brush-setting-row');
+    if (!row) {
+      throw new Error(`Missing slider row for ${label}`);
+    }
+    const range = row.querySelector('input[type="range"]');
+    if (!range) {
+      throw new Error(`Missing range input for ${label}`);
+    }
+    return range as HTMLInputElement;
+  }
+
+  function getControlSelect(label: string): HTMLSelectElement {
+    const row = screen.getByText(label).closest('.control-source-row');
+    if (!row) {
+      throw new Error(`Missing control row for ${label}`);
+    }
+    const select = row.querySelector('select');
+    if (!select) {
+      throw new Error(`Missing select input for ${label}`);
+    }
+    return select as HTMLSelectElement;
+  }
+
+  it('disables Minimum Depth, Depth Jitter and Control when Texture Each Tip is off', () => {
+    useToolStore.setState({
+      textureSettings: {
+        ...DEFAULT_TEXTURE_SETTINGS,
+        patternId: 'brush-pattern-1',
+        textureEachTip: false,
+        depthControl: 2,
+      },
+    });
+
+    render(<TextureSettings />);
+
+    expect(getSliderRange('Minimum Depth')).toBeDisabled();
+    expect(getSliderRange('Depth Jitter')).toBeDisabled();
+    expect(getControlSelect('Control')).toBeDisabled();
+  });
+
+  it('keeps only Minimum Depth disabled when Texture Each Tip is on and control is Off', () => {
+    useToolStore.setState({
+      textureSettings: {
+        ...DEFAULT_TEXTURE_SETTINGS,
+        patternId: 'brush-pattern-1',
+        textureEachTip: true,
+        depthControl: 0,
+      },
+    });
+
+    render(<TextureSettings />);
+
+    expect(getSliderRange('Minimum Depth')).toBeDisabled();
+    expect(getSliderRange('Depth Jitter')).not.toBeDisabled();
+    expect(getControlSelect('Control')).not.toBeDisabled();
+  });
+
+  it('enables Minimum Depth when Texture Each Tip is on and control is Pen Pressure', () => {
+    useToolStore.setState({
+      textureSettings: {
+        ...DEFAULT_TEXTURE_SETTINGS,
+        patternId: 'brush-pattern-1',
+        textureEachTip: true,
+        depthControl: 2,
+      },
+    });
+
+    render(<TextureSettings />);
+
+    expect(getSliderRange('Minimum Depth')).not.toBeDisabled();
+    expect(getSliderRange('Depth Jitter')).not.toBeDisabled();
+    expect(getControlSelect('Control')).not.toBeDisabled();
+  });
 });
