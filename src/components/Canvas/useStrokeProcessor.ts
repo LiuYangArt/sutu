@@ -7,7 +7,7 @@ import { FPSCounter } from '@/benchmark/FPSCounter';
 import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import type { GpuStrokeCommitResult, RenderBackend, StrokeCompositeMode } from '@/gpu';
-import { isNativeTabletStreamingBackend } from './inputUtils';
+import { isNativeTabletStreamingState } from './inputUtils';
 
 const MAX_POINTS_PER_FRAME = 80;
 // Photoshop Build-up (Airbrush) rate tuning:
@@ -39,14 +39,6 @@ function isBrushStrokeState(state: string): boolean {
 
 function isStrokeTool(tool: ToolType): boolean {
   return tool === 'brush' || tool === 'eraser';
-}
-
-function isNativeStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
-  const activeBackend =
-    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
-      ? state.activeBackend
-      : state.backend;
-  return state.isStreaming && isNativeTabletStreamingBackend(activeBackend);
 }
 
 interface UseStrokeProcessorParams {
@@ -434,7 +426,7 @@ export function useStrokeProcessor({
 
             let pressure = lastPressureRef.current;
             const tabletState = useTabletStore.getState();
-            const isNativeBackendActive = isNativeStreamingBackend(tabletState);
+            const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
             if (isNativeBackendActive) {
               const pt = tabletState.currentPoint;
               if (pt) {

@@ -164,22 +164,24 @@ impl TabletState {
         }
     }
 
+    fn has_backend(&self, backend: BackendType) -> bool {
+        match backend {
+            BackendType::WinTab => self.wintab.is_some(),
+            BackendType::MacNative => self.macnative.is_some(),
+            BackendType::PointerEvent => self.pointer.is_some(),
+            BackendType::Auto => false,
+        }
+    }
+
     fn active_backend_type(&self) -> Option<BackendType> {
         match self.backend_type {
             BackendType::WinTab => self.wintab.as_ref().map(|_| BackendType::WinTab),
             BackendType::MacNative => self.macnative.as_ref().map(|_| BackendType::MacNative),
             BackendType::PointerEvent => self.pointer.as_ref().map(|_| BackendType::PointerEvent),
-            BackendType::Auto => {
-                auto_backend_priority_for_platform()
-                    .iter()
-                    .copied()
-                    .find(|candidate| match candidate {
-                        BackendType::WinTab => self.wintab.is_some(),
-                        BackendType::MacNative => self.macnative.is_some(),
-                        BackendType::PointerEvent => self.pointer.is_some(),
-                        BackendType::Auto => false,
-                    })
-            }
+            BackendType::Auto => auto_backend_priority_for_platform()
+                .iter()
+                .copied()
+                .find(|candidate| self.has_backend(*candidate)),
         }
     }
 
@@ -430,6 +432,35 @@ fn build_mac_native_backend(
     Ok(macnative)
 }
 
+fn select_auto_backend(state: &TabletState) -> Result<BackendType, String> {
+    auto_backend_priority_for_platform()
+        .iter()
+        .copied()
+        .find(|candidate| state.has_backend(*candidate))
+        .ok_or_else(|| "No tablet backend is available".to_string())
+}
+
+fn start_backend(state: &mut TabletState, backend: BackendType) -> Result<(), String> {
+    match backend {
+        BackendType::WinTab => state
+            .wintab
+            .as_mut()
+            .ok_or_else(|| "WinTab backend is not initialized".to_string())?
+            .start(),
+        BackendType::MacNative => state
+            .macnative
+            .as_mut()
+            .ok_or_else(|| "MacNative backend is not initialized".to_string())?
+            .start(),
+        BackendType::PointerEvent => state
+            .pointer
+            .as_mut()
+            .ok_or_else(|| "PointerEvent backend is not initialized".to_string())?
+            .start(),
+        BackendType::Auto => Err("No tablet backend is available".to_string()),
+    }
+}
+
 fn select_backend(
     state: &mut TabletState,
     requested_backend: BackendType,
@@ -482,15 +513,12 @@ fn select_backend(
                 Ok(pointer) => {
                     state.pointer = Some(pointer);
                     state.backend_type = BackendType::PointerEvent;
-                    state.fallback_reason = Some(format!(
-                        "{}",
-                        combine_normalization_reason(
-                            &normalization_reason,
-                            format!(
-                                "WinTab initialization failed, switched to PointerEvent: {}",
-                                backend_error_or_unknown(&wintab_error, "WinTab")
-                            )
-                        )
+                    state.fallback_reason = Some(combine_normalization_reason(
+                        &normalization_reason,
+                        format!(
+                            "WinTab initialization failed, switched to PointerEvent: {}",
+                            backend_error_or_unknown(&wintab_error, "WinTab")
+                        ),
                     ));
                     return Ok(());
                 }
@@ -515,15 +543,12 @@ fn select_backend(
                 Ok(pointer) => {
                     state.pointer = Some(pointer);
                     state.backend_type = BackendType::PointerEvent;
-                    state.fallback_reason = Some(format!(
-                        "{}",
-                        combine_normalization_reason(
-                            &normalization_reason,
-                            format!(
-                                "MacNative initialization failed, switched to PointerEvent: {}",
-                                backend_error_or_unknown(&macnative_error, "MacNative")
-                            )
-                        )
+                    state.fallback_reason = Some(combine_normalization_reason(
+                        &normalization_reason,
+                        format!(
+                            "MacNative initialization failed, switched to PointerEvent: {}",
+                            backend_error_or_unknown(&macnative_error, "MacNative")
+                        ),
                     ));
                     return Ok(());
                 }
@@ -560,15 +585,12 @@ fn select_backend(
                     Ok(pointer) => {
                         state.pointer = Some(pointer);
                         state.backend_type = BackendType::PointerEvent;
-                        state.fallback_reason = Some(format!(
-                            "{}",
-                            combine_normalization_reason(
-                                &normalization_reason,
-                                format!(
-                                    "Auto fallback to PointerEvent after WinTab init failure: {}",
-                                    backend_error_or_unknown(&wintab_error, "WinTab")
-                                )
-                            )
+                        state.fallback_reason = Some(combine_normalization_reason(
+                            &normalization_reason,
+                            format!(
+                                "Auto fallback to PointerEvent after WinTab init failure: {}",
+                                backend_error_or_unknown(&wintab_error, "WinTab")
+                            ),
                         ));
                         return Ok(());
                     }
@@ -595,15 +617,12 @@ fn select_backend(
                     Ok(pointer) => {
                         state.pointer = Some(pointer);
                         state.backend_type = BackendType::PointerEvent;
-                        state.fallback_reason = Some(format!(
-                            "{}",
-                            combine_normalization_reason(
-                                &normalization_reason,
-                                format!(
-                                    "Auto fallback to PointerEvent after MacNative init failure: {}",
-                                    backend_error_or_unknown(&macnative_error, "MacNative")
-                                )
-                            )
+                        state.fallback_reason = Some(combine_normalization_reason(
+                            &normalization_reason,
+                            format!(
+                                "Auto fallback to PointerEvent after MacNative init failure: {}",
+                                backend_error_or_unknown(&macnative_error, "MacNative")
+                            ),
                         ));
                         return Ok(());
                     }
@@ -770,52 +789,14 @@ pub fn start_tablet() -> Result<(), String> {
     let state = get_tablet_state();
     let mut state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    let start_result = match state.backend_type {
-        BackendType::WinTab => match state.wintab.as_mut() {
-            Some(backend) => backend.start(),
-            None => Err("WinTab backend is not initialized".to_string()),
-        },
-        BackendType::MacNative => match state.macnative.as_mut() {
-            Some(backend) => backend.start(),
-            None => Err("MacNative backend is not initialized".to_string()),
-        },
-        BackendType::PointerEvent => match state.pointer.as_mut() {
-            Some(backend) => backend.start(),
-            None => Err("PointerEvent backend is not initialized".to_string()),
-        },
-        BackendType::Auto => {
-            let selected_backend = auto_backend_priority_for_platform()
-                .iter()
-                .copied()
-                .find(|candidate| match candidate {
-                    BackendType::WinTab => state.wintab.is_some(),
-                    BackendType::MacNative => state.macnative.is_some(),
-                    BackendType::PointerEvent => state.pointer.is_some(),
-                    BackendType::Auto => false,
-                })
-                .ok_or_else(|| "No tablet backend is available".to_string())?;
-
-            state.backend_type = selected_backend;
-            match selected_backend {
-                BackendType::WinTab => state
-                    .wintab
-                    .as_mut()
-                    .ok_or_else(|| "WinTab backend is not initialized".to_string())?
-                    .start(),
-                BackendType::MacNative => state
-                    .macnative
-                    .as_mut()
-                    .ok_or_else(|| "MacNative backend is not initialized".to_string())?
-                    .start(),
-                BackendType::PointerEvent => state
-                    .pointer
-                    .as_mut()
-                    .ok_or_else(|| "PointerEvent backend is not initialized".to_string())?
-                    .start(),
-                BackendType::Auto => Err("No tablet backend is available".to_string()),
-            }
-        }
+    let backend_to_start = if state.backend_type == BackendType::Auto {
+        let selected_backend = select_auto_backend(&state)?;
+        state.backend_type = selected_backend;
+        selected_backend
+    } else {
+        state.backend_type
     };
+    let start_result = start_backend(&mut state, backend_to_start);
 
     if let Err(start_err) = start_result {
         if is_native_streaming_backend(state.backend_type) {

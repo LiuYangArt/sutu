@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { RawInputPoint } from '@/stores/tablet';
-import { getEffectiveInputData, isNativeTabletStreamingBackend } from '../inputUtils';
+import {
+  getEffectiveInputData,
+  isNativeTabletStreamingBackend,
+  isNativeTabletStreamingState,
+} from '../inputUtils';
 
 function createRawPoint(partial: Partial<RawInputPoint> = {}): RawInputPoint {
   return {
@@ -142,5 +146,29 @@ describe('inputUtils.getEffectiveInputData', () => {
     expect(isNativeTabletStreamingBackend('macnative')).toBe(true);
     expect(isNativeTabletStreamingBackend('pointerevent')).toBe(false);
     expect(isNativeTabletStreamingBackend('auto')).toBe(false);
+  });
+
+  it('流式状态判断优先使用 activeBackend 并要求 streaming=true', () => {
+    expect(
+      isNativeTabletStreamingState({
+        isStreaming: true,
+        activeBackend: 'macnative',
+        backend: 'pointerevent',
+      })
+    ).toBe(true);
+    expect(
+      isNativeTabletStreamingState({
+        isStreaming: true,
+        activeBackend: '',
+        backend: 'wintab',
+      })
+    ).toBe(true);
+    expect(
+      isNativeTabletStreamingState({
+        isStreaming: false,
+        activeBackend: 'wintab',
+        backend: 'wintab',
+      })
+    ).toBe(false);
   });
 });

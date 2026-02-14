@@ -69,6 +69,31 @@ export function isNativeTabletStreamingBackend(activeBackend: string | null | un
   return normalized === 'wintab' || normalized === 'macnative';
 }
 
+export interface TabletStreamingBackendStateLike {
+  backend: string | null | undefined;
+  activeBackend: string | null | undefined;
+  isStreaming: boolean;
+}
+
+export function resolveStreamingBackendName(
+  activeBackend: string | null | undefined,
+  backend: string | null | undefined
+): string | null {
+  if (typeof activeBackend === 'string' && activeBackend.length > 0) {
+    return activeBackend;
+  }
+  if (typeof backend === 'string' && backend.length > 0) {
+    return backend;
+  }
+  return null;
+}
+
+export function isNativeTabletStreamingState(state: TabletStreamingBackendStateLike): boolean {
+  if (!state.isStreaming) return false;
+  const backendName = resolveStreamingBackendName(state.activeBackend, state.backend);
+  return isNativeTabletStreamingBackend(backendName);
+}
+
 function clampSignedUnit(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(-1, Math.min(1, value));

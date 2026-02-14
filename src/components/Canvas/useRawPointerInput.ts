@@ -1,6 +1,6 @@
 import { useEffect, useRef, MutableRefObject } from 'react';
 import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
-import { getEffectiveInputData, isNativeTabletStreamingBackend } from './inputUtils';
+import { getEffectiveInputData, isNativeTabletStreamingState } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 
 /**
@@ -15,14 +15,6 @@ import { clientToCanvasPoint } from './canvasGeometry';
 // Check if pointerrawupdate is supported (non-standard, mainly Chromium)
 export const supportsPointerRawUpdate =
   typeof window !== 'undefined' && 'onpointerrawupdate' in window;
-
-function isNativeStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
-  const activeBackend =
-    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
-      ? state.activeBackend
-      : state.backend;
-  return state.isStreaming && isNativeTabletStreamingBackend(activeBackend);
-}
 
 type QueuedPoint = {
   x: number;
@@ -99,7 +91,7 @@ export function useRawPointerInput({
 
       // Get tablet state for pressure resolution
       const tabletState = useTabletStore.getState();
-      const isNativeBackendActive = isNativeStreamingBackend(tabletState);
+      const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
       const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
       const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
         ? readPointBufferSince(nativeSeqCursorRef.current)

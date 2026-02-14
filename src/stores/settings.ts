@@ -235,18 +235,26 @@ function resolveDefaultTabletBackend(): TabletSettings['backend'] {
   return 'pointerevent';
 }
 
+function parseTabletBackend(value: unknown): TabletSettings['backend'] | null {
+  if (value === 'auto') return 'auto';
+  if (value === 'wintab') return 'wintab';
+  if (value === 'macnative') return 'macnative';
+  if (value === 'pointerevent') return 'pointerevent';
+  return null;
+}
+
 function normalizeTabletBackend(value: unknown): TabletSettings['backend'] {
-  const resolved: TabletSettings['backend'] =
-    value === 'auto' || value === 'wintab' || value === 'macnative' || value === 'pointerevent'
-      ? value
-      : resolveDefaultTabletBackend();
+  const parsedBackend = parseTabletBackend(value);
+  const resolved = parsedBackend ?? resolveDefaultTabletBackend();
 
   const platform = resolvePlatformKind();
   if (platform === 'windows') {
-    return resolved === 'macnative' ? 'wintab' : resolved;
+    if (resolved === 'macnative') return 'wintab';
+    return resolved;
   }
   if (platform === 'macos') {
-    return resolved === 'wintab' ? 'macnative' : resolved;
+    if (resolved === 'wintab') return 'macnative';
+    return resolved;
   }
 
   return 'pointerevent';
@@ -264,8 +272,7 @@ function shouldAutoMigrateMacBackend(loadedTablet: unknown): boolean {
     partial,
     'backendMigratedToMacNativeAt'
   );
-  const marker = normalizeBackendMigrationMarker(partial.backendMigratedToMacNativeAt);
-  return partial.backend === 'pointerevent' && !hasMarkerField && marker === null;
+  return partial.backend === 'pointerevent' && !hasMarkerField;
 }
 
 function cloneDefaultNewFileSettings(): NewFileSettings {

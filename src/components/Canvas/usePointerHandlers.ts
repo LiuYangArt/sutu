@@ -4,7 +4,7 @@ import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
-import { getEffectiveInputData, isNativeTabletStreamingBackend } from './inputUtils';
+import { getEffectiveInputData, isNativeTabletStreamingState } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 
 function pointerEventToCanvasPoint(
@@ -104,14 +104,6 @@ interface UsePointerHandlersParams {
   lastInputPosRef: MutableRefObject<{ x: number; y: number } | null>;
   latencyProfilerRef: MutableRefObject<LatencyProfiler>;
   onBeforeCanvasMutation?: () => void;
-}
-
-function isNativeStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
-  const activeBackend =
-    typeof state.activeBackend === 'string' && state.activeBackend.length > 0
-      ? state.activeBackend
-      : state.backend;
-  return state.isStreaming && isNativeTabletStreamingBackend(activeBackend);
 }
 
 function isStrokeTool(tool: ToolType): boolean {
@@ -277,7 +269,7 @@ export function usePointerHandlers({
       }
       if (isStrokeTool(currentTool)) {
         const tabletState = useTabletStore.getState();
-        const isNativeBackendActive = isNativeStreamingBackend(tabletState);
+        const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
         // Synthetic replay events are not trusted; keep captured pressure instead of
         // overriding with live native stream.
         const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
@@ -529,7 +521,7 @@ export function usePointerHandlers({
       }
 
       const tabletState = useTabletStore.getState();
-      const isNativeBackendActive = isNativeStreamingBackend(tabletState);
+      const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
       // Replay events should consume recorded pressure/tilt and must not be polluted
       // by current tablet stream state.
       const shouldUseNativeBackend =
