@@ -3,16 +3,24 @@
 //! Uses AppKit `NSEvent` local monitors to capture tablet pressure/tilt/rotation/proximity
 //! and feeds them into the existing `tablet-event-v2` queue.
 
+#[cfg(target_os = "macos")]
 use super::backend::{
-    default_event_queue_capacity, InputEventQueue, InputPhase, InputQueueMetrics, InputSampleV2,
-    InputSource, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+    default_event_queue_capacity, InputEventQueue, InputPhase, InputSampleV2, InputSource,
 };
+use super::backend::{
+    InputQueueMetrics, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+};
+#[cfg(target_os = "macos")]
 use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
 const MAC_NATIVE_STREAM_ID: u64 = 3;
+#[cfg(target_os = "macos")]
 const MONITOR_SETUP_TIMEOUT_MS: u64 = 2_000;
+#[cfg(target_os = "macos")]
 const MONITOR_TEARDOWN_TIMEOUT_MS: u64 = 500;
 
+#[cfg(any(target_os = "macos", test))]
 fn normalize_pressure(value: f32) -> f32 {
     if !value.is_finite() {
         return 0.0;
@@ -20,6 +28,7 @@ fn normalize_pressure(value: f32) -> f32 {
     value.clamp(0.0, 1.0)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn normalize_tilt_component(value: f64) -> f32 {
     if !value.is_finite() {
         return 0.0;
@@ -27,6 +36,7 @@ fn normalize_tilt_component(value: f64) -> f32 {
     (value * 90.0).clamp(-90.0, 90.0) as f32
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn normalize_rotation_degrees(value: f32) -> f32 {
     if !value.is_finite() {
         return 0.0;
@@ -34,6 +44,7 @@ fn normalize_rotation_degrees(value: f32) -> f32 {
     value.rem_euclid(360.0)
 }
 
+#[cfg(target_os = "macos")]
 fn normalize_device_timestamp_us(timestamp_seconds: f64, fallback_host_time_us: u64) -> u64 {
     if !timestamp_seconds.is_finite() || timestamp_seconds < 0.0 {
         return fallback_host_time_us;
@@ -41,6 +52,7 @@ fn normalize_device_timestamp_us(timestamp_seconds: f64, fallback_host_time_us: 
     (timestamp_seconds * 1_000_000.0).max(0.0) as u64
 }
 
+#[cfg(target_os = "macos")]
 fn normalize_pointer_id(raw_pointer_id: u64) -> u32 {
     if raw_pointer_id > u32::MAX as u64 {
         u32::MAX

@@ -88,6 +88,12 @@ pnpm format           # 格式化代码
 - 日志: 使用 `tracing`，不用 `println!`
 - 错误: Tauri 命令返回 `Result<T, String>`
 
+### Rust 跨平台约束
+
+- 平台专属符号（`use`、`const`、`fn`、`struct`、`impl`）必须与其使用点保持同层 `#[cfg(...)]`，禁止“声明跨平台、使用单平台”。
+- 仅被单平台主代码和单测共用的工具函数，使用 `#[cfg(any(target_os = \"<os>\", test))]`，避免本地开发平台出现 `dead_code/unused`。
+- 修改 `src-tauri/src/input/` 后，至少执行一次 `cargo check --manifest-path src-tauri/Cargo.toml --lib`；PR 以 Windows + macOS 的 Rust lint 全绿为合并前提。
+
 ### 文件大小限制
 
 - **单个文件不超过 1000 行**
