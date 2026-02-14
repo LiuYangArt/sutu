@@ -2,9 +2,7 @@ name: Issue Triage
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
-    - cron: '15 2 * * *'
-    - cron: '*/30 * * * *'
+    - cron: '0 */8 * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -52,10 +50,6 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             mode="${{ inputs.mode }}"
-          elif [[ "${{ github.event.schedule }}" == "*/30 * * * *" ]]; then
-            mode="retry"
-          elif [[ "${{ github.event.schedule }}" == "15 2 * * *" ]]; then
-            mode="full"
           else
             mode="incremental"
           fi
