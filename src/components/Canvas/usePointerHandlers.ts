@@ -298,6 +298,7 @@ export function usePointerHandlers({
           tabletState.currentPoint,
           pe
         );
+        pressure = effectiveInput.pressure;
         tiltX = effectiveInput.tiltX;
         tiltY = effectiveInput.tiltY;
         rotation = effectiveInput.rotation;

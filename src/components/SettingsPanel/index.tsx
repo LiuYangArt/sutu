@@ -69,8 +69,10 @@ function normalizeBackendType(value: string | null | undefined): BackendType {
 
 interface PointerEventDiagnosticsSnapshot {
   eventType: string;
+  pointerType: string;
   pointerId: number;
   pressure: number;
+  webkitForce: number | null;
   tiltX: number;
   tiltY: number;
   normalizedTiltX: number;
@@ -481,8 +483,8 @@ function TabletSettings() {
         twist?: number;
         altitudeAngle?: number;
         azimuthAngle?: number;
+        webkitForce?: number;
       };
-      if (pe.pointerType !== 'pen') return;
 
       const isHighFrequencyPointerEvent =
         pe.type === 'pointermove' || pe.type === 'pointerrawupdate';
@@ -505,8 +507,10 @@ function TabletSettings() {
 
       pending = {
         eventType: pe.type,
+        pointerType: typeof pe.pointerType === 'string' ? pe.pointerType : 'unknown',
         pointerId: Number.isFinite(pe.pointerId) ? pe.pointerId : 0,
         pressure: Number.isFinite(pe.pressure) ? pe.pressure : 0,
+        webkitForce: Number.isFinite(pe.webkitForce) ? pe.webkitForce! : null,
         tiltX: rawTiltX,
         tiltY: rawTiltY,
         normalizedTiltX: normalizeTiltDegrees(rawTiltX),
@@ -543,9 +547,15 @@ function TabletSettings() {
   const pointerRawUpdateSupported = typeof window !== 'undefined' && 'onpointerrawupdate' in window;
   const liveInputSourceHint = isWinTabActive
     ? 'Source: backend tablet-event-v2 (WinTab packet stream)'
-    : `Source: window PointerEvent (pointerType=pen only) | pointerrawupdate support: ${
+    : `Source: window PointerEvent (all pointer types) | pointerrawupdate support: ${
         pointerRawUpdateSupported ? 'Yes' : 'No'
       }`;
+  const pointerEventLooksMouseOnly =
+    !isWinTabActive &&
+    pointerDiag !== null &&
+    pointerDiag.pointerType === 'mouse' &&
+    pointerDiag.pressure <= 0 &&
+    (pointerDiag.webkitForce === null || pointerDiag.webkitForce <= 0);
 
   return (
     <div className="settings-content">
@@ -759,12 +769,20 @@ function TabletSettings() {
                 <span>{pointerDiag.eventType}</span>
               </div>
               <div className="status-row">
+                <span>Pointer Type:</span>
+                <span>{pointerDiag.pointerType}</span>
+              </div>
+              <div className="status-row">
                 <span>Pointer ID:</span>
                 <span>{pointerDiag.pointerId}</span>
               </div>
               <div className="status-row">
                 <span>Pressure:</span>
                 <span>{toFixed(pointerDiag.pressure, 4)}</span>
+              </div>
+              <div className="status-row">
+                <span>WebKit Force:</span>
+                <span>{toFixed(pointerDiag.webkitForce ?? Number.NaN, 4)}</span>
               </div>
               <div className="status-row">
                 <span>Tilt X / Y (raw deg):</span>
@@ -802,10 +820,18 @@ function TabletSettings() {
                 <span>Event Timestamp:</span>
                 <span>{toFixed(pointerDiag.timeStamp, 1)} ms</span>
               </div>
+              {pointerEventLooksMouseOnly && (
+                <div className="status-row status-row-warning">
+                  <span>Warning:</span>
+                  <span>
+                    Stylus is reported as mouse by current WebView path; pressure is unavailable.
+                  </span>
+                </div>
+              )}
             </>
           ) : (
             <div className="tablet-live-empty">
-              No pen PointerEvent received. Move the pen into the app window and hover or touch down
+              No PointerEvent received yet. Move the pen into the app window and hover or touch down
               to see live updates here.
             </div>
           )}

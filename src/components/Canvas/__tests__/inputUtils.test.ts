@@ -21,6 +21,9 @@ function createPointerEvent(
     twist?: number;
     altitudeAngle?: number;
     azimuthAngle?: number;
+    webkitForce?: number;
+    WEBKIT_FORCE_AT_MOUSE_DOWN?: number;
+    WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN?: number;
   } = {}
 ): PointerEvent {
   return {
@@ -31,7 +34,10 @@ function createPointerEvent(
     twist: init.twist ?? 0,
     altitudeAngle: init.altitudeAngle,
     azimuthAngle: init.azimuthAngle,
-  } as PointerEvent;
+    webkitForce: init.webkitForce,
+    WEBKIT_FORCE_AT_MOUSE_DOWN: init.WEBKIT_FORCE_AT_MOUSE_DOWN,
+    WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN: init.WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN,
+  } as unknown as PointerEvent;
 }
 
 describe('inputUtils.getEffectiveInputData', () => {
@@ -66,6 +72,29 @@ describe('inputUtils.getEffectiveInputData', () => {
       tiltY: -18 / 90,
       rotation: 123,
     });
+  });
+
+  it('非 WinTab 下 pressure=0 时回退 webkitForce', () => {
+    const evt = createPointerEvent({
+      pointerType: 'mouse',
+      pressure: 0,
+      webkitForce: 1.5,
+      WEBKIT_FORCE_AT_MOUSE_DOWN: 1,
+      WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN: 2,
+    });
+    const result = getEffectiveInputData(evt, false, [], null);
+    expect(result.pressure).toBeCloseTo(0.5, 6);
+  });
+
+  it('非 WinTab 下样本 pressure 为 synthetic 0.5 时回退 fallbackEvent webkitForce', () => {
+    const sampled = createPointerEvent({ pointerType: 'mouse', pressure: 0.5, webkitForce: 0 });
+    const fallback = createPointerEvent({
+      pointerType: 'mouse',
+      pressure: 0.5,
+      webkitForce: 2.4,
+    });
+    const result = getEffectiveInputData(sampled, false, [], null, fallback);
+    expect(result.pressure).toBeCloseTo(0.8, 6);
   });
 
   it('WinTab 优先使用 buffered 点', () => {

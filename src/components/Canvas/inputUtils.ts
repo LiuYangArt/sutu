@@ -1,9 +1,66 @@
 import { RawInputPoint } from '@/stores/tablet';
 
+type WebKitPointerEvent = PointerEvent & {
+  webkitForce?: number;
+  WEBKIT_FORCE_AT_MOUSE_DOWN?: number;
+  WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN?: number;
+};
+
 function getWinTabPressureFallback(evt: PointerEvent): number {
   if (evt.pointerType === 'pen') return 0;
   if (evt.pressure > 0) return evt.pressure;
   return 0.5;
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function getWebKitPressure(evt: PointerEvent): number | null {
+  const webkitEvt = evt as WebKitPointerEvent;
+  const force = webkitEvt.webkitForce;
+  if (!Number.isFinite(force) || force! <= 0) return null;
+
+  const base = webkitEvt.WEBKIT_FORCE_AT_MOUSE_DOWN;
+  const max = webkitEvt.WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN;
+  if (Number.isFinite(base) && Number.isFinite(max) && max! > base!) {
+    return clampUnit((force! - base!) / (max! - base!));
+  }
+
+  // Fallback range normalization for WebKit variants.
+  return clampUnit(force! <= 1 ? force! : force! / 3);
+}
+
+function resolvePointerPressure(evt: PointerEvent, fallbackEvent?: PointerEvent): number {
+  const raw = evt.pressure;
+  const hasFinitePressure = Number.isFinite(raw);
+  const pressure = hasFinitePressure ? clampUnit(raw) : 0;
+  const likelySyntheticMousePressure =
+    evt.pointerType !== 'pen' && Math.abs(pressure - 0.5) <= 1e-6;
+  const needsFallback = !hasFinitePressure || pressure <= 0 || likelySyntheticMousePressure;
+
+  if (!needsFallback) {
+    return pressure;
+  }
+
+  const webkitPressure = getWebKitPressure(evt);
+  if (webkitPressure !== null) {
+    return webkitPressure;
+  }
+
+  if (fallbackEvent && fallbackEvent !== evt) {
+    const fallbackWebKitPressure = getWebKitPressure(fallbackEvent);
+    if (fallbackWebKitPressure !== null) {
+      return fallbackWebKitPressure;
+    }
+    const fallbackPressure = fallbackEvent.pressure;
+    if (Number.isFinite(fallbackPressure) && fallbackPressure > 0) {
+      return clampUnit(fallbackPressure);
+    }
+  }
+
+  return pressure;
 }
 
 function clampSignedUnit(value: number): number {
@@ -100,10 +157,11 @@ export function getEffectiveInputData(
   fallbackEvent?: PointerEvent
 ): { pressure: number; tiltX: number; tiltY: number; rotation: number } {
   const pointerOrientation = resolvePointerOrientation(evt, fallbackEvent);
+  const pointerPressure = resolvePointerPressure(evt, fallbackEvent);
 
   if (!isWinTabActive) {
     return {
-      pressure: evt.pressure,
+      pressure: pointerPressure,
       tiltX: pointerOrientation.tiltX,
       tiltY: pointerOrientation.tiltY,
       rotation: pointerOrientation.rotation,
