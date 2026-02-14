@@ -5,20 +5,25 @@ import { appHyphenStorageKey } from '@/constants/appMeta';
 interface PersistedBrushSettingsPayload {
   state?: {
     recentSwatches?: string[];
-    brushTexture?: {
-      id?: string;
-      width?: number;
-      height?: number;
-    } | null;
+    brushTexture?: PersistedTextureRef | null;
     brushProfile?: {
-      texture?: {
-        id?: string;
-        width?: number;
-        height?: number;
-      } | null;
+      texture?: PersistedTextureRef | null;
+      dualBrush?: PersistedDualBrushRef;
     };
+    dualBrush?: PersistedDualBrushRef;
   };
   version?: number;
+}
+
+interface PersistedTextureRef {
+  id?: string;
+  width?: number;
+  height?: number;
+}
+
+interface PersistedDualBrushRef {
+  brushId?: string | null;
+  texture?: PersistedTextureRef | null;
 }
 
 function readPersistedBrushSettings(): PersistedBrushSettingsPayload {
@@ -270,6 +275,80 @@ describe('ToolStore', () => {
 
       const state = useToolStore.getState();
       expect(state.recentSwatches).toEqual([]);
+    });
+
+    it('rehydrates dual brush texture from same-version payload for startup restore', async () => {
+      const store = useToolStore.getState();
+      store.setDualBrushEnabled(true);
+      store.setDualBrush({
+        enabled: true,
+        brushId: 'dual-texture-tip-1',
+        brushName: 'Dual Tip 1',
+        texture: {
+          id: 'dual-texture-tip-1',
+          data: '',
+          width: 72,
+          height: 48,
+        },
+      });
+
+      const persistedRaw = window.localStorage.getItem(appHyphenStorageKey('brush-settings'));
+      expect(persistedRaw).toBeTruthy();
+      const parsed = readPersistedBrushSettings();
+      expect(parsed.state?.dualBrush?.texture?.id).toBe('dual-texture-tip-1');
+
+      resetToolState();
+      window.localStorage.setItem(appHyphenStorageKey('brush-settings'), persistedRaw!);
+      await useToolStore.persist.rehydrate();
+
+      const state = useToolStore.getState();
+      expect(state.dualBrushEnabled).toBe(true);
+      expect(state.dualBrush.brushId).toBe('dual-texture-tip-1');
+      expect(state.dualBrush.texture?.id).toBe('dual-texture-tip-1');
+      expect(state.dualBrush.texture?.width).toBe(72);
+      expect(state.dualBrush.texture?.height).toBe(48);
+    });
+
+    it('migrates v8 payload by restoring dualBrush.texture from brushProfile', async () => {
+      window.localStorage.setItem(
+        appHyphenStorageKey('brush-settings'),
+        JSON.stringify({
+          state: {
+            dualBrushEnabled: true,
+            dualBrush: {
+              ...DEFAULT_DUAL_BRUSH,
+              enabled: true,
+              brushId: 'legacy-dual-tip',
+              texture: null,
+            },
+            brushProfile: {
+              dualBrushEnabled: true,
+              dualBrush: {
+                ...DEFAULT_DUAL_BRUSH,
+                enabled: true,
+                brushId: 'legacy-dual-tip',
+                texture: {
+                  id: 'legacy-dual-tip',
+                  data: '',
+                  width: 40,
+                  height: 64,
+                },
+              },
+            },
+          },
+          version: 8,
+        })
+      );
+
+      await useToolStore.persist.rehydrate();
+
+      const state = useToolStore.getState();
+      expect(state.dualBrushEnabled).toBe(true);
+      expect(state.dualBrush.brushId).toBe('legacy-dual-tip');
+      expect(state.dualBrush.texture?.id).toBe('legacy-dual-tip');
+      expect(state.dualBrush.texture?.width).toBe(40);
+      expect(state.dualBrush.texture?.height).toBe(64);
+      expect(state.brushProfile.dualBrush.texture?.id).toBe('legacy-dual-tip');
     });
   });
 

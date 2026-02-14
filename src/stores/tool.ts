@@ -1211,7 +1211,7 @@ export const useToolStore = create<ToolState>()(
     },
     {
       name: appHyphenStorageKey('brush-settings'),
-      version: 8,
+      version: 9,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
         if (!isRecord(persistedState)) {
@@ -1340,24 +1340,7 @@ export const useToolStore = create<ToolState>()(
             dualBrushEnabled: state.dualBrushEnabled,
             brushProfile: serializeProfile(state.brushProfile),
             eraserProfile: serializeProfile(state.eraserProfile),
-            dualBrush: state.dualBrush
-              ? {
-                  enabled: state.dualBrush.enabled,
-                  brushId: state.dualBrush.brushId,
-                  brushIndex: state.dualBrush.brushIndex,
-                  brushName: state.dualBrush.brushName,
-                  mode: state.dualBrush.mode,
-                  flip: state.dualBrush.flip,
-                  size: state.dualBrush.size,
-                  sizeRatio: state.dualBrush.sizeRatio,
-                  spacing: state.dualBrush.spacing,
-                  roundness: state.dualBrush.roundness,
-                  scatter: state.dualBrush.scatter,
-                  bothAxes: state.dualBrush.bothAxes,
-                  count: state.dualBrush.count,
-                  // texture is excluded - it's runtime data
-                }
-              : state.dualBrush,
+            dualBrush: serializeDualBrush(state.dualBrush),
           };
         })() as unknown as ToolState,
     }
