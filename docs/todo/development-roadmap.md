@@ -6,6 +6,9 @@
 
 本文档规划 PaintBoard 从脚手架到可用产品的完整开发路径。采用**渐进式开发**策略，优先实现核心绘画功能，逐步完善专业特性。
 
+> [!NOTE]
+> 本路线图中的 M0（WinTab 优先）为历史阶段决策记录。当前项目已演进为 Windows + macOS 双平台，输入策略为平台原生后端优先（Windows: WinTab，macOS: MacNative）并保留 PointerEvent 回退。
+
 > [!IMPORTANT]
 > 本文档是产品路线图（M0~M7）。`docs/design/done/2026-02-05-gpu-first-brush-design.md` 使用的是独立里程碑编号（同样含 M0~M5），两者编号不一一对应。涉及 GPU-first 实时绘画链路时，以该归档文档为准。
 

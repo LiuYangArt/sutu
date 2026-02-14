@@ -1,4 +1,4 @@
-**Sutu** 速涂是一个专业绘画软件，追求低延迟数位板输入体验。目标平台 windows x86, 未来计划兼容macos和ipad
+**Sutu** 速涂是一个专业绘画软件，追求低延迟数位板输入体验。当前目标平台为 Windows + macOS，未来计划兼容 iPad。
 这是一个纯AI vibe-coding项目，所有开发方案以ai native优先。
 
 | 技术栈   | 说明                         |
@@ -39,7 +39,7 @@ pnpm format           # 格式化代码
 │                    Tauri 应用                        │
 ├─────────────────────────────────────────────────────┤
 │  Rust 后端 (src-tauri/)                             │
-│  ├── input/     → 数位板输入（WinTab/PointerEvent） │
+│  ├── input/     → 数位板输入（WinTab/MacNative/PointerEvent） │
 │  ├── brush/     → [Reserved] 纯数值计算备用          │
 │  └── commands.rs→ Tauri IPC 命令                    │
 ├─────────────────────────────────────────────────────┤
@@ -55,7 +55,7 @@ pnpm format           # 格式化代码
 
 ### 数据流: 笔触输入 → 画布渲染
 
-1. **WinTab/PointerEvent** 捕获原始输入 (Rust)
+1. **平台原生后端/PointerEvent** 捕获原始输入 (Rust)
 2. **IPC** 传输至前端
 3. **Frontend Brush Engine** (TS): 插值、抖动、生成 Dabs
 4. **Renderer** (WebGPU): 实时写入 Stroke Buffer 并合成到显示层（绘画阶段不做 readback）
@@ -116,7 +116,9 @@ pnpm format           # 格式化代码
 - `useDocumentStore` - 文档状态、图层管理
 - `useToolStore` - 当前工具、笔刷设置、颜色
 
-### 持久化设置： C:\Users\<用户名>\AppData\Roaming\com.paintboard\settings.json
+### 持久化设置：
+- Windows: `C:\Users\<用户名>\AppData\Roaming\com.paintboard\settings.json`
+- macOS: `~/Library/Application Support/com.paintboard/settings.json`
 
 ## 相关文档
 

@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-**PaintBoard** 是一款专业级绘画软件，目标是在 Windows 平台上提供：
+**PaintBoard** 是一款专业级绘画软件，目标是在 Windows + macOS 双平台上提供：
 
 - 极低延迟的压感输入响应（< 12ms）
 - Photoshop 级别的图层和混合模式
@@ -22,7 +22,7 @@
 | **应用框架** | Tauri 2.x              | Rust 后端 + Web 前端，兼顾性能与开发效率 |
 | **前端框架** | React 18 + TypeScript  | 生态成熟，组件化开发                     |
 | **渲染引擎** | WebGPU                 | 现代 GPU API，接近原生性能               |
-| **输入采集** | WinTab + PointerEvent  | WinTab 提供低延迟输入，PointerEvent 负责跨平台兜底 |
+| **输入采集** | WinTab + MacNative + PointerEvent  | 平台原生后端优先提供低延迟输入，PointerEvent 负责跨平台兜底 |
 | **笔刷计算** | Rust (可选编译为 WASM) | 高性能计算，零 GC 开销                   |
 | **文件格式** | psd crate + 自定义格式 | PSD 兼容 + 高效内部格式                  |
 
@@ -42,7 +42,7 @@
 │  │  │ Input       │  │ Brush       │  │ File I/O            │ │ │
 │  │  │ Pipeline    │  │ Compute     │  │                     │ │ │
 │  │  │             │  │ (Reserve)   │  │ - PSD read/write    │ │ │
-│  │  │ WinTab/Pointer │─►│ 纯数值计算  │  │ - 项目文件          │ │ │
+│  │  │ WinTab/MacNative/Pointer │─►│ 纯数值计算  │  │ - 项目文件          │ │ │
 │  │  │ 压感采集    │  │ 无渲染      │  │ - 自动保存          │ │ │
 │  │  │             │  │             │  │                     │ │ │
 │  │  └─────────────┘  └──────┬──────┘  └─────────────────────┘ │ │
