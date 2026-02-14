@@ -193,7 +193,7 @@ echo.
 echo  Sutu Issue Automation Helper
 echo  ============================
 echo.
-echo  Usage: .dev\issue.bat [command]
+echo  Usage: dev\issue.bat [command]
 echo.
 echo  Commands:
 echo    today                 Show today's priorities

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sutu development helper for macOS/Linux
 # Usage:
-#   ./.dev/dev.sh                # interactive menu
-#   ./.dev/dev.sh <command>      # command mode
+#   ./dev/dev.sh                # interactive menu
+#   ./dev/dev.sh <command>      # command mode
 
 set -u
 
@@ -151,7 +151,7 @@ install_toolchain() {
 
 install_deps() {
   if ! command -v pnpm >/dev/null 2>&1; then
-    log_err "pnpm is missing. Run: ./.dev/dev.sh install-toolchain"
+    log_err "pnpm is missing. Run: ./dev/dev.sh install-toolchain"
     return 1
   fi
   log_step "Installing project dependencies..."
@@ -300,8 +300,8 @@ Sutu Development Scripts (macOS/Linux)
 ======================================
 
 Usage:
-  ./.dev/dev.sh                # interactive menu
-  ./.dev/dev.sh <command>      # command mode
+  ./dev/dev.sh                # interactive menu
+  ./dev/dev.sh <command>      # command mode
 
 Commands:
   bootstrap          Install toolchain + install project dependencies

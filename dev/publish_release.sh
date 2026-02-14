@@ -2,7 +2,8 @@
 
 set -u
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$PROJECT_DIR" || exit 1
 
 if [[ -t 1 ]]; then
@@ -119,7 +120,7 @@ run_release_flow() {
   read -r run_local_check
 
   if is_yes "$run_local_check"; then
-    if ! bash .dev/pre_release_check.sh; then
+    if ! bash "${SCRIPT_DIR}/pre_release_check.sh"; then
       printf "\n"
       log_err "Local checks failed."
       printf 'Continue release anyway? Y/N: '

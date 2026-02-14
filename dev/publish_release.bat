@@ -66,7 +66,7 @@ set "run_local_check="
 set /p "run_local_check=Run local checks first? Y/N [Y recommended]: "
 
 if /i "!run_local_check!"=="Y" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File ".dev\pre_release_check.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pre_release_check.ps1"
     if errorlevel 1 (
         echo.
         echo [ERROR] Local checks failed.
