@@ -4,13 +4,19 @@
 //! This is the preferred backend for Wacom tablets.
 
 use super::backend::{
-    default_event_queue_capacity, InputEventQueue, InputPhase, InputQueueMetrics, InputSampleV2,
-    InputSource, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+    default_event_queue_capacity, InputEventQueue, InputQueueMetrics, TabletBackend, TabletConfig,
+    TabletEventV2, TabletInfo, TabletStatus,
 };
+#[cfg(target_os = "windows")]
+use super::backend::{InputPhase, InputSampleV2, InputSource};
+#[cfg(target_os = "windows")]
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+#[cfg(target_os = "windows")]
+use std::thread;
+use std::thread::JoinHandle;
+#[cfg(target_os = "windows")]
 use std::time::Duration;
 
 #[cfg(target_os = "windows")]
@@ -76,11 +82,14 @@ fn packet_rotation_degrees(packet: &Packet) -> f32 {
 pub struct WinTabBackend {
     status: TabletStatus,
     info: Option<TabletInfo>,
+    #[cfg(target_os = "windows")]
     config: TabletConfig,
     running: Arc<AtomicBool>,
     events: Arc<InputEventQueue>,
     poll_thread: Option<JoinHandle<()>>,
+    #[cfg(target_os = "windows")]
     pressure_max: f32,
+    #[cfg(target_os = "windows")]
     stream_id: u64,
     #[cfg(target_os = "windows")]
     hwnd: Option<isize>, // Window handle for WinTab context
@@ -92,6 +101,7 @@ impl WinTabBackend {
         Self {
             status: TabletStatus::Disconnected,
             info: None,
+            #[cfg(target_os = "windows")]
             config: TabletConfig::default(),
             running: Arc::new(AtomicBool::new(false)),
             events: Arc::new(InputEventQueue::new(
@@ -99,7 +109,9 @@ impl WinTabBackend {
                 default_event_queue_capacity(),
             )),
             poll_thread: None,
+            #[cfg(target_os = "windows")]
             pressure_max: 32767.0,
+            #[cfg(target_os = "windows")]
             stream_id: 1,
             #[cfg(target_os = "windows")]
             hwnd: None,
