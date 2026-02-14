@@ -17,6 +17,7 @@ chmod +x dev/dev.sh dev/dev.command dev/publish_release.sh dev/publish_release.c
 ./dev/dev.sh bootstrap
 ./dev/dev.sh dev
 ./dev/dev.sh check
+./dev/dev.sh build-release   # macOS: 产出 .app/.dmg；Linux: 仅 release 二进制
 ./dev/dev.sh doctor
 
 # 发布助手（菜单）

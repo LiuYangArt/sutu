@@ -181,13 +181,24 @@ cmd_build() {
 }
 
 cmd_build_release() {
-  log_step "Building project (release)..."
+  local os_name
+  os_name="$(uname -s)"
+
+  if [[ "$os_name" == "Darwin" ]]; then
+    log_step "Building macOS release bundles (app + dmg)..."
+    run_cmd pnpm sync:app-meta || return 1
+    run_cmd pnpm tauri build --bundles app,dmg || return 1
+    log_ok "macOS release bundles generated: src-tauri/target/release/bundle/{macos,dmg}"
+    return 0
+  fi
+
+  log_warn "Non-macOS detected (${os_name}). Building release binary only."
   run_cmd pnpm build:dev || return 1
   (
     cd src-tauri || exit 1
     run_cmd cargo build --release
   ) || return 1
-  log_ok "Release build completed."
+  log_ok "Release binary build completed."
 }
 
 cmd_test() {
@@ -310,7 +321,7 @@ Commands:
   install-deps       Install project dependencies (pnpm install)
   dev                Start development server
   build              Build project (debug)
-  build-release      Build project (release)
+  build-release      Build release (macOS: app+dmg, others: binary)
   test               Run frontend + rust tests
   check              Run typecheck + lint + tests
   lint               Run linters
@@ -359,7 +370,7 @@ menu_loop() {
 [3] install-deps
 [4] dev              Start development server
 [5] build            Build project (debug)
-[6] build-release    Build project (release)
+[6] build-release    Build release (macOS: app+dmg)
 [7] test             Run tests
 [8] check            Run all checks
 [9] lint             Run linters
