@@ -4,6 +4,24 @@
 
 ## 使用方式
 
+### macOS / Linux (Shell)
+
+```bash
+# 给脚本执行权限（首次）
+chmod +x .dev/dev.sh .dev/dev.command
+
+# 菜单模式
+./.dev/dev.sh
+
+# 命令模式
+./.dev/dev.sh bootstrap
+./.dev/dev.sh dev
+./.dev/dev.sh check
+./.dev/dev.sh doctor
+```
+
+在 macOS Finder 中也可以双击 `.dev/dev.command` 打开菜单。
+
 ### PowerShell (推荐)
 
 ```powershell
