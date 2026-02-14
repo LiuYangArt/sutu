@@ -1,128 +1,80 @@
 .color-panel {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  height: 100%;
+  padding: 6px 8px 8px;
+  height: auto;
   box-sizing: border-box;
 }
 
-.color-panel h3 {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-primary);
-  flex-shrink: 0;
-}
-
-.color-picker-wrapper {
+.color-layout {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: flex-start;
+  gap: 6px;
   width: 100%;
-  flex: 1; /* Expand to fill space */
-  min-height: 200px;
+  height: auto;
+  min-height: 0;
 }
 
-.picker-area {
-  display: flex; /* Row layout for Saturation + Hue */
-  gap: 12px;
-  flex-shrink: 0; /* Don't shrink */
-}
-
-.saturation-wrapper {
-  flex: 1; /* Take remaining width */
-  aspect-ratio: 1 / 1; /* Force square */
-  position: relative;
-}
-
-/* Override react-colorful Saturation styles */
-.saturation-wrapper .react-colorful__saturation {
-  width: 100% !important;
-  height: 100% !important;
-  border-radius: 0 !important;
-  border: 1px solid var(--border-color);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.saturation-wrapper .react-colorful__pointer {
-  width: 12px;
-  height: 12px;
-  border: 1px solid white;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
-}
-
-.hue-wrapper {
-  width: 16px;
-  height: 100%; /* Fill parent */
+.color-control-column {
+  --control-cell-size: 20px;
+  width: 48px;
   flex-shrink: 0;
-}
-
-/* Inputs */
-.color-inputs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  flex-shrink: 0; /* Keep inputs at bottom */
-}
-
-/* Foreground/Background Color Swatches */
-.color-swatches {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-}
-
-.color-swatch {
-  position: absolute;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--border-color);
-  cursor: pointer;
-  transition: box-shadow 0.1s ease;
-}
-
-.color-swatch:hover {
-  box-shadow: 0 0 0 1px var(--text-secondary);
-}
-
-.color-swatch.foreground {
-  top: 0;
-  left: 0;
-  z-index: 2;
-  border: 2px solid var(--text-primary);
-}
-
-.color-swatch.background {
-  bottom: 0;
-  right: 0;
-  z-index: 1;
-}
-
-/* Color action buttons */
-.color-actions {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+}
+
+.main-swatches-card {
+  position: relative;
+  height: 50px;
+}
+
+.main-color-swatch {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  display: block;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: default;
+}
+
+.main-color-swatch.background {
+  right: 8px;
+  top: 13px;
+}
+
+.main-color-swatch.foreground {
+  left: 7px;
+  top: 7px;
+  z-index: 1;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+}
+
+.control-button-grid {
+  display: grid;
+  grid-template-columns: repeat(2, var(--control-cell-size));
   gap: 2px;
-  margin-left: 4px;
+  justify-content: start;
+  width: fit-content;
+}
+
+.control-cell-btn {
+  width: var(--control-cell-size);
+  height: var(--control-cell-size);
+  min-height: 0;
+  border-radius: 2px;
 }
 
 .color-action-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
   padding: 0;
-  background: transparent;
-  border: none;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 2px;
 }
 
 .color-action-btn:hover {
@@ -130,43 +82,82 @@
   color: var(--text-primary);
 }
 
-.color-action-btn:focus {
-  outline: none;
+.color-action-btn:focus-visible,
+.recent-swatch-slot:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 1px;
 }
 
-.color-preview {
-  width: 24px;
-  height: 24px;
-  border-radius: 0;
-  border: 1px solid var(--border-color);
-  flex-shrink: 0;
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, var(--control-cell-size));
+  grid-auto-rows: var(--control-cell-size);
+  gap: 2px;
+  justify-content: start;
+  width: fit-content;
 }
 
-.hex-input-wrapper {
-  display: flex;
-  align-items: center;
-  background: var(--bg-tertiary);
+.recent-swatch-slot {
+  width: var(--control-cell-size);
+  height: var(--control-cell-size);
+  min-height: 0;
+  padding: 0;
+  display: block;
   border: 1px solid var(--border-color);
   border-radius: 2px;
-  padding: 0 8px;
+  background: var(--bg-primary);
+  cursor: pointer;
+}
+
+.recent-swatch-slot:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+}
+
+.recent-swatch-slot.empty {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.color-picker-wrapper {
   flex: 1;
-  height: 24px;
-}
-
-.hex-prefix {
-  color: var(--text-secondary);
-  font-size: 11px;
-  margin-right: 4px;
-  user-select: none;
-}
-
-.hex-input {
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 11px;
+  min-width: 0;
   width: 100%;
-  outline: none;
-  text-transform: uppercase;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  padding: 3px;
+  border-radius: 2px;
+}
+
+.picker-area {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  align-items: stretch;
+}
+
+.saturation-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  aspect-ratio: 1 / 1;
+  max-width: 100%;
+}
+
+.saturation-wrapper .react-colorful__saturation {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0 !important;
+  border: 1px solid var(--border-color);
+}
+
+.saturation-wrapper .react-colorful__pointer {
+  width: 12px;
+  height: 12px;
+  border: 1px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.hue-wrapper {
+  width: 16px;
+  flex-shrink: 0;
 }
