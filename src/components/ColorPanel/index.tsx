@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeftRight, Plus, RotateCcw } from 'lucide-react';
+import { ArrowLeftRight, Hash, Plus, RotateCcw } from 'lucide-react';
 import { SaturationSquare } from './SaturationSquare';
 import { VerticalHueSlider } from './VerticalHueSlider';
 import { useToolStore, RECENT_SWATCH_LIMIT } from '@/stores/tool';
@@ -13,6 +13,7 @@ interface HsvaColor {
   v: number;
   a: number;
 }
+const CONTROL_ICON_SIZE = 12;
 
 function isSameHsva(a: HsvaColor, b: HsvaColor): boolean {
   return a.h === b.h && a.s === b.s && a.v === b.v && a.a === b.a;
@@ -119,105 +120,103 @@ export function ColorPanel() {
 
   return (
     <div className="color-panel">
-      <div className="color-picker-wrapper">
-        <div className="picker-area">
-          <div className="saturation-wrapper">
-            <SaturationSquare hsva={hsva} onChange={handleSaturationChange} />
+      <div className="color-layout">
+        <div className="color-control-column">
+          <div className="main-swatches-card">
+            <button
+              type="button"
+              className="main-color-swatch background"
+              style={{ backgroundColor: backgroundColor }}
+              title="Background Color"
+              aria-label="Background Color"
+            />
+            <button
+              type="button"
+              className="main-color-swatch foreground"
+              style={{ backgroundColor: brushColor }}
+              title="Foreground Color"
+              aria-label="Foreground Color"
+            />
           </div>
-          <div className="hue-wrapper">
-            <VerticalHueSlider hue={hsva.h} onChange={handleHueChange} />
+
+          <div className="control-button-grid">
+            <button
+              type="button"
+              className="control-cell-btn color-action-btn"
+              onClick={swapColors}
+              title="Swap Colors (X)"
+              aria-label="Swap Colors"
+            >
+              <ArrowLeftRight size={CONTROL_ICON_SIZE} />
+            </button>
+            <button
+              type="button"
+              className="control-cell-btn color-action-btn"
+              onClick={resetColors}
+              title="Reset Colors (D)"
+              aria-label="Reset Colors"
+            >
+              <RotateCcw size={CONTROL_ICON_SIZE} />
+            </button>
+            <button
+              type="button"
+              className="control-cell-btn color-action-btn"
+              onClick={() => void handleCopyHex()}
+              title="Copy HEX"
+              aria-label="HEX"
+            >
+              <Hash size={CONTROL_ICON_SIZE} />
+            </button>
+            <button
+              type="button"
+              className="control-cell-btn color-action-btn"
+              onClick={handleAddSwatch}
+              title="Add current foreground color to swatches"
+              aria-label="Add Swatch"
+            >
+              <Plus size={CONTROL_ICON_SIZE} />
+            </button>
+          </div>
+
+          <div className="swatch-grid" role="list" aria-label="Recent Swatches">
+            {Array.from({ length: RECENT_SWATCH_LIMIT }).map((_, index) => {
+              const swatch = recentSwatches[index];
+              if (!swatch) {
+                return (
+                  <button
+                    key={`empty-${index}`}
+                    type="button"
+                    className="recent-swatch-slot empty"
+                    data-testid="recent-swatch-slot"
+                    aria-label={`Empty swatch slot ${index + 1}`}
+                    disabled
+                  />
+                );
+              }
+
+              return (
+                <button
+                  key={swatch}
+                  type="button"
+                  className="recent-swatch-slot"
+                  data-testid="recent-swatch-slot"
+                  style={{ backgroundColor: swatch }}
+                  aria-label={`Swatch ${index + 1}: ${swatch}`}
+                  title={swatch}
+                  onClick={() => setBrushColor(swatch)}
+                />
+              );
+            })}
           </div>
         </div>
 
-        <div className="color-controls">
-          <div className="color-left-column">
-            <div className="color-swatches-vertical">
-              <button
-                type="button"
-                className="color-swatch foreground"
-                style={{ backgroundColor: brushColor }}
-                title="Foreground Color"
-                aria-label="Foreground Color"
-              />
-              <button
-                type="button"
-                className="color-swatch background"
-                style={{ backgroundColor: backgroundColor }}
-                title="Background Color"
-                aria-label="Background Color"
-              />
+        <div className="color-picker-wrapper">
+          <div className="picker-area">
+            <div className="saturation-wrapper">
+              <SaturationSquare hsva={hsva} onChange={handleSaturationChange} />
             </div>
-            <div className="color-actions">
-              <button
-                type="button"
-                className="color-action-btn"
-                onClick={swapColors}
-                title="Swap Colors (X)"
-                aria-label="Swap Colors"
-              >
-                <ArrowLeftRight size={12} />
-              </button>
-              <button
-                type="button"
-                className="color-action-btn"
-                onClick={resetColors}
-                title="Reset Colors (D)"
-                aria-label="Reset Colors"
-              >
-                <RotateCcw size={12} />
-              </button>
-            </div>
-          </div>
-
-          <div className="color-right-column">
-            <div className="color-action-row">
-              <button
-                type="button"
-                className="palette-action-btn hex-copy-btn"
-                onClick={() => void handleCopyHex()}
-              >
-                HEX
-              </button>
-              <button
-                type="button"
-                className="palette-action-btn add-swatch-btn"
-                onClick={handleAddSwatch}
-                title="Add current foreground color to swatches"
-                aria-label="Add Swatch"
-              >
-                <Plus size={14} />
-              </button>
-            </div>
-
-            <div className="swatch-grid" role="list" aria-label="Recent Swatches">
-              {Array.from({ length: RECENT_SWATCH_LIMIT }).map((_, index) => {
-                const swatch = recentSwatches[index];
-                if (!swatch) {
-                  return (
-                    <button
-                      key={`empty-${index}`}
-                      type="button"
-                      className="recent-swatch-slot empty"
-                      data-testid="recent-swatch-slot"
-                      aria-label={`Empty swatch slot ${index + 1}`}
-                      disabled
-                    />
-                  );
-                }
-
-                return (
-                  <button
-                    key={swatch}
-                    type="button"
-                    className="recent-swatch-slot"
-                    data-testid="recent-swatch-slot"
-                    style={{ backgroundColor: swatch }}
-                    aria-label={`Swatch ${index + 1}: ${swatch}`}
-                    title={swatch}
-                    onClick={() => setBrushColor(swatch)}
-                  />
-                );
-              })}
+            <div className="hue-wrapper">
+              <VerticalHueSlider hue={hsva.h} onChange={handleHueChange} />
             </div>
           </div>
         </div>

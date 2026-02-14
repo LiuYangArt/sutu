@@ -1,31 +1,146 @@
 .color-panel {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  height: 100%;
+  padding: 6px 8px 8px;
+  height: auto;
   box-sizing: border-box;
 }
 
-.color-picker-wrapper {
+.color-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+}
+
+.color-control-column {
+  --control-cell-size: 20px;
+  width: 48px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  width: 100%;
+  gap: 4px;
+}
+
+.main-swatches-card {
+  position: relative;
+  height: 50px;
+}
+
+.main-color-swatch {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  display: block;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: default;
+}
+
+.main-color-swatch.background {
+  right: 8px;
+  top: 13px;
+}
+
+.main-color-swatch.foreground {
+  left: 7px;
+  top: 7px;
+  z-index: 1;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+}
+
+.control-button-grid {
+  display: grid;
+  grid-template-columns: repeat(2, var(--control-cell-size));
+  gap: 2px;
+  justify-content: start;
+  width: fit-content;
+}
+
+.control-cell-btn {
+  width: var(--control-cell-size);
+  height: var(--control-cell-size);
+  min-height: 0;
+  border-radius: 2px;
+}
+
+.color-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.color-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.color-action-btn:focus-visible,
+.recent-swatch-slot:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, var(--control-cell-size));
+  grid-auto-rows: var(--control-cell-size);
+  gap: 2px;
+  justify-content: start;
+  width: fit-content;
+}
+
+.recent-swatch-slot {
+  width: var(--control-cell-size);
+  height: var(--control-cell-size);
+  min-height: 0;
+  padding: 0;
+  display: block;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  background: var(--bg-primary);
+  cursor: pointer;
+}
+
+.recent-swatch-slot:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+}
+
+.recent-swatch-slot.empty {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.color-picker-wrapper {
   flex: 1;
-  min-height: 200px;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  padding: 3px;
+  border-radius: 2px;
 }
 
 .picker-area {
   display: flex;
-  gap: 10px;
-  flex-shrink: 0;
+  gap: 6px;
+  width: 100%;
+  align-items: stretch;
 }
 
 .saturation-wrapper {
-  flex: 1;
-  aspect-ratio: 1 / 1;
+  flex: 1 1 auto;
+  min-width: 0;
   position: relative;
+  aspect-ratio: 1 / 1;
+  max-width: 100%;
 }
 
 .saturation-wrapper .react-colorful__saturation {
@@ -44,155 +159,5 @@
 
 .hue-wrapper {
   width: 16px;
-  height: 100%;
   flex-shrink: 0;
-}
-
-.color-controls {
-  display: flex;
-  gap: 10px;
-  min-height: 74px;
-}
-
-.color-left-column {
-  width: 40px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.color-swatches-vertical {
-  width: 30px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.color-swatch {
-  width: 30px;
-  height: 22px;
-  border: 1px solid var(--border-color);
-  cursor: default;
-  border-radius: 2px;
-}
-
-.color-swatch.foreground {
-  border: 2px solid var(--text-primary);
-}
-
-.color-swatch.background {
-  border-color: var(--border-color);
-}
-
-.color-actions {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  gap: 3px;
-}
-
-.color-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.color-action-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.color-action-btn:focus-visible {
-  outline: 1px solid var(--primary);
-  outline-offset: 1px;
-}
-
-.color-right-column {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.color-action-row {
-  display: flex;
-  gap: 6px;
-}
-
-.palette-action-btn {
-  height: 24px;
-  border: 1px solid var(--border-color);
-  border-radius: 2px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
-}
-
-.palette-action-btn:hover {
-  background: var(--surface-hover);
-}
-
-.palette-action-btn:focus-visible {
-  outline: 1px solid var(--primary);
-  outline-offset: 1px;
-}
-
-.hex-copy-btn {
-  flex: 1;
-  min-width: 0;
-}
-
-.add-swatch-btn {
-  width: 24px;
-  padding: 0;
-}
-
-.swatch-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.recent-swatch-slot {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  min-height: 18px;
-  border: 1px solid var(--border-color);
-  border-radius: 2px;
-  background: var(--bg-primary);
-  cursor: pointer;
-}
-
-.recent-swatch-slot:hover:not(:disabled) {
-  border-color: var(--text-secondary);
-}
-
-.recent-swatch-slot:focus-visible {
-  outline: 1px solid var(--primary);
-  outline-offset: 1px;
-}
-
-.recent-swatch-slot.empty {
-  background: var(--bg-primary);
-  opacity: 0.45;
-  cursor: default;
 }
