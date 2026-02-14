@@ -17,6 +17,14 @@ interface MockResponse {
   arrayBuffer: () => Promise<ArrayBuffer>;
 }
 
+type MockWindow = Window & {
+  __TAURI_INTERNALS__?: {
+    convertFileSrc?: (filePath: string, protocol?: string) => string;
+  };
+};
+
+const initialTauriInternals = (window as MockWindow).__TAURI_INTERNALS__;
+
 function createResponse(width: number, height: number, payload: Uint8Array): MockResponse {
   return {
     ok: true,
@@ -33,6 +41,12 @@ describe('brushLoader cache behavior', () => {
     __resetBrushTextureCacheForTests();
     vi.clearAllMocks();
     vi.useRealTimers();
+    const mockWindow = window as MockWindow;
+    if (initialTauriInternals === undefined) {
+      delete mockWindow.__TAURI_INTERNALS__;
+    } else {
+      mockWindow.__TAURI_INTERNALS__ = initialTauriInternals;
+    }
   });
 
   it('reuses cache for repeated requests of the same texture id', async () => {
@@ -112,5 +126,38 @@ describe('brushLoader cache behavior', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/brush/a');
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/brush/b');
+  });
+
+  it('uses macOS project://localhost mapping when Tauri internals provide it', async () => {
+    vi.mocked(decompressLz4PrependSize).mockReturnValue(new Uint8Array([1, 2, 3, 4]));
+    const fetchMock = vi.fn().mockResolvedValue(createResponse(2, 2, new Uint8Array([1, 2, 3, 4])));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const mockWindow = window as MockWindow;
+    mockWindow.__TAURI_INTERNALS__ = {
+      convertFileSrc: (_filePath: string, protocol: string = 'asset') => `${protocol}://localhost/`,
+    };
+
+    const loaded = await loadBrushTexture('tip-mac', 2, 2);
+    expect(loaded).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('project://localhost/brush/tip-mac');
+  });
+
+  it('uses windows project localhost mapping when Tauri internals provide it', async () => {
+    vi.mocked(decompressLz4PrependSize).mockReturnValue(new Uint8Array([1, 2, 3, 4]));
+    const fetchMock = vi.fn().mockResolvedValue(createResponse(2, 2, new Uint8Array([1, 2, 3, 4])));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const mockWindow = window as MockWindow;
+    mockWindow.__TAURI_INTERNALS__ = {
+      convertFileSrc: (_filePath: string, protocol: string = 'asset') =>
+        `http://${protocol}.localhost/`,
+    };
+
+    const loaded = await loadBrushTexture('tip-win', 2, 2);
+    expect(loaded).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://project.localhost/brush/tip-win');
   });
 });

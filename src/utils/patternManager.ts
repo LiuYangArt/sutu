@@ -9,6 +9,7 @@
  */
 
 import { decompressLz4PrependSize } from './lz4';
+import { buildProjectProtocolUrl } from './projectProtocolUrl';
 
 export interface PatternData {
   id: string;
@@ -105,9 +106,7 @@ class PatternManager {
    * Fetch and decompress pattern data
    */
   private async fetchPattern(id: string): Promise<PatternData> {
-    // Tauri v2 Windows restriction: Must use http://project.localhost instead of project://
-    // The backend handles /pattern/{id} requests
-    const url = `http://project.localhost/pattern/${id}`;
+    const url = buildProjectProtocolUrl(`/pattern/${id}`);
 
     const response = await fetch(url);
 

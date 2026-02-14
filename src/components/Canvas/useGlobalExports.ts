@@ -16,6 +16,7 @@ import { useToolStore, type ToolType, type PressureCurve, type BrushMaskType } f
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
 import { renderLayerThumbnail } from '@/utils/layerThumbnail';
+import { buildProjectProtocolUrl } from '@/utils/projectProtocolUrl';
 import {
   parseDualBrushSettings,
   parseScatterSettings,
@@ -938,7 +939,7 @@ export function useGlobalExports({
           });
         } else {
           // New: use project:// custom protocol
-          const url = `http://project.localhost/layer/${layerData.id}`;
+          const url = buildProjectProtocolUrl(`/layer/${layerData.id}`);
           try {
             const fetchStart = performance.now();
             const response = await fetch(url);

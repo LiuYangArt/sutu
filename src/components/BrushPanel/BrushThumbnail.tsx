@@ -1,7 +1,7 @@
 /**
  * BrushThumbnail - Canvas-based brush texture renderer
  *
- * Fetches brush texture via project:// protocol (mapped to http://project.localhost/ on Windows),
+ * Fetches brush texture via the project protocol URL,
  * decompresses LZ4 Gray8 data, and renders to canvas.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';

@@ -1,4 +1,5 @@
 import { decompressLz4PrependSize } from '@/utils/lz4';
+import { buildProjectProtocolUrl } from '@/utils/projectProtocolUrl';
 
 const TEXTURE_CACHE_LIMIT = 128;
 const textureCache = new Map<string, ImageData>();
@@ -53,7 +54,7 @@ function buildImageDataFromGray(gray: Uint8Array, width: number, height: number)
 }
 
 /**
- * Loads a brush texture via the project:// protocol (mapped to http://project.localhost)
+ * Loads a brush texture via the project protocol URL.
  * Decompresses LZ4 Gray8 data and converts to RGBA ImageData
  *
  * @param textureId - The ID of the brush texture to load
@@ -77,9 +78,7 @@ export async function loadBrushTexture(
 
   const loadPromise = (async () => {
     try {
-      // Use http://project.localhost/ format for Windows compatibility
-      // See: docs/postmortem/2026-01-22-canvas-taint-crossorigin.md
-      const response = await fetch(`http://project.localhost/brush/${textureId}`);
+      const response = await fetch(buildProjectProtocolUrl(`/brush/${textureId}`));
 
       if (!response.ok) {
         return null;
