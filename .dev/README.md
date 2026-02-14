@@ -8,7 +8,7 @@
 
 ```bash
 # 给脚本执行权限（首次）
-chmod +x .dev/dev.sh .dev/dev.command
+chmod +x .dev/dev.sh .dev/dev.command .dev/publish_release.sh .dev/publish_release.command
 
 # 菜单模式
 ./.dev/dev.sh
@@ -18,9 +18,12 @@ chmod +x .dev/dev.sh .dev/dev.command
 ./.dev/dev.sh dev
 ./.dev/dev.sh check
 ./.dev/dev.sh doctor
+
+# 发布助手（菜单）
+./.dev/publish_release.sh
 ```
 
-在 macOS Finder 中也可以双击 `.dev/dev.command` 打开菜单。
+在 macOS Finder 中也可以双击 `.dev/dev.command` 或 `.dev/publish_release.command` 打开菜单。
 
 ### PowerShell (推荐)
 
