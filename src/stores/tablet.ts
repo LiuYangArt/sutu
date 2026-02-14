@@ -58,6 +58,7 @@ export interface RawInputPoint {
   pressure: number;
   tilt_x: number;
   tilt_y: number;
+  rotation?: number;
   timestamp_ms: number;
   tiltX?: number;
   tiltY?: number;

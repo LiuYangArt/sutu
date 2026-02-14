@@ -34,6 +34,44 @@ type WTEnableFn = unsafe extern "C" fn(*mut HCTX, i32) -> i32;
 #[cfg(target_os = "windows")]
 type WTOverlapFn = unsafe extern "C" fn(*mut HCTX, i32) -> i32;
 
+#[cfg(target_os = "windows")]
+const WINTAB_ANGLE_TENTHS_PER_DEGREE: f32 = 10.0;
+#[cfg(target_os = "windows")]
+const CONTEXT_REENABLE_INTERVAL_LOOPS: u64 = 100;
+
+#[cfg(target_os = "windows")]
+fn normalize_rotation_degrees(value: f32) -> f32 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+    value.rem_euclid(360.0)
+}
+
+/// Convert WinTab orientation (azimuth/altitude in 0.1 degree units) into
+/// PointerEvent-compatible tilt angles (degrees, -90..90).
+#[cfg(target_os = "windows")]
+fn orientation_to_tilt_degrees(azimuth_tenths: i32, altitude_tenths: i32) -> (f32, f32) {
+    let azimuth_rad = (azimuth_tenths as f32 / WINTAB_ANGLE_TENTHS_PER_DEGREE).to_radians();
+    let altitude_rad = (altitude_tenths as f32 / WINTAB_ANGLE_TENTHS_PER_DEGREE).to_radians();
+
+    // Pen axis in tablet coordinates.
+    let axis_xy = altitude_rad.cos();
+    let axis_z = altitude_rad.sin();
+    let axis_x = azimuth_rad.cos() * axis_xy;
+    let axis_y = azimuth_rad.sin() * axis_xy;
+
+    let tilt_x = axis_x.atan2(axis_z).to_degrees().clamp(-90.0, 90.0);
+    let tilt_y = axis_y.atan2(axis_z).to_degrees().clamp(-90.0, 90.0);
+    (tilt_x, tilt_y)
+}
+
+#[cfg(target_os = "windows")]
+fn packet_rotation_degrees(packet: &Packet) -> f32 {
+    // WinTab Orientation::orTwist is typically reported in 0.1 degree units.
+    // Keep a normalized 0..360 range to match PointerEvent.twist semantics.
+    normalize_rotation_degrees(packet.pkOrientation.orTwist as f32 / WINTAB_ANGLE_TENTHS_PER_DEGREE)
+}
+
 /// WinTab backend for Windows tablet input
 pub struct WinTabBackend {
     status: TabletStatus,
@@ -283,7 +321,8 @@ impl TabletBackend for WinTabBackend {
             // CRITICAL: lcPktData MUST be WTPKT::all() to match Packet struct layout
             log_context.lcPktData = WTPKT::all();
             log_context.lcPktMode = WTPKT::empty(); // All fields in absolute mode
-            log_context.lcMoveMask = WTPKT::X | WTPKT::Y | WTPKT::NORMAL_PRESSURE;
+            log_context.lcMoveMask =
+                WTPKT::X | WTPKT::Y | WTPKT::NORMAL_PRESSURE | WTPKT::ORIENTATION | WTPKT::ROTATION;
 
             // Flip Y axis (tablet Y is inverted by default)
             let default_y_extent = log_context.lcOutExtXYZ.y;
@@ -333,7 +372,7 @@ impl TabletBackend for WinTabBackend {
 
                 // Periodically re-enable context to prevent it from being disabled
                 // This is a workaround for WinTab context being disabled by other apps
-                if loop_count % 100 == 0 {
+                if loop_count % CONTEXT_REENABLE_INTERVAL_LOOPS == 0 {
                     unsafe {
                         wt_enable(context_ptr, 1);
                         wt_overlap(context_ptr, 1);
@@ -374,11 +413,11 @@ impl TabletBackend for WinTabBackend {
                         let x = packet.pkXYZ.x as f32;
                         let y = packet.pkXYZ.y as f32;
 
-                        // Convert tilt from orientation
-                        let tilt_x =
-                            (packet.pkOrientation.orAzimuth as f32 / 10.0).clamp(-90.0, 90.0);
-                        let tilt_y =
-                            (packet.pkOrientation.orAltitude as f32 / 10.0).clamp(-90.0, 90.0);
+                        let (tilt_x, tilt_y) = orientation_to_tilt_degrees(
+                            packet.pkOrientation.orAzimuth,
+                            packet.pkOrientation.orAltitude,
+                        );
+                        let rotation = packet_rotation_degrees(packet);
 
                         let host_time_us = super::current_time_us();
                         let device_time_us = (packet.pkTime as u64).saturating_mul(1000);
@@ -397,7 +436,7 @@ impl TabletBackend for WinTabBackend {
                             pressure,
                             tilt_x,
                             tilt_y,
-                            rotation: 0.0,
+                            rotation,
                             host_time_us,
                             device_time_us,
                             timestamp_ms: host_time_us / 1000,

@@ -16,6 +16,11 @@ function normalizeTiltComponent(value: number): number {
   return clampSignedUnit(value / 90);
 }
 
+function normalizeRotationDegrees(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return ((value % 360) + 360) % 360;
+}
+
 type PointerEventWithAngles = PointerEvent & {
   altitudeAngle?: number;
   azimuthAngle?: number;
@@ -48,7 +53,15 @@ function getRotationFromPointerEvent(evt: PointerEvent): number {
   const evtWithAngles = evt as PointerEventWithAngles;
   const twist = evtWithAngles.twist;
   if (!Number.isFinite(twist)) return 0;
-  return ((twist! % 360) + 360) % 360;
+  return normalizeRotationDegrees(twist!);
+}
+
+function resolveTabletRotation(
+  point: RawInputPoint | null | undefined,
+  fallbackRotation: number
+): number {
+  if (!point || !Number.isFinite(point.rotation)) return fallbackRotation;
+  return normalizeRotationDegrees(point.rotation!);
 }
 
 function resolvePointerOrientation(
@@ -106,7 +119,7 @@ export function getEffectiveInputData(
       pressure: pt.pressure,
       tiltX: normalizeTiltComponent(pt.tilt_x),
       tiltY: normalizeTiltComponent(pt.tilt_y),
-      rotation: pointerOrientation.rotation,
+      rotation: resolveTabletRotation(pt, pointerOrientation.rotation),
     };
   }
 
@@ -116,7 +129,7 @@ export function getEffectiveInputData(
       pressure: currentPoint.pressure,
       tiltX: normalizeTiltComponent(currentPoint.tilt_x),
       tiltY: normalizeTiltComponent(currentPoint.tilt_y),
-      rotation: pointerOrientation.rotation,
+      rotation: resolveTabletRotation(currentPoint, pointerOrientation.rotation),
     };
   }
 

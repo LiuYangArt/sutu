@@ -9,6 +9,7 @@ function createRawPoint(partial: Partial<RawInputPoint> = {}): RawInputPoint {
     pressure: partial.pressure ?? 0.5,
     tilt_x: partial.tilt_x ?? 0,
     tilt_y: partial.tilt_y ?? 0,
+    rotation: partial.rotation,
     timestamp_ms: partial.timestamp_ms ?? 0,
   };
 }
@@ -69,17 +70,24 @@ describe('inputUtils.getEffectiveInputData', () => {
 
   it('WinTab 优先使用 buffered 点', () => {
     const evt = createPointerEvent({ pressure: 0.8, tiltX: 5, tiltY: 5, twist: 30 });
-    const buffered = [createRawPoint({ pressure: 0.33, tilt_x: 21, tilt_y: -12 })];
-    const current = createRawPoint({ pressure: 0.9, tilt_x: 30, tilt_y: 30 });
+    const buffered = [createRawPoint({ pressure: 0.33, tilt_x: 21, tilt_y: -12, rotation: 210 })];
+    const current = createRawPoint({ pressure: 0.9, tilt_x: 30, tilt_y: 30, rotation: 320 });
     const result = getEffectiveInputData(evt, true, buffered, current);
-    expect(result).toEqual({ pressure: 0.33, tiltX: 21 / 90, tiltY: -12 / 90, rotation: 30 });
+    expect(result).toEqual({ pressure: 0.33, tiltX: 21 / 90, tiltY: -12 / 90, rotation: 210 });
   });
 
   it('WinTab 无 buffered 时回退 currentPoint', () => {
     const evt = createPointerEvent({ pressure: 0.7, tiltX: 0, tiltY: 0, twist: 75 });
-    const current = createRawPoint({ pressure: 0.41, tilt_x: 8, tilt_y: 3 });
+    const current = createRawPoint({ pressure: 0.41, tilt_x: 8, tilt_y: 3, rotation: 288 });
     const result = getEffectiveInputData(evt, true, [], current);
-    expect(result).toEqual({ pressure: 0.41, tiltX: 8 / 90, tiltY: 3 / 90, rotation: 75 });
+    expect(result).toEqual({ pressure: 0.41, tiltX: 8 / 90, tiltY: 3 / 90, rotation: 288 });
+  });
+
+  it('WinTab 点缺少 rotation 时回退 PointerEvent twist', () => {
+    const evt = createPointerEvent({ pressure: 0.4, tiltX: 2, tiltY: -1, twist: 123 });
+    const buffered = [createRawPoint({ pressure: 0.39, tilt_x: 4, tilt_y: -2 })];
+    const result = getEffectiveInputData(evt, true, buffered, null);
+    expect(result).toEqual({ pressure: 0.39, tiltX: 4 / 90, tiltY: -2 / 90, rotation: 123 });
   });
 
   it('WinTab pen 无可用数据时返回 0 压力', () => {

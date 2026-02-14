@@ -102,6 +102,11 @@ function normalizeTiltDegrees(value: number): number {
   return clampSignedUnit(value / 90);
 }
 
+function normalizeRotationDegrees(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return ((value % 360) + 360) % 360;
+}
+
 function toFixed(value: number, digits: number = 3): string {
   if (!Number.isFinite(value)) return '-';
   return value.toFixed(digits);
@@ -389,6 +394,8 @@ function TabletSettings() {
     info,
     isInitialized,
     isStreaming,
+    currentPoint,
+    inProximity,
     init,
     switchBackend,
     start,
@@ -534,6 +541,11 @@ function TabletSettings() {
   }, []);
 
   const pointerRawUpdateSupported = typeof window !== 'undefined' && 'onpointerrawupdate' in window;
+  const liveInputSourceHint = isWinTabActive
+    ? 'Source: backend tablet-event-v2 (WinTab packet stream)'
+    : `Source: window PointerEvent (pointerType=pen only) | pointerrawupdate support: ${
+        pointerRawUpdateSupported ? 'Yes' : 'No'
+      }`;
 
   return (
     <div className="settings-content">
@@ -678,9 +690,69 @@ function TabletSettings() {
       </div>
 
       <div className="settings-section">
-        <label className="settings-label">POINTEREVENT LIVE</label>
+        <label className="settings-label">
+          {isWinTabActive ? 'WINTAB LIVE' : 'POINTEREVENT LIVE'}
+        </label>
         <div className="tablet-live-card">
-          {pointerDiag ? (
+          {isWinTabActive ? (
+            currentPoint ? (
+              <>
+                <div className="status-row">
+                  <span>In Proximity:</span>
+                  <span>{inProximity ? 'true' : 'false'}</span>
+                </div>
+                <div className="status-row">
+                  <span>Sample Seq / Stream:</span>
+                  <span>
+                    {currentPoint.seq} / {currentPoint.stream_id}
+                  </span>
+                </div>
+                <div className="status-row">
+                  <span>Phase:</span>
+                  <span>{currentPoint.phase}</span>
+                </div>
+                <div className="status-row">
+                  <span>Pressure:</span>
+                  <span>{toFixed(currentPoint.pressure, 4)}</span>
+                </div>
+                <div className="status-row">
+                  <span>Tilt X / Y (raw deg):</span>
+                  <span>
+                    {toFixed(currentPoint.tilt_x, 1)} / {toFixed(currentPoint.tilt_y, 1)}
+                  </span>
+                </div>
+                <div className="status-row">
+                  <span>Tilt X / Y (normalized):</span>
+                  <span>
+                    {toFixed(normalizeTiltDegrees(currentPoint.tilt_x), 4)} /{' '}
+                    {toFixed(normalizeTiltDegrees(currentPoint.tilt_y), 4)}
+                  </span>
+                </div>
+                <div className="status-row">
+                  <span>Rotation:</span>
+                  <span>{toFixed(normalizeRotationDegrees(currentPoint.rotation), 1)}°</span>
+                </div>
+                <div className="status-row">
+                  <span>Source / Pointer ID:</span>
+                  <span>
+                    {currentPoint.source} / {currentPoint.pointer_id}
+                  </span>
+                </div>
+                <div className="status-row">
+                  <span>Host / Device Time:</span>
+                  <span>
+                    {toFixed(currentPoint.host_time_us / 1000, 3)} ms /{' '}
+                    {toFixed(currentPoint.device_time_us / 1000, 3)} ms
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="tablet-live-empty">
+                No WinTab sample yet. Keep the pen in proximity and move or press on the canvas to
+                see live WinTab values here.
+              </div>
+            )
+          ) : pointerDiag ? (
             <>
               <div className="status-row">
                 <span>Last Event:</span>
@@ -737,10 +809,7 @@ function TabletSettings() {
               to see live updates here.
             </div>
           )}
-          <div className="tablet-live-hint">
-            Source: window PointerEvent (pointerType=pen only) | pointerrawupdate support:{' '}
-            {pointerRawUpdateSupported ? 'Yes' : 'No'}
-          </div>
+          <div className="tablet-live-hint">{liveInputSourceHint}</div>
         </div>
       </div>
 
