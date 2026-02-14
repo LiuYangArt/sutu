@@ -9,6 +9,7 @@
 
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { buildProjectProtocolUrl } from '@/utils/projectProtocolUrl';
 
 // ============================================================================
 // Types
@@ -263,8 +264,8 @@ export function normalizePatternThumbSize(size: number): number {
 /** Get pattern thumbnail URL (optional thumb size bucket) */
 export function getPatternThumbnailUrl(id: string, thumbSize?: number): string {
   if (thumbSize === undefined) {
-    return `http://project.localhost/pattern/${id}`;
+    return buildProjectProtocolUrl(`/pattern/${id}`);
   }
   const normalized = normalizePatternThumbSize(thumbSize);
-  return `http://project.localhost/pattern/${id}?thumb=${normalized}`;
+  return buildProjectProtocolUrl(`/pattern/${id}?thumb=${normalized}`);
 }

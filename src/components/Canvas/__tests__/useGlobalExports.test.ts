@@ -5,6 +5,12 @@ import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { LOCKED_NOISE_SETTINGS, useToolStore } from '@/stores/tool';
 import { patternManager } from '@/utils/patternManager';
+import {
+  createPlatformConvertFileSrcMock,
+  getTauriInternalsSnapshot,
+  restoreTauriInternals,
+  setTauriConvertFileSrcMock,
+} from '@/test/tauriInternalsMock';
 
 function cleanupGlobals(): void {
   const win = window as any;
@@ -536,6 +542,86 @@ describe('useGlobalExports', () => {
       expect(compositeAndRender).toHaveBeenCalledTimes(1);
     } finally {
       (globalThis as any).Image = OriginalImage as any;
+    }
+  });
+
+  it('loads layer image via project protocol URL on macOS mapping', async () => {
+    useDocumentStore.setState({
+      layers: [
+        {
+          id: 'layerA',
+          name: 'Layer A',
+          type: 'raster',
+          visible: true,
+          locked: false,
+          opacity: 100,
+          blendMode: 'normal',
+        },
+      ],
+      activeLayerId: 'layerA',
+    });
+
+    const originalFetch = globalThis.fetch;
+    const originalInternals = getTauriInternalsSnapshot();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({
+        'Content-Type': 'image/x-rgba',
+        'X-Image-Width': '1',
+        'X-Image-Height': '1',
+      }),
+      arrayBuffer: async () => new Uint8Array([255, 255, 255, 255]).buffer as ArrayBuffer,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    setTauriConvertFileSrcMock(createPlatformConvertFileSrcMock('macos'));
+
+    try {
+      const canvasA = document.createElement('canvas');
+
+      const layerRenderer = {
+        getLayer: (id: string) => {
+          if (id === 'layerA') return { canvas: canvasA, ctx: canvasA.getContext('2d') };
+          return null;
+        },
+        composite: () => canvasA,
+      } as any;
+
+      const compositeAndRender = vi.fn();
+
+      renderHook(() =>
+        useGlobalExports({
+          layerRendererRef: { current: layerRenderer } as any,
+          compositeAndRender,
+          fillActiveLayer: vi.fn(),
+          handleClearSelection: vi.fn(),
+          handleUndo: vi.fn(),
+          handleRedo: vi.fn(),
+          handleClearLayer: vi.fn(),
+          handleDuplicateLayer: vi.fn(),
+          handleRemoveLayer: vi.fn(),
+          handleResizeCanvas: vi.fn(),
+        })
+      );
+
+      const win = window as any;
+      expect(typeof win.__loadLayerImages).toBe('function');
+
+      await act(async () => {
+        await win.__loadLayerImages([{ id: 'layerA', offsetX: 0, offsetY: 0 }]);
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith('project://localhost/layer/layerA');
+      expect(compositeAndRender).toHaveBeenCalledTimes(1);
+      const layer = useDocumentStore.getState().layers.find((l) => l.id === 'layerA');
+      expect(layer?.thumbnail).toMatch(/^data:image\/png;base64,/);
+    } finally {
+      if (originalFetch) {
+        vi.stubGlobal('fetch', originalFetch as typeof fetch);
+      } else {
+        delete (globalThis as { fetch?: unknown }).fetch;
+      }
+
+      restoreTauriInternals(originalInternals);
     }
   });
 
