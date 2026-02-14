@@ -26,6 +26,10 @@ chmod +x dev/dev.sh dev/dev.command dev/publish_release.sh dev/publish_release.c
 
 在 macOS Finder 中也可以双击 `dev/dev.command` 或 `dev/publish_release.command` 打开菜单。
 
+## 发布配置文档
+
+- macOS 发布 secrets 配置：`docs/development/macos-release-secrets.md`
+
 ### PowerShell (推荐)
 
 ```powershell

@@ -111,8 +111,88 @@ jobs:
           app_name=$(node -e "const fs=require('fs'); const conf=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')); process.stdout.write(conf.productName);")
           echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve macOS signing identity
+        if: matrix.platform == 'macos'
+        id: mac_sign
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -n "${APPLE_SIGNING_IDENTITY_SECRET}" ]; then
+            echo "identity=${APPLE_SIGNING_IDENTITY_SECRET}" >> "$GITHUB_OUTPUT"
+            echo "mode=developer-id" >> "$GITHUB_OUTPUT"
+          else
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Print macOS signing mode
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          echo "Using macOS signing mode: ${{ steps.mac_sign.outputs.mode }}"
+
       - name: Build Tauri app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos' && steps.mac_sign.outputs.identity || '' }}
+          APPLE_CERTIFICATE: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
         run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
+
+      - name: Verify macOS bundle signatures
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          apps=(src-tauri/target/release/bundle/macos/*.app)
+          if [ ${#apps[@]} -eq 0 ]; then
+            echo "No .app bundle found to verify." >&2
+            exit 1
+          fi
+
+          for app in "${apps[@]}"; do
+            echo "Verifying app bundle: ${app}"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            signature_info="$(codesign -dv --verbose=4 "$app" 2>&1 || true)"
+            if echo "$signature_info" | grep -q "Sealed Resources=none"; then
+              echo "Invalid app signature (Sealed Resources=none): ${app}" >&2
+              echo "$signature_info"
+              exit 1
+            fi
+          done
+
+          dmgs=(src-tauri/target/release/bundle/dmg/*.dmg)
+          if [ ${#dmgs[@]} -eq 0 ]; then
+            echo "No .dmg bundle found to verify." >&2
+            exit 1
+          fi
+
+          for dmg in "${dmgs[@]}"; do
+            echo "Verifying dmg payload app signature: ${dmg}"
+            attach_output="$(hdiutil attach "$dmg" -nobrowse -readonly)"
+            mount_point="$(echo "$attach_output" | awk '/\/Volumes\// {sub(/^.*Apple_HFS[[:space:]]+/, "", $0); print $0; exit}')"
+            if [ -z "$mount_point" ] || [ ! -d "$mount_point" ]; then
+              mount_point="$(echo "$attach_output" | awk '/\/Volumes\// {sub(/^.*\t/, "", $0); print $0; exit}')"
+            fi
+            if [ -z "$mount_point" ] || [ ! -d "$mount_point" ]; then
+              echo "Failed to locate mounted dmg volume for ${dmg}" >&2
+              echo "$attach_output"
+              exit 1
+            fi
+            mounted_app="$(find "$mount_point" -maxdepth 1 -type d -name '*.app' | head -n1)"
+            if [ -z "$mounted_app" ]; then
+              echo "No .app found inside ${dmg}" >&2
+              hdiutil detach "$mount_point" -quiet || true
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=2 "$mounted_app"
+            hdiutil detach "$mount_point" -quiet
+          done
 
       - name: Create Portable ZIP
         if: matrix.platform == 'windows'
