@@ -1,26 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProjectProtocolUrl, getProjectProtocolBaseUrl } from '@/utils/projectProtocolUrl';
+import {
+  createPlatformConvertFileSrcMock,
+  getTauriInternalsSnapshot,
+  restoreTauriInternals,
+  setTauriConvertFileSrcMock,
+  type TauriInternalsWindow,
+} from '@/test/tauriInternalsMock';
 
-type MockWindow = Window & {
-  __TAURI_INTERNALS__?: {
-    convertFileSrc?: (filePath: string, protocol?: string) => string;
-  };
-};
-
-const initialTauriInternals = (window as MockWindow).__TAURI_INTERNALS__;
+const initialTauriInternals = getTauriInternalsSnapshot();
 
 afterEach(() => {
-  const mockWindow = window as MockWindow;
-  if (initialTauriInternals === undefined) {
-    delete mockWindow.__TAURI_INTERNALS__;
-  } else {
-    mockWindow.__TAURI_INTERNALS__ = initialTauriInternals;
-  }
+  restoreTauriInternals(initialTauriInternals);
 });
 
 describe('projectProtocolUrl', () => {
   it('falls back to project localhost when Tauri internals are unavailable', () => {
-    const mockWindow = window as MockWindow;
+    const mockWindow = window as TauriInternalsWindow;
     delete mockWindow.__TAURI_INTERNALS__;
 
     expect(getProjectProtocolBaseUrl()).toBe('http://project.localhost');
@@ -28,11 +24,8 @@ describe('projectProtocolUrl', () => {
   });
 
   it('uses Tauri convertFileSrc mapping on Windows', () => {
-    const convertFileSrc = vi.fn((_filePath: string, protocol: string = 'asset') => {
-      return `http://${protocol}.localhost/`;
-    });
-    const mockWindow = window as MockWindow;
-    mockWindow.__TAURI_INTERNALS__ = { convertFileSrc };
+    const convertFileSrc = vi.fn(createPlatformConvertFileSrcMock('windows'));
+    setTauriConvertFileSrcMock(convertFileSrc);
 
     expect(getProjectProtocolBaseUrl()).toBe('http://project.localhost');
     expect(buildProjectProtocolUrl('/pattern/p1?thumb=48')).toBe(
@@ -42,11 +35,8 @@ describe('projectProtocolUrl', () => {
   });
 
   it('uses Tauri convertFileSrc mapping on macOS', () => {
-    const convertFileSrc = vi.fn((_filePath: string, protocol: string = 'asset') => {
-      return `${protocol}://localhost/`;
-    });
-    const mockWindow = window as MockWindow;
-    mockWindow.__TAURI_INTERNALS__ = { convertFileSrc };
+    const convertFileSrc = vi.fn(createPlatformConvertFileSrcMock('macos'));
+    setTauriConvertFileSrcMock(convertFileSrc);
 
     expect(getProjectProtocolBaseUrl()).toBe('project://localhost');
     expect(buildProjectProtocolUrl('/layer/layer-1')).toBe('project://localhost/layer/layer-1');
@@ -57,8 +47,7 @@ describe('projectProtocolUrl', () => {
     const convertFileSrc = vi.fn(() => {
       throw new Error('convert failed');
     });
-    const mockWindow = window as MockWindow;
-    mockWindow.__TAURI_INTERNALS__ = { convertFileSrc };
+    setTauriConvertFileSrcMock(convertFileSrc);
 
     expect(getProjectProtocolBaseUrl()).toBe('http://project.localhost');
     expect(buildProjectProtocolUrl('/layer/l1')).toBe('http://project.localhost/layer/l1');

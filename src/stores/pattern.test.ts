@@ -1,21 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createPlatformConvertFileSrcMock,
+  getTauriInternalsSnapshot,
+  restoreTauriInternals,
+  setTauriConvertFileSrcMock,
+} from '@/test/tauriInternalsMock';
 import { getPatternThumbnailUrl, normalizePatternThumbSize } from './pattern';
 
-type MockWindow = Window & {
-  __TAURI_INTERNALS__?: {
-    convertFileSrc?: (filePath: string, protocol?: string) => string;
-  };
-};
-
-const initialTauriInternals = (window as MockWindow).__TAURI_INTERNALS__;
+const initialTauriInternals = getTauriInternalsSnapshot();
 
 afterEach(() => {
-  const mockWindow = window as MockWindow;
-  if (initialTauriInternals === undefined) {
-    delete mockWindow.__TAURI_INTERNALS__;
-  } else {
-    mockWindow.__TAURI_INTERNALS__ = initialTauriInternals;
-  }
+  restoreTauriInternals(initialTauriInternals);
 });
 
 describe('pattern thumbnail url', () => {
@@ -33,12 +28,7 @@ describe('pattern thumbnail url', () => {
   });
 
   it('uses macOS project://localhost mapping when available', () => {
-    const mockWindow = window as MockWindow;
-    mockWindow.__TAURI_INTERNALS__ = {
-      convertFileSrc: vi.fn((_filePath: string, protocol: string = 'asset') => {
-        return `${protocol}://localhost/`;
-      }),
-    };
+    setTauriConvertFileSrcMock(vi.fn(createPlatformConvertFileSrcMock('macos')));
 
     expect(getPatternThumbnailUrl('abc')).toBe('project://localhost/pattern/abc');
     expect(getPatternThumbnailUrl('abc', 40)).toBe('project://localhost/pattern/abc?thumb=48');

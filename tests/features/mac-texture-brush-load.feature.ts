@@ -5,32 +5,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProjectProtocolUrl } from '@/utils/projectProtocolUrl';
 import { getPatternThumbnailUrl } from '@/stores/pattern';
+import {
+  createPlatformConvertFileSrcMock,
+  getTauriInternalsSnapshot,
+  restoreTauriInternals,
+  setTauriConvertFileSrcMock,
+  type TauriInternalsWindow,
+} from '@/test/tauriInternalsMock';
 
-type MockWindow = Window & {
-  __TAURI_INTERNALS__?: {
-    convertFileSrc?: (filePath: string, protocol?: string) => string;
-  };
-};
-
-const initialTauriInternals = (window as MockWindow).__TAURI_INTERNALS__;
+const initialTauriInternals = getTauriInternalsSnapshot();
 
 afterEach(() => {
-  const mockWindow = window as MockWindow;
-  if (initialTauriInternals === undefined) {
-    delete mockWindow.__TAURI_INTERNALS__;
-  } else {
-    mockWindow.__TAURI_INTERNALS__ = initialTauriInternals;
-  }
+  restoreTauriInternals(initialTauriInternals);
 });
 
 describe('[Bug]: mac版本纹理笔刷无法正确加载', () => {
   it('uses mac project protocol mapping for brush/layer/pattern URLs', () => {
-    const mockWindow = window as MockWindow;
-    mockWindow.__TAURI_INTERNALS__ = {
-      convertFileSrc: vi.fn((_filePath: string, protocol: string = 'asset') => {
-        return `${protocol}://localhost/`;
-      }),
-    };
+    setTauriConvertFileSrcMock(vi.fn(createPlatformConvertFileSrcMock('macos')));
 
     expect(buildProjectProtocolUrl('/brush/tip-1')).toBe('project://localhost/brush/tip-1');
     expect(buildProjectProtocolUrl('/layer/layer-1')).toBe('project://localhost/layer/layer-1');
@@ -40,7 +31,7 @@ describe('[Bug]: mac版本纹理笔刷无法正确加载', () => {
   });
 
   it('keeps windows-compatible fallback when Tauri internals are missing', () => {
-    const mockWindow = window as MockWindow;
+    const mockWindow = window as TauriInternalsWindow;
     delete mockWindow.__TAURI_INTERNALS__;
 
     expect(buildProjectProtocolUrl('/brush/tip-1')).toBe('http://project.localhost/brush/tip-1');

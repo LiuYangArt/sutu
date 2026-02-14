@@ -5,6 +5,12 @@ import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { LOCKED_NOISE_SETTINGS, useToolStore } from '@/stores/tool';
 import { patternManager } from '@/utils/patternManager';
+import {
+  createPlatformConvertFileSrcMock,
+  getTauriInternalsSnapshot,
+  restoreTauriInternals,
+  setTauriConvertFileSrcMock,
+} from '@/test/tauriInternalsMock';
 
 function cleanupGlobals(): void {
   const win = window as any;
@@ -556,8 +562,7 @@ describe('useGlobalExports', () => {
     });
 
     const originalFetch = globalThis.fetch;
-    const originalInternals = (window as Window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__;
+    const originalInternals = getTauriInternalsSnapshot();
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       headers: new Headers({
@@ -568,15 +573,7 @@ describe('useGlobalExports', () => {
       arrayBuffer: async () => new Uint8Array([255, 255, 255, 255]).buffer as ArrayBuffer,
     });
     vi.stubGlobal('fetch', fetchMock);
-    (
-      window as Window & {
-        __TAURI_INTERNALS__?: {
-          convertFileSrc?: (filePath: string, protocol?: string) => string;
-        };
-      }
-    ).__TAURI_INTERNALS__ = {
-      convertFileSrc: (_filePath: string, protocol: string = 'asset') => `${protocol}://localhost/`,
-    };
+    setTauriConvertFileSrcMock(createPlatformConvertFileSrcMock('macos'));
 
     try {
       const canvasA = document.createElement('canvas');
@@ -624,12 +621,7 @@ describe('useGlobalExports', () => {
         delete (globalThis as { fetch?: unknown }).fetch;
       }
 
-      if (originalInternals === undefined) {
-        delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-      } else {
-        (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ =
-          originalInternals;
-      }
+      restoreTauriInternals(originalInternals);
     }
   });
 

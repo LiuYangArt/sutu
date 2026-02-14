@@ -6,6 +6,12 @@ import {
   prewarmBrushTextures,
 } from '@/utils/brushLoader';
 import { decompressLz4PrependSize } from '@/utils/lz4';
+import {
+  createPlatformConvertFileSrcMock,
+  getTauriInternalsSnapshot,
+  restoreTauriInternals,
+  setTauriConvertFileSrcMock,
+} from '@/test/tauriInternalsMock';
 
 vi.mock('@/utils/lz4', () => ({
   decompressLz4PrependSize: vi.fn(),
@@ -17,13 +23,7 @@ interface MockResponse {
   arrayBuffer: () => Promise<ArrayBuffer>;
 }
 
-type MockWindow = Window & {
-  __TAURI_INTERNALS__?: {
-    convertFileSrc?: (filePath: string, protocol?: string) => string;
-  };
-};
-
-const initialTauriInternals = (window as MockWindow).__TAURI_INTERNALS__;
+const initialTauriInternals = getTauriInternalsSnapshot();
 
 function createResponse(width: number, height: number, payload: Uint8Array): MockResponse {
   return {
@@ -41,12 +41,7 @@ describe('brushLoader cache behavior', () => {
     __resetBrushTextureCacheForTests();
     vi.clearAllMocks();
     vi.useRealTimers();
-    const mockWindow = window as MockWindow;
-    if (initialTauriInternals === undefined) {
-      delete mockWindow.__TAURI_INTERNALS__;
-    } else {
-      mockWindow.__TAURI_INTERNALS__ = initialTauriInternals;
-    }
+    restoreTauriInternals(initialTauriInternals);
   });
 
   it('reuses cache for repeated requests of the same texture id', async () => {
@@ -133,10 +128,7 @@ describe('brushLoader cache behavior', () => {
     const fetchMock = vi.fn().mockResolvedValue(createResponse(2, 2, new Uint8Array([1, 2, 3, 4])));
     vi.stubGlobal('fetch', fetchMock);
 
-    const mockWindow = window as MockWindow;
-    mockWindow.__TAURI_INTERNALS__ = {
-      convertFileSrc: (_filePath: string, protocol: string = 'asset') => `${protocol}://localhost/`,
-    };
+    setTauriConvertFileSrcMock(createPlatformConvertFileSrcMock('macos'));
 
     const loaded = await loadBrushTexture('tip-mac', 2, 2);
     expect(loaded).not.toBeNull();
@@ -149,11 +141,7 @@ describe('brushLoader cache behavior', () => {
     const fetchMock = vi.fn().mockResolvedValue(createResponse(2, 2, new Uint8Array([1, 2, 3, 4])));
     vi.stubGlobal('fetch', fetchMock);
 
-    const mockWindow = window as MockWindow;
-    mockWindow.__TAURI_INTERNALS__ = {
-      convertFileSrc: (_filePath: string, protocol: string = 'asset') =>
-        `http://${protocol}.localhost/`,
-    };
+    setTauriConvertFileSrcMock(createPlatformConvertFileSrcMock('windows'));
 
     const loaded = await loadBrushTexture('tip-win', 2, 2);
     expect(loaded).not.toBeNull();

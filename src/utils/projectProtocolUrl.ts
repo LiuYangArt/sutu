@@ -1,4 +1,5 @@
 const PROJECT_PROTOCOL_FALLBACK_BASE_URL = 'http://project.localhost';
+const PROJECT_PROTOCOL_NAME = 'project';
 
 type TauriInternals = {
   convertFileSrc?: (filePath: string, protocol?: string) => string;
@@ -20,22 +21,26 @@ function getTauriConvertFileSrc(): ((filePath: string, protocol?: string) => str
   return typeof convertFileSrc === 'function' ? convertFileSrc : null;
 }
 
-export function getProjectProtocolBaseUrl(): string {
+function resolveProjectBaseUrlFromTauri(): string | null {
   const convertFileSrc = getTauriConvertFileSrc();
   if (!convertFileSrc) {
-    return PROJECT_PROTOCOL_FALLBACK_BASE_URL;
+    return null;
   }
 
   try {
-    const resolved = convertFileSrc('', 'project');
+    const resolved = convertFileSrc('', PROJECT_PROTOCOL_NAME);
     if (typeof resolved !== 'string' || resolved.trim() === '') {
-      return PROJECT_PROTOCOL_FALLBACK_BASE_URL;
+      return null;
     }
     const normalized = normalizeBaseUrl(resolved);
-    return normalized || PROJECT_PROTOCOL_FALLBACK_BASE_URL;
+    return normalized || null;
   } catch {
-    return PROJECT_PROTOCOL_FALLBACK_BASE_URL;
+    return null;
   }
+}
+
+export function getProjectProtocolBaseUrl(): string {
+  return resolveProjectBaseUrlFromTauri() ?? PROJECT_PROTOCOL_FALLBACK_BASE_URL;
 }
 
 function normalizeResourcePath(path: string): string {
