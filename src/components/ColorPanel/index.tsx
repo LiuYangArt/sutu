@@ -1,9 +1,10 @@
+import { useCallback, useEffect, useState } from 'react';
+import { ArrowLeftRight, Plus, RotateCcw } from 'lucide-react';
 import { SaturationSquare } from './SaturationSquare';
-import { useToolStore } from '@/stores/tool';
-import { useState, useEffect, useCallback } from 'react';
-import { hexToHsva, hsvaToHex, normalizeHex } from '@/utils/colorUtils';
 import { VerticalHueSlider } from './VerticalHueSlider';
-import { ArrowLeftRight, RotateCcw } from 'lucide-react';
+import { useToolStore, RECENT_SWATCH_LIMIT } from '@/stores/tool';
+import { useToastStore } from '@/stores/toast';
+import { hexToHsva, hsvaToHex, normalizeHex } from '@/utils/colorUtils';
 import './ColorPanel.css';
 
 interface HsvaColor {
@@ -21,28 +22,68 @@ function isSameColorToken(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-export function ColorPanel() {
-  const { brushColor, backgroundColor, setBrushColor, swapColors, resetColors } = useToolStore();
+function toCanonicalHex(color: string): string {
+  const raw = color.trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(raw)) {
+    return '#000000';
+  }
+  return `#${normalizeHex(raw).toUpperCase()}`;
+}
 
-  // Use HSVA locally to control Saturation and Hue separately
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  const clipboardApi = (
+    navigator as Navigator & {
+      clipboard?: { writeText?: (value: string) => Promise<void> };
+    }
+  ).clipboard;
+
+  if (clipboardApi?.writeText) {
+    try {
+      await clipboardApi.writeText(text);
+      return true;
+    } catch {
+      // Fallback below.
+    }
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+export function ColorPanel() {
+  const {
+    brushColor,
+    backgroundColor,
+    recentSwatches,
+    setBrushColor,
+    swapColors,
+    resetColors,
+    addRecentSwatch,
+  } = useToolStore();
+  const pushToast = useToastStore((s) => s.pushToast);
+
+  // Use HSVA locally to control Saturation and Hue separately.
   const [hsva, setHsva] = useState<HsvaColor>(() => hexToHsva(brushColor));
 
-  // Also keep hex input synced
-  const [hexInput, setHexInput] = useState(brushColor.replace('#', ''));
-
-  // When store changes (e.g. undo/eyedropper), sync local state
   useEffect(() => {
-    // Always sync hex input
-    setHexInput(brushColor.replace('#', ''));
     const newHsva = hexToHsva(brushColor);
     setHsva((prev) => (isSameHsva(prev, newHsva) ? prev : newHsva));
   }, [brushColor]);
 
-  // Handler for Saturation change
   const handleSaturationChange = useCallback(
     (newColor: HsvaColor) => {
-      // newColor contains updated s,v. h,a are passed from props?
-      // react-colorful Saturation calls onChange with { h, s, v, a } merged.
       const hex = hsvaToHex(newColor);
       if (!isSameColorToken(brushColor, hex)) {
         setBrushColor(hex);
@@ -51,7 +92,6 @@ export function ColorPanel() {
     [brushColor, setBrushColor]
   );
 
-  // Handler for Hue change
   const handleHueChange = useCallback(
     (newHue: number) => {
       const newHsva = { ...hsva, h: newHue };
@@ -63,24 +103,23 @@ export function ColorPanel() {
     [hsva, brushColor, setBrushColor]
   );
 
-  const handleHexChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setHexInput(val);
-
-    const clean = val.replace(/[^0-9a-fA-F]/g, '');
-    if (clean.length === 3 || clean.length === 6) {
-      setBrushColor(`#${normalizeHex(clean)}`);
+  const handleCopyHex = useCallback(async () => {
+    const hex = toCanonicalHex(brushColor);
+    const copied = await copyTextToClipboard(hex);
+    if (copied) {
+      pushToast(`Copied ${hex}`, { variant: 'success' });
+    } else {
+      pushToast('Copy failed', { variant: 'error' });
     }
-  };
+  }, [brushColor, pushToast]);
 
-  const handleHexBlur = () => {
-    setHexInput(brushColor.replace('#', ''));
-  };
+  const handleAddSwatch = useCallback(() => {
+    addRecentSwatch(brushColor);
+  }, [addRecentSwatch, brushColor]);
 
   return (
     <div className="color-panel">
       <div className="color-picker-wrapper">
-        {/* Custom Layout: Saturation + Vertical Hue */}
         <div className="picker-area">
           <div className="saturation-wrapper">
             <SaturationSquare hsva={hsva} onChange={handleSaturationChange} />
@@ -90,39 +129,96 @@ export function ColorPanel() {
           </div>
         </div>
 
-        <div className="color-inputs">
-          {/* Foreground/Background Color Swatches */}
-          <div className="color-swatches">
-            <div
-              className="color-swatch foreground"
-              style={{ backgroundColor: brushColor }}
-              title="Foreground Color"
-            />
-            <div
-              className="color-swatch background"
-              style={{ backgroundColor: backgroundColor }}
-              onClick={swapColors}
-              title="Background Color (Click to swap)"
-            />
+        <div className="color-controls">
+          <div className="color-left-column">
+            <div className="color-swatches-vertical">
+              <button
+                type="button"
+                className="color-swatch foreground"
+                style={{ backgroundColor: brushColor }}
+                title="Foreground Color"
+                aria-label="Foreground Color"
+              />
+              <button
+                type="button"
+                className="color-swatch background"
+                style={{ backgroundColor: backgroundColor }}
+                title="Background Color"
+                aria-label="Background Color"
+              />
+            </div>
+            <div className="color-actions">
+              <button
+                type="button"
+                className="color-action-btn"
+                onClick={swapColors}
+                title="Swap Colors (X)"
+                aria-label="Swap Colors"
+              >
+                <ArrowLeftRight size={12} />
+              </button>
+              <button
+                type="button"
+                className="color-action-btn"
+                onClick={resetColors}
+                title="Reset Colors (D)"
+                aria-label="Reset Colors"
+              >
+                <RotateCcw size={12} />
+              </button>
+            </div>
           </div>
-          <div className="color-actions">
-            <button className="color-action-btn" onClick={swapColors} title="Swap Colors (X)">
-              <ArrowLeftRight size={12} />
-            </button>
-            <button className="color-action-btn" onClick={resetColors} title="Reset Colors (D)">
-              <RotateCcw size={12} />
-            </button>
-          </div>
-          <div className="hex-input-wrapper">
-            <span className="hex-prefix">#</span>
-            <input
-              type="text"
-              value={hexInput}
-              onChange={handleHexChange}
-              onBlur={handleHexBlur}
-              className="hex-input"
-              maxLength={6}
-            />
+
+          <div className="color-right-column">
+            <div className="color-action-row">
+              <button
+                type="button"
+                className="palette-action-btn hex-copy-btn"
+                onClick={() => void handleCopyHex()}
+              >
+                HEX
+              </button>
+              <button
+                type="button"
+                className="palette-action-btn add-swatch-btn"
+                onClick={handleAddSwatch}
+                title="Add current foreground color to swatches"
+                aria-label="Add Swatch"
+              >
+                <Plus size={14} />
+              </button>
+            </div>
+
+            <div className="swatch-grid" role="list" aria-label="Recent Swatches">
+              {Array.from({ length: RECENT_SWATCH_LIMIT }).map((_, index) => {
+                const swatch = recentSwatches[index];
+                if (!swatch) {
+                  return (
+                    <button
+                      key={`empty-${index}`}
+                      type="button"
+                      className="recent-swatch-slot empty"
+                      data-testid="recent-swatch-slot"
+                      aria-label={`Empty swatch slot ${index + 1}`}
+                      disabled
+                    />
+                  );
+                }
+
+                return (
+                  <button
+                    key={swatch}
+                    type="button"
+                    className="recent-swatch-slot"
+                    data-testid="recent-swatch-slot"
+                    style={{ backgroundColor: swatch }}
+                    aria-label={`Swatch ${index + 1}: ${swatch}`}
+                    title={swatch}
+                    onClick={() => setBrushColor(swatch)}
+                  />
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

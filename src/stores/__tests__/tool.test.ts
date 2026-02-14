@@ -4,6 +4,7 @@ import { appHyphenStorageKey } from '@/constants/appMeta';
 
 interface PersistedBrushSettingsPayload {
   state?: {
+    recentSwatches?: string[];
     brushTexture?: {
       id?: string;
       width?: number;
@@ -47,6 +48,9 @@ describe('ToolStore', () => {
       currentTool: 'brush',
       brushSize: 20,
       eraserSize: 20,
+      brushColor: '#000000',
+      backgroundColor: '#ffffff',
+      recentSwatches: [],
       brushFlow: 1,
       brushOpacity: 1,
       brushHardness: 100,
@@ -65,6 +69,7 @@ describe('ToolStore', () => {
   };
 
   beforeEach(() => {
+    window.localStorage.clear();
     resetToolState();
   });
 
@@ -196,6 +201,16 @@ describe('ToolStore', () => {
   });
 
   describe('persistence', () => {
+    it('persists recent swatches with canonical order', () => {
+      const store = useToolStore.getState();
+      store.addRecentSwatch('#00aa00');
+      store.addRecentSwatch('#11BB11');
+      store.addRecentSwatch('#00AA00');
+
+      const parsed = readPersistedBrushSettings();
+      expect(parsed.state?.recentSwatches).toEqual(['#00AA00', '#11BB11']);
+    });
+
     it('persists active brushTexture so startup restore can keep texture tips without preset re-apply', () => {
       const store = useToolStore.getState();
       store.setBrushTexture({
@@ -237,6 +252,24 @@ describe('ToolStore', () => {
       expect(state.brushTexture?.width).toBe(48);
       expect(state.brushTexture?.height).toBe(48);
       expect(state.brushProfile.texture?.id).toBe('legacy-texture-tip');
+    });
+
+    it('migrates v7 payload by backfilling empty recent swatches', async () => {
+      window.localStorage.setItem(
+        appHyphenStorageKey('brush-settings'),
+        JSON.stringify({
+          state: {
+            brushColor: '#112233',
+            backgroundColor: '#ffffff',
+          },
+          version: 7,
+        })
+      );
+
+      await useToolStore.persist.rehydrate();
+
+      const state = useToolStore.getState();
+      expect(state.recentSwatches).toEqual([]);
     });
   });
 
@@ -294,6 +327,40 @@ describe('ToolStore', () => {
 
       expect(useToolStore.getState().brushColor).toBe('#000000');
       expect(useToolStore.getState().backgroundColor).toBe('#ffffff');
+    });
+  });
+
+  describe('addRecentSwatch', () => {
+    it('inserts new colors at the front and caps list size at 6', () => {
+      const store = useToolStore.getState();
+      store.addRecentSwatch('#111111');
+      store.addRecentSwatch('#222222');
+      store.addRecentSwatch('#333333');
+      store.addRecentSwatch('#444444');
+      store.addRecentSwatch('#555555');
+      store.addRecentSwatch('#666666');
+      store.addRecentSwatch('#777777');
+
+      expect(useToolStore.getState().recentSwatches).toEqual([
+        '#777777',
+        '#666666',
+        '#555555',
+        '#444444',
+        '#333333',
+        '#222222',
+      ]);
+    });
+
+    it('moves duplicate color to the first slot instead of increasing length', () => {
+      const store = useToolStore.getState();
+      store.addRecentSwatch('#AA0000');
+      store.addRecentSwatch('#BB0000');
+      store.addRecentSwatch('#CC0000');
+
+      store.addRecentSwatch('#bb0000');
+      const state = useToolStore.getState();
+      expect(state.recentSwatches).toEqual(['#BB0000', '#CC0000', '#AA0000']);
+      expect(state.recentSwatches).toHaveLength(3);
     });
   });
 

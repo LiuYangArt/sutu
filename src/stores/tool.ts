@@ -7,6 +7,7 @@ import {
 } from '@/components/BrushPanel/types';
 import { patternManager } from '@/utils/patternManager';
 import { appHyphenStorageKey } from '@/constants/appMeta';
+import { normalizeHex } from '@/utils/colorUtils';
 
 export type ToolType =
   | 'brush'
@@ -22,6 +23,7 @@ export type PressureCurve = 'linear' | 'soft' | 'hard' | 'sCurve';
 
 export type BrushMaskType = 'gaussian';
 const FORCED_BRUSH_MASK_TYPE: BrushMaskType = 'gaussian';
+export const RECENT_SWATCH_LIMIT = 6;
 
 /**
  * Control source for dynamic brush parameters (Photoshop-compatible)
@@ -392,6 +394,29 @@ function isSameCaseInsensitiveText(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
+function normalizeRecentSwatchColor(color: string): string | null {
+  const trimmed = color.trim();
+  const raw = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
+  if (!/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(raw)) {
+    return null;
+  }
+  return `#${normalizeHex(raw).toUpperCase()}`;
+}
+
+function normalizeRecentSwatchList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const normalized: string[] = [];
+  for (const item of input) {
+    if (typeof item !== 'string') continue;
+    const color = normalizeRecentSwatchColor(item);
+    if (!color) continue;
+    if (normalized.some((entry) => isSameCaseInsensitiveText(entry, color))) continue;
+    normalized.push(color);
+    if (normalized.length >= RECENT_SWATCH_LIMIT) break;
+  }
+  return normalized;
+}
+
 function cloneCursorBounds(
   bounds: BrushTexture['cursorBounds'] | undefined
 ): BrushTexture['cursorBounds'] | undefined {
@@ -506,6 +531,7 @@ interface ToolState {
   brushAngle: number; // Angle: 0-360 degrees
   brushColor: string;
   backgroundColor: string;
+  recentSwatches: string[];
   brushTexture: BrushTexture | null; // Texture for sampled brushes (from ABR import)
 
   // Eraser settings (independent from brush)
@@ -585,6 +611,8 @@ interface ToolState {
   getCurrentSize: () => number;
   // Set current tool's size (brush or eraser)
   setCurrentSize: (size: number) => void;
+  addRecentSwatch: (color: string) => void;
+  clearRecentSwatches: () => void;
   swapColors: () => void;
   resetColors: () => void;
   togglePressureSize: () => void;
@@ -812,6 +840,7 @@ export const useToolStore = create<ToolState>()(
         brushAngle: 0, // 0 degrees
         brushColor: '#000000',
         backgroundColor: '#ffffff',
+        recentSwatches: [],
         brushTexture: null, // No texture by default (procedural brush)
         eraserSize: 20,
         eraserBackgroundMode: 'background-color',
@@ -1003,6 +1032,28 @@ export const useToolStore = create<ToolState>()(
           }
         },
 
+        addRecentSwatch: (color) =>
+          set((state) => {
+            const normalized = normalizeRecentSwatchColor(color);
+            if (!normalized) return state;
+            const next = [
+              normalized,
+              ...state.recentSwatches.filter(
+                (entry) => !isSameCaseInsensitiveText(entry, normalized)
+              ),
+            ].slice(0, RECENT_SWATCH_LIMIT);
+            if (
+              next.length === state.recentSwatches.length &&
+              next.every((entry, index) => entry === state.recentSwatches[index])
+            ) {
+              return state;
+            }
+            return { recentSwatches: next };
+          }),
+
+        clearRecentSwatches: () =>
+          set((state) => (state.recentSwatches.length === 0 ? state : { recentSwatches: [] })),
+
         swapColors: () =>
           set((state) => ({
             brushColor: state.backgroundColor,
@@ -1160,7 +1211,7 @@ export const useToolStore = create<ToolState>()(
     },
     {
       name: appHyphenStorageKey('brush-settings'),
-      version: 7,
+      version: 8,
       // Only persist brush-related settings, not current tool or runtime state
       migrate: (persistedState: unknown) => {
         if (!isRecord(persistedState)) {
@@ -1214,6 +1265,7 @@ export const useToolStore = create<ToolState>()(
         });
         const eraserBackgroundMode: EraserBackgroundMode =
           state.eraserBackgroundMode === 'transparent' ? 'transparent' : 'background-color';
+        const recentSwatches = normalizeRecentSwatchList(state.recentSwatches);
 
         return {
           ...(state as unknown as ToolState),
@@ -1222,6 +1274,7 @@ export const useToolStore = create<ToolState>()(
           eraserProfile,
           eraserSize: eraserProfile.size,
           eraserBackgroundMode,
+          recentSwatches,
         };
       },
       partialize: (state) =>
@@ -1261,6 +1314,7 @@ export const useToolStore = create<ToolState>()(
             brushAngle: state.brushAngle,
             brushColor: state.brushColor,
             backgroundColor: state.backgroundColor,
+            recentSwatches: normalizeRecentSwatchList(state.recentSwatches),
             brushTexture: serializeTexture(state.brushTexture),
             eraserSize: state.eraserSize,
             eraserBackgroundMode: state.eraserBackgroundMode,
