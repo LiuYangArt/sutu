@@ -1,6 +1,6 @@
 import { useEffect, useRef, MutableRefObject } from 'react';
 import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
-import { getEffectiveInputData } from './inputUtils';
+import { getEffectiveInputData, isNativeTabletStreamingBackend } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 
 /**
@@ -16,16 +16,12 @@ import { clientToCanvasPoint } from './canvasGeometry';
 export const supportsPointerRawUpdate =
   typeof window !== 'undefined' && 'onpointerrawupdate' in window;
 
-function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+function isNativeStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
   const activeBackend =
     typeof state.activeBackend === 'string' && state.activeBackend.length > 0
       ? state.activeBackend
       : state.backend;
-  return (
-    state.isStreaming &&
-    typeof activeBackend === 'string' &&
-    activeBackend.toLowerCase() === 'wintab'
-  );
+  return state.isStreaming && isNativeTabletStreamingBackend(activeBackend);
 }
 
 type QueuedPoint = {
@@ -69,7 +65,7 @@ export function useRawPointerInput({
 }: RawPointerInputConfig) {
   // Track if we're using raw input (for diagnostics)
   const usingRawInputRef = useRef(false);
-  const wintabSeqCursorRef = useRef(0);
+  const nativeSeqCursorRef = useRef(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -103,13 +99,13 @@ export function useRawPointerInput({
 
       // Get tablet state for pressure resolution
       const tabletState = useTabletStore.getState();
-      const isWinTabActive = isWinTabStreamingBackend(tabletState);
-      const shouldUseWinTab = isWinTabActive && pe.isTrusted;
-      const { points: bufferedPoints, nextSeq } = shouldUseWinTab
-        ? readPointBufferSince(wintabSeqCursorRef.current)
-        : { points: [], nextSeq: wintabSeqCursorRef.current };
-      if (shouldUseWinTab) {
-        wintabSeqCursorRef.current = nextSeq;
+      const isNativeBackendActive = isNativeStreamingBackend(tabletState);
+      const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
+      const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+        ? readPointBufferSince(nativeSeqCursorRef.current)
+        : { points: [], nextSeq: nativeSeqCursorRef.current };
+      if (shouldUseNativeBackend) {
+        nativeSeqCursorRef.current = nextSeq;
       }
 
       for (const evt of coalescedEvents) {
@@ -120,10 +116,10 @@ export function useRawPointerInput({
           rect
         );
 
-        // Resolve pressure/tilt from WinTab or PointerEvent
+        // Resolve pressure/tilt from native backend or PointerEvent
         const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
           evt,
-          shouldUseWinTab,
+          shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
           pe

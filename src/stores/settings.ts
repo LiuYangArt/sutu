@@ -64,7 +64,8 @@ export interface AppearanceSettings {
 }
 
 export interface TabletSettings {
-  backend: 'auto' | 'wintab' | 'pointerevent';
+  backend: 'auto' | 'wintab' | 'macnative' | 'pointerevent';
+  backendMigratedToMacNativeAt: string | null;
   pollingRate: number;
   pressureCurve: 'linear' | 'soft' | 'hard' | 'scurve';
   backpressureMode: 'lossless' | 'latency_capped';
@@ -213,31 +214,58 @@ type NavigatorWithUAData = Navigator & {
   };
 };
 
-function isWindowsPlatform(): boolean {
+type PlatformKind = 'windows' | 'macos' | 'other';
+
+function resolvePlatformKind(): PlatformKind {
   if (typeof navigator === 'undefined') {
-    return true;
+    return 'windows';
   }
 
   const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
   const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
-  return /windows/i.test(platformHint);
+  if (/windows/i.test(platformHint)) return 'windows';
+  if (/mac/i.test(platformHint)) return 'macos';
+  return 'other';
 }
 
 function resolveDefaultTabletBackend(): TabletSettings['backend'] {
-  return isWindowsPlatform() ? 'wintab' : 'pointerevent';
+  const platform = resolvePlatformKind();
+  if (platform === 'windows') return 'wintab';
+  if (platform === 'macos') return 'macnative';
+  return 'pointerevent';
 }
 
 function normalizeTabletBackend(value: unknown): TabletSettings['backend'] {
   const resolved: TabletSettings['backend'] =
-    value === 'auto' || value === 'wintab' || value === 'pointerevent'
+    value === 'auto' || value === 'wintab' || value === 'macnative' || value === 'pointerevent'
       ? value
       : resolveDefaultTabletBackend();
 
-  if (!isWindowsPlatform() && resolved !== 'pointerevent') {
-    return 'pointerevent';
+  const platform = resolvePlatformKind();
+  if (platform === 'windows') {
+    return resolved === 'macnative' ? 'wintab' : resolved;
+  }
+  if (platform === 'macos') {
+    return resolved === 'wintab' ? 'macnative' : resolved;
   }
 
-  return resolved;
+  return 'pointerevent';
+}
+
+function normalizeBackendMigrationMarker(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function shouldAutoMigrateMacBackend(loadedTablet: unknown): boolean {
+  if (resolvePlatformKind() !== 'macos') return false;
+  if (!loadedTablet || typeof loadedTablet !== 'object') return false;
+  const partial = loadedTablet as Partial<TabletSettings>;
+  const hasMarkerField = Object.prototype.hasOwnProperty.call(
+    partial,
+    'backendMigratedToMacNativeAt'
+  );
+  const marker = normalizeBackendMigrationMarker(partial.backendMigratedToMacNativeAt);
+  return partial.backend === 'pointerevent' && !hasMarkerField && marker === null;
 }
 
 function cloneDefaultNewFileSettings(): NewFileSettings {
@@ -397,6 +425,7 @@ const defaultSettings: PersistedSettings = {
   },
   tablet: {
     backend: resolveDefaultTabletBackend(),
+    backendMigratedToMacNativeAt: null,
     pollingRate: 200,
     pressureCurve: 'linear',
     backpressureMode: 'lossless',
@@ -697,9 +726,17 @@ export const useSettingsStore = create<SettingsState>()(
             }
             if (loaded.tablet) {
               const mergedTablet = { ...defaultSettings.tablet, ...loaded.tablet };
+              const shouldMigrateToMacNative = shouldAutoMigrateMacBackend(loaded.tablet);
+              const backendMigratedToMacNativeAt = shouldMigrateToMacNative
+                ? new Date().toISOString()
+                : normalizeBackendMigrationMarker(mergedTablet.backendMigratedToMacNativeAt);
+              const normalizedBackend = shouldMigrateToMacNative
+                ? 'macnative'
+                : normalizeTabletBackend(mergedTablet.backend);
               state.tablet = {
                 ...mergedTablet,
-                backend: normalizeTabletBackend(mergedTablet.backend),
+                backend: normalizedBackend,
+                backendMigratedToMacNativeAt,
               };
             }
             if (loaded.brush) {

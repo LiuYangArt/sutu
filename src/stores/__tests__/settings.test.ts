@@ -39,6 +39,7 @@ describe('settings store newFile persistence', () => {
       },
       tablet: {
         backend: 'pointerevent',
+        backendMigratedToMacNativeAt: null,
         pollingRate: 200,
         pressureCurve: 'linear',
         backpressureMode: 'lossless',
@@ -79,6 +80,7 @@ describe('settings store newFile persistence', () => {
         },
         tablet: {
           backend: 'pointerevent',
+          backendMigratedToMacNativeAt: null,
           pollingRate: 100,
           pressureCurve: 'hard',
           autoStart: false,
@@ -235,5 +237,74 @@ describe('settings store newFile persistence', () => {
     const state = useSettingsStore.getState();
 
     expect(state.quickExport.maxSize).toBe(960);
+  });
+
+  it('auto-migrates legacy macOS pointerevent backend to macnative once', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        tablet: {
+          backend: 'pointerevent',
+          pollingRate: 200,
+          pressureCurve: 'linear',
+          backpressureMode: 'lossless',
+          autoStart: true,
+        },
+      })
+    );
+
+    const originalPlatform = navigator.platform;
+    Object.defineProperty(window.navigator, 'platform', {
+      value: 'MacIntel',
+      configurable: true,
+    });
+
+    try {
+      await useSettingsStore.getState()._loadSettings();
+      const state = useSettingsStore.getState();
+      expect(state.tablet.backend).toBe('macnative');
+      expect(typeof state.tablet.backendMigratedToMacNativeAt).toBe('string');
+      expect(state.tablet.backendMigratedToMacNativeAt).toBeTruthy();
+    } finally {
+      Object.defineProperty(window.navigator, 'platform', {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
+  });
+
+  it('does not remigrate macOS backend when migration marker exists', async () => {
+    const migratedAt = '2026-02-14T00:00:00.000Z';
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        tablet: {
+          backend: 'pointerevent',
+          backendMigratedToMacNativeAt: migratedAt,
+          pollingRate: 200,
+          pressureCurve: 'linear',
+          backpressureMode: 'lossless',
+          autoStart: true,
+        },
+      })
+    );
+
+    const originalPlatform = navigator.platform;
+    Object.defineProperty(window.navigator, 'platform', {
+      value: 'MacIntel',
+      configurable: true,
+    });
+
+    try {
+      await useSettingsStore.getState()._loadSettings();
+      const state = useSettingsStore.getState();
+      expect(state.tablet.backend).toBe('pointerevent');
+      expect(state.tablet.backendMigratedToMacNativeAt).toBe(migratedAt);
+    } finally {
+      Object.defineProperty(window.navigator, 'platform', {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 });

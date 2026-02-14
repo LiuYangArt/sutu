@@ -18,11 +18,27 @@ function isWindowsPlatform(): boolean {
   return /windows/i.test(platformHint);
 }
 
-const DEFAULT_REQUESTED_BACKEND: BackendType = isWindowsPlatform() ? 'wintab' : 'pointerevent';
+function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+
+  const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
+  const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
+  return /mac/i.test(platformHint);
+}
+
+function resolveDefaultRequestedBackend(): BackendType {
+  if (isWindowsPlatform()) return 'wintab';
+  if (isMacPlatform()) return 'macnative';
+  return 'pointerevent';
+}
+
+const DEFAULT_REQUESTED_BACKEND: BackendType = resolveDefaultRequestedBackend();
 
 // Types matching Rust backend
 export type TabletStatus = 'Disconnected' | 'Connected' | 'Error';
-export type BackendType = 'wintab' | 'pointerevent' | 'auto';
+export type BackendType = 'wintab' | 'macnative' | 'pointerevent' | 'auto';
 export type InputBackpressureMode = 'lossless' | 'latency_capped';
 
 export interface TabletInfo {
@@ -67,7 +83,7 @@ interface TabletStatusStatePatch {
   info: TabletInfo | null;
 }
 
-export type InputSource = 'wintab' | 'pointerevent' | 'win_tab' | 'pointer_event';
+export type InputSource = 'wintab' | 'pointerevent' | 'mac_native' | 'win_tab' | 'pointer_event';
 export type InputPhase = 'unknown' | 'hover' | 'down' | 'move' | 'up';
 
 export interface RawInputPoint {

@@ -67,6 +67,12 @@ raw-window-handle = "0.6"
 wintab_lite = { version = "1.0.1", features = ["libloading"] }
 libloading = "0.8"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", default-features = false }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSEvent", "NSWindow", "block2"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry"] }
+block2 = "0.6"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 

@@ -40,6 +40,7 @@ pub enum TabletStatus {
 pub enum InputSource {
     WinTab,
     PointerEvent,
+    MacNative,
 }
 
 /// Input phase used by cross-backend matching.
@@ -546,5 +547,15 @@ mod tests {
                 prev_seq = sample.seq;
             }
         }
+    }
+
+    #[test]
+    fn test_input_source_mac_native_serialization() {
+        let encoded = serde_json::to_string(&InputSource::MacNative).expect("serialize source");
+        assert_eq!(encoded, "\"mac_native\"");
+
+        let decoded: InputSource =
+            serde_json::from_str("\"mac_native\"").expect("deserialize source");
+        assert_eq!(decoded, InputSource::MacNative);
     }
 }

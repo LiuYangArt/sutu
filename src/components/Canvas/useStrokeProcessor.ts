@@ -7,6 +7,7 @@ import { FPSCounter } from '@/benchmark/FPSCounter';
 import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import type { GpuStrokeCommitResult, RenderBackend, StrokeCompositeMode } from '@/gpu';
+import { isNativeTabletStreamingBackend } from './inputUtils';
 
 const MAX_POINTS_PER_FRAME = 80;
 // Photoshop Build-up (Airbrush) rate tuning:
@@ -40,16 +41,12 @@ function isStrokeTool(tool: ToolType): boolean {
   return tool === 'brush' || tool === 'eraser';
 }
 
-function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+function isNativeStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
   const activeBackend =
     typeof state.activeBackend === 'string' && state.activeBackend.length > 0
       ? state.activeBackend
       : state.backend;
-  return (
-    state.isStreaming &&
-    typeof activeBackend === 'string' &&
-    activeBackend.toLowerCase() === 'wintab'
-  );
+  return state.isStreaming && isNativeTabletStreamingBackend(activeBackend);
 }
 
 interface UseStrokeProcessorParams {
@@ -437,8 +434,8 @@ export function useStrokeProcessor({
 
             let pressure = lastPressureRef.current;
             const tabletState = useTabletStore.getState();
-            const isWinTabActive = isWinTabStreamingBackend(tabletState);
-            if (isWinTabActive) {
+            const isNativeBackendActive = isNativeStreamingBackend(tabletState);
+            if (isNativeBackendActive) {
               const pt = tabletState.currentPoint;
               if (pt) {
                 pressure = pt.pressure;
@@ -498,7 +495,7 @@ export function useStrokeProcessor({
   // Internal stroke finishing logic (called after state machine validation)
   // Renamed to finalizeStroke for clarity
   const finalizeStroke = useCallback(async () => {
-    // 清理 WinTab 缓冲区
+    // Clear buffered native tablet samples between strokes.
     clearPointBuffer();
 
     const isBrushStroke = isBrushStrokeState(strokeStateRef.current) || isStrokeActive();
@@ -634,7 +631,7 @@ export function useStrokeProcessor({
       let replayPoints = points;
       if (isBuildup && points.length > 1) {
         // When Build-up is enabled, the 'starting' phase can accumulate many
-        // near-identical points at the same coordinate (especially with WinTab/raw input).
+        // near-identical points at the same coordinate (especially with native/raw input).
         // Replaying all of them can create an overly heavy "starting blob".
         // Collapse consecutive near-identical points by keeping only the latest.
         const out: QueuedPoint[] = [];

@@ -23,6 +23,7 @@ import { useGradientTool, type GradientPreviewPayload } from './useGradientTool'
 import { SelectionOverlay } from './SelectionOverlay';
 import { BrushQuickPanel } from './BrushQuickPanel';
 import { clientToCanvasPoint, getDisplayScale, getSafeDevicePixelRatio } from './canvasGeometry';
+import { isNativeTabletStreamingBackend } from './inputUtils';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LagometerMonitor } from '@/benchmark/LagometerMonitor';
 import { FPSCounter } from '@/benchmark/FPSCounter';
@@ -545,17 +546,19 @@ export function Canvas() {
           getCaptureRoot: () => containerRef.current,
           getScale: () => useViewportStore.getState().scale,
           getLiveInputOverride: (event) => {
-            // WinTab backend often reports PointerEvent pressure as a constant mouse-like value.
+            // Native tablet backend can report richer pressure/tilt than raw PointerEvent.
             // For recording/replay fidelity, capture pressure/tilt from tablet stream when available.
             if (!event.isTrusted) return null;
             if (event.type !== 'pointerdown' && event.type !== 'pointermove') return null;
 
             const tablet = useTabletStore.getState();
-            const isWinTabActive =
-              tablet.isStreaming &&
-              typeof tablet.backend === 'string' &&
-              tablet.backend.toLowerCase() === 'wintab';
-            if (!isWinTabActive) return null;
+            const activeBackend =
+              typeof tablet.activeBackend === 'string' && tablet.activeBackend.length > 0
+                ? tablet.activeBackend
+                : tablet.backend;
+            const isNativeBackendActive =
+              tablet.isStreaming && isNativeTabletStreamingBackend(activeBackend);
+            if (!isNativeBackendActive) return null;
 
             const pt = tablet.currentPoint;
             if (!pt) return null;

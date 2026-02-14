@@ -3,6 +3,14 @@ import { Tablet, Wifi, WifiOff, Settings, X } from 'lucide-react';
 import { useTabletStore, BackendType } from '@/stores/tablet';
 import './TabletPanel.css';
 
+function detectPlatformKind(): 'windows' | 'macos' | 'other' {
+  if (typeof navigator === 'undefined') return 'windows';
+  const platformHint = navigator.platform ?? navigator.userAgent;
+  if (/windows/i.test(platformHint)) return 'windows';
+  if (/mac/i.test(platformHint)) return 'macos';
+  return 'other';
+}
+
 // Global toggle function for menu control
 let toggleVisibilityFn: (() => void) | null = null;
 let getVisibilityFn: (() => boolean) | null = null;
@@ -13,6 +21,7 @@ export const isTabletPanelVisible = () => getVisibilityFn?.() ?? false;
 export function TabletPanel() {
   const [isVisible, setIsVisible] = useState(false); // Hidden by default
   const [isOpen, setIsOpen] = useState(false);
+  const platformKind = detectPlatformKind();
 
   // Register global toggle function
   useEffect(() => {
@@ -23,7 +32,9 @@ export function TabletPanel() {
       getVisibilityFn = null;
     };
   }, [isVisible]);
-  const [selectedBackend, setSelectedBackend] = useState<BackendType>('pointerevent');
+  const [selectedBackend, setSelectedBackend] = useState<BackendType>(() =>
+    platformKind === 'macos' ? 'macnative' : platformKind === 'windows' ? 'wintab' : 'pointerevent'
+  );
   const [pollingRate, setPollingRate] = useState(200);
   const [pressureCurve, setPressureCurve] = useState('linear');
 
@@ -64,6 +75,12 @@ export function TabletPanel() {
   };
 
   const statusColor = status === 'Connected' ? '#4f4' : status === 'Error' ? '#f44' : '#888';
+  const autoBackendLabel =
+    platformKind === 'macos'
+      ? 'Auto (prefer Mac Native)'
+      : platformKind === 'windows'
+        ? 'Auto (prefer WinTab)'
+        : 'Auto (prefer PointerEvent)';
 
   // Don't render anything if not visible
   if (!isVisible) return null;
@@ -143,8 +160,9 @@ export function TabletPanel() {
                     value={selectedBackend}
                     onChange={(e) => setSelectedBackend(e.target.value as BackendType)}
                   >
-                    <option value="auto">Auto (prefer WinTab)</option>
-                    <option value="wintab">WinTab only</option>
+                    <option value="auto">{autoBackendLabel}</option>
+                    {platformKind !== 'macos' && <option value="wintab">WinTab only</option>}
+                    {platformKind === 'macos' && <option value="macnative">Mac Native only</option>}
                     <option value="pointerevent">PointerEvent only</option>
                   </select>
                 </label>

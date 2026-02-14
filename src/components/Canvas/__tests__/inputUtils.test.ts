@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { RawInputPoint } from '@/stores/tablet';
-import { getEffectiveInputData } from '../inputUtils';
+import { getEffectiveInputData, isNativeTabletStreamingBackend } from '../inputUtils';
 
 function createRawPoint(partial: Partial<RawInputPoint> = {}): RawInputPoint {
   return {
@@ -41,7 +41,7 @@ function createPointerEvent(
 }
 
 describe('inputUtils.getEffectiveInputData', () => {
-  it('非 WinTab 模式使用 PointerEvent，并归一化 tilt 与读取 twist', () => {
+  it('非原生后端模式使用 PointerEvent，并归一化 tilt 与读取 twist', () => {
     const evt = createPointerEvent({ pressure: 0.62, tiltX: 45, tiltY: -30, twist: 270 });
     const result = getEffectiveInputData(evt, false, [], null);
     expect(result).toEqual({ pressure: 0.62, tiltX: 0.5, tiltY: -1 / 3, rotation: 270 });
@@ -74,7 +74,7 @@ describe('inputUtils.getEffectiveInputData', () => {
     });
   });
 
-  it('非 WinTab 下 pressure=0 时回退 webkitForce', () => {
+  it('非原生后端下 pressure=0 时回退 webkitForce', () => {
     const evt = createPointerEvent({
       pointerType: 'mouse',
       pressure: 0,
@@ -86,7 +86,7 @@ describe('inputUtils.getEffectiveInputData', () => {
     expect(result.pressure).toBeCloseTo(0.5, 6);
   });
 
-  it('非 WinTab 下样本 pressure 为 synthetic 0.5 时回退 fallbackEvent webkitForce', () => {
+  it('非原生后端下样本 pressure 为 synthetic 0.5 时回退 fallbackEvent webkitForce', () => {
     const sampled = createPointerEvent({ pointerType: 'mouse', pressure: 0.5, webkitForce: 0 });
     const fallback = createPointerEvent({
       pointerType: 'mouse',
@@ -97,7 +97,7 @@ describe('inputUtils.getEffectiveInputData', () => {
     expect(result.pressure).toBeCloseTo(0.8, 6);
   });
 
-  it('WinTab 优先使用 buffered 点', () => {
+  it('原生后端优先使用 buffered 点', () => {
     const evt = createPointerEvent({ pressure: 0.8, tiltX: 5, tiltY: 5, twist: 30 });
     const buffered = [createRawPoint({ pressure: 0.33, tilt_x: 21, tilt_y: -12, rotation: 210 })];
     const current = createRawPoint({ pressure: 0.9, tilt_x: 30, tilt_y: 30, rotation: 320 });
@@ -105,21 +105,21 @@ describe('inputUtils.getEffectiveInputData', () => {
     expect(result).toEqual({ pressure: 0.33, tiltX: 21 / 90, tiltY: -12 / 90, rotation: 210 });
   });
 
-  it('WinTab 无 buffered 时回退 currentPoint', () => {
+  it('原生后端无 buffered 时回退 currentPoint', () => {
     const evt = createPointerEvent({ pressure: 0.7, tiltX: 0, tiltY: 0, twist: 75 });
     const current = createRawPoint({ pressure: 0.41, tilt_x: 8, tilt_y: 3, rotation: 288 });
     const result = getEffectiveInputData(evt, true, [], current);
     expect(result).toEqual({ pressure: 0.41, tiltX: 8 / 90, tiltY: 3 / 90, rotation: 288 });
   });
 
-  it('WinTab 点缺少 rotation 时回退 PointerEvent twist', () => {
+  it('原生后端点缺少 rotation 时回退 PointerEvent twist', () => {
     const evt = createPointerEvent({ pressure: 0.4, tiltX: 2, tiltY: -1, twist: 123 });
     const buffered = [createRawPoint({ pressure: 0.39, tilt_x: 4, tilt_y: -2 })];
     const result = getEffectiveInputData(evt, true, buffered, null);
     expect(result).toEqual({ pressure: 0.39, tiltX: 4 / 90, tiltY: -2 / 90, rotation: 123 });
   });
 
-  it('WinTab pen 无可用数据时返回 0 压力', () => {
+  it('原生后端 pen 无可用数据时返回 0 压力', () => {
     const evt = createPointerEvent({
       pointerType: 'pen',
       pressure: 0,
@@ -131,9 +131,16 @@ describe('inputUtils.getEffectiveInputData', () => {
     expect(result).toEqual({ pressure: 0, tiltX: 1 / 90, tiltY: 2 / 90, rotation: 9 });
   });
 
-  it('WinTab mouse 无可用数据时返回 0.5 压力兜底', () => {
+  it('原生后端 mouse 无可用数据时返回 0.5 压力兜底', () => {
     const evt = createPointerEvent({ pointerType: 'mouse', pressure: 0, tiltX: 1, tiltY: 2 });
     const result = getEffectiveInputData(evt, true, [], null);
     expect(result).toEqual({ pressure: 0.5, tiltX: 1 / 90, tiltY: 2 / 90, rotation: 0 });
+  });
+
+  it('识别原生流后端类型', () => {
+    expect(isNativeTabletStreamingBackend('wintab')).toBe(true);
+    expect(isNativeTabletStreamingBackend('macnative')).toBe(true);
+    expect(isNativeTabletStreamingBackend('pointerevent')).toBe(false);
+    expect(isNativeTabletStreamingBackend('auto')).toBe(false);
   });
 });

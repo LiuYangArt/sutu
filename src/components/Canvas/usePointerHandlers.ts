@@ -4,7 +4,7 @@ import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
-import { getEffectiveInputData } from './inputUtils';
+import { getEffectiveInputData, isNativeTabletStreamingBackend } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 
 function pointerEventToCanvasPoint(
@@ -106,16 +106,12 @@ interface UsePointerHandlersParams {
   onBeforeCanvasMutation?: () => void;
 }
 
-function isWinTabStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
+function isNativeStreamingBackend(state: ReturnType<typeof useTabletStore.getState>): boolean {
   const activeBackend =
     typeof state.activeBackend === 'string' && state.activeBackend.length > 0
       ? state.activeBackend
       : state.backend;
-  return (
-    state.isStreaming &&
-    typeof activeBackend === 'string' &&
-    activeBackend.toLowerCase() === 'wintab'
-  );
+  return state.isStreaming && isNativeTabletStreamingBackend(activeBackend);
 }
 
 function isStrokeTool(tool: ToolType): boolean {
@@ -170,7 +166,7 @@ export function usePointerHandlers({
   latencyProfilerRef,
   onBeforeCanvasMutation,
 }: UsePointerHandlersParams) {
-  const wintabSeqCursorRef = useRef(0);
+  const nativeSeqCursorRef = useRef(0);
 
   const trySetPointerCapture = useCallback((target: Element, event: React.PointerEvent) => {
     const native = event.nativeEvent as PointerEvent;
@@ -266,7 +262,7 @@ export function usePointerHandlers({
         return;
       }
 
-      // Prepare input data (pressure/tilt), preferring WinTab buffer if active.
+      // Prepare input data (pressure/tilt), preferring native backend buffer if active.
       // Important: For pen, do NOT default pressure to 0.5 at pointerdown,
       // otherwise the first dab can become noticeably too heavy (especially with Build-up enabled).
       const pe = e.nativeEvent as PointerEvent;
@@ -281,19 +277,19 @@ export function usePointerHandlers({
       }
       if (isStrokeTool(currentTool)) {
         const tabletState = useTabletStore.getState();
-        const isWinTabActive = isWinTabStreamingBackend(tabletState);
+        const isNativeBackendActive = isNativeStreamingBackend(tabletState);
         // Synthetic replay events are not trusted; keep captured pressure instead of
-        // overriding with live WinTab stream.
-        const shouldUseWinTab = isWinTabActive && pe.isTrusted;
-        const { points: bufferedPoints, nextSeq } = shouldUseWinTab
-          ? readPointBufferSince(wintabSeqCursorRef.current)
-          : { points: [], nextSeq: wintabSeqCursorRef.current };
-        if (shouldUseWinTab) {
-          wintabSeqCursorRef.current = nextSeq;
+        // overriding with live native stream.
+        const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
+        const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+          ? readPointBufferSince(nativeSeqCursorRef.current)
+          : { points: [], nextSeq: nativeSeqCursorRef.current };
+        if (shouldUseNativeBackend) {
+          nativeSeqCursorRef.current = nextSeq;
         }
         const effectiveInput = getEffectiveInputData(
           pe,
-          shouldUseWinTab,
+          shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
           pe
@@ -302,14 +298,14 @@ export function usePointerHandlers({
         tiltX = effectiveInput.tiltX;
         tiltY = effectiveInput.tiltY;
         rotation = effectiveInput.rotation;
-        if (shouldUseWinTab) {
-          // Use buffered WinTab points when available; avoid using currentPoint at pointerdown
+        if (shouldUseNativeBackend) {
+          // Use buffered native points when available; avoid using currentPoint at pointerdown
           // because it can be stale (previous stroke), causing an overly heavy first dab.
           const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1];
           if (lastBufferedPoint) {
             pressure = lastBufferedPoint.pressure;
           } else if (pe.pointerType === 'pen') {
-            // No fresh WinTab sample yet at pen-down.
+            // No fresh native sample yet at pen-down.
             window.__strokeDiagnostics?.onStartPressureFallback();
             pressure = 0;
           }
@@ -533,16 +529,17 @@ export function usePointerHandlers({
       }
 
       const tabletState = useTabletStore.getState();
-      const isWinTabActive = isWinTabStreamingBackend(tabletState);
+      const isNativeBackendActive = isNativeStreamingBackend(tabletState);
       // Replay events should consume recorded pressure/tilt and must not be polluted
       // by current tablet stream state.
-      const shouldUseWinTab = isWinTabActive && (e.nativeEvent as PointerEvent).isTrusted;
+      const shouldUseNativeBackend =
+        isNativeBackendActive && (e.nativeEvent as PointerEvent).isTrusted;
       // Drain input buffer once per frame/event-batch (outside the loop)
-      const { points: bufferedPoints, nextSeq } = shouldUseWinTab
-        ? readPointBufferSince(wintabSeqCursorRef.current)
-        : { points: [], nextSeq: wintabSeqCursorRef.current };
-      if (shouldUseWinTab) {
-        wintabSeqCursorRef.current = nextSeq;
+      const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+        ? readPointBufferSince(nativeSeqCursorRef.current)
+        : { points: [], nextSeq: nativeSeqCursorRef.current };
+      if (shouldUseNativeBackend) {
+        nativeSeqCursorRef.current = nextSeq;
       }
 
       // 遍历所有合并事件，恢复完整输入轨迹
@@ -550,10 +547,10 @@ export function usePointerHandlers({
         // 始终使用 PointerEvent 的坐标（它们是准确的屏幕坐标）
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
 
-        // Resolve input pressure/tilt (handling WinTab buffering if active)
+        // Resolve input pressure/tilt (handling native buffering if active)
         const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
           evt,
-          shouldUseWinTab,
+          shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
           nativeEvent

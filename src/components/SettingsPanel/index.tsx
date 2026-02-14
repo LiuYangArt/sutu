@@ -63,8 +63,17 @@ function getTabletStatusColor(status: string): string {
 
 function normalizeBackendType(value: string | null | undefined): BackendType {
   if (value === 'wintab') return 'wintab';
+  if (value === 'macnative') return 'macnative';
   if (value === 'pointerevent') return 'pointerevent';
   return 'auto';
+}
+
+function detectPlatformKind(): 'windows' | 'macos' | 'other' {
+  if (typeof navigator === 'undefined') return 'windows';
+  const platformHint = navigator.platform ?? navigator.userAgent;
+  if (/windows/i.test(platformHint)) return 'windows';
+  if (/mac/i.test(platformHint)) return 'macos';
+  return 'other';
 }
 
 interface PointerEventDiagnosticsSnapshot {
@@ -408,12 +417,31 @@ function TabletSettings() {
   const statusColor = getTabletStatusColor(status);
   const [pointerDiag, setPointerDiag] = useState<PointerEventDiagnosticsSnapshot | null>(null);
   const [isApplyingPipelineConfig, setIsApplyingPipelineConfig] = useState(false);
+  const platformKind = detectPlatformKind();
+  const preferredNativeBackend: BackendType =
+    platformKind === 'macos' ? 'macnative' : platformKind === 'windows' ? 'wintab' : 'pointerevent';
+  const showBackendToggle = platformKind === 'windows' || platformKind === 'macos';
   const activeBackendLower =
     typeof activeBackend === 'string' ? activeBackend.toLowerCase() : 'none';
   const requestedBackendType = normalizeBackendType(requestedBackend || tablet.backend);
-  const isWinTabActive = activeBackendLower === 'wintab';
-  const toggleTargetBackend: BackendType = isWinTabActive ? 'pointerevent' : 'wintab';
-  const toggleBackendLabel = isWinTabActive ? 'Use PointerEvent' : 'Use WinTab';
+  const isNativeBackendActive =
+    activeBackendLower === 'wintab' || activeBackendLower === 'macnative';
+  const toggleTargetBackend: BackendType = isNativeBackendActive
+    ? 'pointerevent'
+    : preferredNativeBackend;
+  const toggleBackendLabel = isNativeBackendActive
+    ? 'Use PointerEvent'
+    : platformKind === 'macos'
+      ? 'Use Mac Native'
+      : platformKind === 'windows'
+        ? 'Use WinTab'
+        : 'Use PointerEvent';
+  const autoBackendLabel =
+    platformKind === 'macos'
+      ? 'Auto (prefer Mac Native)'
+      : platformKind === 'windows'
+        ? 'Auto (prefer WinTab)'
+        : 'Auto (prefer PointerEvent)';
   const backendSwitchOptions = {
     pollingRate: tablet.pollingRate,
     pressureCurve: tablet.pressureCurve,
@@ -545,13 +573,15 @@ function TabletSettings() {
   }, []);
 
   const pointerRawUpdateSupported = typeof window !== 'undefined' && 'onpointerrawupdate' in window;
-  const liveInputSourceHint = isWinTabActive
-    ? 'Source: backend tablet-event-v2 (WinTab packet stream)'
+  const liveInputSourceHint = isNativeBackendActive
+    ? activeBackendLower === 'macnative'
+      ? 'Source: backend tablet-event-v2 (MacNative packet stream)'
+      : 'Source: backend tablet-event-v2 (WinTab packet stream)'
     : `Source: window PointerEvent (all pointer types) | pointerrawupdate support: ${
         pointerRawUpdateSupported ? 'Yes' : 'No'
       }`;
   const pointerEventLooksMouseOnly =
-    !isWinTabActive &&
+    !isNativeBackendActive &&
     pointerDiag !== null &&
     pointerDiag.pointerType === 'mouse' &&
     pointerDiag.pressure <= 0 &&
@@ -561,7 +591,7 @@ function TabletSettings() {
     <div className="settings-content">
       <h3 className="settings-section-title">Tablet</h3>
 
-      {isInitialized && (
+      {isInitialized && showBackendToggle && (
         <div className="settings-section">
           <label className="settings-label">BACKEND SWITCH</label>
           <div className="settings-actions">
@@ -701,10 +731,14 @@ function TabletSettings() {
 
       <div className="settings-section">
         <label className="settings-label">
-          {isWinTabActive ? 'WINTAB LIVE' : 'POINTEREVENT LIVE'}
+          {isNativeBackendActive
+            ? activeBackendLower === 'macnative'
+              ? 'MAC NATIVE LIVE'
+              : 'WINTAB LIVE'
+            : 'POINTEREVENT LIVE'}
         </label>
         <div className="tablet-live-card">
-          {isWinTabActive ? (
+          {isNativeBackendActive ? (
             currentPoint ? (
               <>
                 <div className="status-row">
@@ -758,8 +792,8 @@ function TabletSettings() {
               </>
             ) : (
               <div className="tablet-live-empty">
-                No WinTab sample yet. Keep the pen in proximity and move or press on the canvas to
-                see live WinTab values here.
+                No native backend sample yet. Keep the pen in proximity and move or press on the
+                canvas to see live values here.
               </div>
             )
           ) : pointerDiag ? (
@@ -851,8 +885,9 @@ function TabletSettings() {
               value={tablet.backend}
               onChange={(e) => setTabletBackend(e.target.value as BackendType)}
             >
-              <option value="auto">Auto (prefer WinTab)</option>
-              <option value="wintab">WinTab only</option>
+              <option value="auto">{autoBackendLabel}</option>
+              {platformKind !== 'macos' && <option value="wintab">WinTab only</option>}
+              {platformKind === 'macos' && <option value="macnative">Mac Native only</option>}
               <option value="pointerevent">PointerEvent only</option>
             </select>
           </div>

@@ -6,7 +6,7 @@ type WebKitPointerEvent = PointerEvent & {
   WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN?: number;
 };
 
-function getWinTabPressureFallback(evt: PointerEvent): number {
+function getNativeBackendPressureFallback(evt: PointerEvent): number {
   if (evt.pointerType === 'pen') return 0;
   if (evt.pressure > 0) return evt.pressure;
   return 0.5;
@@ -61,6 +61,12 @@ function resolvePointerPressure(evt: PointerEvent, fallbackEvent?: PointerEvent)
   }
 
   return pressure;
+}
+
+export function isNativeTabletStreamingBackend(activeBackend: string | null | undefined): boolean {
+  if (typeof activeBackend !== 'string') return false;
+  const normalized = activeBackend.toLowerCase();
+  return normalized === 'wintab' || normalized === 'macnative';
 }
 
 function clampSignedUnit(value: number): number {
@@ -146,12 +152,12 @@ function resolvePointerOrientation(
 }
 
 /**
- * Resolves pressure and tilt data, preferring WinTab buffer if active.
+ * Resolves pressure and tilt data, preferring native tablet backend buffer when active.
  * Respects pressure=0 from backend smoothing.
  */
 export function getEffectiveInputData(
   evt: PointerEvent,
-  isWinTabActive: boolean,
+  isNativeBackendActive: boolean,
   bufferedPoints: RawInputPoint[],
   currentPoint: RawInputPoint | null,
   fallbackEvent?: PointerEvent
@@ -159,7 +165,7 @@ export function getEffectiveInputData(
   const pointerOrientation = resolvePointerOrientation(evt, fallbackEvent);
   const pointerPressure = resolvePointerPressure(evt, fallbackEvent);
 
-  if (!isWinTabActive) {
+  if (!isNativeBackendActive) {
     return {
       pressure: pointerPressure,
       tiltX: pointerOrientation.tiltX,
@@ -168,9 +174,9 @@ export function getEffectiveInputData(
     };
   }
 
-  // Note: WinTab timestamps (pkTime) are not guaranteed to share a time origin with
+  // Note: Native backend timestamps are not guaranteed to share a time origin with
   // PointerEvent.timeStamp, so we avoid time-based matching here.
-  // Use the most recent WinTab sample we have for this event batch.
+  // Use the most recent native sample we have for this event batch.
   if (bufferedPoints.length > 0) {
     const pt = bufferedPoints[bufferedPoints.length - 1]!;
     return {
@@ -194,8 +200,8 @@ export function getEffectiveInputData(
   // 3. Ultimate Fallback: Use PointerEvent data
   return {
     // Mouse/touch often report pressure=0; use 0.5 as a reasonable default.
-    // In WinTab mode, treat pen pressure as unknown (0) when we can't match tablet samples.
-    pressure: getWinTabPressureFallback(evt),
+    // In native streaming mode, treat pen pressure as unknown (0) when we can't match tablet samples.
+    pressure: getNativeBackendPressureFallback(evt),
     tiltX: pointerOrientation.tiltX,
     tiltY: pointerOrientation.tiltY,
     rotation: pointerOrientation.rotation,

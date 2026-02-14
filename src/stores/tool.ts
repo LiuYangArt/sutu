@@ -1090,7 +1090,9 @@ export const useToolStore = create<ToolState>()(
         setTextureSettings: (settings) => {
           // Optimistically load pattern if ID is provided
           if (settings.patternId) {
-            patternManager.loadPattern(settings.patternId);
+            void patternManager.loadPattern(settings.patternId).catch((error) => {
+              console.warn('[ToolStore] Failed to preload texture pattern:', error);
+            });
           }
           setWithActiveProfile((state) => {
             const nextScale =

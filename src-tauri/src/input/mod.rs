@@ -1,6 +1,7 @@
 //! Input module - handles tablet/pen input processing
 
 mod backend;
+mod macos_backend;
 mod pointer_backend;
 mod processor;
 mod tablet;
@@ -12,6 +13,7 @@ pub use backend::{
     InputSource, PressureCurve, TabletBackend, TabletConfig, TabletEventV2, TabletInfo,
     TabletStatus,
 };
+pub use macos_backend::MacNativeBackend;
 pub use pointer_backend::PointerEventBackend;
 pub use processor::{InputProcessor, PressureSmoother};
 pub use tablet::TabletManager;
