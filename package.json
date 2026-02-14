@@ -28,7 +28,7 @@
     "version": "node scripts/sync-version.mjs && node scripts/sync-app-meta.mjs && git add app.meta.json package.json index.html src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/capabilities/default.json src/constants/appMeta.ts src-tauri/src/app_meta.rs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.0.0",
     "immer": "^10.0.0",
@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.41.0",
-    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/cli": "^2.10.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^14.1.0",
     "@testing-library/user-event": "^14.5.0",

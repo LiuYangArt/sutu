@@ -94,8 +94,8 @@ debug_output/
 __tmp_dir_test/
 target-cargo/
 target-cargo-*/
+target-cargo*/
 target-cargo-dualbrush/
 target-cargo-dualbrush8HEnqj/CACHEDIR.TAG
 notes.md
 task_plan.md
-
