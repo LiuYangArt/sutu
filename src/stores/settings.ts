@@ -207,6 +207,39 @@ export const DEFAULT_QUICK_EXPORT_SETTINGS: QuickExportSettings = {
   backgroundPreset: 'current-bg',
 };
 
+type NavigatorWithUAData = Navigator & {
+  userAgentData?: {
+    platform?: string;
+  };
+};
+
+function isWindowsPlatform(): boolean {
+  if (typeof navigator === 'undefined') {
+    return true;
+  }
+
+  const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
+  const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
+  return /windows/i.test(platformHint);
+}
+
+function resolveDefaultTabletBackend(): TabletSettings['backend'] {
+  return isWindowsPlatform() ? 'wintab' : 'pointerevent';
+}
+
+function normalizeTabletBackend(value: unknown): TabletSettings['backend'] {
+  const resolved: TabletSettings['backend'] =
+    value === 'auto' || value === 'wintab' || value === 'pointerevent'
+      ? value
+      : resolveDefaultTabletBackend();
+
+  if (!isWindowsPlatform() && resolved !== 'pointerevent') {
+    return 'pointerevent';
+  }
+
+  return resolved;
+}
+
 function cloneDefaultNewFileSettings(): NewFileSettings {
   return {
     customSizePresets: [...DEFAULT_NEW_FILE_SETTINGS.customSizePresets],
@@ -363,7 +396,7 @@ const defaultSettings: PersistedSettings = {
     enableBlur: true,
   },
   tablet: {
-    backend: 'wintab',
+    backend: resolveDefaultTabletBackend(),
     pollingRate: 200,
     pressureCurve: 'linear',
     backpressureMode: 'lossless',
@@ -509,7 +542,7 @@ export const useSettingsStore = create<SettingsState>()(
     // Tablet actions
     setTabletBackend: (backend) => {
       set((state) => {
-        state.tablet.backend = backend;
+        state.tablet.backend = normalizeTabletBackend(backend);
       });
       debouncedSave(() => get()._saveSettings());
     },
@@ -663,7 +696,11 @@ export const useSettingsStore = create<SettingsState>()(
               state.appearance = { ...defaultSettings.appearance, ...loaded.appearance };
             }
             if (loaded.tablet) {
-              state.tablet = { ...defaultSettings.tablet, ...loaded.tablet };
+              const mergedTablet = { ...defaultSettings.tablet, ...loaded.tablet };
+              state.tablet = {
+                ...mergedTablet,
+                backend: normalizeTabletBackend(mergedTablet.backend),
+              };
             }
             if (loaded.brush) {
               state.brush = {

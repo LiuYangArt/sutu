@@ -2,6 +2,24 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
+type NavigatorWithUAData = Navigator & {
+  userAgentData?: {
+    platform?: string;
+  };
+};
+
+function isWindowsPlatform(): boolean {
+  if (typeof navigator === 'undefined') {
+    return true;
+  }
+
+  const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
+  const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
+  return /windows/i.test(platformHint);
+}
+
+const DEFAULT_REQUESTED_BACKEND: BackendType = isWindowsPlatform() ? 'wintab' : 'pointerevent';
+
 // Types matching Rust backend
 export type TabletStatus = 'Disconnected' | 'Connected' | 'Error';
 export type BackendType = 'wintab' | 'pointerevent' | 'auto';
@@ -198,7 +216,7 @@ const EMPTY_QUEUE_METRICS: InputQueueMetrics = {
 export const useTabletStore = create<TabletState>((set, get) => ({
   status: 'Disconnected',
   backend: 'none',
-  requestedBackend: 'wintab',
+  requestedBackend: DEFAULT_REQUESTED_BACKEND,
   activeBackend: 'none',
   fallbackReason: null,
   backpressureMode: 'lossless',

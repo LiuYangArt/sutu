@@ -8,10 +8,12 @@ use crate::input::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 #[cfg(target_os = "windows")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 
 /// Document information returned after creation
 #[derive(Debug, Clone, Serialize)]
@@ -143,9 +145,10 @@ struct TabletState {
 
 impl TabletState {
     fn new() -> Self {
+        let default_backend = default_backend_for_platform();
         Self {
-            requested_backend: BackendType::WinTab,
-            backend_type: BackendType::WinTab,
+            requested_backend: default_backend,
+            backend_type: default_backend,
             wintab: None,
             pointer: None,
             config: TabletConfig::default(),
@@ -210,6 +213,31 @@ fn backend_type_name(backend: BackendType) -> &'static str {
         BackendType::WinTab => "wintab",
         BackendType::PointerEvent => "pointerevent",
         BackendType::Auto => "auto",
+    }
+}
+
+fn default_backend_for_platform() -> BackendType {
+    #[cfg(target_os = "windows")]
+    {
+        BackendType::WinTab
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        BackendType::PointerEvent
+    }
+}
+
+fn normalize_requested_backend_for_platform(requested_backend: BackendType) -> BackendType {
+    #[cfg(target_os = "windows")]
+    {
+        requested_backend
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        match requested_backend {
+            BackendType::PointerEvent => BackendType::PointerEvent,
+            BackendType::WinTab | BackendType::Auto => BackendType::PointerEvent,
+        }
     }
 }
 
@@ -311,6 +339,9 @@ fn build_wintab_backend(
     config: &TabletConfig,
     main_hwnd: Option<isize>,
 ) -> Result<crate::input::WinTabBackend, String> {
+    #[cfg(not(target_os = "windows"))]
+    let _ = main_hwnd;
+
     let mut wintab = crate::input::WinTabBackend::new();
     #[cfg(target_os = "windows")]
     if let Some(hwnd) = main_hwnd {
@@ -333,13 +364,24 @@ fn select_backend(
     requested_backend: BackendType,
     main_hwnd: Option<isize>,
 ) -> Result<(), String> {
-    state.requested_backend = requested_backend;
+    #[cfg(not(target_os = "windows"))]
+    let _ = main_hwnd;
+
+    let normalized_backend = normalize_requested_backend_for_platform(requested_backend);
+    if normalized_backend != requested_backend {
+        tracing::info!(
+            "[Tablet] Requested backend '{}' is not supported on this platform, using '{}'",
+            backend_type_name(requested_backend),
+            backend_type_name(normalized_backend)
+        );
+    }
+    state.requested_backend = normalized_backend;
     state.fallback_reason = None;
 
     let mut wintab_error: Option<String> = None;
     let mut pointer_error: Option<String> = None;
 
-    match requested_backend {
+    match normalized_backend {
         BackendType::WinTab => {
             match build_wintab_backend(&state.config, main_hwnd) {
                 Ok(wintab) => {
@@ -425,7 +467,7 @@ fn select_backend(
 
     Err(format!(
         "No tablet backend available (requested={}, wintab_error={}, pointer_error={})",
-        backend_type_name(requested_backend),
+        backend_type_name(normalized_backend),
         wintab_error.unwrap_or_else(|| "n/a".to_string()),
         pointer_error.unwrap_or_else(|| "n/a".to_string())
     ))
@@ -477,7 +519,7 @@ pub fn init_tablet(
         backpressure_mode.as_deref(),
     );
 
-    let requested_backend = backend.unwrap_or(BackendType::WinTab);
+    let requested_backend = backend.unwrap_or(default_backend_for_platform());
     select_backend(&mut state, requested_backend, main_hwnd)?;
     Ok(current_tablet_status_response(&mut state))
 }
