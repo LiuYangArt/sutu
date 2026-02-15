@@ -1,10 +1,26 @@
 import { useRef, useEffect, useState, useMemo } from 'react';
 import { useSelectionStore } from '@/stores/selection';
+import { useSettingsStore } from '@/stores/settings';
+import { useToolStore } from '@/stores/tool';
+import { normalizeHex } from '@/utils/colorUtils';
 
 interface SelectionOverlayProps {
   scale: number;
   offsetX: number;
   offsetY: number;
+}
+
+const SELECTION_PREVIEW_ALPHA = 0.28;
+
+function toRgbaWithAlpha(hexColor: string, alpha: number): string {
+  const normalized = normalizeHex(hexColor);
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /**
@@ -14,6 +30,8 @@ interface SelectionOverlayProps {
 export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 1920, height: 1080 });
+  const selectionAutoFillEnabled = useSettingsStore((s) => s.general.selectionAutoFillEnabled);
+  const brushColor = useToolStore((s) => s.brushColor);
   const {
     hasSelection,
     selectionPath,
@@ -34,6 +52,10 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     if (!isCreating) return null;
     return previewPoint ? [...creationPoints, previewPoint] : [...creationPoints];
   }, [isCreating, creationPoints, previewPoint]);
+  const creationFillStyle = useMemo(
+    () => toRgbaWithAlpha(brushColor, SELECTION_PREVIEW_ALPHA),
+    [brushColor]
+  );
 
   const shouldRender = existingPaths.length > 0 || (creatingPath && creatingPath.length >= 2);
 
@@ -125,11 +147,23 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
       ctx.stroke();
     }
 
-    // 2. Render Creation Path (Solid Line)
+    // 2. Render Creation Path (Fill Preview + Solid Line)
     if (creatingPath && creatingPath.length >= 2) {
-      ctx.beginPath();
       const first = creatingPath[0];
       if (first) {
+        if (selectionAutoFillEnabled && creatingPath.length >= 3) {
+          ctx.beginPath();
+          ctx.moveTo(first.x, first.y);
+          for (let i = 1; i < creatingPath.length; i++) {
+            const pt = creatingPath[i];
+            if (pt) ctx.lineTo(pt.x, pt.y);
+          }
+          ctx.closePath();
+          ctx.fillStyle = creationFillStyle;
+          ctx.fill();
+        }
+
+        ctx.beginPath();
         ctx.moveTo(first.x, first.y);
         for (let i = 1; i < creatingPath.length; i++) {
           const pt = creatingPath[i];
@@ -153,7 +187,17 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
 
     // Restore context state
     ctx.restore();
-  }, [existingPaths, creatingPath, shouldRender, marchingAntsOffset, scale, offsetX, offsetY]);
+  }, [
+    existingPaths,
+    creatingPath,
+    shouldRender,
+    marchingAntsOffset,
+    scale,
+    offsetX,
+    offsetY,
+    selectionAutoFillEnabled,
+    creationFillStyle,
+  ]);
 
   return (
     <canvas

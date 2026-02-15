@@ -159,4 +159,62 @@ describe('useSelectionHandler', () => {
       'freehand',
     ]);
   });
+
+  it('自动填色回调成功时，不额外写入 selection 历史', async () => {
+    const onSelectionCommitted = vi.fn(async () => true);
+    const { result } = renderHook(() =>
+      useSelectionHandler({
+        currentTool: 'select',
+        scale: 1,
+        onSelectionCommitted,
+      })
+    );
+
+    act(() => {
+      result.current.handleSelectionPointerDown(10, 10, {
+        altKey: false,
+        shiftKey: false,
+        ctrlKey: false,
+      } as PointerEvent);
+      result.current.handleSelectionPointerMove(80, 60, {} as PointerEvent);
+      result.current.handleSelectionPointerUp(80, 60);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(onSelectionCommitted).toHaveBeenCalledTimes(1);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
+
+  it('自动填色回调失败时，回退为 selection 历史记录', async () => {
+    const onSelectionCommitted = vi.fn(async () => false);
+    const { result } = renderHook(() =>
+      useSelectionHandler({
+        currentTool: 'select',
+        scale: 1,
+        onSelectionCommitted,
+      })
+    );
+
+    act(() => {
+      result.current.handleSelectionPointerDown(12, 12, {
+        altKey: false,
+        shiftKey: false,
+        ctrlKey: false,
+      } as PointerEvent);
+      result.current.handleSelectionPointerMove(70, 50, {} as PointerEvent);
+      result.current.handleSelectionPointerUp(70, 50);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(onSelectionCommitted).toHaveBeenCalledTimes(1);
+    const undoStack = useHistoryStore.getState().undoStack;
+    const lastEntry = undoStack[undoStack.length - 1];
+    expect(lastEntry?.type).toBe('selection');
+  });
 });

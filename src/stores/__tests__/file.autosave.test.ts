@@ -145,6 +145,7 @@ describe('file store autosave and startup restore', () => {
         autosaveIntervalMinutes: 10,
         openLastFileOnStartup: true,
         recentFiles: [],
+        selectionAutoFillEnabled: false,
       },
     }));
   });

@@ -3,6 +3,7 @@ import {
   useSelectionStore,
   didSelectionChange,
   SelectionPoint,
+  type SelectionMode,
   type SelectionSnapshot,
 } from '@/stores/selection';
 import { useHistoryStore } from '@/stores/history';
@@ -13,6 +14,11 @@ interface UseSelectionHandlerProps {
   currentTool: ToolType;
   scale: number;
   onBeforeSelectionMutation?: () => void;
+  onSelectionCommitted?: (payload: {
+    before: SelectionSnapshot;
+    after: SelectionSnapshot;
+    mode: SelectionMode;
+  }) => boolean | Promise<boolean>;
 }
 
 function isSelectionTool(tool: ToolType): boolean {
@@ -70,6 +76,7 @@ interface SelectionHandlerResult {
 export function useSelectionHandler({
   currentTool,
   onBeforeSelectionMutation,
+  onSelectionCommitted,
 }: UseSelectionHandlerProps): SelectionHandlerResult {
   const {
     isCreating,
@@ -159,19 +166,95 @@ export function useSelectionHandler({
     selectionHistoryBeforeRef.current = null;
   }, []);
 
+  const waitForSelectionCommitSettled = useCallback(
+    async (selectionMaskBuildId: number): Promise<void> => {
+      const initialState = useSelectionStore.getState();
+      if (
+        initialState.selectionMaskBuildId !== selectionMaskBuildId ||
+        !initialState.selectionMaskPending
+      ) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        let done = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          if (timeoutId !== null) {
+            clearTimeout(timeoutId);
+          }
+          unsubscribe();
+          resolve();
+        };
+
+        const unsubscribe = useSelectionStore.subscribe((state) => {
+          if (state.selectionMaskBuildId < selectionMaskBuildId) {
+            return;
+          }
+          if (!state.selectionMaskPending) {
+            finish();
+          }
+        });
+
+        timeoutId = setTimeout(finish, 2000);
+      });
+    },
+    []
+  );
+
+  const finalizeCommittedCreationMutation = useCallback(
+    async (
+      before: SelectionSnapshot,
+      mode: SelectionMode,
+      selectionMaskBuildId: number
+    ): Promise<void> => {
+      await waitForSelectionCommitSettled(selectionMaskBuildId);
+
+      const after = useSelectionStore.getState().createSnapshot();
+      if (!didSelectionChange(before, after)) {
+        return;
+      }
+
+      if (onSelectionCommitted) {
+        try {
+          const handled = await Promise.resolve(onSelectionCommitted({ before, after, mode }));
+          if (handled) {
+            return;
+          }
+        } catch (error) {
+          console.warn(
+            '[Selection] Post-commit handler failed, fallback to selection history',
+            error
+          );
+        }
+      }
+
+      useHistoryStore.getState().pushSelection(before);
+    },
+    [onSelectionCommitted, waitForSelectionCommitSettled]
+  );
+
   const commitCreationIfNeeded = useCallback(
     function commitCreationIfNeeded(): void {
       const state = useSelectionStore.getState();
       const isCreatingSelection = isSelectingRef.current || state.isCreating;
       if (!isCreatingSelection) return;
 
+      const before = selectionHistoryBeforeRef.current;
+      const mode = state.selectionMode;
       const { width, height } = useDocumentStore.getState();
       setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
       commitSelection(width, height);
-      finalizeHistoryIfChanged();
+      const selectionMaskBuildId = useSelectionStore.getState().selectionMaskBuildId;
+      selectionHistoryBeforeRef.current = null;
+      if (before) {
+        void finalizeCommittedCreationMutation(before, mode, selectionMaskBuildId);
+      }
       resetGestureRefs();
     },
-    [commitSelection, finalizeHistoryIfChanged, resetGestureRefs, setLassoMode]
+    [commitSelection, finalizeCommittedCreationMutation, resetGestureRefs, setLassoMode]
   );
 
   const resetModifierState = useCallback(function resetModifierState(): void {

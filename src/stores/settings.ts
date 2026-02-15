@@ -114,6 +114,7 @@ export interface GeneralSettings {
   autosaveIntervalMinutes: number;
   openLastFileOnStartup: boolean;
   recentFiles: string[];
+  selectionAutoFillEnabled: boolean;
 }
 
 export type BrushPresetSelectionTool = 'brush' | 'eraser';
@@ -175,6 +176,7 @@ interface SettingsState extends PersistedSettings {
   // General actions
   setAutosaveIntervalMinutes: (minutes: number) => void;
   setOpenLastFileOnStartup: (enabled: boolean) => void;
+  setSelectionAutoFillEnabled: (enabled: boolean) => void;
   addRecentFile: (path: string) => void;
   setRecentFiles: (paths: string[]) => void;
   removeRecentFile: (path: string) => void;
@@ -447,6 +449,7 @@ const defaultSettings: PersistedSettings = {
     autosaveIntervalMinutes: 10,
     openLastFileOnStartup: true,
     recentFiles: [],
+    selectionAutoFillEnabled: false,
   },
   quickExport: { ...DEFAULT_QUICK_EXPORT_SETTINGS },
   brushLibrary: {
@@ -671,6 +674,13 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setSelectionAutoFillEnabled: (enabled) => {
+      set((state) => {
+        state.general.selectionAutoFillEnabled = enabled;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     addRecentFile: (path) => {
       set((state) => {
         state.general.recentFiles = buildRecentFilesWith(path, state.general.recentFiles);
@@ -763,6 +773,10 @@ export const useSettingsStore = create<SettingsState>()(
                     defaultSettings.general.autosaveIntervalMinutes
                 ),
                 recentFiles: normalizeRecentFiles(loaded.general.recentFiles),
+                selectionAutoFillEnabled:
+                  typeof loaded.general.selectionAutoFillEnabled === 'boolean'
+                    ? loaded.general.selectionAutoFillEnabled
+                    : defaultSettings.general.selectionAutoFillEnabled,
               };
             } else {
               state.general = { ...defaultSettings.general };

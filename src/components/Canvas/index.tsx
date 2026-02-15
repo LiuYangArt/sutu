@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { LOCKED_NOISE_SETTINGS, useToolStore, ToolType } from '@/stores/tool';
-import { useSelectionStore } from '@/stores/selection';
+import { useSelectionStore, type SelectionMode, type SelectionSnapshot } from '@/stores/selection';
 import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { createHistoryEntryId, type HistoryEntry, useHistoryStore } from '@/stores/history';
@@ -501,6 +501,7 @@ export function Canvas() {
 
   const {
     brush: { renderMode },
+    general: { selectionAutoFillEnabled },
   } = useSettingsStore();
 
   const {
@@ -678,15 +679,6 @@ export function Canvas() {
   const onBeforeSelectionMutation = useCallback(() => {
     finalizeFloatingSessionIfNeeded('selection-mutation');
   }, [finalizeFloatingSessionIfNeeded]);
-
-  // Selection handler for rect select and lasso tools
-  const {
-    handleSelectionPointerDown,
-    handleSelectionPointerMove,
-    handleSelectionPointerUp,
-    handleSelectionDoubleClick: _handleSelectionDoubleClick,
-    isSelectionToolActive,
-  } = useSelectionHandler({ currentTool, scale, onBeforeSelectionMutation });
 
   // Get selection store actions for keyboard shortcuts
   const { selectAll, deselectAll, cancelSelection } = useSelectionStore();
@@ -1336,6 +1328,7 @@ export function Canvas() {
     saveStrokeToHistory,
     discardCapturedStrokeHistory,
     fillActiveLayer,
+    applySelectionAutoFillToActiveLayer,
     applyGradientToActiveLayer,
     handleClearSelection,
     handleUndo,
@@ -1402,6 +1395,40 @@ export function Canvas() {
   });
   finalizeFloatingSelectionSessionRef.current = finalizeFloatingSelectionSession;
   hasFloatingSelectionSessionRef.current = hasFloatingSelectionSession;
+
+  const handleSelectionCommitted = useCallback(
+    async ({
+      before,
+      after,
+      mode: _mode,
+    }: {
+      before: SelectionSnapshot;
+      after: SelectionSnapshot;
+      mode: SelectionMode;
+    }): Promise<boolean> => {
+      if (!selectionAutoFillEnabled) return false;
+      return applySelectionAutoFillToActiveLayer({
+        color: brushColor,
+        selectionBefore: before,
+        selectionAfter: after,
+      });
+    },
+    [applySelectionAutoFillToActiveLayer, brushColor, selectionAutoFillEnabled]
+  );
+
+  // Selection handler for rect select and lasso tools
+  const {
+    handleSelectionPointerDown,
+    handleSelectionPointerMove,
+    handleSelectionPointerUp,
+    handleSelectionDoubleClick: _handleSelectionDoubleClick,
+    isSelectionToolActive,
+  } = useSelectionHandler({
+    currentTool,
+    scale,
+    onBeforeSelectionMutation,
+    onSelectionCommitted: selectionAutoFillEnabled ? handleSelectionCommitted : undefined,
+  });
 
   const renderGpuFrame = useCallback(
     (showScratch: boolean) => {

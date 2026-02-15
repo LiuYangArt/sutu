@@ -78,4 +78,44 @@ describe('HistoryStore - stroke entry', () => {
     expect(entry.selectionBefore).toBe(selectionBefore);
     expect(entry.selectionAfter).toBe(selectionAfter);
   });
+
+  it('preserves selection snapshots through undo/redo stack transitions', () => {
+    const store = useHistoryStore.getState();
+    const image = new ImageData(new Uint8ClampedArray([1, 2, 3, 4]), 1, 1);
+    const selectionBefore: SelectionSnapshot = {
+      hasSelection: true,
+      selectionMask: new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1),
+      selectionMaskPending: false,
+      selectionPath: [[{ x: 0, y: 0, type: 'polygonal' }]],
+      bounds: { x: 0, y: 0, width: 1, height: 1 },
+    };
+    const selectionAfter: SelectionSnapshot = {
+      hasSelection: true,
+      selectionMask: new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1),
+      selectionMaskPending: false,
+      selectionPath: [[{ x: 2, y: 2, type: 'polygonal' }]],
+      bounds: { x: 2, y: 2, width: 1, height: 1 },
+    };
+
+    store.pushStroke({
+      layerId: 'layer_auto_fill',
+      entryId: 'selection-fill-entry',
+      snapshotMode: 'cpu',
+      beforeImage: image,
+      selectionBefore,
+      selectionAfter,
+    });
+
+    const undone = store.undo();
+    expect(undone?.type).toBe('stroke');
+    if (!undone || undone.type !== 'stroke') return;
+    expect(undone.selectionBefore).toBe(selectionBefore);
+    expect(undone.selectionAfter).toBe(selectionAfter);
+
+    const redone = store.redo();
+    expect(redone?.type).toBe('stroke');
+    if (!redone || redone.type !== 'stroke') return;
+    expect(redone.selectionBefore).toBe(selectionBefore);
+    expect(redone.selectionAfter).toBe(selectionAfter);
+  });
 });

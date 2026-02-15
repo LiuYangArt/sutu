@@ -84,6 +84,12 @@ export interface ApplyGradientToActiveLayerParams extends GradientRenderConfig {
   end: GradientPoint;
 }
 
+export interface ApplySelectionAutoFillToActiveLayerParams {
+  color: string;
+  selectionBefore: SelectionSnapshot;
+  selectionAfter: SelectionSnapshot;
+}
+
 interface ImportAnchorPoint {
   x: number;
   y: number;
@@ -750,6 +756,64 @@ export function useLayerOperations({
       layerRendererRef,
       onBeforeCanvasMutation,
       setDocumentDirty,
+    ]
+  );
+
+  const applySelectionAutoFillToActiveLayer = useCallback(
+    async ({
+      color,
+      selectionBefore,
+      selectionAfter,
+    }: ApplySelectionAutoFillToActiveLayerParams): Promise<boolean> => {
+      if (!activeLayerId) return false;
+      if (!selectionAfter.hasSelection || !selectionAfter.selectionMask) return false;
+
+      await syncGpuLayerForHistory?.(activeLayerId);
+
+      const renderer = layerRendererRef.current;
+      if (!renderer) return false;
+
+      const layerState = layers.find((layer) => layer.id === activeLayerId);
+      if (!layerState || layerState.locked) return false;
+
+      const layer = renderer.getLayer(activeLayerId);
+      if (!layer) return false;
+
+      const beforeImage = renderer.getLayerImageData(activeLayerId);
+      if (!beforeImage) return false;
+
+      onBeforeCanvasMutation?.();
+
+      fillWithMask(layer.ctx, selectionAfter.selectionMask, color, width, height);
+
+      pushStroke({
+        layerId: activeLayerId,
+        entryId: createHistoryEntryId('selection-fill'),
+        snapshotMode: 'cpu',
+        beforeImage,
+        selectionBefore,
+        selectionAfter,
+      });
+      setDocumentDirty(true);
+
+      markLayerDirty(activeLayerId);
+      updateThumbnail(activeLayerId);
+      compositeAndRender();
+      return true;
+    },
+    [
+      activeLayerId,
+      compositeAndRender,
+      height,
+      layerRendererRef,
+      layers,
+      markLayerDirty,
+      onBeforeCanvasMutation,
+      pushStroke,
+      setDocumentDirty,
+      syncGpuLayerForHistory,
+      updateThumbnail,
+      width,
     ]
   );
 
@@ -2078,6 +2142,7 @@ export function useLayerOperations({
     saveStrokeToHistory,
     discardCapturedStrokeHistory,
     fillActiveLayer,
+    applySelectionAutoFillToActiveLayer,
     applyGradientToActiveLayer,
     handleClearSelection,
     handleUndo,

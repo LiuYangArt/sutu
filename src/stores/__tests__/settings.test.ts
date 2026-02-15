@@ -53,6 +53,7 @@ describe('settings store newFile persistence', () => {
         autosaveIntervalMinutes: 10,
         openLastFileOnStartup: true,
         recentFiles: [],
+        selectionAutoFillEnabled: false,
       },
       newFile: {
         customSizePresets: [],
@@ -105,6 +106,7 @@ describe('settings store newFile persistence', () => {
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
     expect(state.general.recentFiles).toEqual([]);
+    expect(state.general.selectionAutoFillEnabled).toBe(false);
     expect(state.quickExport).toEqual(DEFAULT_QUICK_EXPORT_SETTINGS);
     expect(state.brushLibrary.selectedPresetByTool).toEqual({
       brush: null,
@@ -188,6 +190,7 @@ describe('settings store newFile persistence', () => {
         autosaveIntervalMinutes?: number;
         openLastFileOnStartup?: boolean;
         recentFiles?: string[];
+        selectionAutoFillEnabled?: boolean;
       };
       quickExport?: {
         lastPath?: string;
@@ -209,6 +212,7 @@ describe('settings store newFile persistence', () => {
       'C:\\projects\\ALPHA.psd',
       'C:\\projects\\beta.ora',
     ]);
+    expect(parsed.general?.selectionAutoFillEnabled).toBe(false);
     expect(parsed.quickExport?.lastPath).toBe('D:\\exports\\sample.png');
     expect(parsed.quickExport?.lastFormat).toBe('png');
     expect(parsed.quickExport?.maxSize).toBe(1000);
@@ -237,6 +241,33 @@ describe('settings store newFile persistence', () => {
     const state = useSettingsStore.getState();
 
     expect(state.quickExport.maxSize).toBe(960);
+  });
+
+  it('loads and persists selection auto fill toggle', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        general: {
+          autosaveIntervalMinutes: 12,
+          openLastFileOnStartup: true,
+          recentFiles: [],
+          selectionAutoFillEnabled: true,
+        },
+      })
+    );
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    expect(useSettingsStore.getState().general.selectionAutoFillEnabled).toBe(true);
+
+    useSettingsStore.getState().setSelectionAutoFillEnabled(false);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as { general?: { selectionAutoFillEnabled?: boolean } };
+    expect(parsed.general?.selectionAutoFillEnabled).toBe(false);
   });
 
   it('auto-migrates legacy macOS pointerevent backend to macnative once', async () => {

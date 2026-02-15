@@ -39,6 +39,20 @@
   padding: 0 4px;
 }
 
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.selection-auto-fill-btn {
+  width: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .zoom-tool-options {
   display: flex;
   align-items: center;
