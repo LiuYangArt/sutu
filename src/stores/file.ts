@@ -14,20 +14,6 @@ const SESSION_FILE = 'autosave-session.json';
 const TEMP_AUTOSAVE_FILE_NAME = `${appHyphenStorageKey('autosave')}.ora`;
 
 // Types matching Rust backend
-interface LayerData {
-  id: string;
-  name: string;
-  type: string;
-  visible: boolean;
-  locked: boolean;
-  opacity: number;
-  blendMode: string;
-  isBackground?: boolean;
-  imageData?: string;
-  offsetX: number;
-  offsetY: number;
-}
-
 interface LayerDataV2 {
   id: string;
   name: string;
@@ -52,16 +38,6 @@ interface BackendBenchmark {
   decodeCacheMs: number;
   totalMs: number;
   layerCount: number;
-}
-
-interface ProjectData {
-  width: number;
-  height: number;
-  dpi: number;
-  layers: LayerData[];
-  flattenedImage?: string;
-  thumbnail?: string;
-  benchmark?: BackendBenchmark;
 }
 
 interface ProjectDataV2 {
@@ -121,12 +97,17 @@ const AUTOSAVE_TEMP_TARGET_OPTIONS: SaveTargetOptions = {
 };
 
 type CanvasExportWindow = Window & {
-  __getThumbnail?: () => Promise<string | undefined>;
   __getThumbnailBytes?: () => Promise<number[] | undefined>;
-  __getFlattenedImage?: () => Promise<string | undefined>;
   __getFlattenedImageBytes?: () => Promise<number[] | undefined>;
   __getLayerImageBytes?: (layerId: string) => Promise<number[] | undefined>;
 };
+
+interface LayerImageLoadPayload {
+  id: string;
+  imageData?: string;
+  offsetX?: number;
+  offsetY?: number;
+}
 
 interface FileState {
   isSaving: boolean;
@@ -148,44 +129,22 @@ const DEFAULT_SESSION: AutosaveSessionData = {
   hasUnsavedTemp: false,
 };
 
-/**
- * Get layer image data from canvas
- */
-async function getLayerImageData(layerId: string): Promise<string | undefined> {
-  const win = window as Window & {
-    __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
-  };
-  return win.__getLayerImageData?.(layerId);
+function getCanvasExportWindow(): CanvasExportWindow {
+  return window as CanvasExportWindow;
 }
 
 async function getLayerImageBytes(layerId: string): Promise<number[] | undefined> {
-  const win = window as CanvasExportWindow;
+  const win = getCanvasExportWindow();
   return win.__getLayerImageBytes?.(layerId);
 }
 
-/**
- * Get thumbnail image (256x256) for ORA
- */
-async function getThumbnail(): Promise<string | undefined> {
-  const win = window as CanvasExportWindow;
-  return win.__getThumbnail?.();
-}
-
 async function getThumbnailBytes(): Promise<number[] | undefined> {
-  const win = window as CanvasExportWindow;
+  const win = getCanvasExportWindow();
   return win.__getThumbnailBytes?.();
 }
 
-/**
- * Get flattened composited image for PSD/TIFF exports
- */
-async function getFlattenedImage(): Promise<string | undefined> {
-  const win = window as CanvasExportWindow;
-  return win.__getFlattenedImage?.();
-}
-
 async function getFlattenedImageBytes(): Promise<number[] | undefined> {
-  const win = window as CanvasExportWindow;
+  const win = getCanvasExportWindow();
   return win.__getFlattenedImageBytes?.();
 }
 
@@ -282,30 +241,7 @@ async function getTempAutosavePath(): Promise<string> {
   return join(tempRoot, TEMP_AUTOSAVE_FILE_NAME);
 }
 
-/**
- * Convert frontend Layer to backend LayerData format
- */
-function layerToLayerData(layer: Layer, imageData?: string): LayerData {
-  return {
-    id: layer.id,
-    name: layer.name,
-    type: layer.type,
-    visible: layer.visible,
-    locked: layer.locked,
-    opacity: layer.opacity / 100, // Convert 0-100 to 0.0-1.0
-    blendMode: layer.blendMode,
-    isBackground: layer.isBackground,
-    imageData,
-    offsetX: 0,
-    offsetY: 0,
-  };
-}
-
-function layerToLayerDataV2(
-  layer: Layer,
-  layerPngBytes?: number[],
-  legacyImageDataBase64?: string
-): LayerDataV2 {
+function layerToLayerDataV2(layer: Layer, layerPngBytes?: number[]): LayerDataV2 {
   return {
     id: layer.id,
     name: layer.name,
@@ -318,7 +254,6 @@ function layerToLayerDataV2(
     offsetX: 0,
     offsetY: 0,
     layerPngBytes,
-    legacyImageDataBase64,
   };
 }
 
@@ -336,36 +271,7 @@ function layerDataV2ToLayer(data: LayerDataV2): Layer {
   };
 }
 
-function projectDataToV2(project: ProjectData): ProjectDataV2 {
-  return {
-    width: project.width,
-    height: project.height,
-    dpi: project.dpi,
-    layers: project.layers.map((layer) => ({
-      id: layer.id,
-      name: layer.name,
-      type: layer.type,
-      visible: layer.visible,
-      locked: layer.locked,
-      opacity: layer.opacity,
-      blendMode: layer.blendMode,
-      isBackground: layer.isBackground,
-      offsetX: layer.offsetX,
-      offsetY: layer.offsetY,
-      legacyImageDataBase64: layer.imageData,
-    })),
-    legacyFlattenedImageBase64: project.flattenedImage,
-    legacyThumbnailBase64: project.thumbnail,
-    benchmark: project.benchmark,
-  };
-}
-
-function layerV2ToLoadImagePayload(layer: LayerDataV2): {
-  id: string;
-  imageData?: string;
-  offsetX?: number;
-  offsetY?: number;
-} {
+function layerV2ToLoadImagePayload(layer: LayerDataV2): LayerImageLoadPayload {
   return {
     id: layer.id,
     imageData: normalizeImageDataToDataUrl(layer.legacyImageDataBase64),
@@ -379,37 +285,24 @@ interface ProjectSnapshotOptions {
   includeFlattenedImage: boolean;
 }
 
-async function buildProjectDataSnapshot(options: ProjectSnapshotOptions): Promise<ProjectData> {
-  const docStore = useDocumentStore.getState();
-  const layerDataPromises = docStore.layers.map(async (layer) => {
-    const imageData = await getLayerImageData(layer.id);
-    return layerToLayerData(layer, imageData);
-  });
-
-  const layers = await Promise.all(layerDataPromises);
-
-  const thumbnailPromise = options.includeThumbnail ? getThumbnail() : Promise.resolve(undefined);
-  const flattenedImagePromise = options.includeFlattenedImage
-    ? getFlattenedImage()
-    : Promise.resolve(undefined);
-  const [thumbnail, flattenedImage] = await Promise.all([thumbnailPromise, flattenedImagePromise]);
-
-  return {
-    width: docStore.width,
-    height: docStore.height,
-    dpi: docStore.dpi,
-    layers,
-    flattenedImage,
-    thumbnail,
-  };
+function ensureRequiredBytes(
+  bytes: number[] | undefined,
+  message: string
+): asserts bytes is number[] {
+  if (!bytes) {
+    throw new Error(message);
+  }
 }
 
 async function buildProjectDataSnapshotV2(options: ProjectSnapshotOptions): Promise<ProjectDataV2> {
   const docStore = useDocumentStore.getState();
   const layerDataPromises = docStore.layers.map(async (layer) => {
+    if (layer.type !== 'raster') {
+      return layerToLayerDataV2(layer, undefined);
+    }
     const layerPngBytes = await getLayerImageBytes(layer.id);
-    const legacyImageDataBase64 = layerPngBytes ? undefined : await getLayerImageData(layer.id);
-    return layerToLayerDataV2(layer, layerPngBytes, legacyImageDataBase64);
+    ensureRequiredBytes(layerPngBytes, `[file] Missing layer bytes for raster layer: ${layer.id}`);
+    return layerToLayerDataV2(layer, layerPngBytes);
   });
   const layers = await Promise.all(layerDataPromises);
 
@@ -417,12 +310,13 @@ async function buildProjectDataSnapshotV2(options: ProjectSnapshotOptions): Prom
     options.includeThumbnail ? getThumbnailBytes() : Promise.resolve(undefined),
     options.includeFlattenedImage ? getFlattenedImageBytes() : Promise.resolve(undefined),
   ]);
-  const [thumbnailLegacy, flattenedLegacy] = await Promise.all([
-    options.includeThumbnail && !thumbnailPngBytes ? getThumbnail() : Promise.resolve(undefined),
-    options.includeFlattenedImage && !flattenedPngBytes
-      ? getFlattenedImage()
-      : Promise.resolve(undefined),
-  ]);
+
+  if (options.includeThumbnail) {
+    ensureRequiredBytes(thumbnailPngBytes, '[file] Missing thumbnail bytes for save payload');
+  }
+  if (options.includeFlattenedImage) {
+    ensureRequiredBytes(flattenedPngBytes, '[file] Missing flattened image bytes for save payload');
+  }
 
   return {
     width: docStore.width,
@@ -431,8 +325,6 @@ async function buildProjectDataSnapshotV2(options: ProjectSnapshotOptions): Prom
     layers,
     flattenedPngBytes,
     thumbnailPngBytes,
-    legacyFlattenedImageBase64: flattenedPngBytes ? undefined : flattenedLegacy,
-    legacyThumbnailBase64: thumbnailPngBytes ? undefined : thumbnailLegacy,
   };
 }
 
@@ -448,14 +340,7 @@ async function loadProjectIntoDocument(
     docStore.reset();
 
     const ipcStart = performance.now();
-    let projectData: ProjectDataV2;
-    try {
-      projectData = await invoke<ProjectDataV2>('load_project_v2', { path: filePath });
-    } catch (v2Error) {
-      console.warn('[file] load_project_v2 failed, fallback to legacy command', v2Error);
-      const legacy = await invoke<ProjectData>('load_project', { path: filePath });
-      projectData = projectDataToV2(legacy);
-    }
+    const projectData = await invoke<ProjectDataV2>('load_project_v2', { path: filePath });
     const ipcTransferMs = performance.now() - ipcStart;
 
     if (projectData.benchmark?.sessionId) {
@@ -467,6 +352,7 @@ async function loadProjectIntoDocument(
     }
 
     const loadedLayers = projectData.layers.map(layerDataV2ToLayer);
+    const activeLayerId = loadedLayers[loadedLayers.length - 1]?.id ?? null;
     const detectedFormat = detectFileFormatFromPath(filePath) ?? 'ora';
 
     useDocumentStore.setState({
@@ -474,9 +360,9 @@ async function loadProjectIntoDocument(
       height: projectData.height,
       dpi: projectData.dpi,
       layers: loadedLayers,
-      activeLayerId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
-      selectedLayerIds: loadedLayers.length > 0 ? [loadedLayers[loadedLayers.length - 1]!.id] : [],
-      layerSelectionAnchorId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
+      activeLayerId,
+      selectedLayerIds: activeLayerId ? [activeLayerId] : [],
+      layerSelectionAnchorId: activeLayerId,
       filePath: options.asUntitled ? null : filePath,
       fileFormat: options.asUntitled ? null : detectedFormat,
       isDirty: false,
@@ -491,7 +377,7 @@ async function loadProjectIntoDocument(
 
     const win = window as Window & {
       __loadLayerImages?: (
-        layers: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>,
+        layers: LayerImageLoadPayload[],
         benchmarkSessionId?: string
       ) => Promise<void>;
     };
@@ -565,35 +451,13 @@ async function saveProjectToTarget(
       includeThumbnail,
       includeFlattenedImage,
     });
-    let v2Error: string | null = null;
-    try {
-      const v2Result = await invoke<FileOperationResult>('save_project_v2', {
-        path: targetPath,
-        format: targetFormat,
-        project: projectDataV2,
-      });
-      if (v2Result.success) {
-        applySaveSuccess();
-        return { success: true };
-      }
-      v2Error = v2Result.error || 'Unknown V2 save error';
-    } catch (error) {
-      v2Error = error instanceof Error ? error.message : String(error);
-    }
-
-    console.warn('[file] save_project_v2 failed, fallback to legacy save_project', v2Error);
-
-    const projectData = await buildProjectDataSnapshot({
-      includeThumbnail,
-      includeFlattenedImage,
-    });
-    const legacyResult = await invoke<FileOperationResult>('save_project', {
+    const v2Result = await invoke<FileOperationResult>('save_project_v2', {
       path: targetPath,
       format: targetFormat,
-      project: projectData,
+      project: projectDataV2,
     });
-    if (!legacyResult.success) {
-      const message = legacyResult.error || v2Error || 'Unknown error';
+    if (!v2Result.success) {
+      const message = v2Result.error || 'Unknown save error';
       set({ isSaving: false, error: message });
       return { success: false, error: message };
     }

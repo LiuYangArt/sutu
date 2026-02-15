@@ -1,26 +1,24 @@
 //! Shared file format APIs for desktop and future native adapters.
 
-use crate::core::adapters::{project_core_to_legacy, project_legacy_to_core};
+use crate::core::adapters::project_legacy_to_core;
 use crate::core::contracts::ProjectDataCore;
 use crate::core::errors::CoreError;
 use crate::file::FileFormat;
 use std::path::Path;
+
+fn tiff_disabled_error() -> CoreError {
+    CoreError::InvalidInput("TIFF format is currently disabled".to_string())
+}
 
 pub fn save_project_core(
     path: &Path,
     format: FileFormat,
     project: &ProjectDataCore,
 ) -> Result<(), CoreError> {
-    let legacy = project_core_to_legacy(project);
-
     match format {
-        FileFormat::Ora => crate::file::ora::save_ora(path, &legacy)?,
-        FileFormat::Tiff => {
-            return Err(CoreError::InvalidInput(
-                "TIFF format is currently disabled".to_string(),
-            ));
-        }
-        FileFormat::Psd => crate::file::psd::save_psd(path, &legacy)?,
+        FileFormat::Ora => crate::file::ora::save_ora_core(path, project)?,
+        FileFormat::Tiff => return Err(tiff_disabled_error()),
+        FileFormat::Psd => crate::file::psd::save_psd_core(path, project)?,
     }
 
     Ok(())
@@ -34,11 +32,7 @@ pub fn load_project_core(path: &Path) -> Result<ProjectDataCore, CoreError> {
 
     let legacy = match format {
         FileFormat::Ora => crate::file::ora::load_ora(path)?,
-        FileFormat::Tiff => {
-            return Err(CoreError::InvalidInput(
-                "TIFF format is currently disabled".to_string(),
-            ));
-        }
+        FileFormat::Tiff => return Err(tiff_disabled_error()),
         FileFormat::Psd => crate::file::psd::load_psd(path)?,
     };
 

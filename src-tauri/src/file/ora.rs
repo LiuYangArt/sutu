@@ -10,6 +10,7 @@ use super::layer_cache::{cache_layer_png, cache_thumbnail, clear_cache};
 use super::types::{FileError, LayerData, ProjectData};
 use crate::app_meta::{APP_ORA_LEGACY_NAMESPACE, APP_ORA_NAMESPACE};
 use crate::benchmark::{generate_session_id, BackendBenchmark};
+use crate::core::contracts::ProjectDataCore;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use image::{ImageFormat, RgbaImage};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
@@ -30,6 +31,73 @@ fn ora_attr_key(name: &str) -> String {
 
 fn ora_legacy_attr_key(name: &str) -> String {
     format!("{}:{}", APP_ORA_LEGACY_NAMESPACE, name)
+}
+
+struct OraLayerXml<'a> {
+    id: &'a str,
+    name: &'a str,
+    layer_type: &'a str,
+    visible: bool,
+    locked: bool,
+    opacity: f32,
+    blend_mode: &'a str,
+    is_background: Option<bool>,
+    offset_x: i32,
+    offset_y: i32,
+}
+
+fn write_layer_xml(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    layer: OraLayerXml<'_>,
+) -> Result<(), FileError> {
+    let mut layer_elem = BytesStart::new("layer");
+    layer_elem.push_attribute(("name", layer.name));
+    layer_elem.push_attribute(("src", format!("data/{}.png", layer.id).as_str()));
+    layer_elem.push_attribute(("x", layer.offset_x.to_string().as_str()));
+    layer_elem.push_attribute(("y", layer.offset_y.to_string().as_str()));
+    layer_elem.push_attribute(("composite-op", blend_mode_to_ora(layer.blend_mode)));
+    layer_elem.push_attribute(("opacity", layer.opacity.to_string().as_str()));
+    layer_elem.push_attribute((
+        "visibility",
+        if layer.visible { "visible" } else { "hidden" },
+    ));
+
+    let attr_id = ora_attr_key("id");
+    let attr_type = ora_attr_key("type");
+    let attr_locked = ora_attr_key("locked");
+    layer_elem.push_attribute((attr_id.as_str(), layer.id));
+    layer_elem.push_attribute((attr_type.as_str(), layer.layer_type));
+    layer_elem.push_attribute((attr_locked.as_str(), layer.locked.to_string().as_str()));
+    if let Some(is_bg) = layer.is_background {
+        let attr_is_background = ora_attr_key("is-background");
+        layer_elem.push_attribute((attr_is_background.as_str(), is_bg.to_string().as_str()));
+    }
+
+    writer.write_event(Event::Empty(layer_elem))?;
+    Ok(())
+}
+
+fn resize_thumbnail_if_needed(thumb_img: RgbaImage) -> RgbaImage {
+    if thumb_img.width() != 256 || thumb_img.height() != 256 {
+        image::imageops::resize(&thumb_img, 256, 256, image::imageops::FilterType::Lanczos3)
+    } else {
+        thumb_img
+    }
+}
+
+fn write_thumbnail_entry(
+    zip: &mut ZipWriter<File>,
+    options_deflate: SimpleFileOptions,
+    thumbnail_img: RgbaImage,
+) -> Result<(), FileError> {
+    let thumb_resized = resize_thumbnail_if_needed(thumbnail_img);
+    let mut thumb_data = Cursor::new(Vec::new());
+    thumb_resized.write_to(&mut thumb_data, ImageFormat::Png)?;
+
+    zip.add_directory("Thumbnails", options_deflate)?;
+    zip.start_file("Thumbnails/thumbnail.png", options_deflate)?;
+    zip.write_all(&thumb_data.into_inner())?;
+    Ok(())
 }
 
 /// Map Sutu blend mode to ORA/SVG composite operation
@@ -101,30 +169,21 @@ fn generate_stack_xml(project: &ProjectData) -> Result<Vec<u8>, FileError> {
 
     // Write layers (in reverse order - ORA uses top-to-bottom, we use bottom-to-top)
     for layer in project.layers.iter().rev() {
-        let mut layer_elem = BytesStart::new("layer");
-        layer_elem.push_attribute(("name", layer.name.as_str()));
-        layer_elem.push_attribute(("src", format!("data/{}.png", layer.id).as_str()));
-        layer_elem.push_attribute(("x", layer.offset_x.to_string().as_str()));
-        layer_elem.push_attribute(("y", layer.offset_y.to_string().as_str()));
-        layer_elem.push_attribute(("composite-op", blend_mode_to_ora(&layer.blend_mode)));
-        layer_elem.push_attribute(("opacity", layer.opacity.to_string().as_str()));
-        layer_elem.push_attribute((
-            "visibility",
-            if layer.visible { "visible" } else { "hidden" },
-        ));
-        // Custom attributes for app-specific data.
-        let attr_id = ora_attr_key("id");
-        let attr_type = ora_attr_key("type");
-        let attr_locked = ora_attr_key("locked");
-        layer_elem.push_attribute((attr_id.as_str(), layer.id.as_str()));
-        layer_elem.push_attribute((attr_type.as_str(), layer.layer_type.as_str()));
-        layer_elem.push_attribute((attr_locked.as_str(), layer.locked.to_string().as_str()));
-        if let Some(is_bg) = layer.is_background {
-            let attr_is_background = ora_attr_key("is-background");
-            layer_elem.push_attribute((attr_is_background.as_str(), is_bg.to_string().as_str()));
-        }
-
-        writer.write_event(Event::Empty(layer_elem))?;
+        write_layer_xml(
+            &mut writer,
+            OraLayerXml {
+                id: layer.id.as_str(),
+                name: layer.name.as_str(),
+                layer_type: layer.layer_type.as_str(),
+                visible: layer.visible,
+                locked: layer.locked,
+                opacity: layer.opacity,
+                blend_mode: layer.blend_mode.as_str(),
+                is_background: layer.is_background,
+                offset_x: layer.offset_x,
+                offset_y: layer.offset_y,
+            },
+        )?;
     }
 
     // Close stack and image
@@ -134,6 +193,46 @@ fn generate_stack_xml(project: &ProjectData) -> Result<Vec<u8>, FileError> {
     Ok(writer.into_inner().into_inner())
 }
 
+/// Generate stack.xml content from project core data
+fn generate_stack_xml_core(project: &ProjectDataCore) -> Result<Vec<u8>, FileError> {
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+
+    let mut image_start = BytesStart::new("image");
+    image_start.push_attribute(("w", project.width.to_string().as_str()));
+    image_start.push_attribute(("h", project.height.to_string().as_str()));
+    writer.write_event(Event::Start(image_start))?;
+
+    let mut stack_start = BytesStart::new("stack");
+    stack_start.push_attribute(("composite-op", "svg:src-over"));
+    stack_start.push_attribute(("opacity", "1.0"));
+    stack_start.push_attribute(("visibility", "visible"));
+    writer.write_event(Event::Start(stack_start))?;
+
+    for layer in project.layers.iter().rev() {
+        write_layer_xml(
+            &mut writer,
+            OraLayerXml {
+                id: layer.id.as_str(),
+                name: layer.name.as_str(),
+                layer_type: layer.layer_type.as_str(),
+                visible: layer.visible,
+                locked: layer.locked,
+                opacity: layer.opacity,
+                blend_mode: layer.blend_mode.as_str(),
+                is_background: layer.is_background,
+                offset_x: layer.offset_x,
+                offset_y: layer.offset_y,
+            },
+        )?;
+    }
+
+    writer.write_event(Event::End(BytesEnd::new("stack")))?;
+    writer.write_event(Event::End(BytesEnd::new("image")))?;
+
+    Ok(writer.into_inner().into_inner())
+}
 /// Decode base64 PNG data to raw RGBA bytes
 fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
     // Handle data URL prefix if present
@@ -190,19 +289,44 @@ pub fn save_ora(path: &Path, project: &ProjectData) -> Result<(), FileError> {
     // 4. Write thumbnail if provided
     if let Some(ref thumbnail) = project.thumbnail {
         let thumb_img = decode_base64_png(thumbnail)?;
-        // Resize to 256x256 if needed
-        let thumb_resized = if thumb_img.width() != 256 || thumb_img.height() != 256 {
-            image::imageops::resize(&thumb_img, 256, 256, image::imageops::FilterType::Lanczos3)
-        } else {
-            thumb_img
-        };
+        write_thumbnail_entry(&mut zip, options_deflate, thumb_img)?;
+    }
 
-        let mut thumb_data = Cursor::new(Vec::new());
-        thumb_resized.write_to(&mut thumb_data, ImageFormat::Png)?;
+    zip.finish()?;
+    Ok(())
+}
 
-        zip.add_directory("Thumbnails", options_deflate)?;
-        zip.start_file("Thumbnails/thumbnail.png", options_deflate)?;
-        zip.write_all(&thumb_data.into_inner())?;
+/// Save project core data to ORA file using bytes-first payload.
+pub fn save_ora_core(path: &Path, project: &ProjectDataCore) -> Result<(), FileError> {
+    let file = File::create(path)?;
+    let mut zip = ZipWriter::new(file);
+
+    let options_stored = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .unix_permissions(0o644);
+    zip.start_file("mimetype", options_stored)?;
+    zip.write_all(ORA_MIMETYPE.as_bytes())?;
+
+    let options_deflate = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+
+    let stack_xml = generate_stack_xml_core(project)?;
+    zip.start_file("stack.xml", options_deflate)?;
+    zip.write_all(&stack_xml)?;
+
+    for layer in &project.layers {
+        if let Some(ref png_bytes) = layer.layer_png_bytes {
+            let layer_path = format!("data/{}.png", layer.id);
+            zip.start_file(&layer_path, options_deflate)?;
+            zip.write_all(png_bytes)?;
+        }
+    }
+
+    if let Some(ref thumbnail_png_bytes) = project.thumbnail_png_bytes {
+        let thumb_img =
+            image::load_from_memory_with_format(thumbnail_png_bytes, ImageFormat::Png)?.to_rgba8();
+        write_thumbnail_entry(&mut zip, options_deflate, thumb_img)?;
     }
 
     zip.finish()?;
