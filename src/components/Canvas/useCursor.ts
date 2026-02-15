@@ -13,15 +13,33 @@ const MOVE_TOOL_CURSOR = (() => {
     'm9 5 3-3 3 3',
   ];
   const strokeAttrs = 'fill="none" stroke-linecap="round" stroke-linejoin="round"';
+  const iconContent = iconPaths.map((d) => `<path d="${d}"/>`).join('');
   const svg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
     <g stroke="white" stroke-width="3" ${strokeAttrs}>
-      ${iconPaths.map((d) => `<path d="${d}"/>`).join('')}
+      ${iconContent}
     </g>
     <g stroke="black" stroke-width="1.8" ${strokeAttrs}>
-      ${iconPaths.map((d) => `<path d="${d}"/>`).join('')}
+      ${iconContent}
     </g>
   </svg>`;
   return `url("data:image/svg+xml;base64,${btoa(svg)}") 12 12, move`;
+})();
+
+const ZOOM_TOOL_CURSOR = (() => {
+  const iconPaths = ['M21 21l-4.3-4.3', 'M11 8v6', 'M8 11h6'];
+  const strokeAttrs = 'fill="none" stroke-linecap="round" stroke-linejoin="round"';
+  const iconContent = iconPaths.map((d) => `<path d="${d}"/>`).join('');
+  const svg = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <g stroke="white" stroke-width="3" ${strokeAttrs}>
+      <circle cx="11" cy="11" r="8"/>
+      ${iconContent}
+    </g>
+    <g stroke="black" stroke-width="1.8" ${strokeAttrs}>
+      <circle cx="11" cy="11" r="8"/>
+      ${iconContent}
+    </g>
+  </svg>`;
+  return `url("data:image/svg+xml;base64,${btoa(svg)}") 11 11, zoom-in`;
 })();
 
 /** Cursor style for each tool type */
@@ -33,7 +51,7 @@ const TOOL_CURSORS: Record<ToolType, string> = {
   move: MOVE_TOOL_CURSOR,
   select: 'crosshair',
   lasso: 'crosshair',
-  zoom: 'zoom-in',
+  zoom: ZOOM_TOOL_CURSOR,
 };
 
 /** Brush texture data for cursor rendering */
