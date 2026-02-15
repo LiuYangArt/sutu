@@ -88,9 +88,12 @@ describe('SelectionOverlay', () => {
     );
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      ctx as unknown as CanvasRenderingContext2D
-    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(((contextId: string) => {
+      if (contextId === '2d') {
+        return ctx as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    }) as typeof HTMLCanvasElement.prototype.getContext);
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0,
       y: 0,
