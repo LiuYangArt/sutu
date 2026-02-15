@@ -91,11 +91,11 @@ describe('HistoryPanel', () => {
 
   it('prevents re-entry while history jump is pending', async () => {
     seedMixedTimeline();
-    let resolveJump: ((value: boolean) => void) | null = null;
+    let resolveJump: (() => void) | undefined;
     const jumpToSpy = vi.fn(
       () =>
         new Promise<boolean>((resolve) => {
-          resolveJump = resolve;
+          resolveJump = () => resolve(true);
         })
     );
     (window as HistoryPanelWindow).__canvasHistoryJumpTo = jumpToSpy;
@@ -107,7 +107,9 @@ describe('HistoryPanel', () => {
     fireEvent.click(targetButton);
     expect(jumpToSpy).toHaveBeenCalledTimes(1);
 
-    resolveJump?.(true);
+    if (resolveJump) {
+      resolveJump();
+    }
     await waitFor(() => {
       expect(targetButton).not.toBeDisabled();
     });

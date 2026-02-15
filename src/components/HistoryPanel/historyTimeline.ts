@@ -5,6 +5,23 @@ export interface HistoryTimeline {
   currentIndex: number;
 }
 
+const STROKE_LABEL_BY_PREFIX: Array<{ prefix: string; label: string }> = [
+  { prefix: 'fill-selection-', label: 'Fill Selection' },
+  { prefix: 'fill-layer-', label: 'Fill Layer' },
+  { prefix: 'selection-fill-', label: 'Selection Fill' },
+  { prefix: 'clear-selection-', label: 'Clear Selection' },
+  { prefix: 'clear-layer-', label: 'Clear Layer' },
+  { prefix: 'gradient-', label: 'Gradient Fill' },
+  { prefix: 'curves-', label: 'Curves Adjustment' },
+];
+
+function resolveStrokeLabel(entryId: string): string | null {
+  for (const candidate of STROKE_LABEL_BY_PREFIX) {
+    if (entryId.startsWith(candidate.prefix)) return candidate.label;
+  }
+  return null;
+}
+
 export function buildHistoryTimeline(
   undoStack: HistoryEntry[],
   redoStack: HistoryEntry[]
@@ -17,8 +34,11 @@ export function buildHistoryTimeline(
 
 export function formatHistoryEntryLabel(entry: HistoryEntry): string {
   switch (entry.type) {
-    case 'stroke':
+    case 'stroke': {
+      const actionLabel = resolveStrokeLabel(entry.entryId);
+      if (actionLabel) return actionLabel;
       return entry.snapshotMode === 'gpu' ? 'Brush Stroke (GPU)' : 'Brush Stroke';
+    }
     case 'addLayer':
       return 'Add Layer';
     case 'removeLayer':

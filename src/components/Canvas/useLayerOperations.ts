@@ -571,7 +571,11 @@ export function useLayerOperations({
   // 起笔前保存 beforeImage。
   // no-readback 下必须先同步待刷新的 GPU tiles，否则一次撤销会跨越多笔。
   const captureBeforeImage = useCallback(
-    async (preferGpuHistory = true, captureCpuBackupForGpu = false): Promise<void> => {
+    async (
+      preferGpuHistory = true,
+      captureCpuBackupForGpu = false,
+      cpuEntryIdPrefix = 'stroke'
+    ): Promise<void> => {
       const renderer = layerRendererRef.current;
       if (!renderer || !activeLayerId) return;
 
@@ -611,7 +615,7 @@ export function useLayerOperations({
       if (imageData) {
         beforeImageRef.current = {
           layerId: activeLayerId,
-          entryId: gpuEntry?.entryId ?? createHistoryEntryId(),
+          entryId: gpuEntry?.entryId ?? createHistoryEntryId(cpuEntryIdPrefix),
           snapshotMode: 'cpu',
           beforeImage: imageData,
         };
@@ -724,7 +728,8 @@ export function useLayerOperations({
         // Check for active selection
         const { hasSelection, selectionMask } = useSelectionStore.getState();
 
-        if (hasSelection && selectionMask) {
+        const isSelectionFill = hasSelection && !!selectionMask;
+        if (isSelectionFill && selectionMask) {
           fillWithMask(layer.ctx, selectionMask, color, width, height);
         } else if (!hasSelection) {
           // Only fill if NO selection. If hasSelection is true but no mask (shouldn't happen), do nothing safely
@@ -734,7 +739,11 @@ export function useLayerOperations({
         }
 
         // Save to history
-        pushCpuStrokeHistory(activeLayerId, beforeImage);
+        pushCpuStrokeHistory(
+          activeLayerId,
+          beforeImage,
+          createHistoryEntryId(isSelectionFill ? 'fill-selection' : 'fill-layer')
+        );
         setDocumentDirty(true);
 
         // Update thumbnail and re-render
@@ -855,7 +864,7 @@ export function useLayerOperations({
 
       renderer.setLayerImageData(activeLayerId, nextImage);
 
-      pushCpuStrokeHistory(activeLayerId, beforeImage);
+      pushCpuStrokeHistory(activeLayerId, beforeImage, createHistoryEntryId('gradient'));
       setDocumentDirty(true);
 
       markLayerDirty(activeLayerId);
@@ -923,7 +932,7 @@ export function useLayerOperations({
       ctx.restore();
 
       // Save to history
-      pushCpuStrokeHistory(activeLayerId, beforeImage);
+      pushCpuStrokeHistory(activeLayerId, beforeImage, createHistoryEntryId('clear-selection'));
       setDocumentDirty(true);
 
       // Update thumbnail and re-render
@@ -1455,7 +1464,7 @@ export function useLayerOperations({
       onBeforeCanvasMutation?.();
 
       // Capture state before clearing for undo
-      await captureBeforeImage(false);
+      await captureBeforeImage(false, false, 'clear-layer');
 
       // Use current palette background color for background-layer clear behavior.
       const backgroundColor = useToolStore.getState().backgroundColor;
