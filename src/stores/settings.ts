@@ -115,6 +115,7 @@ export interface GeneralSettings {
   openLastFileOnStartup: boolean;
   recentFiles: string[];
   selectionAutoFillEnabled: boolean;
+  selectionPreviewTranslucent: boolean;
 }
 
 export type BrushPresetSelectionTool = 'brush' | 'eraser';
@@ -177,6 +178,7 @@ interface SettingsState extends PersistedSettings {
   setAutosaveIntervalMinutes: (minutes: number) => void;
   setOpenLastFileOnStartup: (enabled: boolean) => void;
   setSelectionAutoFillEnabled: (enabled: boolean) => void;
+  setSelectionPreviewTranslucent: (enabled: boolean) => void;
   addRecentFile: (path: string) => void;
   setRecentFiles: (paths: string[]) => void;
   removeRecentFile: (path: string) => void;
@@ -405,6 +407,11 @@ function normalizeRecentFiles(value: unknown): string[] {
   return sanitized;
 }
 
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  return fallback;
+}
+
 function buildRecentFilesWith(path: string, current: string[]): string[] {
   const normalizedPath = normalizeRecentFilePath(path);
   if (!normalizedPath) {
@@ -450,6 +457,7 @@ const defaultSettings: PersistedSettings = {
     openLastFileOnStartup: true,
     recentFiles: [],
     selectionAutoFillEnabled: false,
+    selectionPreviewTranslucent: true,
   },
   quickExport: { ...DEFAULT_QUICK_EXPORT_SETTINGS },
   brushLibrary: {
@@ -681,6 +689,13 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setSelectionPreviewTranslucent: (enabled) => {
+      set((state) => {
+        state.general.selectionPreviewTranslucent = enabled;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     addRecentFile: (path) => {
       set((state) => {
         state.general.recentFiles = buildRecentFilesWith(path, state.general.recentFiles);
@@ -773,10 +788,14 @@ export const useSettingsStore = create<SettingsState>()(
                     defaultSettings.general.autosaveIntervalMinutes
                 ),
                 recentFiles: normalizeRecentFiles(loaded.general.recentFiles),
-                selectionAutoFillEnabled:
-                  typeof loaded.general.selectionAutoFillEnabled === 'boolean'
-                    ? loaded.general.selectionAutoFillEnabled
-                    : defaultSettings.general.selectionAutoFillEnabled,
+                selectionAutoFillEnabled: normalizeBoolean(
+                  loaded.general.selectionAutoFillEnabled,
+                  defaultSettings.general.selectionAutoFillEnabled
+                ),
+                selectionPreviewTranslucent: normalizeBoolean(
+                  loaded.general.selectionPreviewTranslucent,
+                  defaultSettings.general.selectionPreviewTranslucent
+                ),
               };
             } else {
               state.general = { ...defaultSettings.general };

@@ -10,7 +10,8 @@ interface SelectionOverlayProps {
   offsetY: number;
 }
 
-const SELECTION_PREVIEW_ALPHA = 0.28;
+const SELECTION_PREVIEW_ALPHA_TRANSLUCENT = 0.28;
+const SELECTION_PREVIEW_ALPHA_OPAQUE = 1;
 
 function toRgbaWithAlpha(hexColor: string, alpha: number): string {
   const normalized = normalizeHex(hexColor);
@@ -23,6 +24,13 @@ function toRgbaWithAlpha(hexColor: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function resolveSelectionPreviewAlpha(selectionPreviewTranslucent: boolean): number {
+  if (selectionPreviewTranslucent) {
+    return SELECTION_PREVIEW_ALPHA_TRANSLUCENT;
+  }
+  return SELECTION_PREVIEW_ALPHA_OPAQUE;
+}
+
 /**
  * Overlay canvas for rendering marching ants selection border.
  * Separated from main canvas to avoid redrawing the entire canvas on each animation frame.
@@ -31,6 +39,9 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 1920, height: 1080 });
   const selectionAutoFillEnabled = useSettingsStore((s) => s.general.selectionAutoFillEnabled);
+  const selectionPreviewTranslucent = useSettingsStore(
+    (s) => s.general.selectionPreviewTranslucent
+  );
   const brushColor = useToolStore((s) => s.brushColor);
   const {
     hasSelection,
@@ -52,9 +63,10 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     if (!isCreating) return null;
     return previewPoint ? [...creationPoints, previewPoint] : [...creationPoints];
   }, [isCreating, creationPoints, previewPoint]);
+  const previewAlpha = resolveSelectionPreviewAlpha(selectionPreviewTranslucent);
   const creationFillStyle = useMemo(
-    () => toRgbaWithAlpha(brushColor, SELECTION_PREVIEW_ALPHA),
-    [brushColor]
+    () => toRgbaWithAlpha(brushColor, previewAlpha),
+    [brushColor, previewAlpha]
   );
 
   const shouldRender = existingPaths.length > 0 || (creatingPath && creatingPath.length >= 2);

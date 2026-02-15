@@ -42,7 +42,7 @@
 .selection-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .selection-auto-fill-btn {
@@ -51,6 +51,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.selection-preview-toggle-btn {
+  min-width: 0;
+  width: auto;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 0 8px;
+}
+
+.selection-preview-toggle-label {
+  font-size: 11px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  line-height: 1;
 }
 
 .zoom-tool-options {
@@ -84,6 +99,14 @@
   background: var(--primary-bg);
   color: var(--primary);
   border-color: var(--primary);
+}
+
+.tool-option-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: transparent;
 }
 
 /* Tool Buttons */

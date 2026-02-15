@@ -54,6 +54,7 @@ describe('settings store newFile persistence', () => {
         openLastFileOnStartup: true,
         recentFiles: [],
         selectionAutoFillEnabled: false,
+        selectionPreviewTranslucent: true,
       },
       newFile: {
         customSizePresets: [],
@@ -107,6 +108,7 @@ describe('settings store newFile persistence', () => {
     expect(state.general.openLastFileOnStartup).toBe(true);
     expect(state.general.recentFiles).toEqual([]);
     expect(state.general.selectionAutoFillEnabled).toBe(false);
+    expect(state.general.selectionPreviewTranslucent).toBe(true);
     expect(state.quickExport).toEqual(DEFAULT_QUICK_EXPORT_SETTINGS);
     expect(state.brushLibrary.selectedPresetByTool).toEqual({
       brush: null,
@@ -191,6 +193,7 @@ describe('settings store newFile persistence', () => {
         openLastFileOnStartup?: boolean;
         recentFiles?: string[];
         selectionAutoFillEnabled?: boolean;
+        selectionPreviewTranslucent?: boolean;
       };
       quickExport?: {
         lastPath?: string;
@@ -213,6 +216,7 @@ describe('settings store newFile persistence', () => {
       'C:\\projects\\beta.ora',
     ]);
     expect(parsed.general?.selectionAutoFillEnabled).toBe(false);
+    expect(parsed.general?.selectionPreviewTranslucent).toBe(true);
     expect(parsed.quickExport?.lastPath).toBe('D:\\exports\\sample.png');
     expect(parsed.quickExport?.lastFormat).toBe('png');
     expect(parsed.quickExport?.maxSize).toBe(1000);
@@ -243,7 +247,7 @@ describe('settings store newFile persistence', () => {
     expect(state.quickExport.maxSize).toBe(960);
   });
 
-  it('loads and persists selection auto fill toggle', async () => {
+  it('loads and persists selection preview toggles', async () => {
     fsMocks.exists.mockResolvedValue(true);
     fsMocks.readTextFile.mockResolvedValue(
       JSON.stringify({
@@ -252,6 +256,7 @@ describe('settings store newFile persistence', () => {
           openLastFileOnStartup: true,
           recentFiles: [],
           selectionAutoFillEnabled: true,
+          selectionPreviewTranslucent: false,
         },
       })
     );
@@ -260,14 +265,19 @@ describe('settings store newFile persistence', () => {
 
     await useSettingsStore.getState()._loadSettings();
     expect(useSettingsStore.getState().general.selectionAutoFillEnabled).toBe(true);
+    expect(useSettingsStore.getState().general.selectionPreviewTranslucent).toBe(false);
 
     useSettingsStore.getState().setSelectionAutoFillEnabled(false);
+    useSettingsStore.getState().setSelectionPreviewTranslucent(true);
     await new Promise((resolve) => setTimeout(resolve, 600));
 
     const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
     const content = String(lastCall?.[1] ?? '{}');
-    const parsed = JSON.parse(content) as { general?: { selectionAutoFillEnabled?: boolean } };
+    const parsed = JSON.parse(content) as {
+      general?: { selectionAutoFillEnabled?: boolean; selectionPreviewTranslucent?: boolean };
+    };
     expect(parsed.general?.selectionAutoFillEnabled).toBe(false);
+    expect(parsed.general?.selectionPreviewTranslucent).toBe(true);
   });
 
   it('auto-migrates legacy macOS pointerevent backend to macnative once', async () => {
