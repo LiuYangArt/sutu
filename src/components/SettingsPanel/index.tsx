@@ -958,7 +958,8 @@ const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; descripti
   {
     id: 'auto',
     label: 'Auto',
-    description: 'Downsample for soft large brushes (hardness < 70, size > 300)',
+    description:
+      'Auto downsample for large brushes (size > 300). Procedural tips also require hardness < 70.',
   },
 ];
 

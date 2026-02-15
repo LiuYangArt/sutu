@@ -41,6 +41,8 @@ export function BrushTipShape(): JSX.Element {
   const applyMainTip = useBrushLibraryStore((state) => state.applyMainTip);
 
   const activeTipId = brushTexture?.id ?? null;
+  const isTextureMainTip = brushTexture !== null;
+  const hardnessDisplayValue = isTextureMainTip ? '--' : `${brushHardness}%`;
   const tipItems = useMemo<MainTipListItem[]>(() => buildMainTipItems(tips), [tips]);
 
   function renderTipItem(item: MainTipListItem): JSX.Element {
@@ -104,8 +106,9 @@ export function BrushTipShape(): JSX.Element {
         value={brushHardness}
         min={0}
         max={100}
-        displayValue={`${brushHardness}%`}
+        displayValue={hardnessDisplayValue}
         onChange={setBrushHardness}
+        disabled={isTextureMainTip}
       />
 
       <SliderRow

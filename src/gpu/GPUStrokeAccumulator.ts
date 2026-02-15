@@ -92,6 +92,33 @@ function decodeFloat16(value: number): number {
   return FLOAT16_TO_FLOAT32_LUT[value & 0xffff] ?? 0;
 }
 
+export interface AutoDownsampleDecisionInput {
+  mode: GPURenderScaleMode;
+  brushSize: number;
+  brushHardness: number;
+  hasTextureMainTip: boolean;
+}
+
+export function computeAutoDownsampleDecision({
+  mode,
+  brushSize,
+  brushHardness,
+  hasTextureMainTip,
+}: AutoDownsampleDecisionInput): boolean {
+  if (mode !== 'auto') {
+    return false;
+  }
+  const isLargeBrush = brushSize > 300;
+  if (!isLargeBrush) {
+    return false;
+  }
+  if (hasTextureMainTip) {
+    return true;
+  }
+  const isSoftProceduralBrush = brushHardness < 70;
+  return isSoftProceduralBrush;
+}
+
 function compositeStrokePixel(args: {
   dstR: number;
   dstG: number;
@@ -838,13 +865,20 @@ export class GPUStrokeAccumulator {
 
   /**
    * Sync render scale from store to ping-pong buffer
-   * Auto mode: downsample to 50% for soft large brushes (hardness < 70, size > 300)
+   * Auto mode:
+   * - Texture main tip: downsample when size > 300
+   * - Procedural tip: downsample when hardness < 70 and size > 300
    */
   private syncRenderScale(): void {
     const { gpuRenderScaleMode: mode } = useSettingsStore.getState().brush;
-    const { brushHardness, brushSize } = useToolStore.getState();
+    const { brushHardness, brushSize, brushTexture } = useToolStore.getState();
 
-    const shouldDownsample = mode === 'auto' && brushHardness < 70 && brushSize > 300;
+    const shouldDownsample = computeAutoDownsampleDecision({
+      mode,
+      brushSize,
+      brushHardness,
+      hasTextureMainTip: brushTexture !== null,
+    });
     const targetScale = shouldDownsample ? 0.5 : 1.0;
 
     if (mode !== this.cachedRenderScaleMode || targetScale !== this.currentRenderScale) {
