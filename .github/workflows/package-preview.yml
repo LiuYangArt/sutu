@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "src/**"
-      - "src-tauri/**"
-      - "app.meta.json"
-      - "scripts/sync-app-meta.mjs"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/package-preview.yml"
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'app.meta.json'
+      - 'scripts/sync-app-meta.mjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/package-preview.yml'
 
 env:
   CARGO_TERM_COLOR: always
@@ -91,8 +91,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "pnpm"
+          node-version: '20'
+          cache: 'pnpm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -133,14 +133,25 @@ jobs:
         run: |
           echo "Using macOS signing mode: ${{ steps.mac_sign.outputs.mode }}"
 
-      - name: Build Tauri app
+      - name: Build Tauri app (macOS developer-id)
+        if: matrix.platform == 'macos' && steps.mac_sign.outputs.mode == 'developer-id'
         env:
-          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos' && steps.mac_sign.outputs.identity || '' }}
-          APPLE_CERTIFICATE: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.mac_sign.outputs.identity }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
+
+      - name: Build Tauri app (macOS adhoc)
+        if: matrix.platform == 'macos' && steps.mac_sign.outputs.mode == 'adhoc'
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
+
+      - name: Build Tauri app (non-macOS)
+        if: matrix.platform != 'macos'
         run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
 
       - name: Verify macOS bundle signatures
