@@ -1,6 +1,6 @@
 [package]
 name = "sutu"
-version = "0.12.0"
+version = "0.12.1"
 description = "Professional painting software with low-latency pen input"
 license = "GPL-3.0-only"
 authors = ["Sutu Team"]
