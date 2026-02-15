@@ -1,15 +1,16 @@
 # PaintBoard 架构设计文档
 
-> 版本: 0.1.0 | 最后更新: 2026-01-11
+> 版本: 0.2.0 | 最后更新: 2026-02-16
 
 ## 1. 项目定位
 
-**PaintBoard** 是一款专业级绘画软件，目标是在 Windows + macOS 双平台上提供：
+**PaintBoard** 是一款专业级绘画软件，当前主线是桌面端（Windows + macOS），并按 A 路线推进 iPad 原生分支。核心目标是通过共享 Rust Core 降低双端分叉成本：
 
 - 极低延迟的压感输入响应（< 12ms）
 - Photoshop 级别的图层和混合模式
 - 专业笔刷系统
 - PSD 文件兼容
+- 跨端共享核心能力（ABR/PAT/PSD/ORA/项目合同）
 
 **开发理念**：Vibe Coding —— 在保证性能的前提下，最大化开发体验和迭代速度。
 
@@ -68,6 +69,19 @@
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 3.1 跨平台分层（2026-02 更新）
+
+A 路线采用“共享 Core + 双端适配层”：
+
+1. 共享 Core（Rust）：`src-tauri/src/core/*`
+   - `contracts`：跨端 DTO
+   - `assets`：ABR/PAT 导入 API
+   - `formats`：PSD/ORA 保存加载 API
+2. 桌面适配层：Tauri commands + React/WebGPU
+3. iPad 适配层（计划中）：Swift/Metal + Apple Pencil 输入
+
+当前状态：Phase 0/1 地基已在桌面链路落地，`save/load_project_v2` 已默认走 bytes-first 主链路。
 
 ---
 
@@ -369,12 +383,20 @@ interface InputStateEvent {
 - 滤镜效果
 - 文件格式支持
 
-### 8.2 跨平台 (未来)
+### 8.2 跨平台（进行中）
 
-当前优先 Windows，架构设计兼容：
+当前采用 A 路线：
 
-- macOS（PointerEvent 已支持）
-- Linux (X11/Wayland)
+1. 桌面端继续以 Tauri + React/WebGPU 为主线交付。
+2. iPad 端采用原生渲染与输入栈（Swift/Metal/Pencil）。
+3. 新能力优先进入共享 Core，再由双端适配层接入。
+4. Core 物理拆包（`crates/*`）按触发条件推进，不强制一次性迁移。
+
+### 8.3 多语言（i18n）策略
+
+1. 先做共享 i18n 地基，不要求当前阶段完成全量翻译。  
+2. 复用边界：文案 key 与语言资源文件跨端共享，React/iOS runtime 各端实现。  
+3. 新增 UI 文案使用 key 管理，避免桌面与 iPad 各自硬编码导致术语漂移。
 
 ---
 
