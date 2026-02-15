@@ -174,6 +174,14 @@ export interface GpuCurvesRenderParams {
   dirtyRect: Rect | null;
 }
 
+export interface GpuSelectionFillConfig {
+  color: string;
+}
+
+export interface GpuSelectionFillRenderParams extends GpuSelectionFillConfig {
+  dirtyRect: Rect | null;
+}
+
 export interface GpuBrushCommitMetricsSnapshot {
   attemptCount: number;
   committedCount: number;

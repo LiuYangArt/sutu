@@ -14,6 +14,7 @@ interface UseSelectionHandlerProps {
   currentTool: ToolType;
   scale: number;
   onBeforeSelectionMutation?: () => void;
+  onSelectionCommitStart?: (payload: { path: SelectionPoint[]; mode: SelectionMode }) => void;
   onSelectionCommitted?: (payload: {
     before: SelectionSnapshot;
     after: SelectionSnapshot;
@@ -76,6 +77,7 @@ interface SelectionHandlerResult {
 export function useSelectionHandler({
   currentTool,
   onBeforeSelectionMutation,
+  onSelectionCommitStart,
   onSelectionCommitted,
 }: UseSelectionHandlerProps): SelectionHandlerResult {
   const {
@@ -244,7 +246,14 @@ export function useSelectionHandler({
 
       const before = selectionHistoryBeforeRef.current;
       const mode = state.selectionMode;
+      const pathSnapshot = state.creationPoints.map((point) => ({ ...point }));
       const { width, height } = useDocumentStore.getState();
+      if (pathSnapshot.length >= 3) {
+        onSelectionCommitStart?.({
+          path: pathSnapshot,
+          mode,
+        });
+      }
       setLassoMode(isPurePolygonalRef.current ? 'polygonal' : 'freehand');
       commitSelection(width, height);
       const selectionMaskBuildId = useSelectionStore.getState().selectionMaskBuildId;
@@ -254,7 +263,13 @@ export function useSelectionHandler({
       }
       resetGestureRefs();
     },
-    [commitSelection, finalizeCommittedCreationMutation, resetGestureRefs, setLassoMode]
+    [
+      commitSelection,
+      finalizeCommittedCreationMutation,
+      onSelectionCommitStart,
+      resetGestureRefs,
+      setLassoMode,
+    ]
   );
 
   const resetModifierState = useCallback(function resetModifierState(): void {

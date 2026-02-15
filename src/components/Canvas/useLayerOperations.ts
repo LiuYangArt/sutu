@@ -19,6 +19,7 @@ import {
   type GradientRenderConfig,
 } from '@/utils/gradientRenderer';
 import { useToastStore } from '@/stores/toast';
+import type { Rect } from '@/utils/strokeBuffer';
 
 interface UseLayerOperationsParams {
   layerRendererRef: RefObject<LayerRenderer | null>;
@@ -37,6 +38,9 @@ interface UseLayerOperationsParams {
     entryId: string,
     direction: 'undo' | 'redo',
     layerId: string
+  ) => Promise<boolean>;
+  applyGpuSelectionFillToActiveLayer?: (
+    params: ApplyGpuSelectionFillToActiveLayerParams
   ) => Promise<boolean>;
   onBeforeCanvasMutation?: () => void;
 }
@@ -88,6 +92,14 @@ export interface ApplySelectionAutoFillToActiveLayerParams {
   color: string;
   selectionBefore: SelectionSnapshot;
   selectionAfter: SelectionSnapshot;
+}
+
+export interface ApplyGpuSelectionFillToActiveLayerParams {
+  layerId: string;
+  color: string;
+  selectionMask: ImageData;
+  dirtyRect: Rect;
+  historyMeta: CapturedStrokeHistoryMeta | null;
 }
 
 interface ImportAnchorPoint {
@@ -317,6 +329,25 @@ function getMaskBounds(
   };
 }
 
+function resolveSelectionFillDirtyRect(
+  width: number,
+  height: number,
+  selectionAfter: SelectionSnapshot
+): Rect {
+  const bounds = selectionAfter.bounds;
+  if (!bounds) {
+    return { left: 0, top: 0, right: width, bottom: height };
+  }
+  const left = Math.max(0, Math.floor(bounds.x));
+  const top = Math.max(0, Math.floor(bounds.y));
+  const right = Math.min(width, Math.ceil(bounds.x + bounds.width));
+  const bottom = Math.min(height, Math.ceil(bounds.y + bounds.height));
+  if (right <= left || bottom <= top) {
+    return { left: 0, top: 0, right: width, bottom: height };
+  }
+  return { left, top, right, bottom };
+}
+
 function getNextPastedLayerName(layers: Layer[]): string {
   let maxIndex = 0;
   for (const layer of layers) {
@@ -517,6 +548,7 @@ export function useLayerOperations({
   gpuHistoryEnabled = false,
   beginGpuStrokeHistory,
   applyGpuStrokeHistory,
+  applyGpuSelectionFillToActiveLayer,
   onBeforeCanvasMutation,
 }: UseLayerOperationsParams) {
   const pushToast = useToastStore((s) => s.pushToast);
@@ -775,34 +807,54 @@ export function useLayerOperations({
       selectionAfter,
     }: ApplySelectionAutoFillToActiveLayerParams): Promise<boolean> => {
       if (!activeLayerId) return false;
-      if (!selectionAfter.hasSelection || !selectionAfter.selectionMask) return false;
-
-      await syncGpuLayerForHistory?.(activeLayerId);
-
-      const renderer = layerRendererRef.current;
-      if (!renderer) return false;
+      if (
+        !selectionAfter.hasSelection ||
+        !selectionAfter.selectionMask ||
+        selectionAfter.selectionMaskPending
+      ) {
+        return false;
+      }
+      if (!applyGpuSelectionFillToActiveLayer) {
+        pushToast('GPU_SELECTION_FILL_FAILED: GPU selection fill handler unavailable.', {
+          variant: 'error',
+        });
+        return false;
+      }
 
       const layerState = layers.find((layer) => layer.id === activeLayerId);
-      if (!layerState || layerState.locked) return false;
-
-      const layer = renderer.getLayer(activeLayerId);
-      if (!layer) return false;
-
-      const beforeImage = renderer.getLayerImageData(activeLayerId);
-      if (!beforeImage) return false;
+      if (!layerState || layerState.locked || !layerState.visible) return false;
 
       onBeforeCanvasMutation?.();
 
-      fillWithMask(layer.ctx, selectionAfter.selectionMask, color, width, height);
+      await captureBeforeImage(true, true, 'selection-fill');
+      const historyMeta = getCapturedStrokeHistoryMeta();
+      const dirtyRect = resolveSelectionFillDirtyRect(width, height, selectionAfter);
 
-      pushStroke({
-        layerId: activeLayerId,
-        entryId: createHistoryEntryId('selection-fill'),
-        snapshotMode: 'cpu',
-        beforeImage,
-        selectionBefore,
-        selectionAfter,
-      });
+      try {
+        const applied = await applyGpuSelectionFillToActiveLayer({
+          layerId: activeLayerId,
+          color,
+          selectionMask: selectionAfter.selectionMask,
+          dirtyRect,
+          historyMeta,
+        });
+        if (!applied) {
+          discardCapturedStrokeHistory();
+          pushToast('GPU_SELECTION_FILL_FAILED: GPU selection fill commit failed.', {
+            variant: 'error',
+          });
+          return false;
+        }
+      } catch (error) {
+        discardCapturedStrokeHistory();
+        console.error('[GPU_SELECTION_FILL_FAILED]', { layerId: activeLayerId, error });
+        pushToast('GPU_SELECTION_FILL_FAILED: GPU selection fill threw an error.', {
+          variant: 'error',
+        });
+        return false;
+      }
+
+      saveStrokeToHistory({ selectionBefore, selectionAfter });
       setDocumentDirty(true);
 
       markLayerDirty(activeLayerId);
@@ -812,15 +864,18 @@ export function useLayerOperations({
     },
     [
       activeLayerId,
+      applyGpuSelectionFillToActiveLayer,
+      captureBeforeImage,
       compositeAndRender,
+      discardCapturedStrokeHistory,
+      getCapturedStrokeHistoryMeta,
       height,
-      layerRendererRef,
       layers,
       markLayerDirty,
       onBeforeCanvasMutation,
-      pushStroke,
+      pushToast,
+      saveStrokeToHistory,
       setDocumentDirty,
-      syncGpuLayerForHistory,
       updateThumbnail,
       width,
     ]

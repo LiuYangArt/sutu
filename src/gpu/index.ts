@@ -28,6 +28,8 @@ export type {
   GpuGradientConfig,
   GpuGradientRenderParams,
   GpuCurvesRenderParams,
+  GpuSelectionFillConfig,
+  GpuSelectionFillRenderParams,
 } from './types';
 
 export {

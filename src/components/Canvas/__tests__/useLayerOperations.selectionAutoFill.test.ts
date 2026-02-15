@@ -108,6 +108,7 @@ describe('useLayerOperations.applySelectionAutoFillToActiveLayer', () => {
 
     const compositeAndRender = vi.fn();
     const markLayerDirty = vi.fn();
+    const applyGpuSelectionFillToActiveLayer = vi.fn(async (_params: unknown) => true);
 
     const { result } = renderHook(() =>
       useLayerOperations({
@@ -118,6 +119,7 @@ describe('useLayerOperations.applySelectionAutoFillToActiveLayer', () => {
         height: 1,
         compositeAndRender,
         markLayerDirty,
+        applyGpuSelectionFillToActiveLayer,
       })
     );
 
@@ -139,6 +141,7 @@ describe('useLayerOperations.applySelectionAutoFillToActiveLayer', () => {
     expect(lastEntry.selectionAfter).toBe(selectionAfter);
     expect(markLayerDirty).toHaveBeenCalledWith(layer.id);
     expect(compositeAndRender).toHaveBeenCalledTimes(1);
+    expect(applyGpuSelectionFillToActiveLayer).toHaveBeenCalledTimes(1);
   });
 
   it('returns false and does not push stroke history when auto fill cannot apply', async () => {
@@ -174,10 +177,61 @@ describe('useLayerOperations.applySelectionAutoFillToActiveLayer', () => {
         height: 1,
         compositeAndRender: vi.fn(),
         markLayerDirty: vi.fn(),
+        applyGpuSelectionFillToActiveLayer: vi.fn(async (_params: unknown) => true),
       })
     );
 
     let applied = false;
+    await act(async () => {
+      applied = await result.current.applySelectionAutoFillToActiveLayer({
+        color: '#3366FF',
+        selectionBefore,
+        selectionAfter,
+      });
+    });
+
+    expect(applied).toBe(false);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
+
+  it('returns false and does not push stroke history when gpu auto fill commit fails', async () => {
+    const layer = createLayer('layer_gpu_fail');
+    useDocumentStore.setState({
+      layers: [layer],
+      activeLayerId: layer.id,
+      selectedLayerIds: [layer.id],
+      layerSelectionAnchorId: layer.id,
+    });
+
+    const renderer = {
+      getLayerImageData: vi.fn(() => createBlankImageData(2, 1)),
+      getLayer: vi.fn(() => ({ id: layer.id, ctx: { drawImage: vi.fn() } })),
+    } as unknown as LayerRenderer;
+
+    const mask = new ImageData(new Uint8ClampedArray([0, 0, 0, 255, 0, 0, 0, 255]), 2, 1);
+    const selectionAfter = createSelectionSnapshot(mask);
+    const selectionBefore: SelectionSnapshot = {
+      hasSelection: false,
+      selectionMask: null,
+      selectionMaskPending: false,
+      selectionPath: [],
+      bounds: null,
+    };
+
+    const { result } = renderHook(() =>
+      useLayerOperations({
+        layerRendererRef: { current: renderer },
+        activeLayerId: layer.id,
+        layers: [layer],
+        width: 2,
+        height: 1,
+        compositeAndRender: vi.fn(),
+        markLayerDirty: vi.fn(),
+        applyGpuSelectionFillToActiveLayer: vi.fn(async (_params: unknown) => false),
+      })
+    );
+
+    let applied = true;
     await act(async () => {
       applied = await result.current.applySelectionAutoFillToActiveLayer({
         color: '#3366FF',

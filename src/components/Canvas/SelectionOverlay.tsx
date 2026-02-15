@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useMemo } from 'react';
-import { useSelectionStore } from '@/stores/selection';
+import { useSelectionStore, type SelectionPoint } from '@/stores/selection';
 import { useSettingsStore } from '@/stores/settings';
 import { useToolStore } from '@/stores/tool';
 import { normalizeHex } from '@/utils/colorUtils';
@@ -8,6 +8,13 @@ interface SelectionOverlayProps {
   scale: number;
   offsetX: number;
   offsetY: number;
+  latchedFillPreview?: SelectionOverlayLatchedFillPreview | null;
+}
+
+export interface SelectionOverlayLatchedFillPreview {
+  path: SelectionPoint[];
+  color: string;
+  startedAt: number;
 }
 
 const SELECTION_PREVIEW_ALPHA_TRANSLUCENT = 0.28;
@@ -35,7 +42,12 @@ function resolveSelectionPreviewAlpha(selectionPreviewTranslucent: boolean): num
  * Overlay canvas for rendering marching ants selection border.
  * Separated from main canvas to avoid redrawing the entire canvas on each animation frame.
  */
-export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayProps) {
+export function SelectionOverlay({
+  scale,
+  offsetX,
+  offsetY,
+  latchedFillPreview = null,
+}: SelectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 1920, height: 1080 });
   const selectionAutoFillEnabled = useSettingsStore((s) => s.general.selectionAutoFillEnabled);
@@ -63,13 +75,25 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     if (!isCreating) return null;
     return previewPoint ? [...creationPoints, previewPoint] : [...creationPoints];
   }, [isCreating, creationPoints, previewPoint]);
+  const latchedPath = useMemo(() => {
+    if (!latchedFillPreview) return null;
+    if (latchedFillPreview.path.length < 3) return null;
+    return latchedFillPreview.path;
+  }, [latchedFillPreview]);
   const previewAlpha = resolveSelectionPreviewAlpha(selectionPreviewTranslucent);
   const creationFillStyle = useMemo(
     () => toRgbaWithAlpha(brushColor, previewAlpha),
     [brushColor, previewAlpha]
   );
+  const latchedFillStyle = useMemo(
+    () => toRgbaWithAlpha(latchedFillPreview?.color ?? brushColor, previewAlpha),
+    [brushColor, latchedFillPreview?.color, previewAlpha]
+  );
 
-  const shouldRender = existingPaths.length > 0 || (creatingPath && creatingPath.length >= 2);
+  const shouldRender =
+    existingPaths.length > 0 ||
+    (creatingPath && creatingPath.length >= 2) ||
+    (latchedPath && latchedPath.length >= 3);
 
   // Track container size with ResizeObserver to match canvas buffer to display size
   useEffect(() => {
@@ -128,7 +152,41 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
 
-    // 1. Render Existing Selection (Marching Ants)
+    // 1. Render latched fill preview so marching ants remain above the fill.
+    if (latchedPath && selectionAutoFillEnabled) {
+      const first = latchedPath[0];
+      if (first) {
+        ctx.beginPath();
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < latchedPath.length; i++) {
+          const point = latchedPath[i];
+          if (point) ctx.lineTo(point.x, point.y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = latchedFillStyle;
+        ctx.fill();
+      }
+    }
+
+    // 2. Render creation fill preview.
+    if (creatingPath && creatingPath.length >= 2) {
+      const first = creatingPath[0];
+      if (first) {
+        if (selectionAutoFillEnabled && creatingPath.length >= 3) {
+          ctx.beginPath();
+          ctx.moveTo(first.x, first.y);
+          for (let i = 1; i < creatingPath.length; i++) {
+            const pt = creatingPath[i];
+            if (pt) ctx.lineTo(pt.x, pt.y);
+          }
+          ctx.closePath();
+          ctx.fillStyle = creationFillStyle;
+          ctx.fill();
+        }
+      }
+    }
+
+    // 3. Render existing selection border above fill previews.
     if (existingPaths.length > 0) {
       ctx.beginPath();
       for (const path of existingPaths) {
@@ -144,54 +202,34 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
         }
       }
 
-      // Draw marching ants
       ctx.setLineDash([4 / scale, 4 / scale]);
-
-      // White background
       ctx.lineDashOffset = 0;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.lineWidth = 1 / scale;
       ctx.stroke();
 
-      // Black foreground (animated)
       ctx.lineDashOffset = -marchingAntsOffset / scale;
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
       ctx.stroke();
     }
 
-    // 2. Render Creation Path (Fill Preview + Solid Line)
+    // 4. Render creation path outline on top.
     if (creatingPath && creatingPath.length >= 2) {
       const first = creatingPath[0];
       if (first) {
-        if (selectionAutoFillEnabled && creatingPath.length >= 3) {
-          ctx.beginPath();
-          ctx.moveTo(first.x, first.y);
-          for (let i = 1; i < creatingPath.length; i++) {
-            const pt = creatingPath[i];
-            if (pt) ctx.lineTo(pt.x, pt.y);
-          }
-          ctx.closePath();
-          ctx.fillStyle = creationFillStyle;
-          ctx.fill();
-        }
-
         ctx.beginPath();
         ctx.moveTo(first.x, first.y);
         for (let i = 1; i < creatingPath.length; i++) {
           const pt = creatingPath[i];
           if (pt) ctx.lineTo(pt.x, pt.y);
         }
-        // Don't close path automatically for freehand/creation unless needed
       }
 
-      // Solid line style
       ctx.setLineDash([]);
-      // White border for visibility
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.lineWidth = 2 / scale; // Slightly thicker
+      ctx.lineWidth = 2 / scale;
       ctx.stroke();
 
-      // Black inner line
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
       ctx.lineWidth = 1 / scale;
       ctx.stroke();
@@ -209,6 +247,8 @@ export function SelectionOverlay({ scale, offsetX, offsetY }: SelectionOverlayPr
     offsetY,
     selectionAutoFillEnabled,
     creationFillStyle,
+    latchedPath,
+    latchedFillStyle,
   ]);
 
   return (

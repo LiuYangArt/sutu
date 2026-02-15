@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { LOCKED_NOISE_SETTINGS, useToolStore, ToolType } from '@/stores/tool';
-import { useSelectionStore, type SelectionMode, type SelectionSnapshot } from '@/stores/selection';
+import {
+  useSelectionStore,
+  type SelectionMode,
+  type SelectionPoint,
+  type SelectionSnapshot,
+} from '@/stores/selection';
 import { useDocumentStore } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { createHistoryEntryId, type HistoryEntry, useHistoryStore } from '@/stores/history';
@@ -13,7 +18,11 @@ import { useBrushRenderer, BrushRenderConfig } from './useBrushRenderer';
 import { useRawPointerInput } from './useRawPointerInput';
 import { useAltEyedropper } from './useAltEyedropper';
 import { useShiftLineMode } from './useShiftLineMode';
-import { useLayerOperations, type ApplyGradientToActiveLayerParams } from './useLayerOperations';
+import {
+  useLayerOperations,
+  type ApplyGpuSelectionFillToActiveLayerParams,
+  type ApplyGradientToActiveLayerParams,
+} from './useLayerOperations';
 import { useMoveTool } from './useMoveTool';
 import { useGlobalExports } from './useGlobalExports';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
@@ -256,6 +265,12 @@ interface CompositeMovePreview {
   dirtyRect?: CompositeClipRect | null;
 }
 
+interface PendingSelectionAutoFillPreview {
+  path: SelectionPoint[];
+  color: string;
+  startedAt: number;
+}
+
 interface CurvesSessionState {
   sessionId: string;
   layerId: string;
@@ -436,6 +451,9 @@ export function Canvas() {
   const disposeCurvesSessionOnUnmountRef = useRef<() => void>(() => {});
   const finalizeFloatingSelectionSessionRef = useRef<(reason?: string) => void>(() => undefined);
   const hasFloatingSelectionSessionRef = useRef<() => boolean>(() => false);
+  const commitSelectionFillGpuRef = useRef<
+    ((params: ApplyGpuSelectionFillToActiveLayerParams) => Promise<boolean>) | null
+  >(null);
   const [keepGpuCanvasVisible, setKeepGpuCanvasVisible] = useState(false);
   const [gpuSelectionPipelineV2Enabled, setGpuSelectionPipelineV2Enabled] = useState(true);
   const [devicePixelRatio, setDevicePixelRatio] = useState(() =>
@@ -444,6 +462,8 @@ export function Canvas() {
   const [brushQuickPanelOpen, setBrushQuickPanelOpen] = useState(false);
   const [brushQuickPanelAnchor, setBrushQuickPanelAnchor] = useState({ x: 0, y: 0 });
   const [brushQuickPanelHovering, setBrushQuickPanelHovering] = useState(false);
+  const [pendingSelectionAutoFillPreview, setPendingSelectionAutoFillPreview] =
+    useState<PendingSelectionAutoFillPreview | null>(null);
 
   // Input processing refs
   const strokeStateRef = useRef<string>('idle');
@@ -681,9 +701,26 @@ export function Canvas() {
     finalizeFloatingSessionIfNeeded('selection-mutation');
   }, [finalizeFloatingSessionIfNeeded]);
 
+  const clearPendingSelectionAutoFillPreview = useCallback(() => {
+    setPendingSelectionAutoFillPreview(null);
+  }, []);
+
+  const latchPendingSelectionAutoFillPreview = useCallback(
+    (path: SelectionPoint[]): void => {
+      if (!selectionAutoFillEnabled) return;
+      setPendingSelectionAutoFillPreview({
+        path: path.map((point) => ({ ...point })),
+        color: brushColor,
+        startedAt: performance.now(),
+      });
+    },
+    [brushColor, selectionAutoFillEnabled]
+  );
+
   // Get selection store actions for keyboard shortcuts
   const { selectAll, deselectAll, cancelSelection } = useSelectionStore();
   const hasSelection = useSelectionStore((s) => s.hasSelection);
+  const isCreatingSelection = useSelectionStore((s) => s.isCreating);
   const selectionMask = useSelectionStore((s) => s.selectionMask);
   const selectionMaskPending = useSelectionStore((s) => s.selectionMaskPending);
 
@@ -847,6 +884,26 @@ export function Canvas() {
       gpuRendererRef.current.setSelectionMask(selectionMask ?? null);
     }
   }, [selectionMask]);
+
+  useEffect(() => {
+    if (selectionAutoFillEnabled) return;
+    clearPendingSelectionAutoFillPreview();
+  }, [clearPendingSelectionAutoFillPreview, selectionAutoFillEnabled]);
+
+  useEffect(() => {
+    if (currentTool === 'select' || currentTool === 'lasso') return;
+    clearPendingSelectionAutoFillPreview();
+  }, [clearPendingSelectionAutoFillPreview, currentTool]);
+
+  useEffect(() => {
+    if (hasSelection || isCreatingSelection) return;
+    clearPendingSelectionAutoFillPreview();
+  }, [
+    clearPendingSelectionAutoFillPreview,
+    hasSelection,
+    isCreatingSelection,
+    pendingSelectionAutoFillPreview,
+  ]);
 
   useEffect(() => {
     window.__gpuSelectionPipelineV2 = () => gpuSelectionPipelineV2Enabled;
@@ -1360,6 +1417,11 @@ export function Canvas() {
     gpuHistoryEnabled,
     beginGpuStrokeHistory,
     applyGpuStrokeHistory,
+    applyGpuSelectionFillToActiveLayer: async (params) => {
+      const commit = commitSelectionFillGpuRef.current;
+      if (!commit) return false;
+      return commit(params);
+    },
     onBeforeCanvasMutation,
   });
 
@@ -1409,13 +1471,30 @@ export function Canvas() {
       mode: SelectionMode;
     }): Promise<boolean> => {
       if (!selectionAutoFillEnabled) return false;
-      return applySelectionAutoFillToActiveLayer({
-        color: brushColor,
-        selectionBefore: before,
-        selectionAfter: after,
-      });
+      try {
+        const applied = await applySelectionAutoFillToActiveLayer({
+          color: brushColor,
+          selectionBefore: before,
+          selectionAfter: after,
+        });
+        if (!applied) {
+          console.error('[GPU_SELECTION_FILL_FAILED]', {
+            layerId: activeLayerId,
+            reason: 'auto-fill returned false',
+          });
+        }
+        return applied;
+      } finally {
+        clearPendingSelectionAutoFillPreview();
+      }
     },
-    [applySelectionAutoFillToActiveLayer, brushColor, selectionAutoFillEnabled]
+    [
+      activeLayerId,
+      applySelectionAutoFillToActiveLayer,
+      brushColor,
+      clearPendingSelectionAutoFillPreview,
+      selectionAutoFillEnabled,
+    ]
   );
 
   // Selection handler for rect select and lasso tools
@@ -1429,6 +1508,11 @@ export function Canvas() {
     currentTool,
     scale,
     onBeforeSelectionMutation,
+    onSelectionCommitStart: selectionAutoFillEnabled
+      ? ({ path }) => {
+          latchPendingSelectionAutoFillPreview(path);
+        }
+      : undefined,
     onSelectionCommitted: selectionAutoFillEnabled ? handleSelectionCommitted : undefined,
   });
 
@@ -1510,6 +1594,88 @@ export function Canvas() {
     trackPendingGpuCpuSyncTiles,
     schedulePendingGpuCpuSync,
   ]);
+
+  const commitSelectionFillGpu = useCallback(
+    async (params: ApplyGpuSelectionFillToActiveLayerParams): Promise<boolean> => {
+      const gpuRenderer = gpuRendererRef.current;
+      const renderer = layerRendererRef.current;
+      if (!gpuRenderer || !renderer) return false;
+
+      const layerState = layers.find((layer) => layer.id === params.layerId);
+      if (!layerState || layerState.locked || !layerState.visible) return false;
+
+      const selectionState = useSelectionStore.getState();
+      if (selectionState.selectionMaskPending) return false;
+      if (!selectionState.hasSelection || !selectionState.selectionMask) return false;
+
+      const layer = renderer.getLayer(params.layerId);
+      if (!layer) return false;
+
+      const historyStore = gpuStrokeHistoryStoreRef.current;
+      const historyEntryId =
+        params.historyMeta?.snapshotMode === 'gpu' ? params.historyMeta.entryId : null;
+      const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
+      const finalizeHistory = () => {
+        if (historyStore && historyEntryId) {
+          historyStore.finalizeStroke(historyEntryId);
+        }
+      };
+
+      try {
+        const visibleGpuLayers = getVisibleGpuRenderableLayers();
+        for (const visibleLayer of visibleGpuLayers) {
+          const sourceLayer = renderer.getLayer(visibleLayer.id);
+          if (!sourceLayer) continue;
+          gpuRenderer.syncLayerFromCanvas(
+            visibleLayer.id,
+            sourceLayer.canvas,
+            visibleLayer.revision
+          );
+        }
+
+        const committedTiles = gpuRenderer.commitSelectionFill({
+          layerId: params.layerId,
+          fill: {
+            color: params.color,
+            dirtyRect: params.dirtyRect,
+          },
+          baseLayerCanvas: layer.canvas,
+          historyCapture:
+            historyStore && historyEntryId
+              ? {
+                  entryId: historyEntryId,
+                  store: historyStore,
+                }
+              : undefined,
+        });
+        if (committedTiles.length === 0) {
+          return false;
+        }
+
+        if (readbackMode === 'enabled') {
+          await gpuRenderer.readbackTilesToLayer({
+            layerId: params.layerId,
+            tiles: committedTiles,
+            targetCtx: layer.ctx,
+          });
+        } else {
+          trackPendingGpuCpuSyncTiles(params.layerId, committedTiles);
+          schedulePendingGpuCpuSync(params.layerId);
+        }
+        return true;
+      } catch (error) {
+        console.warn('[SelectionAutoFillGpu] Failed to commit GPU selection fill', {
+          layerId: params.layerId,
+          error,
+        });
+        return false;
+      } finally {
+        finalizeHistory();
+      }
+    },
+    [getVisibleGpuRenderableLayers, layers, schedulePendingGpuCpuSync, trackPendingGpuCpuSyncTiles]
+  );
+  commitSelectionFillGpuRef.current = commitSelectionFillGpu;
 
   const commitGradientGpu = useCallback(
     async (
@@ -3043,7 +3209,12 @@ export function Canvas() {
       style={{ cursor: cursorStyle }}
     >
       <div className="canvas-checkerboard" style={{ clipPath: clipPathKey }} />
-      <SelectionOverlay scale={displayScale} offsetX={offsetX} offsetY={offsetY} />
+      <SelectionOverlay
+        scale={displayScale}
+        offsetX={offsetX}
+        offsetY={offsetY}
+        latchedFillPreview={pendingSelectionAutoFillPreview}
+      />
       <div className="canvas-viewport" style={viewportStyle}>
         <canvas
           ref={gpuCanvasRef}
