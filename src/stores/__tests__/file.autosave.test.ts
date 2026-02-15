@@ -50,6 +50,9 @@ import { useSettingsStore } from '../settings';
 type ExportWindow = Window & {
   __getThumbnail?: () => Promise<string | undefined>;
   __getFlattenedImage?: () => Promise<string | undefined>;
+  __getThumbnailBytes?: () => Promise<number[] | undefined>;
+  __getFlattenedImageBytes?: () => Promise<number[] | undefined>;
+  __getLayerImageBytes?: (layerId: string) => Promise<number[] | undefined>;
 };
 
 function createLoadedProject() {
@@ -98,8 +101,14 @@ describe('file store autosave and startup restore', () => {
     fsMocks.mkdir.mockResolvedValue(undefined);
 
     coreMocks.invoke.mockImplementation(async (cmd: string, payload?: Record<string, unknown>) => {
+      if (cmd === 'save_project_v2') {
+        return { success: true, path: payload?.path };
+      }
       if (cmd === 'save_project') {
         return { success: true, path: payload?.path };
+      }
+      if (cmd === 'load_project_v2') {
+        return createLoadedProject();
       }
       if (cmd === 'load_project') {
         return createLoadedProject();
@@ -127,6 +136,9 @@ describe('file store autosave and startup restore', () => {
     exportWindow.__getFlattenedImage = getFlattenedImageMock as unknown as () => Promise<
       string | undefined
     >;
+    exportWindow.__getThumbnailBytes = vi.fn().mockResolvedValue(undefined);
+    exportWindow.__getFlattenedImageBytes = vi.fn().mockResolvedValue(undefined);
+    exportWindow.__getLayerImageBytes = vi.fn().mockResolvedValue(undefined);
 
     useFileStore.setState({ isSaving: false, isLoading: false, error: null });
     useDocumentStore.getState().reset();
@@ -156,7 +168,7 @@ describe('file store autosave and startup restore', () => {
 
     await useFileStore.getState().runAutoSaveTick();
 
-    const saveCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project');
+    const saveCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project_v2');
     expect(saveCalls.length).toBe(1);
     expect(saveCalls[0]?.[1]).toMatchObject({
       path: 'C:/temp/sutu-autosave.ora',
@@ -185,7 +197,7 @@ describe('file store autosave and startup restore', () => {
 
     await useFileStore.getState().runAutoSaveTick();
 
-    const saveCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project');
+    const saveCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project_v2');
     expect(saveCalls.length).toBe(1);
     expect(saveCalls[0]?.[1]).toMatchObject({
       path: 'C:/work/project.psd',
@@ -214,6 +226,12 @@ describe('file store autosave and startup restore', () => {
     });
 
     coreMocks.invoke.mockImplementation(async (cmd: string, payload?: Record<string, unknown>) => {
+      if (cmd === 'load_project_v2') {
+        return createLoadedProject();
+      }
+      if (cmd === 'load_project') {
+        return createLoadedProject();
+      }
       if (cmd === 'save_project') {
         const path = String(payload?.path ?? '');
         if (path === 'C:/work/project.psd') {
@@ -221,15 +239,31 @@ describe('file store autosave and startup restore', () => {
         }
         return { success: true, path };
       }
+      if (cmd === 'save_project_v2') {
+        const path = String(payload?.path ?? '');
+        if (path === 'C:/work/project.psd') {
+          return { success: false, error: 'disk error' };
+        }
+        return { success: true, path };
+      }
+      if (cmd === 'delete_file_if_exists') {
+        return null;
+      }
+      if (cmd === 'report_benchmark') {
+        return null;
+      }
       return null;
     });
 
     await useFileStore.getState().runAutoSaveTick();
 
-    const saveCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project');
-    expect(saveCalls.length).toBe(2);
-    expect(saveCalls[0]?.[1]).toMatchObject({ path: 'C:/work/project.psd', format: 'psd' });
-    expect(saveCalls[1]?.[1]).toMatchObject({
+    const saveV2Calls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project_v2');
+    const saveLegacyCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'save_project');
+    expect(saveV2Calls.length).toBe(2);
+    expect(saveLegacyCalls.length).toBe(1);
+    expect(saveV2Calls[0]?.[1]).toMatchObject({ path: 'C:/work/project.psd', format: 'psd' });
+    expect(saveLegacyCalls[0]?.[1]).toMatchObject({ path: 'C:/work/project.psd', format: 'psd' });
+    expect(saveV2Calls[1]?.[1]).toMatchObject({
       path: 'C:/temp/sutu-autosave.ora',
       format: 'ora',
     });
@@ -258,9 +292,9 @@ describe('file store autosave and startup restore', () => {
     const restored = await useFileStore.getState().restoreOnStartup();
 
     expect(restored).toBe(true);
-    const loadCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
-    expect(loadCalls.length).toBe(1);
-    expect(loadCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
+    const loadV2Calls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project_v2');
+    expect(loadV2Calls.length).toBe(1);
+    expect(loadV2Calls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
     expect(useDocumentStore.getState().filePath).toBeNull();
     expect(useDocumentStore.getState().fileFormat).toBeNull();
   });
@@ -275,6 +309,13 @@ describe('file store autosave and startup restore', () => {
     );
 
     coreMocks.invoke.mockImplementation(async (cmd: string, payload?: Record<string, unknown>) => {
+      if (cmd === 'load_project_v2') {
+        const path = String(payload?.path ?? '');
+        if (path === 'C:/temp/sutu-autosave.ora') {
+          throw new Error('ZIP error: invalid Zip archive');
+        }
+        return createLoadedProject();
+      }
       if (cmd === 'load_project') {
         const path = String(payload?.path ?? '');
         if (path === 'C:/temp/sutu-autosave.ora') {
@@ -297,10 +338,13 @@ describe('file store autosave and startup restore', () => {
     const restored = await useFileStore.getState().restoreOnStartup();
     expect(restored).toBe(true);
 
-    const loadCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
-    expect(loadCalls.length).toBe(2);
-    expect(loadCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
-    expect(loadCalls[1]?.[1]).toMatchObject({ path: 'C:/work/last.ora' });
+    const loadV2Calls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project_v2');
+    const loadLegacyCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
+    expect(loadV2Calls.length).toBe(2);
+    expect(loadLegacyCalls.length).toBe(1);
+    expect(loadV2Calls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
+    expect(loadLegacyCalls[0]?.[1]).toMatchObject({ path: 'C:/temp/sutu-autosave.ora' });
+    expect(loadV2Calls[1]?.[1]).toMatchObject({ path: 'C:/work/last.ora' });
 
     const deleteCalls = coreMocks.invoke.mock.calls.filter(
       ([cmd]) => cmd === 'delete_file_if_exists'
@@ -340,7 +384,9 @@ describe('file store autosave and startup restore', () => {
     const restored = await useFileStore.getState().restoreOnStartup();
     expect(restored).toBe(false);
 
-    const loadCalls = coreMocks.invoke.mock.calls.filter(([cmd]) => cmd === 'load_project');
+    const loadCalls = coreMocks.invoke.mock.calls.filter(
+      ([cmd]) => cmd === 'load_project' || cmd === 'load_project_v2'
+    );
     expect(loadCalls.length).toBe(0);
   });
 

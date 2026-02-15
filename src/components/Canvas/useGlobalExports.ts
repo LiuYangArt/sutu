@@ -163,6 +163,26 @@ function imageDataToDataUrl(imageData: ImageData): string | undefined {
   return canvas.toDataURL('image/png');
 }
 
+function dataUrlToPngBytes(dataUrl: string): Uint8Array | undefined {
+  const base64Index = dataUrl.indexOf('base64,');
+  if (base64Index < 0) return undefined;
+  const base64 = dataUrl.slice(base64Index + 'base64,'.length);
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return undefined;
+  }
+}
+
+async function canvasToPngBytes(canvas: HTMLCanvasElement): Promise<Uint8Array | undefined> {
+  return Promise.resolve(dataUrlToPngBytes(canvas.toDataURL('image/png')));
+}
+
 function imageDataToCanvas(imageData: ImageData): HTMLCanvasElement | null {
   const canvas = document.createElement('canvas');
   canvas.width = imageData.width;
@@ -215,8 +235,11 @@ export function useGlobalExports({
       __canvasFillLayer?: (color: string) => void;
       __canvasClearSelection?: () => void;
       __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
+      __getLayerImageBytes?: (layerId: string) => Promise<number[] | undefined>;
       __getFlattenedImage?: () => Promise<string | undefined>;
+      __getFlattenedImageBytes?: () => Promise<number[] | undefined>;
       __getThumbnail?: () => Promise<string | undefined>;
+      __getThumbnailBytes?: () => Promise<number[] | undefined>;
       __loadLayerImages?: (
         layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>,
         benchmarkSessionId?: string
@@ -843,6 +866,29 @@ export function useGlobalExports({
       return layer.canvas.toDataURL('image/png');
     };
 
+    win.__getLayerImageBytes = async (layerId: string): Promise<number[] | undefined> => {
+      if (exportGpuLayerImageData) {
+        try {
+          const image = await exportGpuLayerImageData(layerId);
+          if (image) {
+            const canvas = imageDataToCanvas(image);
+            if (!canvas) return undefined;
+            const bytes = await canvasToPngBytes(canvas);
+            return bytes ? Array.from(bytes) : undefined;
+          }
+        } catch (error) {
+          console.warn('[M5] GPU layer bytes export failed, fallback to CPU path', error);
+        }
+      }
+
+      await syncGpuLayerToCpu?.(layerId);
+      if (!layerRendererRef.current) return undefined;
+      const layer = layerRendererRef.current.getLayer(layerId);
+      if (!layer) return undefined;
+      const bytes = await canvasToPngBytes(layer.canvas);
+      return bytes ? Array.from(bytes) : undefined;
+    };
+
     // Get flattened (composited) image
     win.__getFlattenedImage = async (): Promise<string | undefined> => {
       const gpuImage = await tryGpuFlattenedExportImageData('flattened');
@@ -854,6 +900,22 @@ export function useGlobalExports({
       if (!layerRendererRef.current) return undefined;
       const compositeCanvas = layerRendererRef.current.composite();
       return compositeCanvas.toDataURL('image/png');
+    };
+
+    win.__getFlattenedImageBytes = async (): Promise<number[] | undefined> => {
+      const gpuImage = await tryGpuFlattenedExportImageData('flattened');
+      if (gpuImage) {
+        const canvas = imageDataToCanvas(gpuImage);
+        if (!canvas) return undefined;
+        const bytes = await canvasToPngBytes(canvas);
+        return bytes ? Array.from(bytes) : undefined;
+      }
+
+      await syncAllGpuLayersToCpu?.();
+      if (!layerRendererRef.current) return undefined;
+      const compositeCanvas = layerRendererRef.current.composite();
+      const bytes = await canvasToPngBytes(compositeCanvas);
+      return bytes ? Array.from(bytes) : undefined;
     };
 
     // Get thumbnail (256x256)
@@ -890,6 +952,39 @@ export function useGlobalExports({
       ctx.drawImage(compositeCanvas, x, y, w, h);
 
       return thumbCanvas.toDataURL('image/png');
+    };
+
+    win.__getThumbnailBytes = async (): Promise<number[] | undefined> => {
+      let compositeCanvas: HTMLCanvasElement | null = null;
+      const gpuImage = await tryGpuFlattenedExportImageData('thumbnail');
+      if (gpuImage) {
+        compositeCanvas = imageDataToCanvas(gpuImage);
+      }
+
+      if (!compositeCanvas) {
+        await syncAllGpuLayersToCpu?.();
+        if (!layerRendererRef.current) return undefined;
+        compositeCanvas = layerRendererRef.current.composite();
+      }
+      if (!compositeCanvas) return undefined;
+
+      const thumbCanvas = document.createElement('canvas');
+      thumbCanvas.width = 256;
+      thumbCanvas.height = 256;
+      const ctx = thumbCanvas.getContext('2d');
+      if (!ctx) return undefined;
+
+      const scale = Math.min(256 / compositeCanvas.width, 256 / compositeCanvas.height);
+      const w = compositeCanvas.width * scale;
+      const h = compositeCanvas.height * scale;
+      const x = (256 - w) / 2;
+      const y = (256 - h) / 2;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 256, 256);
+      ctx.drawImage(compositeCanvas, x, y, w, h);
+      const bytes = await canvasToPngBytes(thumbCanvas);
+      return bytes ? Array.from(bytes) : undefined;
     };
 
     // Load layer images when opening a file
@@ -1043,8 +1138,11 @@ export function useGlobalExports({
       delete win.__canvasFillLayer;
       delete win.__canvasClearSelection;
       delete win.__getLayerImageData;
+      delete win.__getLayerImageBytes;
       delete win.__getFlattenedImage;
+      delete win.__getFlattenedImageBytes;
       delete win.__getThumbnail;
+      delete win.__getThumbnailBytes;
       delete win.__loadLayerImages;
       delete win.__canvasUndo;
       delete win.__canvasRedo;
