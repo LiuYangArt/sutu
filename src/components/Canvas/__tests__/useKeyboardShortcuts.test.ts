@@ -428,6 +428,37 @@ describe('useKeyboardShortcuts', () => {
     expect(setTool).toHaveBeenCalledWith('select');
   });
 
+  it('handles Ctrl/Cmd+H to toggle history panel and ignores repeat keydown', () => {
+    const handleToggleHistoryPanel = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleToggleHistoryPanel,
+      })
+    );
+
+    act(() => {
+      dispatchWindowKeyDown({ code: 'KeyH', ctrlKey: true, repeat: false });
+      dispatchWindowKeyDown({ code: 'KeyH', ctrlKey: true, repeat: true });
+      dispatchWindowKeyDown({ code: 'KeyH', metaKey: true, repeat: false });
+    });
+
+    expect(handleToggleHistoryPanel).toHaveBeenCalledTimes(2);
+  });
+
   it('does not intercept Ctrl+A/Z/Y/X/C/V/J in input/textarea', () => {
     const setTool = vi.fn<[ToolType], void>();
     const handleUndo = vi.fn();
@@ -522,6 +553,38 @@ describe('useKeyboardShortcuts', () => {
     expect(event.defaultPrevented).toBe(true);
     expect(handleUndo).toHaveBeenCalledTimes(1);
     rangeInput.remove();
+  });
+
+  it('does not intercept Ctrl+H in input/textarea', () => {
+    const handleToggleHistoryPanel = vi.fn();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool: vi.fn(),
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+        handleToggleHistoryPanel,
+      })
+    );
+
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    const event = dispatchInputKeyDown(input, { code: 'KeyH', ctrlKey: true });
+    expect(event.defaultPrevented).toBe(false);
+    expect(handleToggleHistoryPanel).not.toHaveBeenCalled();
+
+    input.remove();
   });
 
   it('handles Ctrl+A on window: selectAll + preventDefault', () => {

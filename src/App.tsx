@@ -562,11 +562,20 @@ function App() {
       resizable: false,
       autoHeight: true,
     });
+    registerPanel({
+      id: 'history-panel',
+      title: 'History',
+      defaultGeometry: { x: window.innerWidth - 420, y: 120, width: 280, height: 420 },
+      defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 80 },
+      minWidth: 240,
+      minHeight: 280,
+    });
 
     // Ensure panels are closed by default
     closePanel('brush-panel');
     closePanel('gradient-panel');
     closePanel('curves-panel');
+    closePanel('history-panel');
   }, [registerPanel, closePanel]);
 
   if (!isReady) {

@@ -22,6 +22,7 @@ function cleanupGlobals(): void {
   delete win.__loadLayerImages;
   delete win.__canvasUndo;
   delete win.__canvasRedo;
+  delete win.__canvasHistoryJumpTo;
   delete win.__canvasClearLayer;
   delete win.__canvasDuplicateLayer;
   delete win.__canvasSetLayerOpacity;
@@ -142,6 +143,7 @@ describe('useGlobalExports', () => {
     const handleClearSelection = vi.fn();
     const handleUndo = vi.fn();
     const handleRedo = vi.fn();
+    const jumpToHistoryIndex = vi.fn(async () => true);
     const handleClearLayer = vi.fn();
     const handleDuplicateLayer = vi.fn();
     const handleSetLayerOpacity = vi.fn(() => 1);
@@ -199,6 +201,7 @@ describe('useGlobalExports', () => {
         handleClearSelection,
         handleUndo,
         handleRedo,
+        jumpToHistoryIndex,
         handleClearLayer,
         handleDuplicateLayer,
         handleSetLayerOpacity,
@@ -231,6 +234,7 @@ describe('useGlobalExports', () => {
     expect(typeof win.__canvasClearSelection).toBe('function');
     expect(typeof win.__canvasUndo).toBe('function');
     expect(typeof win.__canvasRedo).toBe('function');
+    expect(typeof win.__canvasHistoryJumpTo).toBe('function');
     expect(typeof win.__canvasClearLayer).toBe('function');
     expect(typeof win.__canvasDuplicateLayer).toBe('function');
     expect(typeof win.__canvasSetLayerOpacity).toBe('function');
@@ -296,6 +300,7 @@ describe('useGlobalExports', () => {
       win.__gpuBrushNoReadbackPilot();
       win.__gpuBrushNoReadbackPilotSet(true);
     });
+    await win.__canvasHistoryJumpTo(2);
     await win.__strokeCaptureReplay(capture);
     const fixedSave = await win.__strokeCaptureSaveFixed(capture);
     const fixedLoad = await win.__strokeCaptureLoadFixed();
@@ -304,6 +309,7 @@ describe('useGlobalExports', () => {
     expect(handleClearSelection).toHaveBeenCalledTimes(1);
     expect(handleUndo).toHaveBeenCalledTimes(1);
     expect(handleRedo).toHaveBeenCalledTimes(1);
+    expect(jumpToHistoryIndex).toHaveBeenCalledWith(2);
     expect(handleClearLayer).toHaveBeenCalledTimes(1);
     expect(handleDuplicateLayer).toHaveBeenCalledWith('from', 'to');
     expect(handleSetLayerOpacity).toHaveBeenCalledWith(['id'], 66);
@@ -352,6 +358,7 @@ describe('useGlobalExports', () => {
     expect(win.__loadLayerImages).toBeUndefined();
     expect(win.__canvasUndo).toBeUndefined();
     expect(win.__canvasRedo).toBeUndefined();
+    expect(win.__canvasHistoryJumpTo).toBeUndefined();
     expect(win.__canvasClearLayer).toBeUndefined();
     expect(win.__canvasDuplicateLayer).toBeUndefined();
     expect(win.__canvasSetLayerOpacity).toBeUndefined();

@@ -946,64 +946,36 @@ export function useLayerOperations({
     setDocumentDirty,
   ]);
 
-  // Handle undo for all operation types
-  const handleUndo = useCallback(() => {
-    void (async () => {
-      let entry = undo();
-      while (entry) {
-        while (entry && entry.type === 'stroke') {
-          const strokeEntry = entry;
-          if (layers.some((l) => l.id === strokeEntry.layerId)) {
-            break;
-          }
-          entry = undo();
-          if (!entry) return;
+  const applyUndoStep = useCallback(async (): Promise<boolean> => {
+    let entry = undo();
+    while (entry) {
+      while (entry && entry.type === 'stroke') {
+        const strokeEntry = entry;
+        if (layers.some((l) => l.id === strokeEntry.layerId)) {
+          break;
         }
+        entry = undo();
+        if (!entry) return false;
+      }
 
-        onBeforeCanvasMutation?.();
+      onBeforeCanvasMutation?.();
 
-        if (entry.type === 'selection') {
-          entry.after = useSelectionStore.getState().createSnapshot();
-          useSelectionStore.getState().applySnapshot(entry.before);
-          return;
-        }
+      if (entry.type === 'selection') {
+        entry.after = useSelectionStore.getState().createSnapshot();
+        useSelectionStore.getState().applySnapshot(entry.before);
+        return true;
+      }
 
-        const renderer = layerRendererRef.current;
-        if (!renderer) return;
-        let skippedBrokenStroke = false;
+      const renderer = layerRendererRef.current;
+      if (!renderer) return false;
+      let skippedBrokenStroke = false;
 
-        switch (entry.type) {
-          case 'stroke': {
-            const gpuApplied =
-              entry.snapshotMode === 'gpu' &&
-              (await applyGpuStrokeHistory?.(entry.entryId, 'undo', entry.layerId));
-            if (gpuApplied) {
-              if (entry.selectionBefore) {
-                entry.selectionAfter = useSelectionStore.getState().createSnapshot();
-                useSelectionStore.getState().applySnapshot(entry.selectionBefore);
-              }
-              markLayerDirty(entry.layerId);
-              compositeAndRender();
-              updateThumbnail(entry.layerId);
-              break;
-            }
-
-            await syncGpuLayerForHistory?.(entry.layerId);
-            // Save current state (afterImage) for redo before restoring
-            const currentImageData = renderer.getLayerImageData(entry.layerId);
-            if (currentImageData) {
-              entry.afterImage = currentImageData;
-            }
-            if (!entry.beforeImage) {
-              console.warn('[History] Missing CPU beforeImage for undo fallback', {
-                layerId: entry.layerId,
-                entryId: entry.entryId,
-                snapshotMode: entry.snapshotMode,
-              });
-              skippedBrokenStroke = true;
-              break;
-            }
-            renderer.setLayerImageData(entry.layerId, entry.beforeImage);
+      switch (entry.type) {
+        case 'stroke': {
+          const gpuApplied =
+            entry.snapshotMode === 'gpu' &&
+            (await applyGpuStrokeHistory?.(entry.entryId, 'undo', entry.layerId));
+          if (gpuApplied) {
             if (entry.selectionBefore) {
               entry.selectionAfter = useSelectionStore.getState().createSnapshot();
               useSelectionStore.getState().applySnapshot(entry.selectionBefore);
@@ -1013,258 +985,25 @@ export function useLayerOperations({
             updateThumbnail(entry.layerId);
             break;
           }
-          case 'layerProps': {
-            const changeMap = new Map(entry.changes.map((change) => [change.layerId, change]));
-            useDocumentStore.setState((state) => ({
-              layers: state.layers.map((layer) => {
-                const change = changeMap.get(layer.id);
-                if (!change) return layer;
-                return {
-                  ...layer,
-                  opacity: change.beforeOpacity,
-                  blendMode: change.beforeBlendMode,
-                };
-              }),
-              isDirty: true,
-            }));
-            for (const change of entry.changes) {
-              renderer.updateLayer(change.layerId, {
-                opacity: change.beforeOpacity,
-                blendMode: change.beforeBlendMode,
-              });
-            }
-            compositeAndRender();
-            markLayerDirty(entry.changes.map((change) => change.layerId));
-            break;
+
+          await syncGpuLayerForHistory?.(entry.layerId);
+          const currentImageData = renderer.getLayerImageData(entry.layerId);
+          if (currentImageData) {
+            entry.afterImage = currentImageData;
           }
-          case 'resizeCanvas': {
-            const docState = useDocumentStore.getState();
-            const afterWidth = docState.width;
-            const afterHeight = docState.height;
-
-            const afterLayers = snapshotLayers(renderer, docState.layers);
-            if (!afterLayers) return;
-
-            entry.after = { width: afterWidth, height: afterHeight, layers: afterLayers };
-
-            renderer.resize(entry.beforeWidth, entry.beforeHeight);
-            for (const layer of entry.beforeLayers) {
-              renderer.setLayerImageData(layer.layerId, layer.imageData);
-            }
-
-            useDocumentStore.setState({ width: entry.beforeWidth, height: entry.beforeHeight });
-            useSelectionStore.getState().deselectAll();
-
-            compositeAndRender();
-            markLayerDirty(docState.layers.map((layer) => layer.id));
-            for (const layer of docState.layers) {
-              updateThumbnailWithSize(layer.id, entry.beforeWidth, entry.beforeHeight);
-            }
-            break;
-          }
-          case 'addLayer': {
-            // Undo add = remove the layer
-            const { removeLayer } = useDocumentStore.getState();
-            renderer.removeLayer(entry.layerId);
-            removeLayer(entry.layerId);
-            compositeAndRender();
-            markLayerDirty(entry.layerId);
-            break;
-          }
-          case 'removeLayer': {
-            const removeLayerEntry = entry;
-            // Undo remove = restore the layer
-            // Insert layer back at original index
-            useDocumentStore.setState((state) => {
-              const newLayers = [...state.layers];
-              newLayers.splice(removeLayerEntry.layerIndex, 0, removeLayerEntry.layerMeta);
-              return {
-                layers: newLayers,
-                activeLayerId: removeLayerEntry.layerId,
-                selectedLayerIds: [removeLayerEntry.layerId],
-                layerSelectionAnchorId: removeLayerEntry.layerId,
-              };
+          if (!entry.beforeImage) {
+            console.warn('[History] Missing CPU beforeImage for undo fallback', {
+              layerId: entry.layerId,
+              entryId: entry.entryId,
+              snapshotMode: entry.snapshotMode,
             });
-            // Recreate in renderer and restore content
-            renderer.createLayer(removeLayerEntry.layerId, {
-              visible: removeLayerEntry.layerMeta.visible,
-              opacity: removeLayerEntry.layerMeta.opacity,
-              blendMode: removeLayerEntry.layerMeta.blendMode,
-              isBackground: removeLayerEntry.layerMeta.isBackground,
-            });
-            renderer.setLayerImageData(removeLayerEntry.layerId, removeLayerEntry.imageData);
-            renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
-            compositeAndRender();
-            markLayerDirty(removeLayerEntry.layerId);
-            updateThumbnail(removeLayerEntry.layerId);
+            skippedBrokenStroke = true;
             break;
           }
-          case 'removeLayers': {
-            const removeLayersEntry = entry;
-            const restored = [...removeLayersEntry.layers].sort(
-              (a, b) => a.layerIndex - b.layerIndex
-            );
-            useDocumentStore.setState((state) => {
-              const newLayers = [...state.layers];
-              for (const layer of restored) {
-                newLayers.splice(layer.layerIndex, 0, layer.layerMeta);
-              }
-              return {
-                layers: newLayers,
-                activeLayerId: removeLayersEntry.beforeSelection.activeLayerId,
-                selectedLayerIds: [...removeLayersEntry.beforeSelection.selectedLayerIds],
-                layerSelectionAnchorId: removeLayersEntry.beforeSelection.layerSelectionAnchorId,
-              };
-            });
-
-            for (const layer of restored) {
-              renderer.createLayer(layer.layerId, {
-                visible: layer.layerMeta.visible,
-                opacity: layer.layerMeta.opacity,
-                blendMode: layer.layerMeta.blendMode,
-                isBackground: layer.layerMeta.isBackground,
-              });
-              renderer.setLayerImageData(layer.layerId, layer.imageData);
-            }
-
-            renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
-            compositeAndRender();
-            markLayerDirty(restored.map((layer) => layer.layerId));
-            for (const layer of restored) {
-              updateThumbnail(layer.layerId);
-            }
-            break;
-          }
-          case 'mergeLayers': {
-            const mergeLayersEntry = entry;
-            const restored = [...mergeLayersEntry.removedLayers].sort(
-              (a, b) => a.layerIndex - b.layerIndex
-            );
-            useDocumentStore.setState((state) => {
-              const mergedTargetRestored = state.layers.map((layer) =>
-                layer.id === mergeLayersEntry.targetLayerId
-                  ? { ...mergeLayersEntry.targetBeforeMeta }
-                  : layer
-              );
-              const newLayers = [...mergedTargetRestored];
-              for (const layer of restored) {
-                newLayers.splice(layer.layerIndex, 0, layer.layerMeta);
-              }
-              return {
-                layers: newLayers,
-                activeLayerId: mergeLayersEntry.beforeSelection.activeLayerId,
-                selectedLayerIds: [...mergeLayersEntry.beforeSelection.selectedLayerIds],
-                layerSelectionAnchorId: mergeLayersEntry.beforeSelection.layerSelectionAnchorId,
-              };
-            });
-
-            const targetLayer = renderer.getLayer(mergeLayersEntry.targetLayerId);
-            if (targetLayer) {
-              renderer.updateLayer(mergeLayersEntry.targetLayerId, {
-                visible: mergeLayersEntry.targetBeforeMeta.visible,
-                opacity: mergeLayersEntry.targetBeforeMeta.opacity,
-                blendMode: mergeLayersEntry.targetBeforeMeta.blendMode,
-                isBackground: mergeLayersEntry.targetBeforeMeta.isBackground,
-              });
-              renderer.setLayerImageData(
-                mergeLayersEntry.targetLayerId,
-                mergeLayersEntry.targetBeforeImage
-              );
-            } else {
-              renderer.createLayer(mergeLayersEntry.targetLayerId, {
-                visible: mergeLayersEntry.targetBeforeMeta.visible,
-                opacity: mergeLayersEntry.targetBeforeMeta.opacity,
-                blendMode: mergeLayersEntry.targetBeforeMeta.blendMode,
-                isBackground: mergeLayersEntry.targetBeforeMeta.isBackground,
-              });
-              renderer.setLayerImageData(
-                mergeLayersEntry.targetLayerId,
-                mergeLayersEntry.targetBeforeImage
-              );
-            }
-
-            for (const layer of restored) {
-              renderer.createLayer(layer.layerId, {
-                visible: layer.layerMeta.visible,
-                opacity: layer.layerMeta.opacity,
-                blendMode: layer.layerMeta.blendMode,
-                isBackground: layer.layerMeta.isBackground,
-              });
-              renderer.setLayerImageData(layer.layerId, layer.imageData);
-            }
-
-            renderer.setLayerOrder(mergeLayersEntry.beforeOrder);
-            compositeAndRender();
-            markLayerDirty([
-              mergeLayersEntry.targetLayerId,
-              ...restored.map((layer) => layer.layerId),
-            ]);
-            updateThumbnail(mergeLayersEntry.targetLayerId);
-            for (const layer of restored) {
-              updateThumbnail(layer.layerId);
-            }
-            break;
-          }
-        }
-        if (skippedBrokenStroke) {
-          entry = undo();
-          continue;
-        }
-        return;
-      }
-    })();
-  }, [
-    undo,
-    applyGpuStrokeHistory,
-    layers,
-    compositeAndRender,
-    markLayerDirty,
-    syncGpuLayerForHistory,
-    updateThumbnail,
-    updateThumbnailWithSize,
-    layerRendererRef,
-    onBeforeCanvasMutation,
-  ]);
-
-  // Handle redo for all operation types
-  const handleRedo = useCallback(() => {
-    void (async () => {
-      const entry = redo();
-      if (!entry) return;
-
-      onBeforeCanvasMutation?.();
-
-      if (entry.type === 'selection') {
-        if (entry.after) {
-          useSelectionStore.getState().applySnapshot(entry.after);
-        }
-        return;
-      }
-
-      const renderer = layerRendererRef.current;
-      if (!renderer) return;
-
-      switch (entry.type) {
-        case 'stroke': {
-          const gpuApplied =
-            entry.snapshotMode === 'gpu' &&
-            (await applyGpuStrokeHistory?.(entry.entryId, 'redo', entry.layerId));
-          if (gpuApplied) {
-            if (entry.selectionAfter) {
-              useSelectionStore.getState().applySnapshot(entry.selectionAfter);
-            }
-            markLayerDirty(entry.layerId);
-            compositeAndRender();
-            updateThumbnail(entry.layerId);
-            break;
-          }
-
-          // Restore afterImage (saved during undo)
-          if (entry.afterImage) {
-            renderer.setLayerImageData(entry.layerId, entry.afterImage);
-          }
-          if (entry.selectionAfter) {
-            useSelectionStore.getState().applySnapshot(entry.selectionAfter);
+          renderer.setLayerImageData(entry.layerId, entry.beforeImage);
+          if (entry.selectionBefore) {
+            entry.selectionAfter = useSelectionStore.getState().createSnapshot();
+            useSelectionStore.getState().applySnapshot(entry.selectionBefore);
           }
           markLayerDirty(entry.layerId);
           compositeAndRender();
@@ -1279,16 +1018,16 @@ export function useLayerOperations({
               if (!change) return layer;
               return {
                 ...layer,
-                opacity: change.afterOpacity,
-                blendMode: change.afterBlendMode,
+                opacity: change.beforeOpacity,
+                blendMode: change.beforeBlendMode,
               };
             }),
             isDirty: true,
           }));
           for (const change of entry.changes) {
             renderer.updateLayer(change.layerId, {
-              opacity: change.afterOpacity,
-              blendMode: change.afterBlendMode,
+              opacity: change.beforeOpacity,
+              blendMode: change.beforeBlendMode,
             });
           }
           compositeAndRender();
@@ -1296,53 +1035,31 @@ export function useLayerOperations({
           break;
         }
         case 'resizeCanvas': {
-          if (!entry.after) return;
+          const docState = useDocumentStore.getState();
+          const afterWidth = docState.width;
+          const afterHeight = docState.height;
 
-          renderer.resize(entry.after.width, entry.after.height);
-          for (const layer of entry.after.layers) {
+          const afterLayers = snapshotLayers(renderer, docState.layers);
+          if (!afterLayers) return false;
+
+          entry.after = { width: afterWidth, height: afterHeight, layers: afterLayers };
+
+          renderer.resize(entry.beforeWidth, entry.beforeHeight);
+          for (const layer of entry.beforeLayers) {
             renderer.setLayerImageData(layer.layerId, layer.imageData);
           }
 
-          useDocumentStore.setState({ width: entry.after.width, height: entry.after.height });
+          useDocumentStore.setState({ width: entry.beforeWidth, height: entry.beforeHeight });
           useSelectionStore.getState().deselectAll();
 
-          const docState = useDocumentStore.getState();
           compositeAndRender();
           markLayerDirty(docState.layers.map((layer) => layer.id));
           for (const layer of docState.layers) {
-            updateThumbnailWithSize(layer.id, entry.after.width, entry.after.height);
+            updateThumbnailWithSize(layer.id, entry.beforeWidth, entry.beforeHeight);
           }
           break;
         }
         case 'addLayer': {
-          // Redo add = add the layer back
-          useDocumentStore.setState((state) => {
-            const newLayers = [...state.layers];
-            newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
-            return {
-              layers: newLayers,
-              activeLayerId: entry.layerId,
-              selectedLayerIds: [entry.layerId],
-              layerSelectionAnchorId: entry.layerId,
-            };
-          });
-          renderer.createLayer(entry.layerId, {
-            visible: entry.layerMeta.visible,
-            opacity: entry.layerMeta.opacity,
-            blendMode: entry.layerMeta.blendMode,
-            isBackground: entry.layerMeta.isBackground,
-          });
-          if (entry.imageData) {
-            renderer.setLayerImageData(entry.layerId, entry.imageData);
-          }
-          renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
-          compositeAndRender();
-          markLayerDirty(entry.layerId);
-          updateThumbnail(entry.layerId);
-          break;
-        }
-        case 'removeLayer': {
-          // Redo remove = remove the layer again
           const { removeLayer } = useDocumentStore.getState();
           renderer.removeLayer(entry.layerId);
           removeLayer(entry.layerId);
@@ -1350,69 +1067,383 @@ export function useLayerOperations({
           markLayerDirty(entry.layerId);
           break;
         }
-        case 'removeLayers': {
-          const removeIds = new Set(entry.layers.map((layer) => layer.layerId));
-          useDocumentStore.setState((state) => ({
-            layers: state.layers.filter((layer) => !removeIds.has(layer.id)),
-            activeLayerId: entry.afterSelection.activeLayerId,
-            selectedLayerIds: [...entry.afterSelection.selectedLayerIds],
-            layerSelectionAnchorId: entry.afterSelection.layerSelectionAnchorId,
-          }));
-          for (const layer of entry.layers) {
-            renderer.removeLayer(layer.layerId);
-          }
+        case 'removeLayer': {
+          const removeLayerEntry = entry;
+          useDocumentStore.setState((state) => {
+            const newLayers = [...state.layers];
+            newLayers.splice(removeLayerEntry.layerIndex, 0, removeLayerEntry.layerMeta);
+            return {
+              layers: newLayers,
+              activeLayerId: removeLayerEntry.layerId,
+              selectedLayerIds: [removeLayerEntry.layerId],
+              layerSelectionAnchorId: removeLayerEntry.layerId,
+            };
+          });
+          renderer.createLayer(removeLayerEntry.layerId, {
+            visible: removeLayerEntry.layerMeta.visible,
+            opacity: removeLayerEntry.layerMeta.opacity,
+            blendMode: removeLayerEntry.layerMeta.blendMode,
+            isBackground: removeLayerEntry.layerMeta.isBackground,
+          });
+          renderer.setLayerImageData(removeLayerEntry.layerId, removeLayerEntry.imageData);
           renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
           compositeAndRender();
-          markLayerDirty(entry.layers.map((layer) => layer.layerId));
+          markLayerDirty(removeLayerEntry.layerId);
+          updateThumbnail(removeLayerEntry.layerId);
           break;
         }
-        case 'mergeLayers': {
-          const removeIds = new Set(entry.removedLayers.map((layer) => layer.layerId));
+        case 'removeLayers': {
+          const removeLayersEntry = entry;
+          const restored = [...removeLayersEntry.layers].sort(
+            (a, b) => a.layerIndex - b.layerIndex
+          );
           useDocumentStore.setState((state) => {
-            const mergedLayers = state.layers
-              .filter((layer) => !removeIds.has(layer.id))
-              .map((layer) =>
-                layer.id === entry.targetLayerId ? { ...entry.targetAfterMeta } : layer
-              );
+            const newLayers = [...state.layers];
+            for (const layer of restored) {
+              newLayers.splice(layer.layerIndex, 0, layer.layerMeta);
+            }
             return {
-              layers: mergedLayers,
-              activeLayerId: entry.afterSelection.activeLayerId,
-              selectedLayerIds: [...entry.afterSelection.selectedLayerIds],
-              layerSelectionAnchorId: entry.afterSelection.layerSelectionAnchorId,
+              layers: newLayers,
+              activeLayerId: removeLayersEntry.beforeSelection.activeLayerId,
+              selectedLayerIds: [...removeLayersEntry.beforeSelection.selectedLayerIds],
+              layerSelectionAnchorId: removeLayersEntry.beforeSelection.layerSelectionAnchorId,
             };
           });
 
-          for (const layer of entry.removedLayers) {
-            renderer.removeLayer(layer.layerId);
+          for (const layer of restored) {
+            renderer.createLayer(layer.layerId, {
+              visible: layer.layerMeta.visible,
+              opacity: layer.layerMeta.opacity,
+              blendMode: layer.layerMeta.blendMode,
+              isBackground: layer.layerMeta.isBackground,
+            });
+            renderer.setLayerImageData(layer.layerId, layer.imageData);
           }
-          renderer.updateLayer(entry.targetLayerId, {
-            visible: entry.targetAfterMeta.visible,
-            opacity: entry.targetAfterMeta.opacity,
-            blendMode: entry.targetAfterMeta.blendMode,
-            isBackground: entry.targetAfterMeta.isBackground,
+
+          renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
+          compositeAndRender();
+          markLayerDirty(restored.map((layer) => layer.layerId));
+          for (const layer of restored) {
+            updateThumbnail(layer.layerId);
+          }
+          break;
+        }
+        case 'mergeLayers': {
+          const mergeLayersEntry = entry;
+          const restored = [...mergeLayersEntry.removedLayers].sort(
+            (a, b) => a.layerIndex - b.layerIndex
+          );
+          useDocumentStore.setState((state) => {
+            const mergedTargetRestored = state.layers.map((layer) =>
+              layer.id === mergeLayersEntry.targetLayerId
+                ? { ...mergeLayersEntry.targetBeforeMeta }
+                : layer
+            );
+            const newLayers = [...mergedTargetRestored];
+            for (const layer of restored) {
+              newLayers.splice(layer.layerIndex, 0, layer.layerMeta);
+            }
+            return {
+              layers: newLayers,
+              activeLayerId: mergeLayersEntry.beforeSelection.activeLayerId,
+              selectedLayerIds: [...mergeLayersEntry.beforeSelection.selectedLayerIds],
+              layerSelectionAnchorId: mergeLayersEntry.beforeSelection.layerSelectionAnchorId,
+            };
           });
-          renderer.setLayerImageData(entry.targetLayerId, entry.targetAfterImage);
-          renderer.setLayerOrder(entry.afterOrder);
+
+          const targetLayer = renderer.getLayer(mergeLayersEntry.targetLayerId);
+          if (targetLayer) {
+            renderer.updateLayer(mergeLayersEntry.targetLayerId, {
+              visible: mergeLayersEntry.targetBeforeMeta.visible,
+              opacity: mergeLayersEntry.targetBeforeMeta.opacity,
+              blendMode: mergeLayersEntry.targetBeforeMeta.blendMode,
+              isBackground: mergeLayersEntry.targetBeforeMeta.isBackground,
+            });
+            renderer.setLayerImageData(
+              mergeLayersEntry.targetLayerId,
+              mergeLayersEntry.targetBeforeImage
+            );
+          } else {
+            renderer.createLayer(mergeLayersEntry.targetLayerId, {
+              visible: mergeLayersEntry.targetBeforeMeta.visible,
+              opacity: mergeLayersEntry.targetBeforeMeta.opacity,
+              blendMode: mergeLayersEntry.targetBeforeMeta.blendMode,
+              isBackground: mergeLayersEntry.targetBeforeMeta.isBackground,
+            });
+            renderer.setLayerImageData(
+              mergeLayersEntry.targetLayerId,
+              mergeLayersEntry.targetBeforeImage
+            );
+          }
+
+          for (const layer of restored) {
+            renderer.createLayer(layer.layerId, {
+              visible: layer.layerMeta.visible,
+              opacity: layer.layerMeta.opacity,
+              blendMode: layer.layerMeta.blendMode,
+              isBackground: layer.layerMeta.isBackground,
+            });
+            renderer.setLayerImageData(layer.layerId, layer.imageData);
+          }
+
+          renderer.setLayerOrder(mergeLayersEntry.beforeOrder);
           compositeAndRender();
           markLayerDirty([
-            entry.targetLayerId,
-            ...entry.removedLayers.map((layer) => layer.layerId),
+            mergeLayersEntry.targetLayerId,
+            ...restored.map((layer) => layer.layerId),
           ]);
-          updateThumbnail(entry.targetLayerId);
+          updateThumbnail(mergeLayersEntry.targetLayerId);
+          for (const layer of restored) {
+            updateThumbnail(layer.layerId);
+          }
           break;
         }
       }
-    })();
+      if (skippedBrokenStroke) {
+        entry = undo();
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }, [
+    undo,
+    layers,
+    onBeforeCanvasMutation,
+    layerRendererRef,
+    applyGpuStrokeHistory,
+    markLayerDirty,
+    compositeAndRender,
+    updateThumbnail,
+    syncGpuLayerForHistory,
+    updateThumbnailWithSize,
+  ]);
+
+  const applyRedoStep = useCallback(async (): Promise<boolean> => {
+    const entry = redo();
+    if (!entry) return false;
+
+    onBeforeCanvasMutation?.();
+
+    if (entry.type === 'selection') {
+      if (entry.after) {
+        useSelectionStore.getState().applySnapshot(entry.after);
+      }
+      return true;
+    }
+
+    const renderer = layerRendererRef.current;
+    if (!renderer) return false;
+
+    switch (entry.type) {
+      case 'stroke': {
+        const gpuApplied =
+          entry.snapshotMode === 'gpu' &&
+          (await applyGpuStrokeHistory?.(entry.entryId, 'redo', entry.layerId));
+        if (gpuApplied) {
+          if (entry.selectionAfter) {
+            useSelectionStore.getState().applySnapshot(entry.selectionAfter);
+          }
+          markLayerDirty(entry.layerId);
+          compositeAndRender();
+          updateThumbnail(entry.layerId);
+          break;
+        }
+
+        if (entry.afterImage) {
+          renderer.setLayerImageData(entry.layerId, entry.afterImage);
+        }
+        if (entry.selectionAfter) {
+          useSelectionStore.getState().applySnapshot(entry.selectionAfter);
+        }
+        markLayerDirty(entry.layerId);
+        compositeAndRender();
+        updateThumbnail(entry.layerId);
+        break;
+      }
+      case 'layerProps': {
+        const changeMap = new Map(entry.changes.map((change) => [change.layerId, change]));
+        useDocumentStore.setState((state) => ({
+          layers: state.layers.map((layer) => {
+            const change = changeMap.get(layer.id);
+            if (!change) return layer;
+            return {
+              ...layer,
+              opacity: change.afterOpacity,
+              blendMode: change.afterBlendMode,
+            };
+          }),
+          isDirty: true,
+        }));
+        for (const change of entry.changes) {
+          renderer.updateLayer(change.layerId, {
+            opacity: change.afterOpacity,
+            blendMode: change.afterBlendMode,
+          });
+        }
+        compositeAndRender();
+        markLayerDirty(entry.changes.map((change) => change.layerId));
+        break;
+      }
+      case 'resizeCanvas': {
+        if (!entry.after) return false;
+
+        renderer.resize(entry.after.width, entry.after.height);
+        for (const layer of entry.after.layers) {
+          renderer.setLayerImageData(layer.layerId, layer.imageData);
+        }
+
+        useDocumentStore.setState({ width: entry.after.width, height: entry.after.height });
+        useSelectionStore.getState().deselectAll();
+
+        const docState = useDocumentStore.getState();
+        compositeAndRender();
+        markLayerDirty(docState.layers.map((layer) => layer.id));
+        for (const layer of docState.layers) {
+          updateThumbnailWithSize(layer.id, entry.after.width, entry.after.height);
+        }
+        break;
+      }
+      case 'addLayer': {
+        useDocumentStore.setState((state) => {
+          const newLayers = [...state.layers];
+          newLayers.splice(entry.layerIndex, 0, entry.layerMeta);
+          return {
+            layers: newLayers,
+            activeLayerId: entry.layerId,
+            selectedLayerIds: [entry.layerId],
+            layerSelectionAnchorId: entry.layerId,
+          };
+        });
+        renderer.createLayer(entry.layerId, {
+          visible: entry.layerMeta.visible,
+          opacity: entry.layerMeta.opacity,
+          blendMode: entry.layerMeta.blendMode,
+          isBackground: entry.layerMeta.isBackground,
+        });
+        if (entry.imageData) {
+          renderer.setLayerImageData(entry.layerId, entry.imageData);
+        }
+        renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
+        compositeAndRender();
+        markLayerDirty(entry.layerId);
+        updateThumbnail(entry.layerId);
+        break;
+      }
+      case 'removeLayer': {
+        const { removeLayer } = useDocumentStore.getState();
+        renderer.removeLayer(entry.layerId);
+        removeLayer(entry.layerId);
+        compositeAndRender();
+        markLayerDirty(entry.layerId);
+        break;
+      }
+      case 'removeLayers': {
+        const removeIds = new Set(entry.layers.map((layer) => layer.layerId));
+        useDocumentStore.setState((state) => ({
+          layers: state.layers.filter((layer) => !removeIds.has(layer.id)),
+          activeLayerId: entry.afterSelection.activeLayerId,
+          selectedLayerIds: [...entry.afterSelection.selectedLayerIds],
+          layerSelectionAnchorId: entry.afterSelection.layerSelectionAnchorId,
+        }));
+        for (const layer of entry.layers) {
+          renderer.removeLayer(layer.layerId);
+        }
+        renderer.setLayerOrder(useDocumentStore.getState().layers.map((l) => l.id));
+        compositeAndRender();
+        markLayerDirty(entry.layers.map((layer) => layer.layerId));
+        break;
+      }
+      case 'mergeLayers': {
+        const removeIds = new Set(entry.removedLayers.map((layer) => layer.layerId));
+        useDocumentStore.setState((state) => {
+          const mergedLayers = state.layers
+            .filter((layer) => !removeIds.has(layer.id))
+            .map((layer) =>
+              layer.id === entry.targetLayerId ? { ...entry.targetAfterMeta } : layer
+            );
+          return {
+            layers: mergedLayers,
+            activeLayerId: entry.afterSelection.activeLayerId,
+            selectedLayerIds: [...entry.afterSelection.selectedLayerIds],
+            layerSelectionAnchorId: entry.afterSelection.layerSelectionAnchorId,
+          };
+        });
+
+        for (const layer of entry.removedLayers) {
+          renderer.removeLayer(layer.layerId);
+        }
+        renderer.updateLayer(entry.targetLayerId, {
+          visible: entry.targetAfterMeta.visible,
+          opacity: entry.targetAfterMeta.opacity,
+          blendMode: entry.targetAfterMeta.blendMode,
+          isBackground: entry.targetAfterMeta.isBackground,
+        });
+        renderer.setLayerImageData(entry.targetLayerId, entry.targetAfterImage);
+        renderer.setLayerOrder(entry.afterOrder);
+        compositeAndRender();
+        markLayerDirty([entry.targetLayerId, ...entry.removedLayers.map((layer) => layer.layerId)]);
+        updateThumbnail(entry.targetLayerId);
+        break;
+      }
+    }
+
+    return true;
   }, [
     redo,
+    onBeforeCanvasMutation,
+    layerRendererRef,
     applyGpuStrokeHistory,
-    compositeAndRender,
     markLayerDirty,
+    compositeAndRender,
     updateThumbnail,
     updateThumbnailWithSize,
-    layerRendererRef,
-    onBeforeCanvasMutation,
   ]);
+
+  const handleUndo = useCallback(() => {
+    void applyUndoStep();
+  }, [applyUndoStep]);
+
+  const handleRedo = useCallback(() => {
+    void applyRedoStep();
+  }, [applyRedoStep]);
+
+  const jumpToHistoryIndex = useCallback(
+    async (targetIndex: number): Promise<boolean> => {
+      if (!Number.isInteger(targetIndex)) return false;
+
+      const getCurrentIndex = (): number => useHistoryStore.getState().undoStack.length - 1;
+      const getMaxIndex = (): number => {
+        const state = useHistoryStore.getState();
+        return state.undoStack.length + state.redoStack.length - 1;
+      };
+
+      const clampedTarget = Math.max(-1, Math.min(targetIndex, getMaxIndex()));
+      let currentIndex = getCurrentIndex();
+      if (clampedTarget === currentIndex) return true;
+
+      if (clampedTarget < currentIndex) {
+        while (currentIndex > clampedTarget) {
+          const applied = await applyUndoStep();
+          if (!applied) return false;
+          const nextIndex = getCurrentIndex();
+          if (nextIndex === currentIndex) return false;
+          currentIndex = nextIndex;
+        }
+        return true;
+      }
+
+      while (currentIndex < clampedTarget) {
+        const applied = await applyRedoStep();
+        if (!applied) return false;
+        const nextIndex = getCurrentIndex();
+        if (nextIndex === currentIndex) return false;
+        currentIndex = nextIndex;
+      }
+      return true;
+    },
+    [applyRedoStep, applyUndoStep]
+  );
 
   // Clear current layer content
   const handleClearLayer = useCallback(() => {
@@ -2147,6 +2178,7 @@ export function useLayerOperations({
     handleClearSelection,
     handleUndo,
     handleRedo,
+    jumpToHistoryIndex,
     handleClearLayer,
     handleDuplicateLayer,
     handleCopyActiveLayerImage,
