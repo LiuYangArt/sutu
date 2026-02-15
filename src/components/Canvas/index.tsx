@@ -526,6 +526,7 @@ export function Canvas() {
 
   const { pushAddLayer } = useHistoryStore();
   const openPanel = usePanelStore((s) => s.openPanel);
+  const togglePanel = usePanelStore((s) => s.togglePanel);
 
   const { isPanning, scale, setScale, setIsPanning, pan, zoomIn, zoomOut, offsetX, offsetY } =
     useViewportStore();
@@ -1333,6 +1334,7 @@ export function Canvas() {
     handleClearSelection,
     handleUndo,
     handleRedo,
+    jumpToHistoryIndex,
     handleClearLayer,
     handleDuplicateLayer,
     handleCopyActiveLayerImage,
@@ -1748,6 +1750,7 @@ export function Canvas() {
     handleClearSelection,
     handleUndo,
     handleRedo,
+    jumpToHistoryIndex,
     handleClearLayer,
     handleDuplicateLayer,
     handleSetLayerOpacity,
@@ -2101,6 +2104,9 @@ export function Canvas() {
     handleMergeAllLayers,
     handleOpenCurvesPanel: () => {
       openPanel('curves-panel');
+    },
+    handleToggleHistoryPanel: () => {
+      togglePanel('history-panel');
     },
   });
 
