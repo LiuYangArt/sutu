@@ -188,6 +188,34 @@ describe('useSelectionHandler', () => {
     expect(useHistoryStore.getState().undoStack).toHaveLength(0);
   });
 
+  it('提交选区时会先触发 onSelectionCommitStart 以锁定预览路径', () => {
+    const onSelectionCommitStart = vi.fn();
+    const { result } = renderHook(() =>
+      useSelectionHandler({
+        currentTool: 'select',
+        scale: 1,
+        onSelectionCommitStart,
+      })
+    );
+
+    act(() => {
+      result.current.handleSelectionPointerDown(10, 10, {
+        altKey: false,
+        shiftKey: false,
+        ctrlKey: false,
+      } as PointerEvent);
+      result.current.handleSelectionPointerMove(64, 48, {} as PointerEvent);
+      result.current.handleSelectionPointerUp(64, 48);
+    });
+
+    expect(onSelectionCommitStart).toHaveBeenCalledTimes(1);
+    const payload = onSelectionCommitStart.mock.calls[0]?.[0] as
+      | { path: Array<{ x: number; y: number }>; mode: string }
+      | undefined;
+    expect(payload?.path.length).toBeGreaterThanOrEqual(3);
+    expect(payload?.mode).toBe('new');
+  });
+
   it('自动填色回调失败时，回退为 selection 历史记录', async () => {
     const onSelectionCommitted = vi.fn(async () => false);
     const { result } = renderHook(() =>

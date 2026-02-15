@@ -156,4 +156,46 @@ describe('SelectionOverlay', () => {
       expect(ctx.fillStyle).toBe('rgba(0, 170, 51, 1)');
     });
   });
+
+  it('renders latched fill preview while selection creation is already finished', async () => {
+    const latchedPath = [
+      { x: 16, y: 16, type: 'freehand' as const },
+      { x: 80, y: 16, type: 'freehand' as const },
+      { x: 48, y: 72, type: 'freehand' as const },
+    ];
+
+    useSettingsStore.setState((state) => ({
+      ...state,
+      general: {
+        ...state.general,
+        selectionAutoFillEnabled: true,
+        selectionPreviewTranslucent: true,
+      },
+    }));
+    useSelectionStore.setState({
+      isCreating: false,
+      creationPoints: [],
+      previewPoint: null,
+      hasSelection: true,
+      selectionPath: [latchedPath],
+    });
+
+    render(
+      <SelectionOverlay
+        scale={1}
+        offsetX={0}
+        offsetY={0}
+        latchedFillPreview={{
+          path: latchedPath,
+          color: '#112233',
+          startedAt: 1,
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(ctx.fill).toHaveBeenCalled();
+      expect(ctx.fillStyle).toBe('rgba(17, 34, 51, 0.28)');
+    });
+  });
 });
