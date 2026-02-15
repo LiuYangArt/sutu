@@ -15,6 +15,19 @@
 在Release中下载最新的安装包。
 [https://github.com/LiuYangArt/sutu/releases](https://github.com/LiuYangArt/sutu/releases)
 
+## macOS 安装说明（当前未 Apple Developer 签名）
+
+目前项目还没有 Apple Developer Program 签名与公证，首次打开时 macOS 可能提示“无法验证开发者”。
+
+请按以下步骤安装：
+
+1. 在 Release 下载 `.dmg`，双击挂载后把 `Sutu.app` 拖到“应用程序”。
+2. 不要直接双击打开应用，先在“应用程序”里对 `Sutu.app` 右键，选择“打开”。
+3. 弹出安全提示后，再点一次“打开”。
+4. 如果仍被拦截：进入“系统设置 -> 隐私与安全性”，在底部找到 `Sutu` 的拦截提示，点击“仍要打开”。
+
+预期结果：完成一次放行后，后续可以正常双击启动。
+
 ## bug反馈和新功能需求
 在此提交issue [https://github.com/LiuYangArt/sutu/issues](https://github.com/LiuYangArt/sutu/issues)
 
