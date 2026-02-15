@@ -243,4 +243,59 @@ describe('useLayerOperations.applySelectionAutoFillToActiveLayer', () => {
     expect(applied).toBe(false);
     expect(useHistoryStore.getState().undoStack).toHaveLength(0);
   });
+
+  it('returns false and does not call gpu commit when selection snapshot is pending', async () => {
+    const layer = createLayer('layer_pending_mask');
+    useDocumentStore.setState({
+      layers: [layer],
+      activeLayerId: layer.id,
+      selectedLayerIds: [layer.id],
+      layerSelectionAnchorId: layer.id,
+    });
+
+    const renderer = {
+      getLayerImageData: vi.fn(() => createBlankImageData(2, 1)),
+      getLayer: vi.fn(() => ({ id: layer.id, ctx: { drawImage: vi.fn() } })),
+    } as unknown as LayerRenderer;
+
+    const mask = new ImageData(new Uint8ClampedArray([0, 0, 0, 255, 0, 0, 0, 255]), 2, 1);
+    const selectionAfter: SelectionSnapshot = {
+      ...createSelectionSnapshot(mask),
+      selectionMaskPending: true,
+    };
+    const selectionBefore: SelectionSnapshot = {
+      hasSelection: false,
+      selectionMask: null,
+      selectionMaskPending: false,
+      selectionPath: [],
+      bounds: null,
+    };
+    const applyGpuSelectionFillToActiveLayer = vi.fn(async (_params: unknown) => true);
+
+    const { result } = renderHook(() =>
+      useLayerOperations({
+        layerRendererRef: { current: renderer },
+        activeLayerId: layer.id,
+        layers: [layer],
+        width: 2,
+        height: 1,
+        compositeAndRender: vi.fn(),
+        markLayerDirty: vi.fn(),
+        applyGpuSelectionFillToActiveLayer,
+      })
+    );
+
+    let applied = true;
+    await act(async () => {
+      applied = await result.current.applySelectionAutoFillToActiveLayer({
+        color: '#3366FF',
+        selectionBefore,
+        selectionAfter,
+      });
+    });
+
+    expect(applied).toBe(false);
+    expect(applyGpuSelectionFillToActiveLayer).not.toHaveBeenCalled();
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
 });
