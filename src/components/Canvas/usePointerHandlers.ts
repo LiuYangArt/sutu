@@ -1,4 +1,4 @@
-import { useCallback, useRef, type RefObject, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
 import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
@@ -110,6 +110,12 @@ function isStrokeTool(tool: ToolType): boolean {
   return tool === 'brush' || tool === 'eraser';
 }
 
+function isEventInsideContainer(container: HTMLDivElement | null, event: PointerEvent): boolean {
+  if (!container) return false;
+  const target = event.target;
+  return target instanceof Node ? container.contains(target) : false;
+}
+
 export function usePointerHandlers({
   containerRef,
   canvasRef,
@@ -159,32 +165,70 @@ export function usePointerHandlers({
   onBeforeCanvasMutation,
 }: UsePointerHandlersParams) {
   const nativeSeqCursorRef = useRef(0);
+  const activePointerIdRef = useRef<number | null>(null);
+  const isPanningRef = useRef(isPanning);
 
-  const trySetPointerCapture = useCallback((target: Element, event: React.PointerEvent) => {
-    const native = event.nativeEvent as PointerEvent;
-    if (!native.isTrusted) return;
-    try {
-      (target as Element & { setPointerCapture(pointerId: number): void }).setPointerCapture(
-        event.pointerId
-      );
-    } catch {
-      // Ignore invalid pointer capture on platform/browser edge cases.
-    }
+  useEffect(() => {
+    isPanningRef.current = isPanning;
+  }, [isPanning]);
+
+  const setActivePointerId = useCallback((pointerId: number) => {
+    activePointerIdRef.current = pointerId;
   }, []);
 
-  const tryReleasePointerCapture = useCallback((target: Element, event: React.PointerEvent) => {
-    const native = event.nativeEvent as PointerEvent;
-    if (!native.isTrusted) return;
-    try {
-      (
-        target as Element & { releasePointerCapture(pointerId: number): void }
-      ).releasePointerCapture(event.pointerId);
-    } catch {
-      // Ignore invalid pointer release on platform/browser edge cases.
+  const clearActivePointerId = useCallback((pointerId?: number) => {
+    if (typeof pointerId === 'number' && activePointerIdRef.current !== pointerId) {
+      return false;
     }
+    activePointerIdRef.current = null;
+    return true;
   }, []);
 
-  // Pick color from canvas at given coordinates
+  const trySetPointerCapture = useCallback(
+    (pointerId: number, isTrusted: boolean) => {
+      if (!isTrusted) return;
+      const container = containerRef.current;
+      if (!container) return;
+      try {
+        container.setPointerCapture(pointerId);
+      } catch {
+        // Ignore invalid pointer capture on platform/browser edge cases.
+      }
+    },
+    [containerRef]
+  );
+
+  const tryReleasePointerCapture = useCallback(
+    (pointerId: number | null) => {
+      const container = containerRef.current;
+      if (!container || pointerId === null) return;
+      try {
+        container.releasePointerCapture(pointerId);
+      } catch {
+        // Ignore invalid pointer release on platform/browser edge cases.
+      }
+    },
+    [containerRef]
+  );
+
+  const beginPointerSession = useCallback(
+    (pointerId: number, isTrusted: boolean) => {
+      setActivePointerId(pointerId);
+      trySetPointerCapture(pointerId, isTrusted);
+    },
+    [setActivePointerId, trySetPointerCapture]
+  );
+
+  const endPointerSession = useCallback(
+    (pointerId?: number) => {
+      const releaseId =
+        typeof pointerId === 'number' ? pointerId : (activePointerIdRef.current ?? null);
+      tryReleasePointerCapture(releaseId);
+      clearActivePointerId(pointerId);
+    },
+    [clearActivePointerId, tryReleasePointerCapture]
+  );
+
   const pickColorAt = useCallback(
     async (canvasX: number, canvasY: number) => {
       const x = Math.floor(canvasX);
@@ -220,243 +264,32 @@ export function usePointerHandlers({
     [width, height, useGpuDisplay, sampleGpuPixelColor, setBrushColor, layerRendererRef, canvasRef]
   );
 
-  // Handle pointer down events
-  const handlePointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      const container = containerRef.current;
-      if (!container) return;
-
-      // Ensure the canvas container receives focus so modifier-key behaviors
-      // (e.g. Shift line mode) only activate when the canvas is active.
-      if (!container.contains(document.activeElement)) {
-        container.focus({ preventScroll: true });
-      }
-
-      // Handle Panning (Space key)
-      if (spacePressed) {
-        setIsPanning(true);
-        panStartRef.current = { x: e.clientX, y: e.clientY };
+  const processPointerMoveNative = useCallback(
+    (nativeEvent: PointerEvent) => {
+      const activePointerId = activePointerIdRef.current;
+      if (activePointerId !== null && nativeEvent.pointerId !== activePointerId) {
         return;
       }
 
-      // Handle Zoom tool
-      if (currentTool === 'zoom') {
-        if (isDrawingRef.current) {
-          void finishCurrentStroke();
-        }
-        isZoomingRef.current = true;
-        zoomStartRef.current = {
-          x: e.clientX,
-          y: e.clientY,
-          startScale: scale,
-        };
-        trySetPointerCapture(container, e);
-        return;
-      }
-
-      // Prepare input data (pressure/tilt), preferring native backend buffer if active.
-      // Important: For pen, do NOT default pressure to 0.5 at pointerdown,
-      // otherwise the first dab can become noticeably too heavy (especially with Build-up enabled).
-      const pe = e.nativeEvent as PointerEvent;
-      let pressure = 0.5;
-      let tiltX = 0;
-      let tiltY = 0;
-      let rotation = 0;
-      if (pe.pointerType === 'pen') {
-        pressure = pe.pressure > 0 ? pe.pressure : 0;
-      } else if (pe.pressure > 0) {
-        pressure = pe.pressure;
-      }
-      if (isStrokeTool(currentTool)) {
-        const tabletState = useTabletStore.getState();
-        const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
-        // Synthetic replay events are not trusted; keep captured pressure instead of
-        // overriding with live native stream.
-        const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
-        const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
-          ? readPointBufferSince(nativeSeqCursorRef.current)
-          : { points: [], nextSeq: nativeSeqCursorRef.current };
-        if (shouldUseNativeBackend) {
-          nativeSeqCursorRef.current = nextSeq;
-        }
-        const effectiveInput = getEffectiveInputData(
-          pe,
-          shouldUseNativeBackend,
-          bufferedPoints,
-          tabletState.currentPoint,
-          pe
-        );
-        pressure = effectiveInput.pressure;
-        tiltX = effectiveInput.tiltX;
-        tiltY = effectiveInput.tiltY;
-        rotation = effectiveInput.rotation;
-        if (shouldUseNativeBackend) {
-          // Use buffered native points when available; avoid using currentPoint at pointerdown
-          // because it can be stale (previous stroke), causing an overly heavy first dab.
-          const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1];
-          if (lastBufferedPoint) {
-            pressure = lastBufferedPoint.pressure;
-          } else if (pe.pointerType === 'pen') {
-            // No fresh native sample yet at pen-down.
-            window.__strokeDiagnostics?.onStartPressureFallback();
-            pressure = 0;
-          }
-        }
-      }
-
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
-
-      updateShiftLineCursor(canvasX, canvasY);
-
-      // Handle Eyedropper
-      if (currentTool === 'eyedropper') {
-        void pickColorAt(canvasX, canvasY);
-        return;
-      }
-
-      // Handle Selection Tools (rect select / lasso)
-      if (isSelectionToolActive) {
-        const handled = handleSelectionPointerDown(canvasX, canvasY, e.nativeEvent);
-        if (handled) {
-          trySetPointerCapture(canvas, e);
-          return;
-        }
-      }
-
-      if (currentTool === 'move') {
-        const handled = handleMovePointerDown(canvasX, canvasY, e.nativeEvent);
-        if (handled) {
-          trySetPointerCapture(canvas, e);
-          return;
-        }
-      }
-
-      if (currentTool === 'gradient') {
-        const handled = handleGradientPointerDown?.(canvasX, canvasY, e.nativeEvent) ?? false;
-        if (handled) {
-          trySetPointerCapture(canvas, e);
-        }
-        return;
-      }
-
-      // Check Layer Validation
-      const activeLayer = layers.find((l) => l.id === activeLayerId);
-      if (!activeLayerId || !activeLayer?.visible) return;
-
-      let constrainedDown = { x: canvasX, y: canvasY };
-      if (isStrokeTool(currentTool)) {
-        lockShiftLine({ x: canvasX, y: canvasY });
-        constrainedDown = constrainShiftLinePoint(canvasX, canvasY);
-        lastInputPosRef.current = { x: constrainedDown.x, y: constrainedDown.y };
-      }
-
-      // Start Drawing
-      trySetPointerCapture(canvas, e);
-      usingRawInput.current = false;
-
-      if (!isStrokeTool(currentTool)) {
-        return;
-      }
-
-      onBeforeCanvasMutation?.();
-
-      isDrawingRef.current = true;
-      const idx = pointIndexRef.current++;
-      latencyProfilerRef.current.markInputReceived(idx, e.nativeEvent as PointerEvent);
-
-      strokeStateRef.current = 'starting';
-      pendingPointsRef.current = [
-        {
-          x: constrainedDown.x,
-          y: constrainedDown.y,
-          pressure,
-          tiltX,
-          tiltY,
-          rotation,
-          pointIndex: idx,
-        },
-      ];
-      pendingEndRef.current = false;
-
-      // 先抓撤销基线，再初始化 GPU 笔触。
-      // 避免 beforeImage 过旧导致一次撤销回退多笔。
-      window.__strokeDiagnostics?.onStrokeStart();
-      void (async () => {
-        await captureBeforeImage();
-        await initializeBrushStroke();
-      })();
-    },
-    [
-      spacePressed,
-      currentTool,
-      scale,
-      pickColorAt,
-      layers,
-      activeLayerId,
-      captureBeforeImage,
-      initializeBrushStroke,
-      finishCurrentStroke,
-      setIsPanning,
-      isSelectionToolActive,
-      handleSelectionPointerDown,
-      handleMovePointerDown,
-      handleGradientPointerDown,
-      updateShiftLineCursor,
-      lockShiftLine,
-      constrainShiftLinePoint,
-      containerRef,
-      canvasRef,
-      panStartRef,
-      isZoomingRef,
-      zoomStartRef,
-      isDrawingRef,
-      strokeStateRef,
-      pendingPointsRef,
-      pointIndexRef,
-      pendingEndRef,
-      lastInputPosRef,
-      latencyProfilerRef,
-      trySetPointerCapture,
-      usingRawInput,
-      onBeforeCanvasMutation,
-    ]
-  );
-
-  const handlePointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      // 获取所有合并事件（包括被浏览器合并的中间事件）
-      // 在 Release 模式下，浏览器会更激进地合并事件，导致采样点不足
-      const nativeEvent = e.nativeEvent as PointerEvent;
       const sampledEvents = nativeEvent.getCoalescedEvents?.();
-      // Synthetic replay events can report an empty coalesced list.
       const coalescedEvents =
         sampledEvents && sampledEvents.length > 0 ? sampledEvents : [nativeEvent];
 
-      // 平移模式：只使用最后一个事件
-      if (isPanning && panStartRef.current) {
-        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+      if (isPanningRef.current && panStartRef.current) {
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? nativeEvent;
         const deltaX = lastEvent.clientX - panStartRef.current.x;
         const deltaY = lastEvent.clientY - panStartRef.current.y;
         pan(deltaX, deltaY);
         panStartRef.current = { x: lastEvent.clientX, y: lastEvent.clientY };
-        // Note: cursor position is updated by native event listener
         return;
       }
 
-      // Zoom logic
       if (isZoomingRef.current && zoomStartRef.current) {
-        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? nativeEvent;
         const deltaX = lastEvent.clientX - zoomStartRef.current.x;
-
-        // Scrubby zoom: 100px drag doubles/halves scale
         const zoomFactor = 1 + deltaX * 0.01;
         const newScale = zoomStartRef.current.startScale * zoomFactor;
 
-        // Retrieve container rect to convert initial mouse to container coords
-        // Zoom anchored to the initial click position
         const container = containerRef.current;
         if (container) {
           const rect = container.getBoundingClientRect();
@@ -464,13 +297,11 @@ export function usePointerHandlers({
           const initialClickY = zoomStartRef.current.y - rect.top;
           setScale(newScale, initialClickX, initialClickY);
         }
-
         return;
       }
 
-      // Selection tool move handling
       if (isSelectionToolActive) {
-        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? nativeEvent;
         const canvas = canvasRef.current;
         if (canvas) {
           const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, lastEvent);
@@ -480,7 +311,7 @@ export function usePointerHandlers({
       }
 
       if (currentTool === 'move') {
-        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? nativeEvent;
         const canvas = canvasRef.current;
         if (canvas) {
           const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, lastEvent);
@@ -494,7 +325,7 @@ export function usePointerHandlers({
       if (currentTool === 'gradient') {
         const canvas = canvasRef.current;
         if (!canvas) return;
-        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? nativeEvent;
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, lastEvent);
         handleGradientPointerMove?.(canvasX, canvasY, lastEvent);
         return;
@@ -503,30 +334,17 @@ export function usePointerHandlers({
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? e.nativeEvent;
+      const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? nativeEvent;
       const mappedHoverPoint = pointerEventToCanvasPoint(canvas, lastEvent, rect);
       updateShiftLineCursor(mappedHoverPoint.x, mappedHoverPoint.y);
 
-      // Note: cursor position is updated by native event listener for zero-lag
-
-      // 绘画模式
       if (!isDrawingRef.current) return;
-
       if (!isStrokeTool(currentTool)) return;
-
-      // Q1 Optimization: Skip brush input if pointerrawupdate is handling it
-      // pointerrawupdate provides lower-latency input (1-3ms improvement)
-      if (isStrokeTool(currentTool) && usingRawInput.current) {
-        return;
-      }
+      if (usingRawInput.current) return;
 
       const tabletState = useTabletStore.getState();
       const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
-      // Replay events should consume recorded pressure/tilt and must not be polluted
-      // by current tablet stream state.
-      const shouldUseNativeBackend =
-        isNativeBackendActive && (e.nativeEvent as PointerEvent).isTrusted;
-      // Drain input buffer once per frame/event-batch (outside the loop)
+      const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
       const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
         ? readPointBufferSince(nativeSeqCursorRef.current)
         : { points: [], nextSeq: nativeSeqCursorRef.current };
@@ -534,12 +352,8 @@ export function usePointerHandlers({
         nativeSeqCursorRef.current = nextSeq;
       }
 
-      // 遍历所有合并事件，恢复完整输入轨迹
       for (const evt of coalescedEvents) {
-        // 始终使用 PointerEvent 的坐标（它们是准确的屏幕坐标）
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
-
-        // Resolve input pressure/tilt (handling native buffering if active)
         const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
           evt,
           shouldUseNativeBackend,
@@ -549,12 +363,10 @@ export function usePointerHandlers({
         );
 
         const idx = pointIndexRef.current++;
-        // Note: evt is PointerEvent here
-        latencyProfilerRef.current.markInputReceived(idx, evt as PointerEvent);
+        latencyProfilerRef.current.markInputReceived(idx, evt);
 
         const state = strokeStateRef.current;
         if (state === 'starting') {
-          // Buffer points during 'starting' phase, replay after beginStroke completes
           pendingPointsRef.current.push({
             x: canvasX,
             y: canvasY,
@@ -580,109 +392,383 @@ export function usePointerHandlers({
       }
     },
     [
-      isPanning,
+      panStartRef,
       pan,
+      isZoomingRef,
+      zoomStartRef,
+      containerRef,
       setScale,
-      currentTool,
-      usingRawInput,
       isSelectionToolActive,
+      canvasRef,
       handleSelectionPointerMove,
+      currentTool,
       handleMovePointerMove,
       handleGradientPointerMove,
       updateShiftLineCursor,
-      containerRef,
-      canvasRef,
-      panStartRef,
-      isZoomingRef,
-      zoomStartRef,
       isDrawingRef,
+      usingRawInput,
+      pointIndexRef,
+      latencyProfilerRef,
       strokeStateRef,
       pendingPointsRef,
       inputQueueRef,
-      pointIndexRef,
-      latencyProfilerRef,
     ]
   );
 
-  const handlePointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      // 结束平移
-      if (isPanning) {
-        setIsPanning(false);
-        panStartRef.current = null;
+  const processPointerUpNative = useCallback(
+    (nativeEvent: PointerEvent) => {
+      const activePointerId = activePointerIdRef.current;
+      if (activePointerId !== null && nativeEvent.pointerId !== activePointerId) {
         return;
       }
 
-      // Finish zooming
+      const withCanvasPoint = (handler: (canvasX: number, canvasY: number) => void): void => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, nativeEvent);
+        handler(canvasX, canvasY);
+      };
+
+      if (isPanningRef.current) {
+        setIsPanning(false);
+        panStartRef.current = null;
+        endPointerSession(nativeEvent.pointerId);
+        return;
+      }
+
       if (isZoomingRef.current) {
         isZoomingRef.current = false;
         zoomStartRef.current = null;
-        const container = containerRef.current;
-        if (container) {
-          tryReleasePointerCapture(container, e);
-        }
+        endPointerSession(nativeEvent.pointerId);
         return;
       }
 
-      // Finish selection
       if (isSelectionToolActive) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
-          handleSelectionPointerUp(canvasX, canvasY);
-          tryReleasePointerCapture(canvas, e);
-        }
+        withCanvasPoint((canvasX, canvasY) => handleSelectionPointerUp(canvasX, canvasY));
+        endPointerSession(nativeEvent.pointerId);
         return;
       }
 
       if (currentTool === 'move') {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
-          handleMovePointerUp(canvasX, canvasY, e.nativeEvent);
-          tryReleasePointerCapture(canvas, e);
-        }
+        withCanvasPoint((canvasX, canvasY) => handleMovePointerUp(canvasX, canvasY, nativeEvent));
+        endPointerSession(nativeEvent.pointerId);
         return;
       }
 
       if (currentTool === 'gradient') {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
-          handleGradientPointerUp?.(canvasX, canvasY, e.nativeEvent);
-          tryReleasePointerCapture(canvas, e);
-        }
+        withCanvasPoint((canvasX, canvasY) =>
+          handleGradientPointerUp?.(canvasX, canvasY, nativeEvent)
+        );
+        endPointerSession(nativeEvent.pointerId);
         return;
       }
 
-      // 结束绘画
-      const canvas = canvasRef.current;
-      if (canvas) {
-        tryReleasePointerCapture(canvas, e);
-      }
       usingRawInput.current = false;
-
-      // 完成当前笔触
+      endPointerSession(nativeEvent.pointerId);
       void finishCurrentStroke();
     },
     [
-      isPanning,
       setIsPanning,
-      finishCurrentStroke,
+      panStartRef,
+      isZoomingRef,
+      zoomStartRef,
       isSelectionToolActive,
+      canvasRef,
       handleSelectionPointerUp,
       currentTool,
       handleMovePointerUp,
       handleGradientPointerUp,
-      containerRef,
-      canvasRef,
-      panStartRef,
-      isZoomingRef,
-      zoomStartRef,
-      tryReleasePointerCapture,
       usingRawInput,
+      finishCurrentStroke,
+      endPointerSession,
     ]
   );
 
-  return { handlePointerDown, handlePointerMove, handlePointerUp };
+  const resetPointerSessionOnBlur = useCallback(() => {
+    if (activePointerIdRef.current === null) {
+      return;
+    }
+
+    if (isPanningRef.current) {
+      setIsPanning(false);
+      panStartRef.current = null;
+    }
+
+    if (isZoomingRef.current) {
+      isZoomingRef.current = false;
+      zoomStartRef.current = null;
+    }
+
+    usingRawInput.current = false;
+    endPointerSession();
+    void finishCurrentStroke();
+  }, [
+    setIsPanning,
+    panStartRef,
+    isZoomingRef,
+    zoomStartRef,
+    usingRawInput,
+    endPointerSession,
+    finishCurrentStroke,
+  ]);
+
+  useEffect(() => {
+    const shouldHandleWindowFallbackEvent = (event: PointerEvent): boolean => {
+      const activePointerId = activePointerIdRef.current;
+      if (activePointerId === null || event.pointerId !== activePointerId) return false;
+      if (isEventInsideContainer(containerRef.current, event)) return false;
+      return true;
+    };
+
+    const handleWindowPointerMove = (event: PointerEvent): void => {
+      if (!shouldHandleWindowFallbackEvent(event)) return;
+      processPointerMoveNative(event);
+    };
+
+    const handleWindowPointerUp = (event: PointerEvent): void => {
+      if (!shouldHandleWindowFallbackEvent(event)) return;
+      processPointerUpNative(event);
+    };
+
+    const handleWindowPointerCancel = (event: PointerEvent): void => {
+      if (!shouldHandleWindowFallbackEvent(event)) return;
+      processPointerUpNative(event);
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('pointerup', handleWindowPointerUp, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('pointercancel', handleWindowPointerCancel, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('blur', resetPointerSessionOnBlur);
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove, { capture: true });
+      window.removeEventListener('pointerup', handleWindowPointerUp, { capture: true });
+      window.removeEventListener('pointercancel', handleWindowPointerCancel, { capture: true });
+      window.removeEventListener('blur', resetPointerSessionOnBlur);
+    };
+  }, [containerRef, processPointerMoveNative, processPointerUpNative, resetPointerSessionOnBlur]);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const activePointerId = activePointerIdRef.current;
+      if (activePointerId !== null && activePointerId !== e.pointerId) {
+        return;
+      }
+
+      if (!container.contains(document.activeElement)) {
+        container.focus({ preventScroll: true });
+      }
+
+      if (spacePressed) {
+        beginPointerSession(e.pointerId, (e.nativeEvent as PointerEvent).isTrusted);
+        setIsPanning(true);
+        panStartRef.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
+
+      if (currentTool === 'zoom') {
+        if (isDrawingRef.current) {
+          void finishCurrentStroke();
+        }
+        isZoomingRef.current = true;
+        zoomStartRef.current = {
+          x: e.clientX,
+          y: e.clientY,
+          startScale: scale,
+        };
+        beginPointerSession(e.pointerId, (e.nativeEvent as PointerEvent).isTrusted);
+        return;
+      }
+
+      const pe = e.nativeEvent as PointerEvent;
+      let pressure = 0.5;
+      let tiltX = 0;
+      let tiltY = 0;
+      let rotation = 0;
+      if (pe.pointerType === 'pen') {
+        pressure = pe.pressure > 0 ? pe.pressure : 0;
+      } else if (pe.pressure > 0) {
+        pressure = pe.pressure;
+      }
+      if (isStrokeTool(currentTool)) {
+        const tabletState = useTabletStore.getState();
+        const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
+        const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
+        const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+          ? readPointBufferSince(nativeSeqCursorRef.current)
+          : { points: [], nextSeq: nativeSeqCursorRef.current };
+        if (shouldUseNativeBackend) {
+          nativeSeqCursorRef.current = nextSeq;
+        }
+        const effectiveInput = getEffectiveInputData(
+          pe,
+          shouldUseNativeBackend,
+          bufferedPoints,
+          tabletState.currentPoint,
+          pe
+        );
+        pressure = effectiveInput.pressure;
+        tiltX = effectiveInput.tiltX;
+        tiltY = effectiveInput.tiltY;
+        rotation = effectiveInput.rotation;
+        if (shouldUseNativeBackend) {
+          const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1];
+          if (lastBufferedPoint) {
+            pressure = lastBufferedPoint.pressure;
+          } else if (pe.pointerType === 'pen') {
+            window.__strokeDiagnostics?.onStartPressureFallback();
+            pressure = 0;
+          }
+        }
+      }
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
+
+      updateShiftLineCursor(canvasX, canvasY);
+
+      if (currentTool === 'eyedropper') {
+        void pickColorAt(canvasX, canvasY);
+        return;
+      }
+
+      if (isSelectionToolActive) {
+        const handled = handleSelectionPointerDown(canvasX, canvasY, pe);
+        if (handled) {
+          beginPointerSession(e.pointerId, pe.isTrusted);
+          return;
+        }
+      }
+
+      if (currentTool === 'move') {
+        const handled = handleMovePointerDown(canvasX, canvasY, pe);
+        if (handled) {
+          beginPointerSession(e.pointerId, pe.isTrusted);
+          return;
+        }
+      }
+
+      if (currentTool === 'gradient') {
+        const handled = handleGradientPointerDown?.(canvasX, canvasY, pe) ?? false;
+        if (handled) {
+          beginPointerSession(e.pointerId, pe.isTrusted);
+        }
+        return;
+      }
+
+      const activeLayer = layers.find((l) => l.id === activeLayerId);
+      if (!activeLayerId || !activeLayer?.visible) return;
+
+      let constrainedDown = { x: canvasX, y: canvasY };
+      if (isStrokeTool(currentTool)) {
+        lockShiftLine({ x: canvasX, y: canvasY });
+        constrainedDown = constrainShiftLinePoint(canvasX, canvasY);
+        lastInputPosRef.current = { x: constrainedDown.x, y: constrainedDown.y };
+      }
+
+      beginPointerSession(e.pointerId, pe.isTrusted);
+      usingRawInput.current = false;
+
+      if (!isStrokeTool(currentTool)) {
+        return;
+      }
+
+      onBeforeCanvasMutation?.();
+
+      isDrawingRef.current = true;
+      const idx = pointIndexRef.current++;
+      latencyProfilerRef.current.markInputReceived(idx, pe);
+
+      strokeStateRef.current = 'starting';
+      pendingPointsRef.current = [
+        {
+          x: constrainedDown.x,
+          y: constrainedDown.y,
+          pressure,
+          tiltX,
+          tiltY,
+          rotation,
+          pointIndex: idx,
+        },
+      ];
+      pendingEndRef.current = false;
+
+      window.__strokeDiagnostics?.onStrokeStart();
+      void (async () => {
+        await captureBeforeImage();
+        await initializeBrushStroke();
+      })();
+    },
+    [
+      containerRef,
+      spacePressed,
+      setIsPanning,
+      panStartRef,
+      currentTool,
+      isDrawingRef,
+      finishCurrentStroke,
+      isZoomingRef,
+      zoomStartRef,
+      scale,
+      canvasRef,
+      updateShiftLineCursor,
+      pickColorAt,
+      isSelectionToolActive,
+      handleSelectionPointerDown,
+      handleMovePointerDown,
+      handleGradientPointerDown,
+      layers,
+      activeLayerId,
+      lockShiftLine,
+      constrainShiftLinePoint,
+      lastInputPosRef,
+      beginPointerSession,
+      usingRawInput,
+      onBeforeCanvasMutation,
+      pointIndexRef,
+      latencyProfilerRef,
+      strokeStateRef,
+      pendingPointsRef,
+      pendingEndRef,
+      captureBeforeImage,
+      initializeBrushStroke,
+    ]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      processPointerMoveNative(e.nativeEvent as PointerEvent);
+    },
+    [processPointerMoveNative]
+  );
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      processPointerUpNative(e.nativeEvent as PointerEvent);
+    },
+    [processPointerUpNative]
+  );
+
+  const handlePointerCancel = useCallback(
+    (e: React.PointerEvent) => {
+      processPointerUpNative(e.nativeEvent as PointerEvent);
+    },
+    [processPointerUpNative]
+  );
+
+  return { handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel };
 }

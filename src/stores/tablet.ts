@@ -1,36 +1,12 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-
-type NavigatorWithUAData = Navigator & {
-  userAgentData?: {
-    platform?: string;
-  };
-};
-
-function isWindowsPlatform(): boolean {
-  if (typeof navigator === 'undefined') {
-    return true;
-  }
-
-  const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
-  const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
-  return /windows/i.test(platformHint);
-}
-
-function isMacPlatform(): boolean {
-  if (typeof navigator === 'undefined') {
-    return false;
-  }
-
-  const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
-  const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
-  return /mac/i.test(platformHint);
-}
+import { detectPlatformKind } from '@/utils/platform';
 
 function resolveDefaultRequestedBackend(): BackendType {
-  if (isWindowsPlatform()) return 'wintab';
-  if (isMacPlatform()) return 'macnative';
+  const platformKind = detectPlatformKind();
+  if (platformKind === 'windows') return 'wintab';
+  if (platformKind === 'macos') return 'macnative';
   return 'pointerevent';
 }
 

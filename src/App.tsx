@@ -26,6 +26,8 @@ import { useViewportStore } from './stores/viewport';
 import { useToastStore } from './stores/toast';
 import { initializeGradientStore } from './stores/gradient';
 import { APP_DISPLAY_NAME } from './constants/appMeta';
+import { detectPlatformKind } from './utils/platform';
+import { formatTabletFallbackReason } from './utils/tabletFallback';
 
 // Lazy load DebugPanel (only used in dev mode)
 const DebugPanel = lazy(() => import('./components/DebugPanel'));
@@ -390,7 +392,15 @@ function App() {
     }
 
     lastTabletFallbackRef.current = tabletFallbackReason;
-    pushToast(`Tablet fallback: ${tabletFallbackReason}`, {
+    const fallbackMessage = formatTabletFallbackReason(
+      tabletFallbackReason,
+      detectPlatformKind(),
+      'toast'
+    );
+    if (!fallbackMessage) {
+      return;
+    }
+    pushToast(fallbackMessage, {
       variant: 'info',
       durationMs: 7000,
     });

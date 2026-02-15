@@ -6,6 +6,7 @@ import {
   type QuickExportFormat,
   type QuickExportSettings,
 } from '@/utils/quickExport';
+import { detectPlatformKind, type PlatformKind } from '@/utils/platform';
 
 // Settings file path (relative to app config directory)
 const SETTINGS_FILE = 'settings.json';
@@ -212,24 +213,8 @@ export const DEFAULT_QUICK_EXPORT_SETTINGS: QuickExportSettings = {
   backgroundPreset: 'current-bg',
 };
 
-type NavigatorWithUAData = Navigator & {
-  userAgentData?: {
-    platform?: string;
-  };
-};
-
-type PlatformKind = 'windows' | 'macos' | 'other';
-
 function resolvePlatformKind(): PlatformKind {
-  if (typeof navigator === 'undefined') {
-    return 'windows';
-  }
-
-  const uaDataPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
-  const platformHint = uaDataPlatform ?? navigator.platform ?? navigator.userAgent;
-  if (/windows/i.test(platformHint)) return 'windows';
-  if (/mac/i.test(platformHint)) return 'macos';
-  return 'other';
+  return detectPlatformKind();
 }
 
 function resolveDefaultTabletBackend(): TabletSettings['backend'] {

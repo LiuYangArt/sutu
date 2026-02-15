@@ -12,6 +12,8 @@ import {
   GPURenderScaleMode,
 } from '@/stores/settings';
 import { useTabletStore, BackendType, InputBackpressureMode } from '@/stores/tablet';
+import { detectPlatformKind } from '@/utils/platform';
+import { formatTabletFallbackReason } from '@/utils/tabletFallback';
 import './SettingsPanel.css';
 
 // Tab configuration
@@ -66,14 +68,6 @@ function normalizeBackendType(value: string | null | undefined): BackendType {
   if (value === 'macnative') return 'macnative';
   if (value === 'pointerevent') return 'pointerevent';
   return 'auto';
-}
-
-function detectPlatformKind(): 'windows' | 'macos' | 'other' {
-  if (typeof navigator === 'undefined') return 'windows';
-  const platformHint = navigator.platform ?? navigator.userAgent;
-  if (/windows/i.test(platformHint)) return 'windows';
-  if (/mac/i.test(platformHint)) return 'macos';
-  return 'other';
 }
 
 interface PointerEventDiagnosticsSnapshot {
@@ -423,6 +417,7 @@ function TabletSettings() {
   const showBackendToggle = platformKind === 'windows' || platformKind === 'macos';
   const activeBackendLower =
     typeof activeBackend === 'string' ? activeBackend.toLowerCase() : 'none';
+  const fallbackDisplayReason = formatTabletFallbackReason(fallbackReason, platformKind);
   const requestedBackendType = normalizeBackendType(requestedBackend || tablet.backend);
   const isNativeBackendActive =
     activeBackendLower === 'wintab' || activeBackendLower === 'macnative';
@@ -660,10 +655,10 @@ function TabletSettings() {
               </div>
             </>
           )}
-          {fallbackReason && (
+          {fallbackDisplayReason && (
             <div className="status-row status-row-warning">
               <span>Fallback:</span>
-              <span>{fallbackReason}</span>
+              <span>{fallbackDisplayReason}</span>
             </div>
           )}
         </div>

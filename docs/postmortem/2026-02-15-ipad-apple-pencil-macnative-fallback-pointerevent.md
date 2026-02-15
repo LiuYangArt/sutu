@@ -1,7 +1,7 @@
 # iPad Apple Pencil 提示“macnative 无效并 fallback PointerEvent”复盘（2026-02-15）
 
 **日期**：2026-02-15  
-**状态**：已记录，未修复（先沉淀经验，后续专项处理）
+**状态**：A 方案已落地（PointerEvent 稳健化 + 平台识别/文案修正）；B 方案暂缓
 
 ## 背景
 
@@ -37,11 +37,44 @@
 2. 该提示不等价于“Apple Pencil 压感不可用”。  
 3. 目前缺少 iPad 端的压感可视化/验收闭环，导致无法快速回答“可用但质量如何”。
 
-## 本次不做修复，仅记录的原因
+## A 方案落地范围（本次已完成）
 
-1. 当前主目标是先打通 iPad 真机运行链路。  
-2. 需要先沉淀输入后端事实与排查路径，避免后续重复踩坑。  
-3. Apple Pencil 体验优化应单独成专题，不在本次上线联调内打包处理。
+1. 画布 Pointer 生命周期稳健化：  
+   - 统一将 pointer capture 绑定到 `canvas-container`。  
+   - 增加 `pointercancel` 终止路径。  
+   - 移除“`pointerleave` 直接当 `pointerup`”的提前结束行为。  
+   - 增加 active pointer 过滤与窗口级 `pointermove/up/cancel` 兜底监听。  
+2. 触控手势拦截位置修正：`touch-action: none` 生效点上移到 `canvas-container`。  
+3. iPad 平台识别修正：iPad/iPadOS 默认请求 backend 为 `pointerevent`，不再走 `macnative` 请求再被规范化。  
+4. fallback 文案分流：  
+   - 平台规范化场景改为“按设计使用 PointerEvent（支持 Apple Pencil 压感）”。  
+   - 初始化失败类 fallback 仍保持告警语义。
+
+## A 方案预期收益
+
+1. 修复“Settings 有压感数值但画布无法连续出线”的主链路问题。  
+2. 降低 iPad 用户对 fallback 提示的误读成本。  
+3. 在不引入 iOS 原生后端的前提下，保持 Win/mac 现有链路不变。
+
+## 本轮实测结果（2026-02-15）
+
+1. iPad 实机验证通过：Apple Pencil 在画布连续绘制正常，不再出现“只能画点/无法出线”。  
+2. 压感表现恢复：压力输入与笔触视觉变化一致，主观手感正常。  
+3. 结论：当前 blocker 已解除，A 方案满足“先修可用性与压感闭环”的目标。
+
+## B 方案（iOS Native Backend）暂缓
+
+### 触发条件（满足任一项再立项）
+
+1. A 方案稳定后，仍长期出现 `pointerType=mouse` 且 `pressure/webkitForce` 持续不可用。  
+2. A 方案下仍无法满足 Apple Pencil 压感/倾斜连续性验收门槛。  
+3. 明确出现 WebView PointerEvent 能力上限导致的不可修复体验缺口。
+
+### 最小技术草案（仅记录，不落地）
+
+1. 新增 `IOSNative` backend（Rust + UIKit 桥接），直接采集 `UITouch` 的 `force / altitudeAngle / azimuthAngle(in:)`。  
+2. 对齐现有 `tablet-event-v2` 结构，保持前端融合逻辑最小改动。  
+3. 增加 iPad 专项回归门禁：压感连续性、倾斜、快速连笔、系统打断恢复、Palm Rejection。
 
 ## 后续行动（待办）
 

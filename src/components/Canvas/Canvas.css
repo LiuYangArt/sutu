@@ -4,6 +4,10 @@
   background: var(--app-bg);
   overflow: hidden;
   position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: none;
 }
 
 .canvas-container:focus {
@@ -61,7 +65,6 @@
   display: block;
   /* Inherit cursor from parent .canvas-container (set via JS) */
   cursor: inherit;
-  touch-action: none;
 }
 
 /* Brush size cursor indicator */
