@@ -8,10 +8,11 @@
 
 ```bash
 # 给脚本执行权限（首次）
-chmod +x dev/dev.sh dev/dev.command dev/publish_release.sh dev/publish_release.command
+chmod +x dev/dev.sh dev/dev.command dev/ios_dev.sh dev/ios_dev.command dev/publish_release.sh dev/publish_release.command
 
 # 菜单模式
 ./dev/dev.sh
+./dev/ios_dev.sh
 
 # 命令模式
 ./dev/dev.sh bootstrap
@@ -19,12 +20,15 @@ chmod +x dev/dev.sh dev/dev.command dev/publish_release.sh dev/publish_release.c
 ./dev/dev.sh check
 ./dev/dev.sh build-release   # macOS: 产出 .app/.dmg；Linux: 仅 release 二进制
 ./dev/dev.sh doctor
+./dev/ios_dev.sh bootstrap   # 检查环境 + 初始化 iOS 工程
+./dev/ios_dev.sh dev         # 真机调试（自动 --host）
+./dev/ios_dev.sh open        # 打开 Xcode 进行 iOS 调试
 
 # 发布助手（菜单）
 ./dev/publish_release.sh
 ```
 
-在 macOS Finder 中也可以双击 `dev/dev.command` 或 `dev/publish_release.command` 打开菜单。
+在 macOS Finder 中也可以双击 `dev/dev.command`、`dev/ios_dev.command` 或 `dev/publish_release.command` 打开菜单。
 
 ## 发布配置文档
 

@@ -112,6 +112,7 @@ fn build_not_found() -> Response<Vec<u8>> {
 /// # Panics
 /// Panics if the Tauri application fails to start.
 #[allow(clippy::expect_used)]
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init();
 
