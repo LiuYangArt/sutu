@@ -13,4 +13,11 @@ describe('tileSelectionFillComposite shader selection sampling', () => {
       'textureLoad(selection_tex, vec2<i32>(i32(global_xy.x), i32(global_xy.y)), 0).r'
     );
   });
+
+  it('uses source-over blending against destination alpha', () => {
+    expect(shaderSource).toContain(
+      '(uniforms.fill_color.rgb * src_alpha + dst.rgb * dst_alpha * (1.0 - src_alpha)) / out_alpha;'
+    );
+    expect(shaderSource).not.toContain('src_alpha * (1.0 - dst_alpha)');
+  });
 });

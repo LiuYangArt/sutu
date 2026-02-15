@@ -812,6 +812,12 @@ export function useLayerOperations({
         !selectionAfter.selectionMask ||
         selectionAfter.selectionMaskPending
       ) {
+        console.warn('[SelectionAutoFill] invalid selection snapshot for auto fill', {
+          layerId: activeLayerId,
+          hasSelection: selectionAfter.hasSelection,
+          hasMask: !!selectionAfter.selectionMask,
+          selectionMaskPending: selectionAfter.selectionMaskPending,
+        });
         return false;
       }
       if (!applyGpuSelectionFillToActiveLayer) {
@@ -840,6 +846,10 @@ export function useLayerOperations({
         });
         if (!applied) {
           discardCapturedStrokeHistory();
+          console.warn('[SelectionAutoFill] GPU selection fill commit returned false', {
+            layerId: activeLayerId,
+            dirtyRect,
+          });
           pushToast('GPU_SELECTION_FILL_FAILED: GPU selection fill commit failed.', {
             variant: 'error',
           });

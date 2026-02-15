@@ -60,6 +60,6 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   }
 
   let out_rgb =
-    (uniforms.fill_color.rgb * src_alpha * (1.0 - dst_alpha) + dst.rgb * dst_alpha) / out_alpha;
+    (uniforms.fill_color.rgb * src_alpha + dst.rgb * dst_alpha * (1.0 - src_alpha)) / out_alpha;
   return vec4<f32>(clamp(out_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), out_alpha);
 }

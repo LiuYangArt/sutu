@@ -1599,22 +1599,48 @@ export function Canvas() {
     async (params: ApplyGpuSelectionFillToActiveLayerParams): Promise<boolean> => {
       const gpuRenderer = gpuRendererRef.current;
       const renderer = layerRendererRef.current;
-      if (!gpuRenderer || !renderer) return false;
+      const fail = (message: string, extra?: Record<string, unknown>): false => {
+        if (extra) {
+          console.warn(`[SelectionAutoFillGpu] ${message}`, extra);
+        } else {
+          console.warn(`[SelectionAutoFillGpu] ${message}`);
+        }
+        return false;
+      };
+      if (!gpuRenderer || !renderer) return fail('GPU renderer unavailable');
 
       const layerState = layers.find((layer) => layer.id === params.layerId);
-      if (!layerState || layerState.locked || !layerState.visible) return false;
+      if (!layerState || layerState.locked || !layerState.visible) {
+        return fail('target layer is not editable', {
+          layerId: params.layerId,
+          layerLocked: layerState?.locked ?? null,
+          layerVisible: layerState?.visible ?? null,
+        });
+      }
 
       const selectionState = useSelectionStore.getState();
-      if (selectionState.selectionMaskPending) return false;
-      if (!selectionState.hasSelection || !selectionState.selectionMask) return false;
+      if (selectionState.selectionMaskPending) {
+        return fail('selection mask is still pending', {
+          layerId: params.layerId,
+        });
+      }
+      if (!selectionState.hasSelection || !selectionState.selectionMask) {
+        return fail('selection mask is missing', {
+          layerId: params.layerId,
+          hasSelection: selectionState.hasSelection,
+        });
+      }
 
       const layer = renderer.getLayer(params.layerId);
-      if (!layer) return false;
+      if (!layer) {
+        return fail('target layer missing in renderer', {
+          layerId: params.layerId,
+        });
+      }
 
       const historyStore = gpuStrokeHistoryStoreRef.current;
       const historyEntryId =
         params.historyMeta?.snapshotMode === 'gpu' ? params.historyMeta.entryId : null;
-      const readbackMode = gpuCommitCoordinatorRef.current?.getReadbackMode() ?? 'enabled';
       const finalizeHistory = () => {
         if (historyStore && historyEntryId) {
           historyStore.finalizeStroke(historyEntryId);
@@ -1622,6 +1648,9 @@ export function Canvas() {
       };
 
       try {
+        // Ensure this commit uses the exact selection snapshot passed from commit workflow.
+        gpuRenderer.setSelectionMask(params.selectionMask);
+
         const visibleGpuLayers = getVisibleGpuRenderableLayers();
         for (const visibleLayer of visibleGpuLayers) {
           const sourceLayer = renderer.getLayer(visibleLayer.id);
@@ -1649,31 +1678,32 @@ export function Canvas() {
               : undefined,
         });
         if (committedTiles.length === 0) {
-          return false;
+          return fail('no tiles committed', {
+            layerId: params.layerId,
+            dirtyRect: params.dirtyRect,
+          });
         }
 
-        if (readbackMode === 'enabled') {
-          await gpuRenderer.readbackTilesToLayer({
+        // Selection auto-fill needs immediate CPU canvas coherence for composite/thumbnail/history UX.
+        // Always read back committed tiles here to avoid stale CPU data clobbering GPU results.
+        const synced = await syncGpuLayerTilesToCpu(params.layerId, committedTiles);
+        if (!synced) {
+          return fail('readback sync failed after commit', {
             layerId: params.layerId,
-            tiles: committedTiles,
-            targetCtx: layer.ctx,
+            committedTileCount: committedTiles.length,
           });
-        } else {
-          trackPendingGpuCpuSyncTiles(params.layerId, committedTiles);
-          schedulePendingGpuCpuSync(params.layerId);
         }
         return true;
       } catch (error) {
-        console.warn('[SelectionAutoFillGpu] Failed to commit GPU selection fill', {
+        return fail('Failed to commit GPU selection fill', {
           layerId: params.layerId,
           error,
         });
-        return false;
       } finally {
         finalizeHistory();
       }
     },
-    [getVisibleGpuRenderableLayers, layers, schedulePendingGpuCpuSync, trackPendingGpuCpuSyncTiles]
+    [getVisibleGpuRenderableLayers, layers, syncGpuLayerTilesToCpu]
   );
   commitSelectionFillGpuRef.current = commitSelectionFillGpu;
 
