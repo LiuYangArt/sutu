@@ -44,6 +44,7 @@ interface UseGlobalExportsParams {
   handleClearSelection: () => void;
   handleUndo: () => void;
   handleRedo: () => void;
+  jumpToHistoryIndex?: (targetIndex: number) => Promise<boolean>;
   handleClearLayer: () => void;
   handleDuplicateLayer: (from: string, to: string) => void;
   handleSetLayerOpacity?: (ids: string[], opacity: number) => number;
@@ -179,6 +180,7 @@ export function useGlobalExports({
   handleClearSelection,
   handleUndo,
   handleRedo,
+  jumpToHistoryIndex,
   handleClearLayer,
   handleDuplicateLayer,
   handleSetLayerOpacity,
@@ -221,6 +223,7 @@ export function useGlobalExports({
       ) => Promise<void>;
       __canvasUndo?: () => void;
       __canvasRedo?: () => void;
+      __canvasHistoryJumpTo?: (targetIndex: number) => Promise<boolean>;
       __canvasClearLayer?: () => void;
       __canvasDuplicateLayer?: (from: string, to: string) => void;
       __canvasSetLayerOpacity?: (ids: string[], opacity: number) => number;
@@ -282,6 +285,10 @@ export function useGlobalExports({
     win.__canvasClearSelection = handleClearSelection;
     win.__canvasUndo = handleUndo;
     win.__canvasRedo = handleRedo;
+    win.__canvasHistoryJumpTo = async (targetIndex: number) => {
+      if (!Number.isInteger(targetIndex)) return false;
+      return (await jumpToHistoryIndex?.(targetIndex)) ?? false;
+    };
     win.__canvasClearLayer = handleClearLayer;
     win.__canvasDuplicateLayer = handleDuplicateLayer;
     if (handleSetLayerOpacity) {
@@ -1041,6 +1048,7 @@ export function useGlobalExports({
       delete win.__loadLayerImages;
       delete win.__canvasUndo;
       delete win.__canvasRedo;
+      delete win.__canvasHistoryJumpTo;
       delete win.__canvasClearLayer;
       delete win.__canvasDuplicateLayer;
       delete win.__canvasSetLayerOpacity;
@@ -1078,6 +1086,7 @@ export function useGlobalExports({
     handleClearSelection,
     handleUndo,
     handleRedo,
+    jumpToHistoryIndex,
     handleClearLayer,
     handleDuplicateLayer,
     handleRemoveLayer,

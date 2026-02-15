@@ -49,6 +49,7 @@ function AppMenu(): JSX.Element {
   // Floating panels shown in menu.
   const brushPanel = usePanelStore((s) => s.panels['brush-panel']);
   const gradientPanel = usePanelStore((s) => s.panels['gradient-panel']);
+  const historyPanel = usePanelStore((s) => s.panels['history-panel']);
   const openPanel = usePanelStore((s) => s.openPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
 
@@ -93,6 +94,14 @@ function AppMenu(): JSX.Element {
       closePanel('gradient-panel');
     } else {
       openPanel('gradient-panel');
+    }
+  };
+
+  const handleToggleHistoryPanel = () => {
+    if (historyPanel?.isOpen) {
+      closePanel('history-panel');
+    } else {
+      openPanel('history-panel');
     }
   };
 
@@ -243,6 +252,11 @@ function AppMenu(): JSX.Element {
                 <button className="menu-item" onClick={handleToggleGradientPanel}>
                   <GradientToolIcon size={14} strokeWidth={1.5} />
                   <span>Gradient Editor</span>
+                </button>
+                <button className="menu-item" onClick={handleToggleHistoryPanel}>
+                  <Undo2 size={14} />
+                  <span>History</span>
+                  <span className="shortcut">Ctrl+H</span>
                 </button>
                 <button
                   className="menu-item"
