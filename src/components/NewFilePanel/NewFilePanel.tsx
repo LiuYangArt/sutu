@@ -6,6 +6,7 @@ import {
   type NewFileOrientation,
 } from '@/stores/settings';
 import { useToastStore } from '@/stores/toast';
+import { useI18n } from '@/i18n';
 import {
   buildAllSizePresets,
   findPresetMatchByDimensions,
@@ -45,6 +46,7 @@ export function NewFilePanel({
   defaultValues,
   onCreate,
 }: NewFilePanelProps): JSX.Element | null {
+  const { t } = useI18n();
   const customSizePresets = useSettingsStore((s) => s.newFile.customSizePresets);
   const lastUsed = useSettingsStore((s) => s.newFile.lastUsed);
   const addCustomSizePreset = useSettingsStore((s) => s.addCustomSizePreset);
@@ -192,11 +194,11 @@ export function NewFilePanel({
     const resolvedHeight = parsePositiveInt(height);
 
     if (!name) {
-      pushToast('Preset name is required.', { variant: 'error' });
+      pushToast(t('newFile.toast.presetNameRequired'), { variant: 'error' });
       return;
     }
     if (resolvedWidth === null || resolvedHeight === null) {
-      pushToast('Width and height must be positive integers.', { variant: 'error' });
+      pushToast(t('newFile.toast.widthHeightPositiveInt'), { variant: 'error' });
       return;
     }
 
@@ -205,7 +207,7 @@ export function NewFilePanel({
       (preset) => preset.name.trim().toLocaleLowerCase() === normalizedName
     );
     if (duplicate) {
-      pushToast('Preset name already exists.', { variant: 'error' });
+      pushToast(t('newFile.toast.presetNameExists'), { variant: 'error' });
       return;
     }
 
@@ -216,21 +218,23 @@ export function NewFilePanel({
     });
     setSelectedPresetId(id);
     setCustomPresetName('');
-    pushToast('Custom preset saved.', { variant: 'success' });
+    pushToast(t('newFile.toast.customPresetSaved'), { variant: 'success' });
   }
 
   function handleDeleteCustomPreset(): void {
     if (!selectedPresetId) {
-      pushToast('Please select a custom preset first.', { variant: 'error' });
+      pushToast(t('newFile.toast.selectCustomPresetFirst'), { variant: 'error' });
       return;
     }
     const preset = customSizePresets.find((item) => item.id === selectedPresetId);
     if (!preset) {
-      pushToast('Default presets cannot be deleted.', { variant: 'error' });
+      pushToast(t('newFile.toast.defaultPresetCannotDelete'), { variant: 'error' });
       return;
     }
 
-    const confirmed = window.confirm(`Delete custom preset "${preset.name}"?`);
+    const confirmed = window.confirm(
+      t('newFile.confirm.deleteCustomPreset', { presetName: preset.name })
+    );
     if (!confirmed) return;
 
     removeCustomSizePreset(preset.id);
@@ -246,7 +250,7 @@ export function NewFilePanel({
       setSelectedPresetId(null);
     }
 
-    pushToast('Custom preset deleted.', { variant: 'info' });
+    pushToast(t('newFile.toast.customPresetDeleted'), { variant: 'info' });
   }
 
   if (!isOpen) return null;
@@ -255,8 +259,8 @@ export function NewFilePanel({
     <div className="new-file-overlay">
       <div className="new-file-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         <div className="mica-panel-header new-file-header">
-          <h2>New Document</h2>
-          <button className="new-file-close-btn" onClick={onClose} title="Close">
+          <h2>{t('newFile.title')}</h2>
+          <button className="new-file-close-btn" onClick={onClose} title={t('common.close')}>
             <X size={18} />
           </button>
         </div>
@@ -264,21 +268,21 @@ export function NewFilePanel({
         <div className="new-file-body">
           <div className="new-file-row">
             <div className="new-file-field">
-              <label>Preset</label>
+              <label>{t('newFile.preset')}</label>
               <select
                 className="new-file-select"
                 value={selectedPresetId ?? UNMATCHED_PRESET_ID}
                 onChange={(e) => handlePresetChange(e.target.value)}
               >
-                <option value={UNMATCHED_PRESET_ID}>Custom (Current Size)</option>
-                <optgroup label="Paper">
+                <option value={UNMATCHED_PRESET_ID}>{t('newFile.customCurrentSize')}</option>
+                <optgroup label={t('newFile.group.paper')}>
                   {paperPresets.map((preset) => (
                     <option key={preset.id} value={preset.id}>
                       {preset.name} ({preset.width} × {preset.height})
                     </option>
                   ))}
                 </optgroup>
-                <optgroup label="Device">
+                <optgroup label={t('newFile.group.device')}>
                   {devicePresets.map((preset) => (
                     <option key={preset.id} value={preset.id}>
                       {preset.name} ({preset.width} × {preset.height})
@@ -286,7 +290,7 @@ export function NewFilePanel({
                   ))}
                 </optgroup>
                 {customPresets.length > 0 && (
-                  <optgroup label="Custom">
+                  <optgroup label={t('newFile.group.custom')}>
                     {customPresets.map((preset) => (
                       <option key={preset.id} value={preset.id}>
                         {preset.name} ({preset.width} × {preset.height})
@@ -300,21 +304,21 @@ export function NewFilePanel({
 
           <div className="new-file-row">
             <div className="new-file-field">
-              <label>Orientation</label>
+              <label>{t('newFile.orientation')}</label>
               <div className="new-file-orientation">
                 <button
                   type="button"
                   className={orientation === 'portrait' ? 'active' : ''}
                   onClick={() => handleOrientationChange('portrait')}
                 >
-                  Portrait
+                  {t('newFile.orientationPortrait')}
                 </button>
                 <button
                   type="button"
                   className={orientation === 'landscape' ? 'active' : ''}
                   onClick={() => handleOrientationChange('landscape')}
                 >
-                  Landscape
+                  {t('newFile.orientationLandscape')}
                 </button>
               </div>
             </div>
@@ -322,7 +326,7 @@ export function NewFilePanel({
 
           <div className="new-file-row">
             <div className="new-file-field">
-              <label>Width</label>
+              <label>{t('newFile.width')}</label>
               <input
                 type="number"
                 min={1}
@@ -336,7 +340,7 @@ export function NewFilePanel({
               />
             </div>
             <div className="new-file-field">
-              <label>Height</label>
+              <label>{t('newFile.height')}</label>
               <input
                 type="number"
                 min={1}
@@ -353,16 +357,16 @@ export function NewFilePanel({
 
           <div className="new-file-row">
             <div className="new-file-field">
-              <label>Save Current Size as Custom Preset</label>
+              <label>{t('newFile.saveCurrentSizeAsPreset')}</label>
               <div className="new-file-custom-actions">
                 <input
                   type="text"
                   value={customPresetName}
-                  placeholder="Preset name"
+                  placeholder={t('newFile.presetNamePlaceholder')}
                   onChange={(e) => setCustomPresetName(e.target.value)}
                 />
                 <button type="button" className="new-file-btn" onClick={handleSavePreset}>
-                  Save Preset
+                  {t('newFile.savePreset')}
                 </button>
                 <button
                   type="button"
@@ -370,7 +374,7 @@ export function NewFilePanel({
                   onClick={handleDeleteCustomPreset}
                   disabled={!selectedCustomPreset}
                 >
-                  Delete Selected
+                  {t('newFile.deleteSelected')}
                 </button>
               </div>
             </div>
@@ -378,23 +382,23 @@ export function NewFilePanel({
 
           <div className="new-file-row">
             <div className="new-file-field">
-              <label>Background Contents</label>
+              <label>{t('newFile.backgroundContents')}</label>
               <select
                 className="new-file-select"
                 value={backgroundPreset}
                 onChange={(e) => setBackgroundPreset(e.target.value as BackgroundPreset)}
               >
-                <option value="transparent">Transparent</option>
-                <option value="white">White</option>
-                <option value="black">Black</option>
-                <option value="current-bg">Current Background</option>
+                <option value="transparent">{t('newFile.background.transparent')}</option>
+                <option value="white">{t('newFile.background.white')}</option>
+                <option value="black">{t('newFile.background.black')}</option>
+                <option value="current-bg">{t('newFile.background.currentBackground')}</option>
               </select>
             </div>
           </div>
 
           <div className="new-file-actions">
             <button className="new-file-btn" onClick={onClose} type="button">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               className="new-file-btn primary"
@@ -402,7 +406,7 @@ export function NewFilePanel({
               disabled={!canCreate}
               type="button"
             >
-              Create
+              {t('common.create')}
             </button>
           </div>
         </div>

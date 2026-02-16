@@ -17,6 +17,7 @@ import {
   useGroupedBrushPresets,
   useSelectedPresetIdForCurrentTool,
 } from '@/stores/brushLibrary';
+import { useI18n } from '@/i18n';
 import './BrushLibraryPanel.css';
 
 interface BrushLibraryPanelProps {
@@ -25,6 +26,7 @@ interface BrushLibraryPanelProps {
 }
 
 export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): JSX.Element | null {
+  const { t } = useI18n();
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const presetCount = useBrushLibraryStore((state) => state.presets.length);
   const tipsCount = useBrushLibraryStore((state) => state.tips.length);
@@ -98,7 +100,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
       return;
     }
 
-    const newName = window.prompt('Preset name', selectedPreset.name)?.trim();
+    const newName = window.prompt(t('brushLibrary.prompt.presetName'), selectedPreset.name)?.trim();
     if (!newName || newName === selectedPreset.name) {
       return;
     }
@@ -115,7 +117,9 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
       return;
     }
 
-    const group = window.prompt('Target group', selectedPreset.group ?? '')?.trim();
+    const group = window
+      .prompt(t('brushLibrary.prompt.targetGroup'), selectedPreset.group ?? '')
+      ?.trim();
     if (!group) {
       return;
     }
@@ -128,7 +132,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
   };
 
   const handleRenameGroup = async (groupName: string) => {
-    const nextName = window.prompt('Rename group', groupName)?.trim();
+    const nextName = window.prompt(t('brushLibrary.prompt.renameGroup'), groupName)?.trim();
     if (!nextName || nextName === groupName) {
       return;
     }
@@ -152,7 +156,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
 
   const handleDeleteGroup = async (groupName: string, presetTotal: number) => {
     const confirmed = window.confirm(
-      `Delete group "${groupName}" and all ${presetTotal} presets in it?`
+      t('brushLibrary.confirm.deleteGroup', { groupName, presetTotal })
     );
     if (!confirmed) {
       return;
@@ -194,7 +198,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
     <div className="brush-library-overlay">
       <div className="brush-library-panel mica-panel" onClick={(event) => event.stopPropagation()}>
         <div className="mica-panel-header brush-library-header">
-          <h2>Brush Library</h2>
+          <h2>{t('brushLibrary.title')}</h2>
           <button className="brush-library-close-btn" onClick={onClose}>
             <X size={18} />
           </button>
@@ -205,7 +209,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
             <Search size={14} />
             <input
               type="text"
-              placeholder="Search brushes..."
+              placeholder={t('brushLibrary.searchPlaceholder')}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
             />
@@ -214,13 +218,13 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
           <div className="brush-library-actions">
             <button className="brush-library-btn primary" onClick={handleImport}>
               <Upload size={14} />
-              Import ABR
+              {t('brushLibrary.importAbr')}
             </button>
             <button
               className="brush-library-btn"
               onClick={handleDelete}
               disabled={!selectedPresetId}
-              title="Delete selected preset"
+              title={t('brushLibrary.deleteSelectedPreset')}
             >
               <Trash2 size={14} />
             </button>
@@ -228,7 +232,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
               className="brush-library-btn"
               onClick={handleRenamePreset}
               disabled={!selectedPresetId}
-              title="Rename selected preset"
+              title={t('brushLibrary.renameSelectedPreset')}
             >
               <Edit2 size={14} />
             </button>
@@ -236,7 +240,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
               className="brush-library-btn"
               onClick={handleMovePreset}
               disabled={!selectedPresetId}
-              title="Move selected preset"
+              title={t('brushLibrary.moveSelectedPreset')}
             >
               <ArrowRightLeft size={14} />
             </button>
@@ -252,15 +256,15 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
 
         <div className="brush-library-content">
           {isLoading ? (
-            <div className="brush-library-loading">Loading brush library...</div>
+            <div className="brush-library-loading">{t('brushLibrary.loading')}</div>
           ) : groupedPresets.length === 0 ? (
             <div className="brush-library-empty">
               <FolderPlus size={48} strokeWidth={1} />
-              <h3>No Brushes</h3>
-              <p>Import an .abr file to get started.</p>
+              <h3>{t('brushLibrary.noBrushes')}</h3>
+              <p>{t('brushLibrary.importHint')}</p>
               <button className="brush-library-btn primary" onClick={handleImport}>
                 <Upload size={14} />
-                Import Brushes
+                {t('brushLibrary.importBrushes')}
               </button>
             </div>
           ) : (
@@ -279,8 +283,12 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
                           void handleRenameGroup(group.name);
                         }}
                         disabled={isVirtualGroup}
-                        title={isVirtualGroup ? 'This group cannot be renamed' : 'Rename group'}
-                        aria-label={`Rename group ${group.name}`}
+                        title={
+                          isVirtualGroup
+                            ? t('brushLibrary.virtualGroupCannotRename')
+                            : t('brushLibrary.renameGroup')
+                        }
+                        aria-label={t('brushLibrary.renameGroupAria', { groupName: group.name })}
                       >
                         <Edit2 size={12} />
                       </button>
@@ -291,9 +299,11 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
                         }}
                         disabled={isVirtualGroup}
                         title={
-                          isVirtualGroup ? 'This group cannot be deleted' : 'Delete this group'
+                          isVirtualGroup
+                            ? t('brushLibrary.virtualGroupCannotDelete')
+                            : t('brushLibrary.deleteGroup')
                         }
-                        aria-label={`Delete group ${group.name}`}
+                        aria-label={t('brushLibrary.deleteGroupAria', { groupName: group.name })}
                       >
                         <Trash2 size={12} />
                       </button>
@@ -301,8 +311,15 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
                     <button
                       className="brush-group-toggle-btn"
                       onClick={() => toggleGroupCollapsed(group.name)}
-                      title={isCollapsed ? 'Expand group' : 'Collapse group'}
-                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} group ${group.name}`}
+                      title={
+                        isCollapsed
+                          ? t('brushLibrary.expandGroup')
+                          : t('brushLibrary.collapseGroup')
+                      }
+                      aria-label={t('brushLibrary.toggleGroupAria', {
+                        action: isCollapsed ? t('brushLibrary.expand') : t('brushLibrary.collapse'),
+                        groupName: group.name,
+                      })}
                     >
                       {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                     </button>
@@ -336,8 +353,8 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
         </div>
 
         <div className="brush-library-footer">
-          <span>{presetCount} presets</span>
-          <span>{tipsCount} tips</span>
+          <span>{t('brushLibrary.footer.presets', { count: presetCount })}</span>
+          <span>{t('brushLibrary.footer.tips', { count: tipsCount })}</span>
         </div>
       </div>
     </div>

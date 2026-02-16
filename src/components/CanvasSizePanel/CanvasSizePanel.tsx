@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Link2, Unlink2 } from 'lucide-react';
 import { useDocumentStore, type ResizeCanvasOptions } from '@/stores/document';
 import { useToolStore } from '@/stores/tool';
+import { useI18n } from '@/i18n';
 import './CanvasSizePanel.css';
 
 type ExtensionPreset = 'transparent' | 'white' | 'black' | 'current-bg';
@@ -61,6 +62,7 @@ export function CanvasSizePanel({
   onClose,
   onApply,
 }: CanvasSizePanelProps): JSX.Element | null {
+  const { t } = useI18n();
   const { width: currentWidth, height: currentHeight } = useDocumentStore((s) => ({
     width: s.width,
     height: s.height,
@@ -183,15 +185,15 @@ export function CanvasSizePanel({
     <div className="canvas-size-overlay">
       <div className="canvas-size-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         <div className="mica-panel-header canvas-size-header">
-          <h2>Canvas Size</h2>
-          <button className="canvas-size-close-btn" onClick={onClose} title="Close">
+          <h2>{t('canvasSize.title')}</h2>
+          <button className="canvas-size-close-btn" onClick={onClose} title={t('common.close')}>
             <X size={18} />
           </button>
         </div>
 
         <div className="canvas-size-body">
           <div className="canvas-size-field">
-            <label>Current</label>
+            <label>{t('canvasSize.current')}</label>
             <div className="canvas-size-current">
               {currentWidth} × {currentHeight} px
             </div>
@@ -199,7 +201,7 @@ export function CanvasSizePanel({
 
           <div className="canvas-size-row">
             <div className="canvas-size-field">
-              <label>Width</label>
+              <label>{t('canvasSize.width')}</label>
               <input
                 type="number"
                 min={1}
@@ -212,13 +214,17 @@ export function CanvasSizePanel({
             <button
               className={`canvas-size-link-btn ${keepAspectRatio ? 'active' : ''}`}
               onClick={handleToggleKeepAspectRatio}
-              title={keepAspectRatio ? 'Keep aspect ratio (on)' : 'Keep aspect ratio (off)'}
+              title={
+                keepAspectRatio
+                  ? t('canvasSize.keepAspectRatioOn')
+                  : t('canvasSize.keepAspectRatioOff')
+              }
             >
               {keepAspectRatio ? <Link2 size={16} /> : <Unlink2 size={16} />}
             </button>
 
             <div className="canvas-size-field">
-              <label>Height</label>
+              <label>{t('canvasSize.height')}</label>
               <input
                 type="number"
                 min={1}
@@ -231,30 +237,30 @@ export function CanvasSizePanel({
 
           <div className="canvas-size-row">
             <div className="canvas-size-field">
-              <label>Mode</label>
+              <label>{t('canvasSize.mode')}</label>
               <div className="canvas-size-mode">
                 <button
                   className={!scaleContent ? 'active' : ''}
                   onClick={() => setScaleContent(false)}
                   type="button"
-                  title="Crop/Extend canvas"
+                  title={t('canvasSize.cropExtend')}
                 >
-                  Crop/Extend
+                  {t('canvasSize.cropExtend')}
                 </button>
                 <button
                   className={scaleContent ? 'active' : ''}
                   onClick={() => setScaleContent(true)}
                   type="button"
-                  title="Scale existing content"
+                  title={t('canvasSize.scaleContent')}
                 >
-                  Scale Content
+                  {t('canvasSize.scaleContent')}
                 </button>
               </div>
             </div>
           </div>
 
           <div className="canvas-size-section">
-            <div className="canvas-size-section-title">Anchor</div>
+            <div className="canvas-size-section-title">{t('canvasSize.anchor')}</div>
             <fieldset className="canvas-size-anchor-fieldset" disabled={scaleContent}>
               <div className="canvas-size-anchor-grid">
                 {anchors.map((a) => (
@@ -274,22 +280,22 @@ export function CanvasSizePanel({
 
           <div className="canvas-size-row">
             <div className="canvas-size-field">
-              <label>Extension Fill</label>
+              <label>{t('canvasSize.extensionFill')}</label>
               <select
                 className="canvas-size-select"
                 value={extensionPreset}
                 onChange={(e) => setExtensionPreset(e.target.value as ExtensionPreset)}
                 disabled={scaleContent}
               >
-                <option value="transparent">Transparent</option>
-                <option value="white">White</option>
-                <option value="black">Black</option>
-                <option value="current-bg">Current Background</option>
+                <option value="transparent">{t('canvasSize.background.transparent')}</option>
+                <option value="white">{t('canvasSize.background.white')}</option>
+                <option value="black">{t('canvasSize.background.black')}</option>
+                <option value="current-bg">{t('canvasSize.background.currentBackground')}</option>
               </select>
             </div>
 
             <div className="canvas-size-field">
-              <label>Resample</label>
+              <label>{t('canvasSize.resample')}</label>
               <select
                 className="canvas-size-select"
                 value={resampleMode}
@@ -298,16 +304,16 @@ export function CanvasSizePanel({
                 }
                 disabled={!scaleContent}
               >
-                <option value="nearest">Nearest</option>
-                <option value="bilinear">Bilinear</option>
-                <option value="bicubic">Bicubic</option>
+                <option value="nearest">{t('canvasSize.resampleNearest')}</option>
+                <option value="bilinear">{t('canvasSize.resampleBilinear')}</option>
+                <option value="bicubic">{t('canvasSize.resampleBicubic')}</option>
               </select>
             </div>
           </div>
 
           <div className="canvas-size-actions">
             <button className="canvas-size-btn" onClick={onClose} type="button">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               className="canvas-size-btn primary"
@@ -315,7 +321,7 @@ export function CanvasSizePanel({
               disabled={!canApply}
               type="button"
             >
-              Apply
+              {t('common.apply')}
             </button>
           </div>
         </div>

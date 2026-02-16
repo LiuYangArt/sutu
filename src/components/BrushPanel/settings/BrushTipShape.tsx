@@ -5,6 +5,7 @@ import { SliderRow } from '../BrushPanelComponents';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
 import { VirtualizedTipGrid } from '../VirtualizedTipGrid';
+import { useI18n } from '@/i18n';
 
 type MainTipListItem =
   | { kind: 'default' }
@@ -22,6 +23,7 @@ function buildMainTipItems(tips: BrushTipResource[]): MainTipListItem[] {
 }
 
 export function BrushTipShape(): JSX.Element {
+  const { t } = useI18n();
   const {
     brushSize,
     setBrushSize,
@@ -51,7 +53,7 @@ export function BrushTipShape(): JSX.Element {
         <button
           className={`abr-preset-item ${activeTipId === null ? 'selected' : ''}`}
           onClick={() => clearBrushTexture()}
-          title="Default Round"
+          title={t('brushPanel.tipShape.defaultRound')}
         >
           <div className="abr-preset-round-icon" style={{ width: '24px', height: '24px' }} />
         </button>
@@ -76,10 +78,10 @@ export function BrushTipShape(): JSX.Element {
 
   return (
     <div className="brush-panel-section">
-      <h4>Brush Tip Shape</h4>
+      <h4>{t('brushPanel.tab.tipShape')}</h4>
 
       <div className="dual-brush-selector-group" style={{ marginTop: '8px' }}>
-        <label className="brush-setting-label">Main Tip</label>
+        <label className="brush-setting-label">{t('brushPanel.tipShape.mainTip')}</label>
         <VirtualizedTipGrid
           items={tipItems}
           getItemKey={(item) =>
@@ -92,7 +94,7 @@ export function BrushTipShape(): JSX.Element {
       </div>
 
       <SliderRow
-        label="Size"
+        label={t('toolbar.brush.size')}
         value={brushSize}
         min={1}
         max={1000}
@@ -102,7 +104,7 @@ export function BrushTipShape(): JSX.Element {
       />
 
       <SliderRow
-        label="Hardness"
+        label={t('brushPanel.tipShape.hardness')}
         value={brushHardness}
         min={0}
         max={100}
@@ -112,7 +114,7 @@ export function BrushTipShape(): JSX.Element {
       />
 
       <SliderRow
-        label="Roundness"
+        label={t('brushPanel.tipShape.roundness')}
         value={brushRoundness}
         min={1}
         max={100}
@@ -121,7 +123,7 @@ export function BrushTipShape(): JSX.Element {
       />
 
       <SliderRow
-        label="Angle"
+        label={t('brushPanel.tipShape.angle')}
         value={brushAngle}
         min={0}
         max={360}
@@ -130,7 +132,7 @@ export function BrushTipShape(): JSX.Element {
       />
 
       <SliderRow
-        label="Spacing"
+        label={t('brushPanel.tipShape.spacing')}
         value={Math.round(brushSpacing * 100)}
         min={1}
         max={1000}

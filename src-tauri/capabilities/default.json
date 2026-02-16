@@ -55,6 +55,17 @@
       ]
     },
     {
+      "identifier": "fs:allow-read-dir",
+      "allow": [
+        {
+          "path": "$APPCONFIG"
+        },
+        {
+          "path": "$APPCONFIG/**"
+        }
+      ]
+    },
+    {
       "identifier": "fs:allow-write-text-file",
       "allow": [
         {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import { useI18n } from '@/i18n';
 import './ConfirmUnsavedChangesDialog.css';
 
 interface ConfirmUnsavedChangesDialogProps {
@@ -15,6 +16,7 @@ export function ConfirmUnsavedChangesDialog({
   onDontSave,
   onCancel,
 }: ConfirmUnsavedChangesDialogProps): JSX.Element | null {
+  const { t } = useI18n();
   const [isSaving, setIsSaving] = useState(false);
 
   if (!isOpen) return null;
@@ -33,16 +35,18 @@ export function ConfirmUnsavedChangesDialog({
     <div className="confirm-unsaved-overlay">
       <div className="confirm-unsaved-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         <div className="mica-panel-header confirm-unsaved-header">
-          <h2>Unsaved Changes</h2>
-          <button className="confirm-unsaved-close-btn" onClick={onCancel} title="Close">
+          <h2>{t('confirmUnsaved.title')}</h2>
+          <button
+            className="confirm-unsaved-close-btn"
+            onClick={onCancel}
+            title={t('common.close')}
+          >
             <X size={18} />
           </button>
         </div>
 
         <div className="confirm-unsaved-body">
-          <div className="confirm-unsaved-text">
-            You have unsaved changes. Save before creating a new file?
-          </div>
+          <div className="confirm-unsaved-text">{t('confirmUnsaved.message')}</div>
 
           <div className="confirm-unsaved-actions">
             <button
@@ -51,7 +55,7 @@ export function ConfirmUnsavedChangesDialog({
               type="button"
               disabled={isSaving}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               className="confirm-unsaved-btn danger"
@@ -59,7 +63,7 @@ export function ConfirmUnsavedChangesDialog({
               type="button"
               disabled={isSaving}
             >
-              Don&apos;t Save
+              {t('confirmUnsaved.dontSave')}
             </button>
             <button
               className="confirm-unsaved-btn primary"
@@ -67,7 +71,7 @@ export function ConfirmUnsavedChangesDialog({
               type="button"
               disabled={isSaving}
             >
-              Save
+              {t('common.save')}
             </button>
           </div>
         </div>

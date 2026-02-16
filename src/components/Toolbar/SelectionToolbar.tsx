@@ -1,17 +1,19 @@
 import { PaintBucket } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings';
+import { useI18n } from '@/i18n';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
 export function SelectionToolbar() {
+  const { t } = useI18n();
   const autoFillEnabled = useSettingsStore((s) => s.general.selectionAutoFillEnabled);
   const previewTranslucent = useSettingsStore((s) => s.general.selectionPreviewTranslucent);
   const setAutoFillEnabled = useSettingsStore((s) => s.setSelectionAutoFillEnabled);
   const setPreviewTranslucent = useSettingsStore((s) => s.setSelectionPreviewTranslucent);
   const previewToggleDisabled = !autoFillEnabled;
   const previewToggleTitle = previewTranslucent
-    ? 'Translucent Preview: On'
-    : 'Translucent Preview: Off';
+    ? t('toolbar.selection.translucentPreviewOn')
+    : t('toolbar.selection.translucentPreviewOff');
 
   function handleToggleAutoFill(): void {
     setAutoFillEnabled(!autoFillEnabled);
@@ -27,8 +29,8 @@ export function SelectionToolbar() {
         type="button"
         className={`tool-option-btn selection-auto-fill-btn ${autoFillEnabled ? 'active' : ''}`}
         onClick={handleToggleAutoFill}
-        title="Auto Fill Selection"
-        aria-label="Auto Fill Selection"
+        title={t('toolbar.selection.autoFillSelection')}
+        aria-label={t('toolbar.selection.autoFillSelection')}
         aria-pressed={autoFillEnabled}
       >
         <PaintBucket {...ICON_PROPS} />
@@ -40,11 +42,13 @@ export function SelectionToolbar() {
         }`}
         onClick={handleTogglePreviewTranslucent}
         title={previewToggleTitle}
-        aria-label="Translucent Preview"
+        aria-label={t('toolbar.selection.translucentPreview')}
         aria-pressed={previewTranslucent}
         disabled={previewToggleDisabled}
       >
-        <span className="selection-preview-toggle-label">Translucent Preview</span>
+        <span className="selection-preview-toggle-label">
+          {t('toolbar.selection.translucentPreview')}
+        </span>
       </button>
     </div>
   );

@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { useDocumentStore, type BlendMode } from '@/stores/document';
 import { useToastStore } from '@/stores/toast';
-import { BLEND_MODE_MENU_ITEMS, getBlendModeLabel } from '@/utils/blendModeMenu';
+import { useI18n } from '@/i18n';
+import { BLEND_MODE_MENU_ITEMS, getBlendModeLabelKey } from '@/utils/blendModeMenu';
 import './LayerPanel.css';
 const CONTEXT_MENU_ESTIMATED_WIDTH = 240;
 const CONTEXT_MENU_ESTIMATED_HEIGHT = 280;
@@ -49,6 +50,7 @@ function resolveContextMenuLayerId(
 }
 
 export function LayerPanel(): JSX.Element {
+  const { t } = useI18n();
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [draggedIds, setDraggedIds] = useState<string[]>([]);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -112,7 +114,7 @@ export function LayerPanel(): JSX.Element {
   const selectedLayerIdSet = new Set(selectedLayerIds);
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const activeBlendMode = activeLayer?.blendMode ?? 'normal';
-  const activeBlendModeLabel = getBlendModeLabel(activeBlendMode);
+  const activeBlendModeLabel = t(getBlendModeLabelKey(activeBlendMode));
   const displayLayers = [...layers].reverse();
   const displayLayerIds = displayLayers.map((layer) => layer.id);
   const { width: thumbWidth, height: thumbHeight } = calculateThumbnailDimensions(width, height);
@@ -159,12 +161,15 @@ export function LayerPanel(): JSX.Element {
         visible: true,
         mode,
         targetIds: orderedIds,
-        value: mode === 'batch' ? 'newname' : (firstTarget?.name ?? ''),
+        value:
+          mode === 'batch'
+            ? t('layerPanel.renameDialog.defaultBatchBaseName')
+            : (firstTarget?.name ?? ''),
       });
       setEditingLayerId(null);
       closeContextMenu();
     },
-    [closeContextMenu, getDisplayOrderedSelectionIds, layers]
+    [closeContextMenu, getDisplayOrderedSelectionIds, layers, t]
   );
 
   const handleRenameDialogChange = useCallback((value: string) => {
@@ -174,7 +179,7 @@ export function LayerPanel(): JSX.Element {
   const applyRenameDialog = useCallback(() => {
     const baseName = renameDialog.value.trim();
     if (!baseName) {
-      pushToast('Layer name cannot be empty.', { variant: 'error' });
+      pushToast(t('layerPanel.toast.layerNameEmpty'), { variant: 'error' });
       return;
     }
 
@@ -381,9 +386,12 @@ export function LayerPanel(): JSX.Element {
   }, [closeContextMenu, getContextSelectionIds, openRenameDialog]);
 
   const handleCreateLayerFromContextMenu = useCallback(() => {
-    addLayer({ name: getNextLayerName('Layer', layers.length), type: 'raster' });
+    addLayer({
+      name: getNextLayerName(t('layerPanel.defaultLayerName'), layers.length),
+      type: 'raster',
+    });
     closeContextMenu();
-  }, [addLayer, closeContextMenu, layers.length]);
+  }, [addLayer, closeContextMenu, layers.length, t]);
 
   const handleDeleteLayer = useCallback(() => {
     const targetIds = getContextSelectionIds();
@@ -442,9 +450,15 @@ export function LayerPanel(): JSX.Element {
       }
 
       if (editableLayerIds.length > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
-        pushToast(`Skipped ${lockedSkipped} locked + ${backgroundSkipped} background layer(s).`, {
-          variant: 'info',
-        });
+        pushToast(
+          t('layerPanel.toast.skippedLockedBackground', {
+            locked: lockedSkipped,
+            background: backgroundSkipped,
+          }),
+          {
+            variant: 'info',
+          }
+        );
       }
 
       return editableLayerIds;
@@ -593,12 +607,18 @@ export function LayerPanel(): JSX.Element {
   }
 
   function handleAddLayer(): void {
-    addLayer({ name: getNextLayerName('Layer', layers.length), type: 'raster' });
+    addLayer({
+      name: getNextLayerName(t('layerPanel.defaultLayerName'), layers.length),
+      type: 'raster',
+    });
   }
 
   function handleAddGroup(): void {
     // TODO: Implement group/folder layer type
-    addLayer({ name: getNextLayerName('Group', layers.length), type: 'raster' });
+    addLayer({
+      name: getNextLayerName(t('layerPanel.defaultGroupName'), layers.length),
+      type: 'raster',
+    });
   }
 
   // Handle rename completion
@@ -655,9 +675,17 @@ export function LayerPanel(): JSX.Element {
   const canMergeContextSelection = contextSelectionCount > 1;
   const canDeleteContextSelection = contextSelectionCount > 0 && layers.length > 1;
   const contextDeleteLabel =
-    contextSelectionCount > 1 ? `Delete ${contextSelectionCount} Layers` : 'Delete Layer';
-  const renameDialogTitle = renameDialog.mode === 'batch' ? 'Batch Rename Layers' : 'Rename Layer';
-  const renameDialogInputLabel = renameDialog.mode === 'batch' ? 'Base Name' : 'Layer Name';
+    contextSelectionCount > 1
+      ? t('layerPanel.contextMenu.deleteLayers', { count: contextSelectionCount })
+      : t('layerPanel.contextMenu.deleteLayer');
+  const renameDialogTitle =
+    renameDialog.mode === 'batch'
+      ? t('layerPanel.renameDialog.batchTitle')
+      : t('layerPanel.renameDialog.title');
+  const renameDialogInputLabel =
+    renameDialog.mode === 'batch'
+      ? t('layerPanel.renameDialog.baseName')
+      : t('layerPanel.renameDialog.layerName');
   const contextMenuPosition = clampContextMenuPosition(contextMenu.x, contextMenu.y);
 
   return (
@@ -671,7 +699,7 @@ export function LayerPanel(): JSX.Element {
         onContextMenu={handleLayerListContextMenu}
       >
         {layers.length === 0 ? (
-          <div className="layer-empty">No layers</div>
+          <div className="layer-empty">{t('layerPanel.empty')}</div>
         ) : (
           displayLayers.map((layer) => (
             <LayerItem
@@ -717,7 +745,11 @@ export function LayerPanel(): JSX.Element {
           </button>
 
           {blendMenuOpen && activeLayer && (
-            <div className="blend-mode-dropdown" role="listbox" aria-label="Blend Mode">
+            <div
+              className="blend-mode-dropdown"
+              role="listbox"
+              aria-label={t('layerPanel.blendMode')}
+            >
               {BLEND_MODE_MENU_ITEMS.map((item) => {
                 if (item.kind === 'separator') {
                   return <div key={item.key} className="blend-mode-divider" aria-hidden />;
@@ -735,7 +767,7 @@ export function LayerPanel(): JSX.Element {
                       setBlendMenuOpen(false);
                     }}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                   </button>
                 );
               })}
@@ -744,7 +776,7 @@ export function LayerPanel(): JSX.Element {
         </div>
 
         <label className="opacity-control">
-          <span>Opacity:</span>
+          <span>{t('layerPanel.opacity')}</span>
           <input
             type="range"
             min="0"
@@ -759,16 +791,24 @@ export function LayerPanel(): JSX.Element {
         </label>
 
         <div className="layer-toolbar">
-          <button className="toolbar-btn" onClick={handleAddLayer} title="New Layer">
+          <button
+            className="toolbar-btn"
+            onClick={handleAddLayer}
+            title={t('layerPanel.toolbar.newLayer')}
+          >
             <Plus size={16} />
           </button>
-          <button className="toolbar-btn" onClick={handleAddGroup} title="New Group">
+          <button
+            className="toolbar-btn"
+            onClick={handleAddGroup}
+            title={t('layerPanel.toolbar.newGroup')}
+          >
             <FolderPlus size={16} />
           </button>
           <button
             className="toolbar-btn"
             onClick={handleClearLayer}
-            title="Clear Layer"
+            title={t('layerPanel.toolbar.clearLayer')}
             disabled={!activeLayerId}
           >
             <Eraser size={16} />
@@ -776,7 +816,11 @@ export function LayerPanel(): JSX.Element {
           <button
             className={`toolbar-btn ${activeLayer?.locked ? 'active' : ''}`}
             onClick={handleToggleActiveLock}
-            title={activeLayer?.locked ? 'Unlock Layer' : 'Lock Layer'}
+            title={
+              activeLayer?.locked
+                ? t('layerPanel.toolbar.unlockLayer')
+                : t('layerPanel.toolbar.lockLayer')
+            }
             disabled={!activeLayerId}
           >
             {activeLayer?.locked ? <Lock size={16} /> : <Unlock size={16} />}
@@ -784,7 +828,7 @@ export function LayerPanel(): JSX.Element {
           <button
             className="toolbar-btn danger"
             onClick={handleDeleteActiveLayer}
-            title="Delete Layer"
+            title={t('layerPanel.toolbar.deleteLayer')}
             disabled={!activeLayerId || layers.length <= 1}
           >
             <Trash2 size={16} />
@@ -806,7 +850,7 @@ export function LayerPanel(): JSX.Element {
           >
             <button className="context-menu-item" onClick={handleCreateLayerFromContextMenu}>
               <Plus size={14} />
-              <span>New Layer</span>
+              <span>{t('layerPanel.contextMenu.newLayer')}</span>
               <span className="context-menu-shortcut">N</span>
             </button>
             <button
@@ -815,7 +859,11 @@ export function LayerPanel(): JSX.Element {
               disabled={contextSelectionCount === 0}
             >
               <Pencil size={14} />
-              <span>{contextSelectionCount > 1 ? 'Batch Rename...' : 'Rename...'}</span>
+              <span>
+                {contextSelectionCount > 1
+                  ? t('layerPanel.contextMenu.batchRename')
+                  : t('layerPanel.contextMenu.rename')}
+              </span>
               <span className="context-menu-shortcut">F2</span>
             </button>
             <div className="context-menu-divider" />
@@ -825,7 +873,7 @@ export function LayerPanel(): JSX.Element {
               disabled={!contextHasLayer}
             >
               <Copy size={14} />
-              <span>Duplicate Layer</span>
+              <span>{t('layerPanel.contextMenu.duplicateLayer')}</span>
             </button>
             <button
               className="context-menu-item"
@@ -833,7 +881,7 @@ export function LayerPanel(): JSX.Element {
               disabled={!canMergeContextSelection}
             >
               <FolderPlus size={14} />
-              <span>Merge Selected Layers</span>
+              <span>{t('layerPanel.contextMenu.mergeSelectedLayers')}</span>
               <span className="context-menu-shortcut">Ctrl+E</span>
             </button>
             <button
@@ -842,7 +890,7 @@ export function LayerPanel(): JSX.Element {
               disabled={layers.length < 2}
             >
               <Layers size={14} />
-              <span>Merge All Layers</span>
+              <span>{t('layerPanel.contextMenu.mergeAllLayers')}</span>
               <span className="context-menu-shortcut">Ctrl+Alt+E</span>
             </button>
             <div className="context-menu-divider" />
@@ -895,13 +943,11 @@ export function LayerPanel(): JSX.Element {
                   }}
                 />
                 {renameDialog.mode === 'batch' && (
-                  <p className="layer-rename-tip">
-                    Naming order is top to bottom: name, name_001, name_002...
-                  </p>
+                  <p className="layer-rename-tip">{t('layerPanel.renameDialog.batchTip')}</p>
                 )}
                 <div className="layer-rename-actions">
                   <button type="button" className="layer-rename-btn" onClick={closeRenameDialog}>
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button
                     type="button"
@@ -909,7 +955,7 @@ export function LayerPanel(): JSX.Element {
                     onClick={applyRenameDialog}
                     disabled={!renameDialog.value.trim()}
                   >
-                    Apply
+                    {t('common.apply')}
                   </button>
                 </div>
               </div>
@@ -993,6 +1039,7 @@ const LayerItem = memo(function LayerItem({
   onRenameCancel,
   onStartEditing,
 }: LayerItemProps) {
+  const { t } = useI18n();
   // Track if drag started from handle
   const dragFromHandleRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1064,7 +1111,9 @@ const LayerItem = memo(function LayerItem({
           e.stopPropagation();
           onToggleVisibility(layer.id);
         }}
-        title={layer.visible ? 'Hide Layer' : 'Show Layer'}
+        title={
+          layer.visible ? t('layerPanel.layerItem.hideLayer') : t('layerPanel.layerItem.showLayer')
+        }
       >
         {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
       </button>
