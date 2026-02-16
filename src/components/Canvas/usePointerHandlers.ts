@@ -22,6 +22,7 @@ interface QueuedPoint {
   tiltX: number;
   tiltY: number;
   rotation: number;
+  timestampMs: number;
   pointIndex: number;
 }
 
@@ -354,7 +355,7 @@ export function usePointerHandlers({
 
       for (const evt of coalescedEvents) {
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
-        const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
+        const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
           evt,
           shouldUseNativeBackend,
           bufferedPoints,
@@ -374,6 +375,7 @@ export function usePointerHandlers({
             tiltX,
             tiltY,
             rotation,
+            timestampMs,
             pointIndex: idx,
           });
           window.__strokeDiagnostics?.onPointBuffered();
@@ -385,6 +387,7 @@ export function usePointerHandlers({
             tiltX,
             tiltY,
             rotation,
+            timestampMs,
             pointIndex: idx,
           });
           window.__strokeDiagnostics?.onPointBuffered();
@@ -597,6 +600,7 @@ export function usePointerHandlers({
       let tiltX = 0;
       let tiltY = 0;
       let rotation = 0;
+      let timestampMs = Number.isFinite(pe.timeStamp) ? pe.timeStamp : performance.now();
       if (pe.pointerType === 'pen') {
         pressure = pe.pressure > 0 ? pe.pressure : 0;
       } else if (pe.pressure > 0) {
@@ -623,10 +627,12 @@ export function usePointerHandlers({
         tiltX = effectiveInput.tiltX;
         tiltY = effectiveInput.tiltY;
         rotation = effectiveInput.rotation;
+        timestampMs = effectiveInput.timestampMs;
         if (shouldUseNativeBackend) {
           const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1];
           if (lastBufferedPoint) {
             pressure = lastBufferedPoint.pressure;
+            timestampMs = lastBufferedPoint.timestamp_ms;
           } else if (pe.pointerType === 'pen') {
             window.__strokeDiagnostics?.onStartPressureFallback();
             pressure = 0;
@@ -702,6 +708,7 @@ export function usePointerHandlers({
           tiltX,
           tiltY,
           rotation,
+          timestampMs,
           pointIndex: idx,
         },
       ];

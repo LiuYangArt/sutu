@@ -24,6 +24,7 @@ import { patternManager, type PatternData } from './patternManager';
 import { calculateTextureInfluence } from './textureRendering';
 import { applyScatter } from './scatterDynamics';
 import { getNoisePattern, NOISE_PATTERN_ID } from './noiseTexture';
+import { BrushSpeedEstimator } from './brushSpeedEstimator';
 
 export type MaskType = 'gaussian';
 
@@ -1307,15 +1308,33 @@ export class StrokeAccumulator {
  * - Prevents "stair-step" artifacts at low pressure
  * - Adds adaptive dab density when pressure changes rapidly
  */
+export interface BrushStamperInputOptions {
+  timestampMs?: number;
+  maxBrushSpeedPxPerMs?: number;
+  brushSpeedSmoothingSamples?: number;
+  lowPressureAdaptiveSmoothingEnabled?: boolean;
+  tailTaperEnabled?: boolean;
+}
+
 export class BrushStamper {
   private accumulatedDistance: number = 0;
   private lastPoint: { x: number; y: number; pressure: number } | null = null;
+  private prevPoint: { x: number; y: number; pressure: number } | null = null;
   private isStrokeStart: boolean = true;
   private strokeStartPoint: { x: number; y: number } | null = null;
   private hasMovedEnough: boolean = false;
 
   // Smoothed pressure using EMA
   private smoothedPressure: number = 0;
+  private readonly speedEstimator = new BrushSpeedEstimator();
+  private lastNormalizedSpeed = 0;
+  private tailSampleHistory: Array<{
+    x: number;
+    y: number;
+    pressure: number;
+    normalizedSpeed: number;
+    timestampMs: number;
+  }> = [];
 
   // Minimum movement in pixels before we start the stroke
   // This prevents pressure buildup at stationary position
@@ -1327,6 +1346,29 @@ export class BrushStamper {
 
   // Additional dabs when pressure changes rapidly (prevents stepping)
   private static readonly PRESSURE_CHANGE_THRESHOLD = 0.1;
+  private static readonly LOW_PRESSURE_THRESHOLD = 0.15;
+  private static readonly MAX_TAIL_HISTORY = 32;
+  private static readonly MIN_TAIL_SAMPLES = 4;
+
+  private static clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+  }
+
+  private static clampInt(value: number, min: number, max: number): number {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, Math.round(value)));
+  }
+
+  private static resolveTimestampMs(timestampMs: number | undefined): number {
+    if (Number.isFinite(timestampMs)) {
+      return Number(timestampMs);
+    }
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      return performance.now();
+    }
+    return Date.now();
+  }
 
   /**
    * Reset for a new stroke
@@ -1334,26 +1376,120 @@ export class BrushStamper {
   beginStroke(): void {
     this.accumulatedDistance = 0;
     this.lastPoint = null;
+    this.prevPoint = null;
     this.isStrokeStart = true;
     this.strokeStartPoint = null;
     this.hasMovedEnough = false;
     this.smoothedPressure = 0;
+    this.speedEstimator.reset();
+    this.lastNormalizedSpeed = 0;
+    this.tailSampleHistory = [];
   }
 
   /**
    * Apply exponential moving average to smooth pressure
    */
-  private smoothPressure(rawPressure: number): number {
+  private smoothPressure(rawPressure: number, options: BrushStamperInputOptions): number {
+    const normalizedSpeed = this.lastNormalizedSpeed;
+    let smoothingAlpha = BrushStamper.PRESSURE_SMOOTHING;
+
+    if (options.lowPressureAdaptiveSmoothingEnabled !== false) {
+      const lowPressureFactor = BrushStamper.clamp01(
+        (BrushStamper.LOW_PRESSURE_THRESHOLD - rawPressure) / BrushStamper.LOW_PRESSURE_THRESHOLD
+      );
+      if (lowPressureFactor > 0) {
+        const adaptiveReduction =
+          0.45 * lowPressureFactor + 0.2 * lowPressureFactor * normalizedSpeed;
+        smoothingAlpha = BrushStamper.clamp01(
+          BrushStamper.PRESSURE_SMOOTHING * (1 - adaptiveReduction)
+        );
+        smoothingAlpha = Math.max(0.12, Math.min(0.75, smoothingAlpha));
+      }
+    }
+
     if (this.smoothedPressure === 0) {
       // First pressure reading - initialize directly
       this.smoothedPressure = rawPressure;
     } else {
       // EMA: smoothed = alpha * raw + (1-alpha) * previous
       this.smoothedPressure =
-        BrushStamper.PRESSURE_SMOOTHING * rawPressure +
-        (1 - BrushStamper.PRESSURE_SMOOTHING) * this.smoothedPressure;
+        smoothingAlpha * rawPressure + (1 - smoothingAlpha) * this.smoothedPressure;
     }
     return this.smoothedPressure;
+  }
+
+  private recordTailSample(
+    x: number,
+    y: number,
+    pressure: number,
+    normalizedSpeed: number,
+    timestampMs: number
+  ): void {
+    this.tailSampleHistory.push({
+      x,
+      y,
+      pressure: BrushStamper.clamp01(pressure),
+      normalizedSpeed: BrushStamper.clamp01(normalizedSpeed),
+      timestampMs,
+    });
+    if (this.tailSampleHistory.length > BrushStamper.MAX_TAIL_HISTORY) {
+      this.tailSampleHistory.shift();
+    }
+  }
+
+  private shouldGenerateTail(options: BrushStamperInputOptions): boolean {
+    if (options.tailTaperEnabled === false) return false;
+    if (!this.lastPoint || !this.prevPoint) return false;
+    if (this.tailSampleHistory.length < BrushStamper.MIN_TAIL_SAMPLES) return false;
+
+    const recent = this.tailSampleHistory.slice(-6);
+    const first = recent[0]!;
+    const last = recent[recent.length - 1]!;
+    const avgSpeed =
+      recent.reduce((sum, sample) => sum + sample.normalizedSpeed, 0) / Math.max(1, recent.length);
+    const pressureSlope = (last.pressure - first.pressure) / Math.max(1, recent.length - 1);
+
+    if (avgSpeed < 0.35) return false;
+    if (last.pressure < 0.08) return false;
+    if (pressureSlope < -0.05) return false;
+
+    return true;
+  }
+
+  private buildTailDabs(brushSize: number): Array<{ x: number; y: number; pressure: number }> {
+    if (!this.lastPoint || !this.prevPoint) return [];
+
+    const dx = this.lastPoint.x - this.prevPoint.x;
+    const dy = this.lastPoint.y - this.prevPoint.y;
+    const segmentDistance = Math.hypot(dx, dy);
+    if (segmentDistance <= 1e-6) return [];
+
+    const dirX = dx / segmentDistance;
+    const dirY = dy / segmentDistance;
+    const recent = this.tailSampleHistory.slice(-6);
+    const avgSpeed =
+      recent.reduce((sum, sample) => sum + sample.normalizedSpeed, 0) / Math.max(1, recent.length);
+    const endPressure = recent[recent.length - 1]!.pressure;
+
+    const safeBrushSize = Math.max(1, brushSize);
+    const tailLengthPx = Math.min(
+      safeBrushSize * 0.8,
+      Math.max(safeBrushSize * 0.12, safeBrushSize * (0.22 + 0.4 * avgSpeed))
+    );
+    const steps = BrushStamper.clampInt(3 + avgSpeed * 4, 3, 8);
+
+    const tailDabs: Array<{ x: number; y: number; pressure: number }> = [];
+    for (let i = 1; i <= steps; i += 1) {
+      const t = i / (steps + 1);
+      const pressure = Math.max(0, endPressure * Math.pow(1 - t, 1.8));
+      if (pressure < 1e-3) continue;
+      tailDabs.push({
+        x: this.lastPoint.x + dirX * tailLengthPx * t,
+        y: this.lastPoint.y + dirY * tailLengthPx * t,
+        pressure,
+      });
+    }
+    return tailDabs;
   }
 
   /**
@@ -1366,9 +1502,17 @@ export class BrushStamper {
     y: number,
     pressure: number,
     spacingPx: number,
-    buildupEnabled: boolean = false
+    buildupEnabled: boolean = false,
+    options: BrushStamperInputOptions = {}
   ): Array<{ x: number; y: number; pressure: number }> {
     const dabs: Array<{ x: number; y: number; pressure: number }> = [];
+    const timestampMs = BrushStamper.resolveTimestampMs(options.timestampMs);
+    const smoothingSamples = BrushStamper.clampInt(options.brushSpeedSmoothingSamples ?? 3, 3, 100);
+    const speedPxPerMs = this.speedEstimator.getNextSpeedPxPerMs(x, y, timestampMs, {
+      smoothingSamples,
+    });
+    const maxBrushSpeedPxPerMs = Math.max(1, options.maxBrushSpeedPxPerMs ?? 30);
+    this.lastNormalizedSpeed = BrushStamper.clamp01(speedPxPerMs / maxBrushSpeedPxPerMs);
 
     // First point: just record position, don't emit dab yet
     // DON'T apply EMA here - we haven't moved yet
@@ -1380,9 +1524,12 @@ export class BrushStamper {
         this.hasMovedEnough = true;
         this.smoothedPressure = pressure;
         this.lastPoint = { x, y, pressure };
+        this.prevPoint = null;
         dabs.push({ x, y, pressure });
+        this.recordTailSample(x, y, pressure, this.lastNormalizedSpeed, timestampMs);
       } else {
         this.lastPoint = { x, y, pressure: 0 }; // Start with 0 pressure
+        this.prevPoint = null;
         this.smoothedPressure = 0; // Reset EMA
       }
       return dabs;
@@ -1390,11 +1537,13 @@ export class BrushStamper {
 
     if (!this.lastPoint || !this.strokeStartPoint) {
       this.lastPoint = { x, y, pressure: buildupEnabled ? pressure : 0 };
+      this.prevPoint = null;
       this.strokeStartPoint = { x, y };
       if (buildupEnabled) {
         this.hasMovedEnough = true;
         this.smoothedPressure = pressure;
         dabs.push({ x, y, pressure });
+        this.recordTailSample(x, y, pressure, this.lastNormalizedSpeed, timestampMs);
       }
       return dabs;
     }
@@ -1405,8 +1554,10 @@ export class BrushStamper {
         // Build-up: skip the minimum movement gate entirely
         this.hasMovedEnough = true;
         this.smoothedPressure = pressure;
+        this.prevPoint = this.lastPoint;
         this.lastPoint = { x, y, pressure };
         dabs.push({ x, y, pressure });
+        this.recordTailSample(x, y, pressure, this.lastNormalizedSpeed, timestampMs);
         return dabs;
       }
 
@@ -1427,13 +1578,15 @@ export class BrushStamper {
       // We've moved enough - NOW initialize EMA with current pressure
       this.hasMovedEnough = true;
       this.smoothedPressure = pressure; // Initialize EMA with current pressure
+      this.prevPoint = this.lastPoint;
       this.lastPoint = { x, y, pressure };
       dabs.push({ x, y, pressure });
+      this.recordTailSample(x, y, pressure, this.lastNormalizedSpeed, timestampMs);
       return dabs;
     }
 
     // Apply pressure smoothing only AFTER we've started moving
-    const smoothedPressure = this.smoothPressure(pressure);
+    const smoothedPressure = this.smoothPressure(pressure, options);
 
     // Calculate distance from last point
     const dx = x - this.lastPoint.x;
@@ -1445,7 +1598,9 @@ export class BrushStamper {
       if (buildupEnabled) {
         dabs.push({ x, y, pressure: smoothedPressure });
       }
+      this.prevPoint = this.lastPoint;
       this.lastPoint = { x, y, pressure: smoothedPressure };
+      this.recordTailSample(x, y, smoothedPressure, this.lastNormalizedSpeed, timestampMs);
       return dabs;
     }
 
@@ -1456,6 +1611,16 @@ export class BrushStamper {
       // Reduce spacing when pressure is changing rapidly
       // This adds more dabs during transitions for smoother appearance
       effectiveSpacing = spacingPx * 0.5;
+    }
+    if (options.lowPressureAdaptiveSmoothingEnabled !== false) {
+      const lowPressureFactor = BrushStamper.clamp01(
+        (BrushStamper.LOW_PRESSURE_THRESHOLD - smoothedPressure) /
+          BrushStamper.LOW_PRESSURE_THRESHOLD
+      );
+      if (lowPressureFactor > 0) {
+        const densityBoost = 1 + lowPressureFactor * (0.5 + 0.5 * this.lastNormalizedSpeed);
+        effectiveSpacing /= densityBoost;
+      }
     }
 
     // Spacing threshold based on precomputed tip size
@@ -1478,20 +1643,21 @@ export class BrushStamper {
       this.accumulatedDistance -= threshold;
     }
 
+    this.prevPoint = this.lastPoint;
     this.lastPoint = { x, y, pressure: smoothedPressure };
+    this.recordTailSample(x, y, smoothedPressure, this.lastNormalizedSpeed, timestampMs);
     return dabs;
   }
 
   /**
    * Finish stroke and reset state
-   *
-   * Note: We don't artificially add fadeout dabs here. Natural pressure decay
-   * from the tablet hardware should create proper tapered ends. If the pen is
-   * lifted too quickly, we accept a blunt end rather than adding unnatural
-   * artificial taper that creates visual discontinuity.
    */
-  finishStroke(_brushSize: number): Array<{ x: number; y: number; pressure: number }> {
+  finishStroke(
+    brushSize: number,
+    options: BrushStamperInputOptions = {}
+  ): Array<{ x: number; y: number; pressure: number }> {
+    const tailDabs = this.shouldGenerateTail(options) ? this.buildTailDabs(brushSize) : [];
     this.beginStroke();
-    return []; // No artificial fadeout - rely on natural pressure data
+    return tailDabs;
   }
 }

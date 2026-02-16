@@ -42,6 +42,14 @@ describe('settings store newFile persistence', () => {
         backendMigratedToMacNativeAt: null,
         pollingRate: 200,
         pressureCurve: 'linear',
+        pressureCurvePoints: [
+          { x: 0, y: 0 },
+          { x: 1, y: 1 },
+        ],
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        lowPressureAdaptiveSmoothingEnabled: true,
+        tailTaperEnabled: true,
         backpressureMode: 'lossless',
         autoStart: true,
       },
@@ -116,6 +124,44 @@ describe('settings store newFile persistence', () => {
       brush: null,
       eraser: null,
     });
+    expect(state.tablet.pressureCurvePoints.length).toBeGreaterThanOrEqual(2);
+    expect(state.tablet.maxBrushSpeedPxPerMs).toBe(30);
+    expect(state.tablet.brushSpeedSmoothingSamples).toBe(3);
+    expect(state.tablet.lowPressureAdaptiveSmoothingEnabled).toBe(true);
+    expect(state.tablet.tailTaperEnabled).toBe(true);
+  });
+
+  it('clamps tablet speed config and normalizes pressure curve points when loading', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        tablet: {
+          backend: 'pointerevent',
+          pollingRate: 120,
+          pressureCurve: 'hard',
+          pressureCurvePoints: [
+            { x: 0.5, y: 0.2 },
+            { x: 0.5, y: 0.7 },
+          ],
+          maxBrushSpeedPxPerMs: 999,
+          brushSpeedSmoothingSamples: 1,
+          lowPressureAdaptiveSmoothingEnabled: false,
+          tailTaperEnabled: false,
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    const state = useSettingsStore.getState();
+
+    expect(state.tablet.maxBrushSpeedPxPerMs).toBe(100);
+    expect(state.tablet.brushSpeedSmoothingSamples).toBe(3);
+    expect(state.tablet.lowPressureAdaptiveSmoothingEnabled).toBe(false);
+    expect(state.tablet.tailTaperEnabled).toBe(false);
+    expect(state.tablet.pressureCurvePoints[0]?.x).toBe(0);
+    expect(state.tablet.pressureCurvePoints[state.tablet.pressureCurvePoints.length - 1]?.x).toBe(
+      1
+    );
   });
 
   it('normalizes loaded recent files and keeps max 10', async () => {
@@ -266,6 +312,32 @@ describe('settings store newFile persistence', () => {
     const parsed = JSON.parse(content) as { general?: { language?: string } };
 
     expect(parsed.general?.language).toBe('zh-CN');
+  });
+
+  it('clamps and persists tablet speed settings via actions', async () => {
+    fsMocks.exists.mockResolvedValue(false);
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    useSettingsStore.getState().setMaxBrushSpeedPxPerMs(0);
+    useSettingsStore.getState().setBrushSpeedSmoothingSamples(999);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const state = useSettingsStore.getState();
+    expect(state.tablet.maxBrushSpeedPxPerMs).toBe(1);
+    expect(state.tablet.brushSpeedSmoothingSamples).toBe(100);
+
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as {
+      tablet?: {
+        maxBrushSpeedPxPerMs?: number;
+        brushSpeedSmoothingSamples?: number;
+      };
+    };
+    expect(parsed.tablet?.maxBrushSpeedPxPerMs).toBe(1);
+    expect(parsed.tablet?.brushSpeedSmoothingSamples).toBe(100);
   });
 
   it('migrates legacy quickExport width/height into maxSize', async () => {

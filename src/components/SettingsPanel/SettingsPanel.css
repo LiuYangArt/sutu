@@ -410,3 +410,80 @@
   background: var(--danger-hover);
   border-color: var(--danger-hover);
 }
+
+.pressure-curve-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pressure-curve-editor {
+  width: 100%;
+  max-width: 420px;
+  align-self: flex-start;
+  touch-action: none;
+  user-select: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.pressure-curve-editor__bg {
+  fill: rgba(0, 0, 0, 0.18);
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+
+.pressure-curve-editor__grid {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+
+.pressure-curve-editor__curve {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 2;
+}
+
+.pressure-curve-editor__point {
+  fill: var(--primary);
+  stroke: var(--text-primary);
+  stroke-width: 1;
+}
+
+.pressure-curve-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pressure-curve-preset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pressure-curve-preset-row .settings-actions {
+  flex-wrap: wrap;
+}
+
+.settings-slider-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.settings-slider-control {
+  width: 100%;
+}

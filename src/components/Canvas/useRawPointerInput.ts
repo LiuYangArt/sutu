@@ -23,6 +23,7 @@ type QueuedPoint = {
   tiltX: number;
   tiltY: number;
   rotation: number;
+  timestampMs: number;
   pointIndex: number;
 };
 
@@ -109,7 +110,7 @@ export function useRawPointerInput({
         );
 
         // Resolve pressure/tilt from native backend or PointerEvent
-        const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
+        const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
           evt,
           shouldUseNativeBackend,
           bufferedPoints,
@@ -120,7 +121,16 @@ export function useRawPointerInput({
         const idx = pointIndexRef.current++;
         latencyProfiler.markInputReceived(idx, evt);
 
-        const point = { x: canvasX, y: canvasY, pressure, tiltX, tiltY, rotation, pointIndex: idx };
+        const point = {
+          x: canvasX,
+          y: canvasY,
+          pressure,
+          tiltX,
+          tiltY,
+          rotation,
+          timestampMs,
+          pointIndex: idx,
+        };
 
         if (state === 'starting') {
           pendingPointsRef.current.push(point);

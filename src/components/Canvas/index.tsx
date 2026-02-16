@@ -82,6 +82,7 @@ import {
   reconcileLayerRevisionMap,
 } from './gpuLayerStackPolicy';
 import { runGpuMovePreviewFrame } from './movePreviewGpuSync';
+import { buildPressureCurveLut } from '@/utils/pressureCurve';
 
 import './Canvas.css';
 
@@ -239,6 +240,7 @@ type QueuedPoint = {
   tiltX: number;
   tiltY: number;
   rotation: number;
+  timestampMs: number;
   pointIndex: number;
 };
 
@@ -525,7 +527,18 @@ export function Canvas() {
   const {
     brush: { renderMode },
     general: { selectionAutoFillEnabled },
+    tablet: {
+      pressureCurvePoints,
+      maxBrushSpeedPxPerMs,
+      brushSpeedSmoothingSamples,
+      lowPressureAdaptiveSmoothingEnabled,
+      tailTaperEnabled,
+    },
   } = useSettingsStore();
+  const globalPressureLut = useMemo(
+    () => buildPressureCurveLut(pressureCurvePoints),
+    [pressureCurvePoints]
+  );
 
   const {
     width,
@@ -2145,6 +2158,11 @@ export function Canvas() {
       pressureSizeEnabled,
       pressureFlowEnabled,
       pressureOpacityEnabled,
+      globalPressureLut,
+      maxBrushSpeedPxPerMs,
+      brushSpeedSmoothingSamples,
+      lowPressureAdaptiveSmoothingEnabled,
+      tailTaperEnabled,
       pressureCurve,
       texture: brushTexture,
       shapeDynamicsEnabled,
@@ -2192,6 +2210,11 @@ export function Canvas() {
     pressureSizeEnabled,
     pressureFlowEnabled,
     pressureOpacityEnabled,
+    globalPressureLut,
+    maxBrushSpeedPxPerMs,
+    brushSpeedSmoothingSamples,
+    lowPressureAdaptiveSmoothingEnabled,
+    tailTaperEnabled,
     pressureCurve,
     brushTexture,
     shapeDynamicsEnabled,
