@@ -159,8 +159,11 @@ declare global {
     __canvasClearSelection?: () => void;
     __canvasClearLayer?: () => void;
     __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
+    __getLayerImageBytes?: (layerId: string) => Promise<number[] | undefined>;
     __getFlattenedImage?: () => Promise<string | undefined>;
+    __getFlattenedImageBytes?: () => Promise<number[] | undefined>;
     __getThumbnail?: () => Promise<string | undefined>;
+    __getThumbnailBytes?: () => Promise<number[] | undefined>;
     __loadLayerImages?: (
       layersData: Array<{ id: string; imageData?: string; offsetX?: number; offsetY?: number }>,
       benchmarkSessionId?: string

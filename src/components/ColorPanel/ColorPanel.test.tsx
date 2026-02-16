@@ -4,12 +4,48 @@ import { ColorPanel } from './index';
 import { useToolStore } from '@/stores/tool';
 import { useToastStore } from '@/stores/toast';
 
+interface MockHsvaColor {
+  h: number;
+  s: number;
+  v: number;
+  a: number;
+}
+
+interface MockSaturationSquareProps {
+  hsva: MockHsvaColor;
+  onChange: (newHsva: MockHsvaColor) => void;
+}
+
+interface MockVerticalHueSliderProps {
+  hue: number;
+  onChange: (newHue: number) => void;
+}
+
 vi.mock('./SaturationSquare', () => ({
-  SaturationSquare: () => <div data-testid="mock-saturation-square" />,
+  SaturationSquare: ({ hsva, onChange }: MockSaturationSquareProps) => (
+    <div data-testid="mock-saturation-square" data-hue={`${hsva.h}`}>
+      <button
+        type="button"
+        data-testid="mock-saturation-change"
+        onClick={() => onChange({ ...hsva, s: 1, v: 50 })}
+      >
+        saturation-change
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('./VerticalHueSlider', () => ({
-  VerticalHueSlider: () => <div data-testid="mock-hue-slider" />,
+  VerticalHueSlider: ({ hue, onChange }: MockVerticalHueSliderProps) => (
+    <button
+      type="button"
+      data-testid="mock-hue-slider"
+      data-hue={`${hue}`}
+      onClick={() => onChange(180)}
+    >
+      hue-change
+    </button>
+  ),
 }));
 
 describe('ColorPanel', () => {
@@ -123,5 +159,50 @@ describe('ColorPanel', () => {
     render(<ColorPanel />);
 
     expect(screen.getAllByTestId('recent-swatch-slot')).toHaveLength(6);
+  });
+
+  it('updates saturation square hue when brush color is grayscale and hue slider changes', () => {
+    useToolStore.setState({
+      brushColor: '#808080',
+      backgroundColor: '#ffffff',
+      recentSwatches: [],
+    });
+    render(<ColorPanel />);
+
+    expect(screen.getByTestId('mock-saturation-square')).toHaveAttribute('data-hue', '0');
+    fireEvent.click(screen.getByTestId('mock-hue-slider'));
+
+    expect(screen.getByTestId('mock-saturation-square')).toHaveAttribute('data-hue', '180');
+    expect(useToolStore.getState().brushColor).toBe('#808080');
+  });
+
+  it('keeps previous hue when external color changes to grayscale', () => {
+    useToolStore.setState({
+      brushColor: '#00FF00',
+      backgroundColor: '#ffffff',
+      recentSwatches: [],
+    });
+    render(<ColorPanel />);
+
+    expect(screen.getByTestId('mock-hue-slider')).toHaveAttribute('data-hue', '120');
+    act(() => {
+      useToolStore.getState().setBrushColor('#808080');
+    });
+
+    expect(screen.getByTestId('mock-hue-slider')).toHaveAttribute('data-hue', '120');
+  });
+
+  it('does not move hue slider when saturation square updates color', () => {
+    useToolStore.setState({
+      brushColor: '#00FF00',
+      backgroundColor: '#ffffff',
+      recentSwatches: [],
+    });
+    render(<ColorPanel />);
+
+    expect(screen.getByTestId('mock-hue-slider')).toHaveAttribute('data-hue', '120');
+    fireEvent.click(screen.getByTestId('mock-saturation-change'));
+
+    expect(screen.getByTestId('mock-hue-slider')).toHaveAttribute('data-hue', '120');
   });
 });

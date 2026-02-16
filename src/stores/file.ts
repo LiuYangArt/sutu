@@ -14,7 +14,7 @@ const SESSION_FILE = 'autosave-session.json';
 const TEMP_AUTOSAVE_FILE_NAME = `${appHyphenStorageKey('autosave')}.ora`;
 
 // Types matching Rust backend
-interface LayerData {
+interface LayerDataV2 {
   id: string;
   name: string;
   type: string;
@@ -23,9 +23,10 @@ interface LayerData {
   opacity: number;
   blendMode: string;
   isBackground?: boolean;
-  imageData?: string;
   offsetX: number;
   offsetY: number;
+  layerPngBytes?: number[];
+  legacyImageDataBase64?: string;
 }
 
 interface BackendBenchmark {
@@ -39,13 +40,15 @@ interface BackendBenchmark {
   layerCount: number;
 }
 
-interface ProjectData {
+interface ProjectDataV2 {
   width: number;
   height: number;
   dpi: number;
-  layers: LayerData[];
-  flattenedImage?: string;
-  thumbnail?: string;
+  layers: LayerDataV2[];
+  flattenedPngBytes?: number[];
+  thumbnailPngBytes?: number[];
+  legacyFlattenedImageBase64?: string;
+  legacyThumbnailBase64?: string;
   benchmark?: BackendBenchmark;
 }
 
@@ -94,9 +97,17 @@ const AUTOSAVE_TEMP_TARGET_OPTIONS: SaveTargetOptions = {
 };
 
 type CanvasExportWindow = Window & {
-  __getThumbnail?: () => Promise<string | undefined>;
-  __getFlattenedImage?: () => Promise<string | undefined>;
+  __getThumbnailBytes?: () => Promise<number[] | undefined>;
+  __getFlattenedImageBytes?: () => Promise<number[] | undefined>;
+  __getLayerImageBytes?: (layerId: string) => Promise<number[] | undefined>;
 };
+
+interface LayerImageLoadPayload {
+  id: string;
+  imageData?: string;
+  offsetX?: number;
+  offsetY?: number;
+}
 
 interface FileState {
   isSaving: boolean;
@@ -118,30 +129,23 @@ const DEFAULT_SESSION: AutosaveSessionData = {
   hasUnsavedTemp: false,
 };
 
-/**
- * Get layer image data from canvas
- */
-async function getLayerImageData(layerId: string): Promise<string | undefined> {
-  const win = window as Window & {
-    __getLayerImageData?: (layerId: string) => Promise<string | undefined>;
-  };
-  return win.__getLayerImageData?.(layerId);
+function getCanvasExportWindow(): CanvasExportWindow {
+  return window as CanvasExportWindow;
 }
 
-/**
- * Get thumbnail image (256x256) for ORA
- */
-async function getThumbnail(): Promise<string | undefined> {
-  const win = window as CanvasExportWindow;
-  return win.__getThumbnail?.();
+async function getLayerImageBytes(layerId: string): Promise<number[] | undefined> {
+  const win = getCanvasExportWindow();
+  return win.__getLayerImageBytes?.(layerId);
 }
 
-/**
- * Get flattened composited image for PSD/TIFF exports
- */
-async function getFlattenedImage(): Promise<string | undefined> {
-  const win = window as CanvasExportWindow;
-  return win.__getFlattenedImage?.();
+async function getThumbnailBytes(): Promise<number[] | undefined> {
+  const win = getCanvasExportWindow();
+  return win.__getThumbnailBytes?.();
+}
+
+async function getFlattenedImageBytes(): Promise<number[] | undefined> {
+  const win = getCanvasExportWindow();
+  return win.__getFlattenedImageBytes?.();
 }
 
 function detectFileFormatFromPath(path: string): FileFormat | null {
@@ -237,39 +241,42 @@ async function getTempAutosavePath(): Promise<string> {
   return join(tempRoot, TEMP_AUTOSAVE_FILE_NAME);
 }
 
-/**
- * Convert frontend Layer to backend LayerData format
- */
-function layerToLayerData(layer: Layer, imageData?: string): LayerData {
+function layerToLayerDataV2(layer: Layer, layerPngBytes?: number[]): LayerDataV2 {
   return {
     id: layer.id,
     name: layer.name,
     type: layer.type,
     visible: layer.visible,
     locked: layer.locked,
-    opacity: layer.opacity / 100, // Convert 0-100 to 0.0-1.0
+    opacity: layer.opacity / 100,
     blendMode: layer.blendMode,
     isBackground: layer.isBackground,
-    imageData,
     offsetX: 0,
     offsetY: 0,
+    layerPngBytes,
   };
 }
 
-/**
- * Convert backend LayerData to frontend Layer format
- */
-function layerDataToLayer(data: LayerData): Layer {
+function layerDataV2ToLayer(data: LayerDataV2): Layer {
   return {
     id: data.id,
     name: data.name,
     type: data.type as 'raster' | 'group' | 'adjustment',
     visible: data.visible,
     locked: data.locked,
-    opacity: Math.round(data.opacity * 100), // Convert 0.0-1.0 to 0-100
+    opacity: Math.round(data.opacity * 100),
     blendMode: data.blendMode as Layer['blendMode'],
     isBackground: data.isBackground,
-    thumbnail: normalizeImageDataToDataUrl(data.imageData),
+    thumbnail: normalizeImageDataToDataUrl(data.legacyImageDataBase64),
+  };
+}
+
+function layerV2ToLoadImagePayload(layer: LayerDataV2): LayerImageLoadPayload {
+  return {
+    id: layer.id,
+    imageData: normalizeImageDataToDataUrl(layer.legacyImageDataBase64),
+    offsetX: layer.offsetX,
+    offsetY: layer.offsetY,
   };
 }
 
@@ -278,28 +285,46 @@ interface ProjectSnapshotOptions {
   includeFlattenedImage: boolean;
 }
 
-async function buildProjectDataSnapshot(options: ProjectSnapshotOptions): Promise<ProjectData> {
+function ensureRequiredBytes(
+  bytes: number[] | undefined,
+  message: string
+): asserts bytes is number[] {
+  if (!bytes) {
+    throw new Error(message);
+  }
+}
+
+async function buildProjectDataSnapshotV2(options: ProjectSnapshotOptions): Promise<ProjectDataV2> {
   const docStore = useDocumentStore.getState();
   const layerDataPromises = docStore.layers.map(async (layer) => {
-    const imageData = await getLayerImageData(layer.id);
-    return layerToLayerData(layer, imageData);
+    if (layer.type !== 'raster') {
+      return layerToLayerDataV2(layer, undefined);
+    }
+    const layerPngBytes = await getLayerImageBytes(layer.id);
+    ensureRequiredBytes(layerPngBytes, `[file] Missing layer bytes for raster layer: ${layer.id}`);
+    return layerToLayerDataV2(layer, layerPngBytes);
   });
-
   const layers = await Promise.all(layerDataPromises);
 
-  const thumbnailPromise = options.includeThumbnail ? getThumbnail() : Promise.resolve(undefined);
-  const flattenedImagePromise = options.includeFlattenedImage
-    ? getFlattenedImage()
-    : Promise.resolve(undefined);
-  const [thumbnail, flattenedImage] = await Promise.all([thumbnailPromise, flattenedImagePromise]);
+  const [thumbnailPngBytes, flattenedPngBytes] = await Promise.all([
+    options.includeThumbnail ? getThumbnailBytes() : Promise.resolve(undefined),
+    options.includeFlattenedImage ? getFlattenedImageBytes() : Promise.resolve(undefined),
+  ]);
+
+  if (options.includeThumbnail) {
+    ensureRequiredBytes(thumbnailPngBytes, '[file] Missing thumbnail bytes for save payload');
+  }
+  if (options.includeFlattenedImage) {
+    ensureRequiredBytes(flattenedPngBytes, '[file] Missing flattened image bytes for save payload');
+  }
 
   return {
     width: docStore.width,
     height: docStore.height,
     dpi: docStore.dpi,
     layers,
-    flattenedImage,
-    thumbnail,
+    flattenedPngBytes,
+    thumbnailPngBytes,
   };
 }
 
@@ -315,7 +340,7 @@ async function loadProjectIntoDocument(
     docStore.reset();
 
     const ipcStart = performance.now();
-    const projectData = await invoke<ProjectData>('load_project', { path: filePath });
+    const projectData = await invoke<ProjectDataV2>('load_project_v2', { path: filePath });
     const ipcTransferMs = performance.now() - ipcStart;
 
     if (projectData.benchmark?.sessionId) {
@@ -326,7 +351,8 @@ async function loadProjectIntoDocument(
       });
     }
 
-    const loadedLayers = projectData.layers.map(layerDataToLayer);
+    const loadedLayers = projectData.layers.map(layerDataV2ToLayer);
+    const activeLayerId = loadedLayers[loadedLayers.length - 1]?.id ?? null;
     const detectedFormat = detectFileFormatFromPath(filePath) ?? 'ora';
 
     useDocumentStore.setState({
@@ -334,9 +360,9 @@ async function loadProjectIntoDocument(
       height: projectData.height,
       dpi: projectData.dpi,
       layers: loadedLayers,
-      activeLayerId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
-      selectedLayerIds: loadedLayers.length > 0 ? [loadedLayers[loadedLayers.length - 1]!.id] : [],
-      layerSelectionAnchorId: loadedLayers[loadedLayers.length - 1]?.id ?? null,
+      activeLayerId,
+      selectedLayerIds: activeLayerId ? [activeLayerId] : [],
+      layerSelectionAnchorId: activeLayerId,
       filePath: options.asUntitled ? null : filePath,
       fileFormat: options.asUntitled ? null : detectedFormat,
       isDirty: false,
@@ -351,12 +377,15 @@ async function loadProjectIntoDocument(
 
     const win = window as Window & {
       __loadLayerImages?: (
-        layers: ProjectData['layers'],
+        layers: LayerImageLoadPayload[],
         benchmarkSessionId?: string
       ) => Promise<void>;
     };
     if (win.__loadLayerImages) {
-      await win.__loadLayerImages(projectData.layers, projectData.benchmark?.sessionId);
+      await win.__loadLayerImages(
+        projectData.layers.map(layerV2ToLoadImagePayload),
+        projectData.benchmark?.sessionId
+      );
     }
 
     if (options.rememberAsLastSaved) {
@@ -405,31 +434,35 @@ async function saveProjectToTarget(
   set({ isSaving: true, error: null });
 
   try {
-    const projectData = await buildProjectDataSnapshot({
-      includeThumbnail: options.includeThumbnail ?? targetFormat === 'ora',
-      includeFlattenedImage: options.includeFlattenedImage ?? targetFormat === 'psd',
+    const includeThumbnail = options.includeThumbnail ?? targetFormat === 'ora';
+    const includeFlattenedImage = options.includeFlattenedImage ?? targetFormat === 'psd';
+    const applySaveSuccess = () => {
+      const docStore = useDocumentStore.getState();
+      if (options.updateDocumentPath) {
+        docStore.setFilePath(targetPath, targetFormat);
+      }
+      if (!options.updateDocumentPath && options.markDocumentClean) {
+        docStore.setDirty(false);
+      }
+      set({ isSaving: false });
+    };
+
+    const projectDataV2 = await buildProjectDataSnapshotV2({
+      includeThumbnail,
+      includeFlattenedImage,
     });
-    const result = await invoke<FileOperationResult>('save_project', {
+    const v2Result = await invoke<FileOperationResult>('save_project_v2', {
       path: targetPath,
       format: targetFormat,
-      project: projectData,
+      project: projectDataV2,
     });
-
-    if (!result.success) {
-      const message = result.error || 'Unknown error';
+    if (!v2Result.success) {
+      const message = v2Result.error || 'Unknown save error';
       set({ isSaving: false, error: message });
       return { success: false, error: message };
     }
 
-    const docStore = useDocumentStore.getState();
-    if (options.updateDocumentPath) {
-      docStore.setFilePath(targetPath, targetFormat);
-    }
-    if (!options.updateDocumentPath && options.markDocumentClean) {
-      docStore.setDirty(false);
-    }
-
-    set({ isSaving: false });
+    applySaveSuccess();
     return { success: true };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

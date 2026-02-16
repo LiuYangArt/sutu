@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeftRight, Hash, Plus, RotateCcw } from 'lucide-react';
 import { SaturationSquare } from './SaturationSquare';
 import { VerticalHueSlider } from './VerticalHueSlider';
@@ -77,31 +77,51 @@ export function ColorPanel() {
 
   // Use HSVA locally to control Saturation and Hue separately.
   const [hsva, setHsva] = useState<HsvaColor>(() => hexToHsva(brushColor));
+  const hsvaRef = useRef<HsvaColor>(hsva);
+  const pendingPickerHexRef = useRef<string | null>(null);
+
+  const syncLocalHsva = useCallback((nextHsva: HsvaColor) => {
+    hsvaRef.current = nextHsva;
+    setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
+  }, []);
+
+  const commitPickerHsva = useCallback(
+    (nextHsva: HsvaColor) => {
+      syncLocalHsva(nextHsva);
+      const hex = hsvaToHex(nextHsva);
+      if (isSameColorToken(brushColor, hex)) return;
+      pendingPickerHexRef.current = hex;
+      setBrushColor(hex);
+    },
+    [brushColor, setBrushColor, syncLocalHsva]
+  );
 
   useEffect(() => {
-    const newHsva = hexToHsva(brushColor);
-    setHsva((prev) => (isSameHsva(prev, newHsva) ? prev : newHsva));
-  }, [brushColor]);
+    const pendingHex = pendingPickerHexRef.current;
+    if (pendingHex && isSameColorToken(pendingHex, brushColor)) {
+      pendingPickerHexRef.current = null;
+      return;
+    }
+    pendingPickerHexRef.current = null;
+
+    const parsed = hexToHsva(brushColor);
+    // For achromatic colors hue is undefined in hex; preserve current picker hue.
+    const newHsva = parsed.s === 0 ? { ...parsed, h: hsvaRef.current.h } : parsed;
+    syncLocalHsva(newHsva);
+  }, [brushColor, syncLocalHsva]);
 
   const handleSaturationChange = useCallback(
     (newColor: HsvaColor) => {
-      const hex = hsvaToHex(newColor);
-      if (!isSameColorToken(brushColor, hex)) {
-        setBrushColor(hex);
-      }
+      commitPickerHsva(newColor);
     },
-    [brushColor, setBrushColor]
+    [commitPickerHsva]
   );
 
   const handleHueChange = useCallback(
     (newHue: number) => {
-      const newHsva = { ...hsva, h: newHue };
-      const hex = hsvaToHex(newHsva);
-      if (!isSameColorToken(brushColor, hex)) {
-        setBrushColor(hex);
-      }
+      commitPickerHsva({ ...hsvaRef.current, h: newHue });
     },
-    [hsva, brushColor, setBrushColor]
+    [commitPickerHsva]
   );
 
   const handleCopyHex = useCallback(async () => {

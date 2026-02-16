@@ -9,7 +9,7 @@ mod types;
 mod writer;
 
 pub use reader::load_psd;
-pub use writer::save_psd;
+pub use writer::{save_psd, save_psd_core};
 
 /// Map Sutu blend mode to PSD 4-byte key
 pub fn blend_mode_to_psd(mode: &str) -> [u8; 4] {

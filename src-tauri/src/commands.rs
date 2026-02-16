@@ -1054,6 +1054,8 @@ pub struct AbrBenchmark {
 // File Format Support (ORA, TIFF)
 // ============================================================================
 
+use crate::core::adapters::{project_core_to_legacy, project_legacy_to_core};
+use crate::core::contracts::ProjectDataCore;
 use crate::file::{FileFormat, FileOperationResult, ProjectData};
 use std::path::Path;
 
@@ -1346,20 +1348,21 @@ pub async fn save_project(
     format: FileFormat,
     project: ProjectData,
 ) -> Result<FileOperationResult, String> {
+    let project_core = project_legacy_to_core(&project)?;
+    save_project_v2(path, format, project_core).await
+}
+
+/// Save project to file (V2 core contract with bytes-first payload)
+#[tauri::command]
+pub async fn save_project_v2(
+    path: String,
+    format: FileFormat,
+    project: ProjectDataCore,
+) -> Result<FileOperationResult, String> {
     tracing::info!("Saving project to: {} (format: {:?})", path, format);
 
     let path_ref = Path::new(&path);
-
-    let result = match format {
-        FileFormat::Ora => crate::file::ora::save_ora(path_ref, &project),
-        FileFormat::Tiff => {
-            // TIFF format is disabled due to implementation issues
-            return Ok(FileOperationResult::error(
-                "TIFF format is currently disabled".to_string(),
-            ));
-        }
-        FileFormat::Psd => crate::file::psd::save_psd(path_ref, &project),
-    };
+    let result = crate::core::formats::save_project_core(path_ref, format, &project);
 
     match result {
         Ok(()) => {
@@ -1376,22 +1379,17 @@ pub async fn save_project(
 /// Load project from file (auto-detects format from extension)
 #[tauri::command]
 pub async fn load_project(path: String) -> Result<ProjectData, String> {
+    let project_core = load_project_v2(path).await?;
+    Ok(project_core_to_legacy(&project_core))
+}
+
+/// Load project from file (V2 core contract with bytes-first payload)
+#[tauri::command]
+pub async fn load_project_v2(path: String) -> Result<ProjectDataCore, String> {
     tracing::info!("Loading project from: {}", path);
 
     let path_ref = Path::new(&path);
-
-    // Auto-detect format from extension
-    let format =
-        FileFormat::from_path(&path).ok_or_else(|| format!("Unknown file format: {}", path))?;
-
-    let result = match format {
-        FileFormat::Ora => crate::file::ora::load_ora(path_ref),
-        FileFormat::Tiff => {
-            // TIFF format is disabled due to implementation issues
-            return Err("TIFF format is currently disabled".to_string());
-        }
-        FileFormat::Psd => crate::file::psd::load_psd(path_ref),
-    };
+    let result = crate::core::formats::load_project_core(path_ref);
 
     match result {
         Ok(project) => {
@@ -1606,6 +1604,7 @@ pub fn rename_pattern_group(old_name: String, new_name: String) -> Result<(), St
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use image::{ImageBuffer, ImageFormat, Rgba};
 
     #[tokio::test]
     async fn test_create_document() {
@@ -1779,5 +1778,124 @@ mod tests {
                 BackendType::PointerEvent
             );
         }
+    }
+
+    fn encode_png_data_url(r: u8, g: u8, b: u8, a: u8) -> String {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+        let img = ImageBuffer::from_pixel(1, 1, Rgba([r, g, b, a]));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut cursor, ImageFormat::Png)
+            .expect("png encode should succeed");
+        format!(
+            "data:image/png;base64,{}",
+            BASE64.encode(cursor.into_inner())
+        )
+    }
+
+    fn sample_legacy_project() -> ProjectData {
+        ProjectData {
+            width: 1,
+            height: 1,
+            dpi: 72,
+            layers: vec![crate::file::LayerData {
+                id: "layer_legacy".to_string(),
+                name: "Legacy Layer".to_string(),
+                layer_type: "raster".to_string(),
+                visible: true,
+                locked: false,
+                opacity: 1.0,
+                blend_mode: "normal".to_string(),
+                is_background: Some(true),
+                image_data: Some(encode_png_data_url(255, 0, 0, 255)),
+                offset_x: 0,
+                offset_y: 0,
+            }],
+            flattened_image: Some(encode_png_data_url(255, 0, 0, 255)),
+            thumbnail: Some(encode_png_data_url(255, 0, 0, 255)),
+            benchmark: None,
+        }
+    }
+
+    fn sample_core_project() -> crate::core::contracts::ProjectDataCore {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+        let data_url = encode_png_data_url(0, 255, 0, 255);
+        let png_bytes = BASE64
+            .decode(data_url.trim_start_matches("data:image/png;base64,"))
+            .expect("decode should succeed");
+
+        crate::core::contracts::ProjectDataCore {
+            width: 1,
+            height: 1,
+            dpi: 72,
+            layers: vec![crate::core::contracts::LayerDataCore {
+                id: "layer_core".to_string(),
+                name: "Core Layer".to_string(),
+                layer_type: "raster".to_string(),
+                visible: true,
+                locked: false,
+                opacity: 1.0,
+                blend_mode: "normal".to_string(),
+                is_background: Some(true),
+                offset_x: 0,
+                offset_y: 0,
+                layer_png_bytes: Some(png_bytes.clone()),
+                legacy_image_data_base64: None,
+            }],
+            flattened_png_bytes: Some(png_bytes.clone()),
+            thumbnail_png_bytes: Some(png_bytes),
+            legacy_flattened_image_base64: None,
+            legacy_thumbnail_base64: None,
+            benchmark: None,
+        }
+    }
+
+    fn temp_file_path(ext: &str) -> String {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("sutu_cmd_compat_{}.{}", ts, ext))
+            .to_string_lossy()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn test_save_project_v2_and_load_project_v2() {
+        let path = temp_file_path("ora");
+        let result = save_project_v2(path.clone(), FileFormat::Ora, sample_core_project())
+            .await
+            .expect("save v2 should return result");
+        assert!(result.success);
+
+        let loaded = load_project_v2(path.clone())
+            .await
+            .expect("load v2 should succeed");
+        assert_eq!(loaded.width, 1);
+        assert_eq!(loaded.height, 1);
+        assert_eq!(loaded.layers.len(), 1);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn test_save_project_legacy_is_compatible_with_load_project_v2() {
+        let path = temp_file_path("psd");
+        let result = save_project(path.clone(), FileFormat::Psd, sample_legacy_project())
+            .await
+            .expect("legacy save should return result");
+        assert!(result.success);
+
+        let loaded = load_project_v2(path.clone())
+            .await
+            .expect("load v2 should succeed after legacy save");
+        assert_eq!(loaded.width, 1);
+        assert_eq!(loaded.height, 1);
+        assert!(!loaded.layers.is_empty());
+
+        let _ = std::fs::remove_file(path);
     }
 }

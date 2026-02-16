@@ -94,6 +94,14 @@ pnpm format           # 格式化代码
 - 仅被单平台主代码和单测共用的工具函数，使用 `#[cfg(any(target_os = \"<os>\", test))]`，避免本地开发平台出现 `dead_code/unused`。
 - 修改 `src-tauri/src/input/` 后，至少执行一次 `cargo check --manifest-path src-tauri/Cargo.toml --lib`；PR 以 Windows + macOS 的 Rust lint 全绿为合并前提。
 
+### 多平台开发约束（Desktop + iPad）
+
+- 新 feature 默认按“共享优先”落地：先定义/扩展 `core contract`，再做桌面或 iPad 适配层。
+- 涉及 ABR/PAT/PSD/ORA、资源模型、项目序列化的逻辑，优先放入 `src-tauri/src/core/*`（或后续对应 crates），避免写进单端壳层。
+- 平台专属实现必须放在适配层：桌面（Tauri/React/WebGPU）与 iPad（Swift/Metal）分层隔离，禁止在共享层引入平台 API。
+- 新增或修改共享数据结构时，需要同步补充跨端一致性测试（至少 path-vs-bytes 或 roundtrip 之一）。
+- 新增 UI 文案默认使用 i18n key，不在业务代码中新增硬编码文案（调试日志除外）。
+
 ### 文件大小限制
 
 - **单个文件不超过 1000 行**

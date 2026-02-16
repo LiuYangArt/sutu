@@ -17,8 +17,11 @@ function cleanupGlobals(): void {
   delete win.__canvasFillLayer;
   delete win.__canvasClearSelection;
   delete win.__getLayerImageData;
+  delete win.__getLayerImageBytes;
   delete win.__getFlattenedImage;
+  delete win.__getFlattenedImageBytes;
   delete win.__getThumbnail;
+  delete win.__getThumbnailBytes;
   delete win.__loadLayerImages;
   delete win.__canvasUndo;
   delete win.__canvasRedo;
@@ -245,8 +248,11 @@ describe('useGlobalExports', () => {
     expect(typeof win.__canvasMergeAllLayers).toBe('function');
     expect(typeof win.__canvasResize).toBe('function');
     expect(typeof win.__getLayerImageData).toBe('function');
+    expect(typeof win.__getLayerImageBytes).toBe('function');
     expect(typeof win.__getFlattenedImage).toBe('function');
+    expect(typeof win.__getFlattenedImageBytes).toBe('function');
     expect(typeof win.__getThumbnail).toBe('function');
+    expect(typeof win.__getThumbnailBytes).toBe('function');
     expect(typeof win.__gpuBrushDiagnostics).toBe('function');
     expect(typeof win.__gpuBrushDiagnosticsReset).toBe('function');
     expect(typeof win.__gpuLayerStackCacheStats).toBe('function');
@@ -342,6 +348,15 @@ describe('useGlobalExports', () => {
 
     await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
     await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
+    const layerBytes = await win.__getLayerImageBytes('layerA');
+    const flattenedBytes = await win.__getFlattenedImageBytes();
+    const thumbnailBytes = await win.__getThumbnailBytes();
+    expect(Array.isArray(layerBytes)).toBe(true);
+    expect(Array.isArray(flattenedBytes)).toBe(true);
+    expect(Array.isArray(thumbnailBytes)).toBe(true);
+    expect(layerBytes.length).toBeGreaterThan(0);
+    expect(flattenedBytes.length).toBeGreaterThan(0);
+    expect(thumbnailBytes.length).toBeGreaterThan(0);
     // __getThumbnail may return undefined when canvas context is unavailable; we only assert no throw.
     const thumb = await win.__getThumbnail();
     expect(thumb === undefined || (typeof thumb === 'string' && thumb.startsWith('data:'))).toBe(
@@ -353,8 +368,11 @@ describe('useGlobalExports', () => {
     expect(win.__canvasFillLayer).toBeUndefined();
     expect(win.__canvasClearSelection).toBeUndefined();
     expect(win.__getLayerImageData).toBeUndefined();
+    expect(win.__getLayerImageBytes).toBeUndefined();
     expect(win.__getFlattenedImage).toBeUndefined();
+    expect(win.__getFlattenedImageBytes).toBeUndefined();
     expect(win.__getThumbnail).toBeUndefined();
+    expect(win.__getThumbnailBytes).toBeUndefined();
     expect(win.__loadLayerImages).toBeUndefined();
     expect(win.__canvasUndo).toBeUndefined();
     expect(win.__canvasRedo).toBeUndefined();
@@ -430,8 +448,11 @@ describe('useGlobalExports', () => {
     await expect(win.__getLayerImageData('layerA')).resolves.toMatch(/^data:/);
     await expect(win.__getFlattenedImage()).resolves.toMatch(/^data:/);
     await expect(win.__getThumbnail()).resolves.toMatch(/^data:/);
-    expect(exportGpuLayerImageData).toHaveBeenCalledTimes(1);
-    expect(exportGpuFlattenedImageData).toHaveBeenCalledTimes(2);
+    await expect(win.__getLayerImageBytes('layerA')).resolves.toEqual(expect.any(Array));
+    await expect(win.__getFlattenedImageBytes()).resolves.toEqual(expect.any(Array));
+    await expect(win.__getThumbnailBytes()).resolves.toEqual(expect.any(Array));
+    expect(exportGpuLayerImageData).toHaveBeenCalledTimes(2);
+    expect(exportGpuFlattenedImageData).toHaveBeenCalledTimes(4);
     expect(syncGpuLayerToCpu).not.toHaveBeenCalled();
     expect(syncAllGpuLayersToCpu).not.toHaveBeenCalled();
 
