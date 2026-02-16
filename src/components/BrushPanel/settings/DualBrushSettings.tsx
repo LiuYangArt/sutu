@@ -16,18 +16,7 @@ import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { VirtualizedTipGrid } from '../VirtualizedTipGrid';
-
-// PS Dual Brush only supports these 8 blend modes
-const BLEND_MODE_OPTIONS: SelectOption[] = [
-  { value: 'multiply', label: 'Multiply' },
-  { value: 'darken', label: 'Darken' },
-  { value: 'overlay', label: 'Overlay' },
-  { value: 'colorDodge', label: 'Color Dodge' },
-  { value: 'colorBurn', label: 'Color Burn' },
-  { value: 'linearBurn', label: 'Linear Burn' },
-  { value: 'hardMix', label: 'Hard Mix' },
-  { value: 'linearHeight', label: 'Linear Height' },
-];
+import { useI18n } from '@/i18n';
 
 type DualTipListItem =
   | { kind: 'default' }
@@ -46,6 +35,7 @@ function buildDualTipItems(tips: BrushTipResource[]): DualTipListItem[] {
 }
 
 export function DualBrushSettings(): JSX.Element {
+  const { t } = useI18n();
   const { dualBrush, setDualBrush, dualBrushEnabled } = useToolStore();
   const importedTips = useBrushLibraryStore((state) => state.tips);
   const tipItems = useMemo<DualTipListItem[]>(
@@ -55,6 +45,16 @@ export function DualBrushSettings(): JSX.Element {
 
   const disabled = !dualBrushEnabled;
   const ratioPercent = Math.round(dualBrush.sizeRatio * 100);
+  const blendModeOptions: SelectOption[] = [
+    { value: 'multiply', label: t('blendMode.multiply') },
+    { value: 'darken', label: t('blendMode.darken') },
+    { value: 'overlay', label: t('blendMode.overlay') },
+    { value: 'colorDodge', label: t('blendMode.colorDodge') },
+    { value: 'colorBurn', label: t('blendMode.colorBurn') },
+    { value: 'linearBurn', label: t('blendMode.linearBurn') },
+    { value: 'hardMix', label: t('blendMode.hardMix') },
+    { value: 'linearHeight', label: t('brushPanel.texture.mode.linearHeight') },
+  ];
 
   const handlePresetSelect = (preset: BrushTipResource, index: number) => {
     const presetId = preset.id;
@@ -112,9 +112,13 @@ export function DualBrushSettings(): JSX.Element {
         <button
           className={`abr-preset-item ${dualBrush.brushId === null ? 'selected' : ''}`}
           onClick={() =>
-            setDualBrush({ brushId: null, brushName: 'Default Round', roundness: 100 })
+            setDualBrush({
+              brushId: null,
+              brushName: t('brushPanel.dualBrush.defaultRoundBrushName'),
+              roundness: 100,
+            })
           }
-          title="Default Round Brush"
+          title={t('brushPanel.dualBrush.defaultRoundBrush')}
           disabled={disabled}
         >
           <div className="abr-preset-round-icon" style={{ width: '24px', height: '24px' }} />
@@ -143,15 +147,15 @@ export function DualBrushSettings(): JSX.Element {
     <div className="brush-panel-section">
       {/* Section header */}
       <div className="section-header-row">
-        <h4>Dual Brush</h4>
+        <h4>{t('brushPanel.tab.dualBrush')}</h4>
       </div>
 
       {/* Mode & Flip */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <SelectRow
-          label="Mode"
+          label={t('brushPanel.dualBrush.mode')}
           value={dualBrush.mode}
-          options={BLEND_MODE_OPTIONS}
+          options={blendModeOptions}
           onChange={(v) => setDualBrush({ mode: v as DualBlendMode })}
           disabled={disabled}
         />
@@ -162,13 +166,13 @@ export function DualBrushSettings(): JSX.Element {
             onChange={() => setDualBrush({ flip: !dualBrush.flip })}
             disabled={disabled}
           />
-          <span>Flip</span>
+          <span>{t('brushPanel.dualBrush.flip')}</span>
         </label>
       </div>
 
       {/* Secondary Brush Selector - Mini Grid */}
       <div className={`dual-brush-selector-group ${disabled ? 'disabled' : ''}`}>
-        <label className="brush-setting-label">Secondary Brush Tip</label>
+        <label className="brush-setting-label">{t('brushPanel.dualBrush.secondaryBrushTip')}</label>
         <VirtualizedTipGrid
           items={tipItems}
           getItemKey={(item) =>
@@ -198,7 +202,7 @@ export function DualBrushSettings(): JSX.Element {
       {/* Dimensions Group */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <SliderRow
-          label="Size"
+          label={t('toolbar.brush.size')}
           value={dualBrush.size}
           min={1}
           max={1000}
@@ -208,7 +212,7 @@ export function DualBrushSettings(): JSX.Element {
           nonLinearConfig={BRUSH_SIZE_SLIDER_CONFIG}
         />
         <SliderRow
-          label="Spacing"
+          label={t('brushPanel.tipShape.spacing')}
           value={Math.round(dualBrush.spacing * 100)}
           min={1}
           max={1000}
@@ -222,7 +226,7 @@ export function DualBrushSettings(): JSX.Element {
       {/* Scatter Group */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <SliderRow
-          label="Scatter"
+          label={t('brushPanel.scatter.scatter')}
           value={dualBrush.scatter}
           min={0}
           max={1000}
@@ -237,14 +241,14 @@ export function DualBrushSettings(): JSX.Element {
             onChange={() => setDualBrush({ bothAxes: !dualBrush.bothAxes })}
             disabled={disabled}
           />
-          <span>Both Axes</span>
+          <span>{t('brushPanel.scatter.bothAxes')}</span>
         </label>
       </div>
 
       {/* Count Group */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <SliderRow
-          label="Count"
+          label={t('brushPanel.scatter.count')}
           value={dualBrush.count}
           min={1}
           max={16}

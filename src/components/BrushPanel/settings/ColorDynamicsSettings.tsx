@@ -9,27 +9,27 @@
 
 import { useToolStore, ControlSource } from '@/stores/tool';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
-
-/** Control options for Foreground/Background */
-const FB_CONTROL_OPTIONS: SelectOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'fade', label: 'Fade' },
-  { value: 'penPressure', label: 'Pen Pressure' },
-  { value: 'penTilt', label: 'Pen Tilt' },
-  { value: 'rotation', label: 'Rotation' },
-];
+import { useI18n } from '@/i18n';
 
 export function ColorDynamicsSettings(): JSX.Element {
+  const { t } = useI18n();
   const { colorDynamics, setColorDynamics, colorDynamicsEnabled } = useToolStore();
 
   const disabled = !colorDynamicsEnabled;
   const applyPerTip = colorDynamics.applyPerTip !== false;
+  const fbControlOptions: SelectOption[] = [
+    { value: 'off', label: t('brushPanel.control.off') },
+    { value: 'fade', label: t('brushPanel.control.fade') },
+    { value: 'penPressure', label: t('brushPanel.control.penPressure') },
+    { value: 'penTilt', label: t('brushPanel.control.penTilt') },
+    { value: 'rotation', label: t('brushPanel.control.rotation') },
+  ];
 
   return (
     <div className="brush-panel-section">
       {/* Section header */}
       <div className="section-header-row">
-        <h4>Color Dynamics</h4>
+        <h4>{t('brushPanel.tab.colorDynamics')}</h4>
       </div>
 
       {/* Foreground/Background Jitter Group */}
@@ -42,12 +42,12 @@ export function ColorDynamicsSettings(): JSX.Element {
               onChange={(e) => setColorDynamics({ applyPerTip: e.target.checked })}
               disabled={disabled}
             />
-            <span>Apply Per Tip</span>
+            <span>{t('brushPanel.colorDynamics.applyPerTip')}</span>
           </label>
         </div>
 
         <SliderRow
-          label="Foreground/Background Jitter"
+          label={t('brushPanel.colorDynamics.foregroundBackgroundJitter')}
           value={colorDynamics.foregroundBackgroundJitter}
           min={0}
           max={100}
@@ -55,9 +55,9 @@ export function ColorDynamicsSettings(): JSX.Element {
           onChange={(v) => setColorDynamics({ foregroundBackgroundJitter: v })}
         />
         <SelectRow
-          label="Control"
+          label={t('brushPanel.control.label')}
           value={colorDynamics.foregroundBackgroundControl}
-          options={FB_CONTROL_OPTIONS}
+          options={fbControlOptions}
           onChange={(v) => setColorDynamics({ foregroundBackgroundControl: v as ControlSource })}
           disabled={disabled}
         />
@@ -66,7 +66,7 @@ export function ColorDynamicsSettings(): JSX.Element {
       {/* HSB Jitter Group */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <SliderRow
-          label="Hue Jitter"
+          label={t('brushPanel.colorDynamics.hueJitter')}
           value={colorDynamics.hueJitter}
           min={0}
           max={100}
@@ -74,7 +74,7 @@ export function ColorDynamicsSettings(): JSX.Element {
           onChange={(v) => setColorDynamics({ hueJitter: v })}
         />
         <SliderRow
-          label="Saturation Jitter"
+          label={t('brushPanel.colorDynamics.saturationJitter')}
           value={colorDynamics.saturationJitter}
           min={0}
           max={100}
@@ -82,7 +82,7 @@ export function ColorDynamicsSettings(): JSX.Element {
           onChange={(v) => setColorDynamics({ saturationJitter: v })}
         />
         <SliderRow
-          label="Brightness Jitter"
+          label={t('brushPanel.colorDynamics.brightnessJitter')}
           value={colorDynamics.brightnessJitter}
           min={0}
           max={100}
@@ -94,7 +94,7 @@ export function ColorDynamicsSettings(): JSX.Element {
       {/* Purity */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <SliderRow
-          label="Purity"
+          label={t('brushPanel.colorDynamics.purity')}
           value={colorDynamics.purity}
           min={-100}
           max={100}

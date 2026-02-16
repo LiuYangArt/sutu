@@ -4,6 +4,7 @@ import { useNonLinearSlider } from '@/hooks/useNonLinearSlider';
 import { useToolStore } from '@/stores/tool';
 import { usePanelStore } from '@/stores/panel';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
+import { useI18n } from '@/i18n';
 
 const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
 const BRUSH_SIZE_MIN = 1;
@@ -33,6 +34,7 @@ interface EditableNumericValueProps {
   displayValue: string;
   min: number;
   max: number;
+  editTitle: string;
   onCommit: (value: number) => void;
 }
 
@@ -41,6 +43,7 @@ function EditableNumericValue({
   displayValue,
   min,
   max,
+  editTitle,
   onCommit,
 }: EditableNumericValueProps): JSX.Element {
   const [isEditing, setIsEditing] = useState(false);
@@ -99,7 +102,7 @@ function EditableNumericValue({
       className="setting-value editable"
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => setIsEditing(true)}
-      title="Click to edit"
+      title={editTitle}
     >
       {displayValue}
     </span>
@@ -128,6 +131,7 @@ function PressureToggle({
 }
 
 export function BrushToolbar(): JSX.Element {
+  const { t } = useI18n();
   const {
     currentTool,
     brushSize,
@@ -186,11 +190,11 @@ export function BrushToolbar(): JSX.Element {
   return (
     <div className="toolbar-section brush-settings">
       <div className="setting">
-        <span className="setting-label">Size</span>
+        <span className="setting-label">{t('toolbar.brush.size')}</span>
         <PressureToggle
           enabled={pressureSizeEnabled}
           onToggle={togglePressureSize}
-          title="Pressure affects size"
+          title={t('toolbar.brush.pressureAffectsSize')}
         />
         <input
           type="range"
@@ -205,16 +209,17 @@ export function BrushToolbar(): JSX.Element {
           displayValue={`${roundedCurrentSize}px`}
           min={BRUSH_SIZE_MIN}
           max={BRUSH_SIZE_MAX}
+          editTitle={t('toolbar.brush.clickToEdit')}
           onCommit={(nextValue) => setCurrentSize(Math.round(nextValue))}
         />
       </div>
 
       <div className="setting">
-        <span className="setting-label">Flow</span>
+        <span className="setting-label">{t('toolbar.brush.flow')}</span>
         <PressureToggle
           enabled={pressureFlowEnabled}
           onToggle={togglePressureFlow}
-          title="Pressure affects flow"
+          title={t('toolbar.brush.pressureAffectsFlow')}
         />
         <input
           type="range"
@@ -229,16 +234,17 @@ export function BrushToolbar(): JSX.Element {
           displayValue={`${flowPercent}%`}
           min={UNIT_PERCENT_MIN}
           max={UNIT_PERCENT_MAX}
+          editTitle={t('toolbar.brush.clickToEdit')}
           onCommit={(nextValue) => setBrushFlow(percentToUnit(nextValue))}
         />
       </div>
 
       <div className="setting">
-        <span className="setting-label">Opacity</span>
+        <span className="setting-label">{t('toolbar.brush.opacity')}</span>
         <PressureToggle
           enabled={pressureOpacityEnabled}
           onToggle={togglePressureOpacity}
-          title="Pressure affects opacity"
+          title={t('toolbar.brush.pressureAffectsOpacity')}
         />
         <input
           type="range"
@@ -253,6 +259,7 @@ export function BrushToolbar(): JSX.Element {
           displayValue={`${opacityPercent}%`}
           min={UNIT_PERCENT_MIN}
           max={UNIT_PERCENT_MAX}
+          editTitle={t('toolbar.brush.clickToEdit')}
           onCommit={(nextValue) => setBrushOpacity(percentToUnit(nextValue))}
         />
       </div>
@@ -261,22 +268,26 @@ export function BrushToolbar(): JSX.Element {
         <button
           className="tool-option-btn"
           onClick={toggleEraserBackgroundMode}
-          title="Eraser background mode"
+          title={t('toolbar.brush.eraserBackgroundMode')}
         >
           {eraserBackgroundMode === 'background-color'
-            ? 'Erase to BG Color'
-            : 'Erase to Transparent'}
+            ? t('toolbar.brush.eraseToBgColor')
+            : t('toolbar.brush.eraseToTransparent')}
         </button>
       )}
 
-      <button className="tool-btn" onClick={openBrushLibrary} title="Brush Library (Ctrl+F5)">
+      <button
+        className="tool-btn"
+        onClick={openBrushLibrary}
+        title={t('toolbar.brush.openBrushLibrary')}
+      >
         <Paintbrush {...ICON_PROPS} />
       </button>
 
       <button
         className={`tool-btn ${brushPanelOpen ? 'active' : ''}`}
         onClick={toggleBrushPanel}
-        title="Brush Settings"
+        title={t('toolbar.brush.openBrushSettings')}
       >
         <SlidersHorizontal {...ICON_PROPS} />
       </button>

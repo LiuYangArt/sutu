@@ -1,8 +1,10 @@
 import { X } from 'lucide-react';
 import { usePanelStore } from '@/stores/panel';
 import { GradientEditor } from './index';
+import { useI18n } from '@/i18n';
 
 export function GradientEditorModal(): JSX.Element | null {
+  const { t } = useI18n();
   const isOpen = usePanelStore((s) => s.panels['gradient-panel']?.isOpen ?? false);
   const closePanel = usePanelStore((s) => s.closePanel);
 
@@ -15,12 +17,12 @@ export function GradientEditorModal(): JSX.Element | null {
         onClick={(event) => event.stopPropagation()}
       >
         <div className="gradient-editor-modal-header mica-panel-header">
-          <h2>Gradient Editor</h2>
+          <h2>{t('app.panel.gradientEditor')}</h2>
           <button
             type="button"
             className="gradient-editor-close-btn"
             onClick={() => closePanel('gradient-panel')}
-            aria-label="Close Gradient Editor"
+            aria-label={t('gradientEditor.close')}
           >
             <X size={18} />
           </button>

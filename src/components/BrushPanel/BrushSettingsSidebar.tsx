@@ -2,6 +2,7 @@ import React from 'react';
 import { useToolStore } from '@/stores/tool';
 import { usePatternLibraryStore } from '@/stores/pattern';
 import { useShallow } from 'zustand/react/shallow';
+import { useI18n } from '@/i18n';
 
 export interface TabConfig {
   id: string;
@@ -25,6 +26,7 @@ export function BrushSettingsSidebar({
   onSave,
   onSaveAs,
 }: BrushSettingsSidebarProps): JSX.Element {
+  const { t } = useI18n();
   // Select all toggle states and actions
   const {
     shapeDynamicsEnabled,
@@ -135,7 +137,7 @@ export function BrushSettingsSidebar({
                 tab.disabled ? 'disabled' : ''
               }`}
               onClick={() => !tab.disabled && onTabSelect(tab.id)}
-              title={tab.disabled ? 'Coming Soon' : tab.label}
+              title={tab.disabled ? t('brushPanel.comingSoon') : tab.label}
             >
               {hasCheckbox ? (
                 <input
@@ -161,10 +163,10 @@ export function BrushSettingsSidebar({
 
       <div className="brush-sidebar-actions">
         <button className="brush-sidebar-action-btn" onClick={onSave}>
-          Save
+          {t('common.save')}
         </button>
         <button className="brush-sidebar-action-btn" onClick={onSaveAs}>
-          Save As
+          {t('brushPanel.saveAs')}
         </button>
       </div>
     </div>

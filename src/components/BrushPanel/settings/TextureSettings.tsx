@@ -8,31 +8,10 @@ import { depthControlToSource, sourceToDepthControl } from '@/utils/textureDynam
 import { TextureBlendMode } from '../types';
 import { SliderRow, SelectRow, SelectOption } from '../BrushPanelComponents';
 import { PatternPicker } from './PatternPicker';
-
-/** Control options for Texture Depth */
-const DEPTH_CONTROL_OPTIONS: SelectOption[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'fade', label: 'Fade' },
-  { value: 'penPressure', label: 'Pen Pressure' },
-  { value: 'penTilt', label: 'Pen Tilt' },
-  { value: 'rotation', label: 'Rotation' },
-];
-
-/** Texture blend mode options */
-const BLEND_MODE_OPTIONS: { value: TextureBlendMode; label: string }[] = [
-  { value: 'multiply', label: 'Multiply' },
-  { value: 'subtract', label: 'Subtract' },
-  { value: 'darken', label: 'Darken' },
-  { value: 'overlay', label: 'Overlay' },
-  { value: 'colorDodge', label: 'Color Dodge' },
-  { value: 'colorBurn', label: 'Color Burn' },
-  { value: 'linearBurn', label: 'Linear Burn' },
-  { value: 'hardMix', label: 'Hard Mix' },
-  { value: 'linearHeight', label: 'Linear Height' },
-  { value: 'height', label: 'Height' },
-];
+import { useI18n } from '@/i18n';
 
 export function TextureSettings(): JSX.Element {
+  const { t } = useI18n();
   const {
     textureEnabled,
     textureSettings,
@@ -46,6 +25,27 @@ export function TextureSettings(): JSX.Element {
   const patternId = textureSettings?.patternId;
 
   const disabled = !textureEnabled;
+  const depthControlOptions: SelectOption[] = [
+    { value: 'off', label: t('brushPanel.control.off') },
+    { value: 'fade', label: t('brushPanel.control.fade') },
+    { value: 'penPressure', label: t('brushPanel.control.penPressure') },
+    { value: 'penTilt', label: t('brushPanel.control.penTilt') },
+    { value: 'rotation', label: t('brushPanel.control.rotation') },
+  ];
+
+  const blendModeOptions: { value: TextureBlendMode; label: string }[] = [
+    { value: 'multiply', label: t('blendMode.multiply') },
+    { value: 'subtract', label: t('blendMode.subtract') },
+    { value: 'darken', label: t('blendMode.darken') },
+    { value: 'overlay', label: t('blendMode.overlay') },
+    { value: 'colorDodge', label: t('blendMode.colorDodge') },
+    { value: 'colorBurn', label: t('blendMode.colorBurn') },
+    { value: 'linearBurn', label: t('blendMode.linearBurn') },
+    { value: 'hardMix', label: t('blendMode.hardMix') },
+    { value: 'linearHeight', label: t('brushPanel.texture.mode.linearHeight') },
+    { value: 'height', label: t('brushPanel.texture.mode.height') },
+  ];
+
   const depthControlSource = depthControlToSource(textureSettings.depthControl);
   const brushPatternFallback = patternId
     ? (brushPatterns.find((pattern) => pattern.id === patternId) ?? null)
@@ -56,8 +56,8 @@ export function TextureSettings(): JSX.Element {
   const canAddCurrentPattern = !disabled && !!patternId && !isPatternInLibrary;
   const addButtonDisabled = !canAddCurrentPattern || isAddingPattern;
   const addButtonTitle = canAddCurrentPattern
-    ? 'Add current brush pattern to library'
-    : 'Pattern already in library';
+    ? t('brushPanel.texture.addCurrentPatternToLibrary')
+    : t('brushPanel.texture.patternAlreadyInLibrary');
 
   // Controls related to individual tip variation are disabled unless Texture Each Tip is on
   const tipVariationDisabled = disabled || !textureSettings.textureEachTip;
@@ -75,15 +75,15 @@ export function TextureSettings(): JSX.Element {
       setTextureSettings({ patternId: result.pattern.id });
       pushToast(
         result.added
-          ? 'Pattern added to library'
-          : 'Pattern already exists, switched to existing item',
+          ? t('brushPanel.texture.toast.patternAddedToLibrary')
+          : t('brushPanel.texture.toast.patternAlreadyExistsSwitched'),
         {
           variant: result.added ? 'success' : 'info',
         }
       );
     } catch (error) {
       console.error('[TextureSettings] Failed to add pattern from brush:', error);
-      pushToast('Failed to add pattern', { variant: 'error' });
+      pushToast(t('brushPanel.texture.toast.failedToAddPattern'), { variant: 'error' });
     } finally {
       setIsAddingPattern(false);
     }
@@ -94,7 +94,7 @@ export function TextureSettings(): JSX.Element {
       {/* Section header */}
       <div className="section-header-row">
         <div className="section-checkbox-label">
-          <h4>Texture</h4>
+          <h4>{t('brushPanel.tab.texture')}</h4>
         </div>
       </div>
 
@@ -102,7 +102,7 @@ export function TextureSettings(): JSX.Element {
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`} style={{ marginBottom: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', minWidth: 60 }}>
-            Pattern
+            {t('brushPanel.texture.pattern')}
           </span>
           <PatternPicker
             selectedId={patternId ?? null}
@@ -131,12 +131,12 @@ export function TextureSettings(): JSX.Element {
               onChange={(e) => setTextureSettings({ invert: e.target.checked })}
               disabled={disabled}
             />
-            <span>Invert</span>
+            <span>{t('brushPanel.texture.invert')}</span>
           </label>
 
           <button
             type="button"
-            aria-label="Add pattern to library"
+            aria-label={t('brushPanel.texture.addPatternToLibrary')}
             title={addButtonTitle}
             onClick={() => void handleAddCurrentPattern()}
             disabled={addButtonDisabled}
@@ -164,7 +164,7 @@ export function TextureSettings(): JSX.Element {
       {/* Basic texture adjustments */}
       <div className={`dynamics-group ${disabled ? 'disabled' : ''}`}>
         <SliderRow
-          label="Scale"
+          label={t('brushPanel.texture.scale')}
           value={textureSettings.scale}
           min={1}
           max={1000}
@@ -174,7 +174,7 @@ export function TextureSettings(): JSX.Element {
         />
 
         <SliderRow
-          label="Brightness"
+          label={t('brushPanel.texture.brightness')}
           value={textureSettings.brightness}
           min={-150}
           max={150}
@@ -183,7 +183,7 @@ export function TextureSettings(): JSX.Element {
         />
 
         <SliderRow
-          label="Contrast"
+          label={t('brushPanel.texture.contrast')}
           value={textureSettings.contrast}
           min={-50}
           max={50}
@@ -202,20 +202,20 @@ export function TextureSettings(): JSX.Element {
               onChange={(e) => setTextureSettings({ textureEachTip: e.target.checked })}
               disabled={disabled}
             />
-            <span>Texture Each Tip</span>
+            <span>{t('brushPanel.texture.textureEachTip')}</span>
           </label>
         </div>
 
         <SelectRow
-          label="Mode"
+          label={t('brushPanel.texture.mode')}
           value={textureSettings.mode}
-          options={BLEND_MODE_OPTIONS}
+          options={blendModeOptions}
           onChange={(v) => setTextureSettings({ mode: v as TextureBlendMode })}
           disabled={disabled}
         />
 
         <SliderRow
-          label="Depth"
+          label={t('brushPanel.texture.depth')}
           value={textureSettings.depth}
           min={0}
           max={100}
@@ -224,7 +224,7 @@ export function TextureSettings(): JSX.Element {
         />
 
         <SliderRow
-          label="Minimum Depth"
+          label={t('brushPanel.texture.minimumDepth')}
           value={textureSettings.minimumDepth}
           min={0}
           max={100}
@@ -234,7 +234,7 @@ export function TextureSettings(): JSX.Element {
         />
 
         <SliderRow
-          label="Depth Jitter"
+          label={t('brushPanel.texture.depthJitter')}
           value={textureSettings.depthJitter}
           min={0}
           max={100}
@@ -244,9 +244,9 @@ export function TextureSettings(): JSX.Element {
         />
 
         <SelectRow
-          label="Control"
+          label={t('brushPanel.control.label')}
           value={depthControlSource}
-          options={DEPTH_CONTROL_OPTIONS}
+          options={depthControlOptions}
           onChange={(v) =>
             setTextureSettings({ depthControl: sourceToDepthControl(v as ControlSource) })
           }
