@@ -19,17 +19,19 @@ function runStrokeWithSamples(params: {
   timestampStepMs: number;
   maxBrushSpeedPxPerMs: number;
   tailTaperEnabled?: boolean;
+  spacingPx?: number;
 }): {
   tailDabs: Array<{ x: number; y: number; pressure: number }>;
   snapshot: TailTaperDebugSnapshot;
 } {
   const stamper = new BrushStamper();
   stamper.beginStroke();
+  const spacingPx = params.spacingPx ?? 2;
 
   for (let i = 0; i < params.points.length; i += 1) {
     const point = params.points[i]!;
     const pressure = params.pressures[i] ?? params.pressures[params.pressures.length - 1] ?? 0;
-    stamper.processPoint(point.x, point.y, pressure, 2, false, {
+    stamper.processPoint(point.x, point.y, pressure, spacingPx, false, {
       timestampMs: i * params.timestampStepMs,
       maxBrushSpeedPxPerMs: params.maxBrushSpeedPxPerMs,
       brushSpeedSmoothingSamples: 3,
@@ -66,10 +68,11 @@ describe('BrushStamper tail taper debug snapshot', () => {
       'insufficient_samples',
       () =>
         runStrokeWithSamples({
-          points: buildLinearPoints(3, 6),
-          pressures: [0.4, 0.4, 0.4],
+          points: buildLinearPoints(2, 3),
+          pressures: [0.4, 0.4],
           timestampStepMs: 5,
           maxBrushSpeedPxPerMs: 30,
+          spacingPx: 4,
         }).snapshot,
     ],
     [

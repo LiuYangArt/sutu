@@ -1381,6 +1381,16 @@ export class BrushStamper {
     return Math.max(0, Math.min(1, value));
   }
 
+  private static smoothstep01(value: number): number {
+    const t = BrushStamper.clamp01(value);
+    return t * t * (3 - 2 * t);
+  }
+
+  private static smootherstep01(value: number): number {
+    const t = BrushStamper.clamp01(value);
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
   private static clampInt(value: number, min: number, max: number): number {
     if (!Number.isFinite(value)) return min;
     return Math.max(min, Math.min(max, Math.round(value)));
@@ -1637,14 +1647,14 @@ export class BrushStamper {
 
     const safeBrushSize = Math.max(1, brushSize);
     const speed = BrushStamper.clamp01(effectiveSpeed);
-    const targetLengthFromSize = safeBrushSize * (0.65 + 2.15 * speed);
-    const targetLengthFromSegment = segmentDistance * (1.4 + 0.8 * speed);
+    const targetLengthFromSize = safeBrushSize * (0.9 + 2.45 * speed);
+    const targetLengthFromSegment = segmentDistance * (1.55 + 1.05 * speed);
     const tailLengthPx = Math.min(
-      safeBrushSize * 3.2,
-      Math.max(safeBrushSize * 0.55, targetLengthFromSize, targetLengthFromSegment)
+      safeBrushSize * 4.1,
+      Math.max(safeBrushSize * 0.75, targetLengthFromSize, targetLengthFromSegment)
     );
     const safeEndPressure = BrushStamper.clamp01(endPressure);
-    const pressureDecayExponent = 1.1 + (1 - speed) * 0.28;
+    const decayBias = 0.82 + (1 - speed) * 0.26;
     const maxTailDabs = 256;
 
     const tailDabs: Array<{ x: number; y: number; pressure: number }> = [];
@@ -1652,7 +1662,8 @@ export class BrushStamper {
 
     while (traveled <= tailLengthPx && tailDabs.length < maxTailDabs) {
       const t = BrushStamper.clamp01(traveled / tailLengthPx);
-      const pressure = Math.max(0, safeEndPressure * Math.pow(1 - t, pressureDecayExponent));
+      const easedT = Math.pow(t, decayBias);
+      const pressure = Math.max(0, safeEndPressure * (1 - BrushStamper.smootherstep01(easedT)));
       if (pressure < 8e-4 && traveled > safeBrushSize * 0.2) {
         break;
       }
@@ -1666,11 +1677,52 @@ export class BrushStamper {
       const nominalDiameter = Math.max(1, safeBrushSize * pressure);
       const minSpacing = Math.max(0.18, safeBrushSize * 0.006);
       const maxSpacing = Math.max(minSpacing, safeBrushSize * 0.07);
-      const spacingPx = Math.min(maxSpacing, Math.max(minSpacing, nominalDiameter * 0.1));
+      const spacingPx = Math.min(maxSpacing, Math.max(minSpacing, nominalDiameter * 0.095));
       traveled += spacingPx;
     }
 
     return tailDabs;
+  }
+
+  private appendStrokeStartTransitionDabs(
+    dabs: Array<{ x: number; y: number; pressure: number }>,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    targetPressure: number,
+    spacingPx: number,
+    normalizedSpeed: number,
+    timestampMs: number
+  ): void {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= 1e-6) {
+      const pressure = BrushStamper.clamp01(targetPressure);
+      dabs.push({ x: toX, y: toY, pressure });
+      this.recordTailSample(toX, toY, pressure, normalizedSpeed, timestampMs);
+      return;
+    }
+
+    const stepSpacing = Math.max(0.25, Math.min(1.5, spacingPx * 0.55));
+    const rampLengthPx = Math.max(BrushStamper.MIN_MOVEMENT_DISTANCE * 1.35, stepSpacing * 3.2);
+    let traveled = Math.min(distance, Math.max(0.1, stepSpacing * 0.3));
+
+    while (traveled < distance) {
+      const t = BrushStamper.clamp01(traveled / distance);
+      const rampT = BrushStamper.clamp01(traveled / rampLengthPx);
+      const pressure = BrushStamper.clamp01(targetPressure * BrushStamper.smoothstep01(rampT));
+      const dabX = fromX + dx * t;
+      const dabY = fromY + dy * t;
+      dabs.push({ x: dabX, y: dabY, pressure });
+      this.recordTailSample(dabX, dabY, pressure, normalizedSpeed, timestampMs);
+      traveled += stepSpacing;
+    }
+
+    const finalPressure = BrushStamper.clamp01(targetPressure);
+    dabs.push({ x: toX, y: toY, pressure: finalPressure });
+    this.recordTailSample(toX, toY, finalPressure, normalizedSpeed, timestampMs);
   }
 
   /**
@@ -1760,10 +1812,25 @@ export class BrushStamper {
       // We've moved enough - NOW initialize EMA with current pressure
       this.hasMovedEnough = true;
       this.smoothedPressure = pressure; // Initialize EMA with current pressure
-      this.prevPoint = this.lastPoint;
-      this.lastPoint = { x, y, pressure };
-      dabs.push({ x, y, pressure });
-      this.recordTailSample(x, y, pressure, this.lastNormalizedSpeed, timestampMs);
+      this.appendStrokeStartTransitionDabs(
+        dabs,
+        this.strokeStartPoint.x,
+        this.strokeStartPoint.y,
+        x,
+        y,
+        pressure,
+        spacingPx,
+        this.lastNormalizedSpeed,
+        timestampMs
+      );
+      const previousDab = dabs[dabs.length - 2];
+      const finalDab = dabs[dabs.length - 1];
+      this.prevPoint = previousDab
+        ? { x: previousDab.x, y: previousDab.y, pressure: previousDab.pressure }
+        : { x: this.strokeStartPoint.x, y: this.strokeStartPoint.y, pressure: 0 };
+      this.lastPoint = finalDab
+        ? { x: finalDab.x, y: finalDab.y, pressure: finalDab.pressure }
+        : { x, y, pressure };
       return dabs;
     }
 
