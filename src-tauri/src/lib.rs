@@ -10,6 +10,7 @@ pub mod bench;
 pub mod benchmark;
 pub mod brush;
 pub mod commands;
+pub mod core;
 pub mod file;
 pub mod input;
 pub mod pattern;
@@ -233,7 +234,9 @@ pub fn run() {
             commands::save_brush_preset_as,
             // File operations
             commands::save_project,
+            commands::save_project_v2,
             commands::load_project,
+            commands::load_project_v2,
             commands::detect_file_format,
             commands::delete_file_if_exists,
             commands::reveal_in_explorer,

@@ -8,6 +8,7 @@ use super::types::{
     ChannelInfo, ImageResourceId, LayerFlags, PreparedChannel, PreparedLayer, PsdHeader,
     ResolutionInfo,
 };
+use crate::core::contracts::{LayerDataCore, ProjectDataCore};
 use crate::file::types::{FileError, LayerData, ProjectData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use byteorder::{BigEndian, WriteBytesExt};
@@ -48,6 +49,28 @@ pub fn save_psd(path: &Path, project: &ProjectData) -> Result<(), FileError> {
     Ok(())
 }
 
+/// Save core contract project data to PSD file using bytes-first payload.
+pub fn save_psd_core(path: &Path, project: &ProjectDataCore) -> Result<(), FileError> {
+    tracing::info!("Saving PSD file (core): {:?}", path);
+
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+
+    let prepared_layers = prepare_layers_core(project)?;
+
+    let header = PsdHeader::new_rgba(project.width, project.height);
+    header.write(&mut writer)?;
+
+    writer.write_u32::<BigEndian>(0)?;
+    write_image_resources(&mut writer, project.dpi)?;
+    write_layer_section(&mut writer, &prepared_layers, project.height)?;
+    write_composite_image_core(&mut writer, project)?;
+    writer.flush()?;
+
+    tracing::info!("PSD file saved successfully (core)");
+    Ok(())
+}
+
 /// Prepare all layers for writing (pre-compress channel data)
 fn prepare_layers(project: &ProjectData) -> Result<Vec<PreparedLayer>, FileError> {
     let mut prepared = Vec::with_capacity(project.layers.len());
@@ -64,6 +87,20 @@ fn prepare_layers(project: &ProjectData) -> Result<Vec<PreparedLayer>, FileError
     Ok(prepared)
 }
 
+fn prepare_layers_core(project: &ProjectDataCore) -> Result<Vec<PreparedLayer>, FileError> {
+    let mut prepared = Vec::with_capacity(project.layers.len());
+
+    for layer in &project.layers {
+        if let Some(ref png_bytes) = layer.layer_png_bytes {
+            let prepared_layer =
+                prepare_layer_core(layer, png_bytes, project.width, project.height)?;
+            prepared.push(prepared_layer);
+        }
+    }
+
+    Ok(prepared)
+}
+
 /// Prepare a single layer
 fn prepare_layer(
     layer: &LayerData,
@@ -71,36 +108,71 @@ fn prepare_layer(
     doc_width: u32,
     doc_height: u32,
 ) -> Result<PreparedLayer, FileError> {
-    // Decode base64 PNG to RGBA
     let img = decode_base64_png(image_data)?;
+    build_prepared_layer(
+        &layer.name,
+        layer.visible,
+        layer.opacity,
+        &layer.blend_mode,
+        &img,
+        doc_width,
+        doc_height,
+    )
+}
 
-    // For simplicity, use full canvas bounds
-    // TODO: Optimize by calculating actual non-transparent bounds
+fn build_prepared_layer(
+    name: &str,
+    visible: bool,
+    opacity: f32,
+    blend_mode: &str,
+    img: &RgbaImage,
+    doc_width: u32,
+    doc_height: u32,
+) -> Result<PreparedLayer, FileError> {
+    // For now we always encode the full document rect.
+    // TODO: compute non-transparent bounds to reduce payload size.
     let top = 0i32;
     let left = 0i32;
     let bottom = doc_height as i32;
     let right = doc_width as i32;
 
-    // Prepare channels (Alpha, Red, Green, Blue)
     let channels = prepare_channels(&img, doc_width, doc_height)?;
 
     let flags = LayerFlags {
-        visible: layer.visible,
+        visible,
         has_useful_info: true,
         ..Default::default()
     };
 
     Ok(PreparedLayer {
-        name: layer.name.clone(),
+        name: name.to_string(),
         top,
         left,
         bottom,
         right,
-        opacity: (layer.opacity * 255.0).round() as u8,
-        blend_mode: blend_mode_to_psd(&layer.blend_mode),
+        opacity: (opacity * 255.0).round() as u8,
+        blend_mode: blend_mode_to_psd(blend_mode),
         flags,
         channels,
     })
+}
+
+fn prepare_layer_core(
+    layer: &LayerDataCore,
+    image_png_bytes: &[u8],
+    doc_width: u32,
+    doc_height: u32,
+) -> Result<PreparedLayer, FileError> {
+    let img = decode_png_bytes(image_png_bytes)?;
+    build_prepared_layer(
+        &layer.name,
+        layer.visible,
+        layer.opacity,
+        &layer.blend_mode,
+        &img,
+        doc_width,
+        doc_height,
+    )
 }
 
 /// Prepare channel data for a layer
@@ -350,18 +422,28 @@ fn write_composite_image<W: Write>(w: &mut W, project: &ProjectData) -> Result<(
     // Prefer frontend flattened export to guarantee WYSIWYG with canvas blend modes.
     // Fallback to backend layer flattening only when flattened image is missing/invalid.
     let composite = create_composite(project)?;
+    write_composite_rle_rgba(w, &composite)
+}
 
-    let width = project.width;
-    let height = project.height;
+fn write_composite_image_core<W: Write>(
+    w: &mut W,
+    project: &ProjectDataCore,
+) -> Result<(), FileError> {
+    let composite = create_composite_core(project)?;
+    write_composite_rle_rgba(w, &composite)
+}
+
+fn write_composite_rle_rgba<W: Write>(w: &mut W, composite: &RgbaImage) -> Result<(), FileError> {
+    let width = composite.width();
+    let height = composite.height();
 
     // Compression method (1 = RLE)
     w.write_u16::<BigEndian>(1)?;
 
-    // Prepare all channels
     let mut all_row_counts: Vec<u16> = Vec::new();
     let mut all_channel_data: Vec<u8> = Vec::new();
 
-    // Channel order for composite: R, G, B, A
+    // Channel order for composite data: R, G, B, A
     for ch_idx in 0..4 {
         let mut rows: Vec<Vec<u8>> = Vec::with_capacity(height as usize);
 
@@ -369,14 +451,7 @@ fn write_composite_image<W: Write>(w: &mut W, project: &ProjectData) -> Result<(
             let mut row = Vec::with_capacity(width as usize);
             for x in 0..width {
                 let pixel = composite.get_pixel(x, y);
-                let value = match ch_idx {
-                    0 => pixel[0], // Red
-                    1 => pixel[1], // Green
-                    2 => pixel[2], // Blue
-                    3 => pixel[3], // Alpha
-                    _ => 0,
-                };
-                row.push(value);
+                row.push(pixel[ch_idx]);
             }
             rows.push(row);
         }
@@ -388,14 +463,10 @@ fn write_composite_image<W: Write>(w: &mut W, project: &ProjectData) -> Result<(
         all_channel_data.extend(compressed_data);
     }
 
-    // Write all row counts first
     for count in &all_row_counts {
         w.write_u16::<BigEndian>(*count)?;
     }
-
-    // Write all compressed data
     w.write_all(&all_channel_data)?;
-
     Ok(())
 }
 
@@ -418,14 +489,28 @@ fn create_composite(project: &ProjectData) -> Result<RgbaImage, FileError> {
     create_composite_from_layers(project)
 }
 
+fn create_composite_core(project: &ProjectDataCore) -> Result<RgbaImage, FileError> {
+    if let Some(ref flattened_png_bytes) = project.flattened_png_bytes {
+        let flattened = decode_png_bytes(flattened_png_bytes)?;
+        if flattened.width() == project.width && flattened.height() == project.height {
+            return Ok(flattened);
+        }
+        tracing::warn!(
+            "PSD(core) flattened image size mismatch: expected {}x{}, got {}x{}, fallback to backend composite",
+            project.width,
+            project.height,
+            flattened.width(),
+            flattened.height()
+        );
+    }
+
+    create_composite_from_layers_core(project)
+}
+
 /// Create composite image from layer stack as fallback path
 fn create_composite_from_layers(project: &ProjectData) -> Result<RgbaImage, FileError> {
     let mut composite = RgbaImage::new(project.width, project.height);
-
-    // Fill with white background
-    for pixel in composite.pixels_mut() {
-        *pixel = image::Rgba([255, 255, 255, 255]);
-    }
+    fill_white_background(&mut composite);
 
     // Composite each visible layer (bottom to top)
     for layer in &project.layers {
@@ -435,43 +520,78 @@ fn create_composite_from_layers(project: &ProjectData) -> Result<RgbaImage, File
 
         if let Some(ref image_data) = layer.image_data {
             let layer_img = decode_base64_png(image_data)?;
-            let opacity = layer.opacity;
-
-            // Simple alpha blending
-            for y in 0..project.height {
-                for x in 0..project.width {
-                    let src = layer_img.get_pixel(x, y);
-                    let dst = composite.get_pixel(x, y);
-
-                    let src_a = (src[3] as f32 / 255.0) * opacity;
-
-                    if src_a > 0.0 {
-                        let dst_a = dst[3] as f32 / 255.0;
-                        let out_a = src_a + dst_a * (1.0 - src_a);
-
-                        if out_a > 0.0 {
-                            let blend = |s: u8, d: u8| -> u8 {
-                                let s_f = s as f32 / 255.0;
-                                let d_f = d as f32 / 255.0;
-                                let out = (s_f * src_a + d_f * dst_a * (1.0 - src_a)) / out_a;
-                                (out * 255.0).round() as u8
-                            };
-
-                            let out_pixel = image::Rgba([
-                                blend(src[0], dst[0]),
-                                blend(src[1], dst[1]),
-                                blend(src[2], dst[2]),
-                                (out_a * 255.0).round() as u8,
-                            ]);
-                            composite.put_pixel(x, y, out_pixel);
-                        }
-                    }
-                }
-            }
+            blend_layer_onto_composite(&mut composite, &layer_img, layer.opacity);
         }
     }
 
     Ok(composite)
+}
+
+fn create_composite_from_layers_core(project: &ProjectDataCore) -> Result<RgbaImage, FileError> {
+    let mut composite = RgbaImage::new(project.width, project.height);
+    fill_white_background(&mut composite);
+
+    for layer in &project.layers {
+        if !layer.visible {
+            continue;
+        }
+
+        if let Some(ref image_png_bytes) = layer.layer_png_bytes {
+            let layer_img = decode_png_bytes(image_png_bytes)?;
+            blend_layer_onto_composite(&mut composite, &layer_img, layer.opacity);
+        }
+    }
+
+    Ok(composite)
+}
+
+fn fill_white_background(image: &mut RgbaImage) {
+    for pixel in image.pixels_mut() {
+        *pixel = image::Rgba([255, 255, 255, 255]);
+    }
+}
+
+fn blend_layer_onto_composite(composite: &mut RgbaImage, layer_img: &RgbaImage, opacity: f32) {
+    let width = composite.width();
+    let height = composite.height();
+
+    for y in 0..height {
+        for x in 0..width {
+            let src = layer_img.get_pixel(x, y);
+            let dst = composite.get_pixel(x, y);
+
+            let src_a = (src[3] as f32 / 255.0) * opacity;
+            if src_a <= 0.0 {
+                continue;
+            }
+
+            let dst_a = dst[3] as f32 / 255.0;
+            let out_a = src_a + dst_a * (1.0 - src_a);
+            if out_a <= 0.0 {
+                continue;
+            }
+
+            let blend = |s: u8, d: u8| -> u8 {
+                let s_f = s as f32 / 255.0;
+                let d_f = d as f32 / 255.0;
+                let out = (s_f * src_a + d_f * dst_a * (1.0 - src_a)) / out_a;
+                (out * 255.0).round() as u8
+            };
+
+            let out_pixel = image::Rgba([
+                blend(src[0], dst[0]),
+                blend(src[1], dst[1]),
+                blend(src[2], dst[2]),
+                (out_a * 255.0).round() as u8,
+            ]);
+            composite.put_pixel(x, y, out_pixel);
+        }
+    }
+}
+
+fn decode_png_bytes(bytes: &[u8]) -> Result<RgbaImage, FileError> {
+    let img = image::load_from_memory_with_format(bytes, ImageFormat::Png)?;
+    Ok(img.to_rgba8())
 }
 
 /// Decode base64 PNG to RGBA image
@@ -486,8 +606,7 @@ fn decode_base64_png(data: &str) -> Result<RgbaImage, FileError> {
     };
 
     let bytes = BASE64.decode(base64_data)?;
-    let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png)?;
-    Ok(img.to_rgba8())
+    decode_png_bytes(&bytes)
 }
 
 #[cfg(test)]

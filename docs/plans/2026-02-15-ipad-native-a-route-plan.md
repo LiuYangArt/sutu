@@ -1,7 +1,7 @@
 # iPad 原生分支 A 路线计划（共享 Rust Core）
 
 **日期**：2026-02-15  
-**状态**：已确认采用 A 路线（同仓双端 + 共享核心）
+**状态**：已确认采用 A 路线（同仓双端 + 共享核心）；已完成 Phase 0/1 地基，2026-02-16 补充复用与拆分评估
 
 ## 1. 结论
 
@@ -155,3 +155,107 @@
 
 能，而且是本路线的核心前提。  
 你的 ABR/PAT/PSD/ORA 与资源库管理逻辑大部分可复用；需要重写的是 iPad 的输入与渲染壳层，以及把部分 Tauri 绑定接口抽成平台无关 Core API。
+
+## 10. 2026-02-16 复核：复用矩阵（按当前代码现状）
+
+### 10.1 可直接复用（高）
+
+| 能力域 | 当前位置 | 复用结论 | 备注 |
+|---|---|---|---|
+| Core 契约 DTO | `src-tauri/src/core/contracts/*` | 可直接复用 | 已是跨端 contract，字段已覆盖 bytes-first 保存链路 |
+| Core 资源导入 | `src-tauri/src/core/assets/*` | 可直接复用 | `ABR/PAT` 已提供 path + bytes 双入口 |
+| Core 格式 API | `src-tauri/src/core/formats/*` | 可直接复用 | `save/load_project_core` 已为平台无关 API |
+| PSD/ORA 读写核心 | `src-tauri/src/file/psd/*`、`src-tauri/src/file/ora.rs` | 可直接复用 | 已接入 `save_project_v2/load_project_v2` bytes 主链路 |
+| 一致性测试基线 | `src-tauri/src/core/*` 单测 + `docs/testing/cross-platform-core-consistency-v1.md` | 可直接复用 | 可直接作为 iPad 适配前的回归门禁 |
+
+### 10.2 需要适配后复用（中）
+
+| 能力域 | 当前位置 | 适配需求 | 结论 |
+|---|---|---|---|
+| 命令桥接层 | `src-tauri/src/commands.rs` | 从 `tauri::command` 语义抽离为 iPad 桥接接口 | 逻辑可复用，壳层需重写 |
+| 桌面协议缓存 | `src-tauri/src/file/layer_cache.rs` + `project://` | iPad 需改为原生资源句柄或内存映射 | 数据可复用，协议不可复用 |
+| 前端文件编排 | `src/stores/file.ts` | iPad 需替换 Web 导出入口与文件对话框 | 流程思想可复用，调用实现需重做 |
+| 画布导出桥 | `src/components/Canvas/useGlobalExports.ts` | iPad 无 `window.__*` 导出接口 | 语义可复用，接口层需重写 |
+
+### 10.3 不建议复用（低）
+
+| 能力域 | 当前位置 | 原因 |
+|---|---|---|
+| WebGPU 渲染主链路 | `src/gpu/*` | iPad 目标是 Metal 渲染，API 与执行模型不同 |
+| React 画布交互 UI | `src/components/Canvas/*` | 触控手势、命中区、双手操作模型与桌面差异大 |
+| 桌面输入后端 | `src-tauri/src/input/*` | WinTab/MacNative/PointerEvent 为桌面特化实现 |
+
+### 10.4 混合模式算法专项结论
+
+1. **可共用**：格式层的混合模式映射语义（如 PSD key <-> 业务 blend mode）可直接复用。  
+2. **不可直接共用代码**：实时绘制混合实现（TS/WebGPU）无法直接搬到 iPad/Metal。  
+3. **建议共用方式**：抽“混合模式规范 + golden 向量”，双端各自实现，统一用同一套向量回归。  
+4. **当前注意事项**：Rust PSD writer 的后端 fallback 合成仍是简化 alpha 合成，跨端一致性仍应优先依赖 flattened bytes 主链路。
+
+## 11. 2026-02-16 复核：是否现在就拆分 crates？
+
+### 11.1 决策
+
+当前**不强制立即物理拆包**。先维持 `src-tauri/src/core/*` 的逻辑模块边界，在 Phase 2 前再按触发条件拆分为独立 crates。
+
+### 11.2 原因
+
+1. 现阶段已经完成“先内聚”目标：Core 契约/API/测试边界清晰。  
+2. 若立即拆包，会增加 Cargo 工作区与发布维护成本，短期收益不高。  
+3. iPad 适配尚未进入真实调用阶段，先保持迭代速度更重要。
+
+### 11.3 拆包触发条件（满足任一即可启动）
+
+1. iPad 原生桥接开始直接依赖 Rust Core（不再仅桌面内部调用）。  
+2. Core 单测/构建需要在无 Tauri 依赖下独立 CI 跑通。  
+3. `src-tauri/src/core/*` 出现明显跨域耦合或改动冲突，影响并行开发效率。
+
+### 11.4 建议拆包顺序（最小风险）
+
+1. `crates/sutu-core-contracts`：纯 DTO 与共享类型。  
+2. `crates/sutu-core-assets`：ABR/PAT 导入与资源索引。  
+3. `crates/sutu-core-formats`：PSD/ORA 保存加载核心。  
+4. `crates/sutu-core-brush-model`：笔刷参数模型与中间数据。  
+5. `crates/sutu-core-compat`（可选）：legacy adapter，仅用于平滑迁移期。
+
+### 11.5 对后续开发的直接建议
+
+1. 先补“混合模式规范 + 回归向量”文档与测试夹具，再做 iPad 渲染实现。  
+2. 保持“新能力先 Core contract，再适配层接入”的变更顺序。  
+3. 在 Phase 2 开始前做一次拆包评审，按 11.3 触发条件决定是否物理拆分。  
+4. iPad UI 采用“业务状态与模型复用 + 交互层重设计”，不追求桌面 UI 组件硬复用。
+
+## 12. 2026-02-16 补充：多语言（i18n）策略
+
+### 12.1 决策
+
+1. 现在先做 **i18n 地基**，不做全量翻译。  
+2. 地基目标是“桌面与 iPad 可共用文案资产”，避免后续双端各自硬编码返工。
+
+### 12.2 可复用与不可复用边界
+
+1. 可复用（高）：
+   - 文案 key 命名规范
+   - 语言资源文件（源格式）
+   - 术语表与翻译记忆
+   - 缺失 key 校验规则
+2. 不可直接复用（中）：
+   - 前端 React i18n runtime 接线
+   - iPad 原生（Swift）本地化加载与绑定
+3. 结论：**资源层共用，接线层分端实现**。
+
+### 12.3 Phase 1.5（最小可行落地）
+
+1. 定义 key 规范（示例）：`feature.module.action`，禁止以中文/英文原句作为 key。  
+2. 约定统一资源源目录（建议）：`locales/`（如 `zh-CN.json`、`en-US.json`）。  
+3. 在桌面端先接入 key 读取；iPad 端后续通过脚本转换同一份源资源。  
+4. 增加校验：
+   - 缺失 key 报告
+   - 未使用 key 报告（可先 warning）
+   - 禁止新增硬编码 UI 文案（新增代码）
+
+### 12.4 与多平台开发顺序的关系
+
+1. 新 feature 流程建议：`Core contract` -> `文案 key` -> `桌面适配` -> `iPad 适配`。  
+2. iPad UI 可重设计交互，但文案 key 与术语应与桌面共享同一来源。  
+3. 先做地基后做翻译，优先保障结构一致性而非短期语言覆盖率。
