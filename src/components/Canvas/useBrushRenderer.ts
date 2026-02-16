@@ -335,6 +335,11 @@ export function useBrushRenderer({
   const strokeCompositeModeLockedRef = useRef(false);
   const strokeColorJitterSampleRef = useRef<ColorJitterSample | null>(null);
   const lastConfigRef = useRef<BrushRenderConfig | null>(null);
+  const lastPointerDynamicsRef = useRef<{ tiltX: number; tiltY: number; rotation: number }>({
+    tiltX: 0,
+    tiltY: 0,
+    rotation: 0,
+  });
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -441,6 +446,7 @@ export function useBrushRenderer({
       strokeCompositeModeLockedRef.current = false;
       strokeColorJitterSampleRef.current = null;
       lastConfigRef.current = null;
+      lastPointerDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
       strokeTailFinalizeRef.current = {
         finalized: false,
         trigger: null,
@@ -514,6 +520,201 @@ export function useBrushRenderer({
     [backend]
   );
 
+  const renderPrimaryDabs = useCallback(
+    (
+      dabs: Array<{ x: number; y: number; pressure: number }>,
+      config: BrushRenderConfig,
+      dynamics: { tiltX: number; tiltY: number; rotation: number }
+    ): void => {
+      if (dabs.length === 0) {
+        return;
+      }
+
+      const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
+      const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
+      const effectiveTransfer = effectiveDynamics.transfer;
+      const tiltX = dynamics.tiltX;
+      const tiltY = dynamics.tiltY;
+      const rotation = dynamics.rotation;
+
+      const useShapeDynamics =
+        effectiveShapeDynamics !== null && isShapeDynamicsActive(effectiveShapeDynamics);
+      const delayFirstDabForInitialDirection =
+        useShapeDynamics && effectiveShapeDynamics?.angleControl === 'initial';
+      const useScatter = config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
+      const useColorDynamics =
+        config.colorDynamicsEnabled &&
+        config.colorDynamics &&
+        isColorDynamicsActive(config.colorDynamics);
+      const colorDynamicsApplyPerTip = config.colorDynamics?.applyPerTip !== false;
+      let strokeColorJitterSample: ColorJitterSample | undefined;
+      if (useColorDynamics && !colorDynamicsApplyPerTip) {
+        if (!strokeColorJitterSampleRef.current) {
+          strokeColorJitterSampleRef.current = createColorJitterSample();
+        }
+        strokeColorJitterSample = strokeColorJitterSampleRef.current;
+      }
+
+      const selectionState = useSelectionStore.getState();
+      const hasSelection = selectionState.hasSelection;
+      const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
+
+      for (const dab of dabs) {
+        if (
+          !skipCpuSelectionCheck &&
+          hasSelection &&
+          !selectionState.isPointInSelection(dab.x, dab.y)
+        ) {
+          continue;
+        }
+
+        lastDabPosRef.current = { x: dab.x, y: dab.y };
+
+        const dabPressure = mapStamperPressureToBrush(config, dab.pressure);
+        let dabSize = config.size;
+        let dabRoundness = config.roundness / 100;
+        let dabAngle = config.angle;
+        let dabFlipX = false;
+        let dabFlipY = false;
+
+        let direction = 0;
+        if (prevDabPosRef.current) {
+          direction = calculateDirection(
+            prevDabPosRef.current.x,
+            prevDabPosRef.current.y,
+            dab.x,
+            dab.y
+          );
+          if (initialDirectionRef.current === null) {
+            initialDirectionRef.current = direction;
+          }
+        }
+
+        if (
+          delayFirstDabForInitialDirection &&
+          initialDirectionRef.current === null &&
+          prevDabPosRef.current === null
+        ) {
+          prevDabPosRef.current = { x: dab.x, y: dab.y };
+          continue;
+        }
+
+        const dynamicsInput: DynamicsInput = {
+          pressure: dabPressure,
+          tiltX,
+          tiltY,
+          rotation,
+          direction,
+          initialDirection: initialDirectionRef.current ?? direction,
+          fadeProgress: 0,
+        };
+
+        const { flow: dabFlow, dabOpacity } = resolveDabFlowAndOpacity(
+          config,
+          dynamicsInput,
+          effectiveTransfer
+        );
+
+        if (useShapeDynamics && effectiveShapeDynamics) {
+          const shape = computeDabShape(
+            dabSize,
+            config.angle,
+            config.roundness,
+            effectiveShapeDynamics,
+            dynamicsInput
+          );
+
+          dabSize = shape.size;
+          dabAngle = shape.angle;
+          dabRoundness = shape.roundness;
+          dabFlipX = shape.flipX;
+          dabFlipY = shape.flipY;
+        }
+
+        prevDabPosRef.current = { x: dab.x, y: dab.y };
+
+        let dabColor = config.color;
+        if (useColorDynamics && config.colorDynamics) {
+          const colorResult = computeDabColor(
+            config.color,
+            config.backgroundColor,
+            config.colorDynamics,
+            dynamicsInput,
+            Math.random,
+            strokeColorJitterSample
+          );
+          dabColor = colorResult.color;
+        }
+
+        const scatteredPositions = useScatter
+          ? applyScatter(
+              {
+                x: dab.x,
+                y: dab.y,
+                strokeAngle: (direction * Math.PI) / 180,
+                diameter: dabSize,
+                dynamics: dynamicsInput,
+              },
+              config.scatter!
+            )
+          : [{ x: dab.x, y: dab.y }];
+
+        for (const pos of scatteredPositions) {
+          const effectiveTextureSettings =
+            config.textureEnabled && config.textureSettings
+              ? (() => {
+                  const settings = config.textureSettings!;
+                  const dynamicDepth = computeTextureDepth(settings.depth, settings, dynamicsInput);
+                  if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
+                    return settings;
+                  }
+                  return {
+                    ...settings,
+                    depth: dynamicDepth,
+                  };
+                })()
+              : undefined;
+
+          const renderDab = resolveRenderableDabSizeAndOpacity(dabSize, dabOpacity);
+          const dabParams: DabParams = {
+            x: pos.x,
+            y: pos.y,
+            size: renderDab.size,
+            flow: dabFlow,
+            hardness: config.hardness / 100,
+            maskType: config.maskType,
+            color: dabColor,
+            dabOpacity: renderDab.dabOpacity,
+            roundness: dabRoundness,
+            angle: dabAngle,
+            texture: config.texture ?? undefined,
+            flipX: dabFlipX,
+            flipY: dabFlipY,
+            wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
+            textureSettings: effectiveTextureSettings,
+            noiseEnabled: config.noiseEnabled,
+            noiseSize: config.noiseSize ?? 100,
+            noiseSizeJitter: config.noiseSizeJitter ?? 0,
+            noiseDensityJitter: config.noiseDensityJitter ?? 0,
+            dualBrush:
+              config.dualBrushEnabled && config.dualBrush
+                ? {
+                    ...config.dualBrush,
+                    enabled: config.dualBrushEnabled,
+                    brushTexture: config.dualBrush.texture,
+                  }
+                : undefined,
+            baseSize: config.size,
+            spacing: config.spacing,
+          };
+
+          stampDabToBackend(dabParams);
+        }
+      }
+    },
+    [backend, mapStamperPressureToBrush, resolveDabFlowAndOpacity, stampDabToBackend]
+  );
+
   const finalizeStrokeTailOnce = useCallback(
     (trigger: StrokeTailFinalizeTrigger): void => {
       if (strokeTailFinalizeRef.current.finalized) {
@@ -546,141 +747,13 @@ export function useBrushRenderer({
         tailTaperEnabled: config.tailTaperEnabled,
       });
       secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
-
       if (tailDabs.length > 0) {
-        const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
-        const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
-        const effectiveTransfer = effectiveDynamics.transfer;
-        const selectionState = useSelectionStore.getState();
-        const hasSelection = selectionState.hasSelection;
-        const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
-        const useShapeDynamics =
-          effectiveShapeDynamics !== null && isShapeDynamicsActive(effectiveShapeDynamics);
-        const useScatter =
-          config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
-        let previousTailPoint = lastDabPosRef.current;
-
-        for (const tailDab of tailDabs) {
-          if (
-            !skipCpuSelectionCheck &&
-            hasSelection &&
-            !selectionState.isPointInSelection(tailDab.x, tailDab.y)
-          ) {
-            continue;
-          }
-
-          const mappedTailPressure = mapStamperPressureToBrush(config, tailDab.pressure);
-          let direction = 0;
-          if (previousTailPoint) {
-            direction = calculateDirection(
-              previousTailPoint.x,
-              previousTailPoint.y,
-              tailDab.x,
-              tailDab.y
-            );
-          }
-          const neutralDynamicsInput: DynamicsInput = {
-            pressure: mappedTailPressure,
-            tiltX: 0,
-            tiltY: 0,
-            rotation: 0,
-            direction,
-            initialDirection: initialDirectionRef.current ?? direction,
-            fadeProgress: 0,
-          };
-          const { flow, dabOpacity } = resolveDabFlowAndOpacity(
-            config,
-            neutralDynamicsInput,
-            effectiveTransfer
-          );
-          let tailSize = config.size;
-          let tailRoundness = config.roundness / 100;
-          let tailAngle = config.angle;
-          let tailFlipX = false;
-          let tailFlipY = false;
-
-          if (useShapeDynamics && effectiveShapeDynamics) {
-            const shape = computeDabShape(
-              tailSize,
-              config.angle,
-              config.roundness,
-              effectiveShapeDynamics,
-              neutralDynamicsInput
-            );
-            tailSize = shape.size;
-            tailRoundness = shape.roundness;
-            tailAngle = shape.angle;
-            tailFlipX = shape.flipX;
-            tailFlipY = shape.flipY;
-          }
-
-          const tailPositions = useScatter
-            ? applyScatter(
-                {
-                  x: tailDab.x,
-                  y: tailDab.y,
-                  strokeAngle: (direction * Math.PI) / 180,
-                  diameter: tailSize,
-                  dynamics: neutralDynamicsInput,
-                },
-                config.scatter!
-              )
-            : [{ x: tailDab.x, y: tailDab.y }];
-
-          for (const pos of tailPositions) {
-            const effectiveTextureSettings =
-              config.textureEnabled && config.textureSettings
-                ? (() => {
-                    const settings = config.textureSettings!;
-                    const dynamicDepth = computeTextureDepth(
-                      settings.depth,
-                      settings,
-                      neutralDynamicsInput
-                    );
-                    if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
-                      return settings;
-                    }
-                    return {
-                      ...settings,
-                      depth: dynamicDepth,
-                    };
-                  })()
-                : undefined;
-
-            const renderTail = resolveRenderableDabSizeAndOpacity(tailSize, dabOpacity);
-            const dabParams: DabParams = {
-              x: pos.x,
-              y: pos.y,
-              size: renderTail.size,
-              flow,
-              hardness: config.hardness / 100,
-              maskType: config.maskType,
-              color: config.color,
-              dabOpacity: renderTail.dabOpacity,
-              roundness: tailRoundness,
-              angle: tailAngle,
-              texture: config.texture ?? undefined,
-              flipX: tailFlipX,
-              flipY: tailFlipY,
-              wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
-              textureSettings: effectiveTextureSettings,
-              noiseEnabled: config.noiseEnabled,
-              noiseSize: config.noiseSize ?? 100,
-              noiseSizeJitter: config.noiseSizeJitter ?? 0,
-              noiseDensityJitter: config.noiseDensityJitter ?? 0,
-              baseSize: config.size,
-              spacing: config.spacing,
-            };
-            stampDabToBackend(dabParams);
-            previousTailPoint = { x: pos.x, y: pos.y };
-            lastDabPosRef.current = previousTailPoint;
-          }
-        }
+        renderPrimaryDabs(tailDabs, config, lastPointerDynamicsRef.current);
       }
 
       lastConfigRef.current = null;
     },
-    [backend, mapStamperPressureToBrush, resolveDabFlowAndOpacity, stampDabToBackend]
+    [renderPrimaryDabs]
   );
 
   /**
@@ -724,7 +797,6 @@ export function useBrushRenderer({
       const adjustedPressure = mapStamperPressureToBrush(config, globalPressure);
       const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
       const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
-      const effectiveTransfer = effectiveDynamics.transfer;
       const tiltX = dynamics?.tiltX ?? 0;
       const tiltY = dynamics?.tiltY ?? 0;
       const rotation = dynamics?.rotation ?? 0;
@@ -843,203 +915,8 @@ export function useBrushRenderer({
         }
       }
 
-      // Shape Dynamics: Check if we need to apply dynamics
-      const useShapeDynamics =
-        effectiveShapeDynamics !== null && isShapeDynamicsActive(effectiveShapeDynamics);
-      const delayFirstDabForInitialDirection =
-        useShapeDynamics && effectiveShapeDynamics?.angleControl === 'initial';
-
-      // Scatter: Check if we need to apply scatter
-      const useScatter = config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
-
-      // Color Dynamics: Check if we need to apply dynamics
-      const useColorDynamics =
-        config.colorDynamicsEnabled &&
-        config.colorDynamics &&
-        isColorDynamicsActive(config.colorDynamics);
-      const colorDynamicsApplyPerTip = config.colorDynamics?.applyPerTip !== false;
-      let strokeColorJitterSample: ColorJitterSample | undefined;
-      if (useColorDynamics && !colorDynamicsApplyPerTip) {
-        if (!strokeColorJitterSampleRef.current) {
-          strokeColorJitterSampleRef.current = createColorJitterSample();
-        }
-        strokeColorJitterSample = strokeColorJitterSampleRef.current;
-      }
-
-      // Selection constraint: get state once before loop for performance
-      const selectionState = useSelectionStore.getState();
-      const hasSelection = selectionState.hasSelection;
-      const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
-
-      for (const dab of dabs) {
-        // Selection constraint: skip dabs outside selection
-        if (
-          !skipCpuSelectionCheck &&
-          hasSelection &&
-          !selectionState.isPointInSelection(dab.x, dab.y)
-        ) {
-          continue;
-        }
-
-        lastDabPosRef.current = { x: dab.x, y: dab.y };
-
-        const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
-        let dabSize = config.size;
-
-        // Shape Dynamics: Calculate direction and apply dynamics
-        let dabRoundness = config.roundness / 100;
-        let dabAngle = config.angle;
-        let dabFlipX = false;
-        let dabFlipY = false;
-
-        // Calculate direction from previous dab (needed for Shape Dynamics, Scatter, Color Dynamics, and Transfer)
-        let direction = 0;
-        if (prevDabPosRef.current) {
-          direction = calculateDirection(
-            prevDabPosRef.current.x,
-            prevDabPosRef.current.y,
-            dab.x,
-            dab.y
-          );
-          // Capture initial direction from the first directional sample.
-          if (initialDirectionRef.current === null) {
-            initialDirectionRef.current = direction;
-          }
-        }
-
-        // Initial Direction needs at least one movement vector.
-        // Delay the very first dab until we can derive that vector from the next dab.
-        if (
-          delayFirstDabForInitialDirection &&
-          initialDirectionRef.current === null &&
-          prevDabPosRef.current === null
-        ) {
-          prevDabPosRef.current = { x: dab.x, y: dab.y };
-          continue;
-        }
-
-        // Prepare dynamics input (shared by Shape Dynamics, Scatter, Color Dynamics, and Transfer)
-        const dynamicsInput: DynamicsInput = {
-          pressure: dabPressure,
-          tiltX,
-          tiltY,
-          rotation,
-          direction,
-          initialDirection: initialDirectionRef.current ?? direction,
-          fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
-        };
-
-        const { flow: dabFlow, dabOpacity } = resolveDabFlowAndOpacity(
-          config,
-          dynamicsInput,
-          effectiveTransfer
-        );
-
-        if (useShapeDynamics && effectiveShapeDynamics) {
-          // Compute dynamic shape
-          const shape = computeDabShape(
-            dabSize,
-            config.angle,
-            config.roundness, // 0-100
-            effectiveShapeDynamics,
-            dynamicsInput
-          );
-
-          dabSize = shape.size;
-          dabAngle = shape.angle;
-          dabRoundness = shape.roundness; // Already 0-1
-          dabFlipX = shape.flipX;
-          dabFlipY = shape.flipY;
-        }
-
-        // Update previous dab position for next direction calculation
-        prevDabPosRef.current = { x: dab.x, y: dab.y };
-
-        // Color Dynamics: Calculate dynamic color
-        let dabColor = config.color;
-        if (useColorDynamics && config.colorDynamics) {
-          const colorResult = computeDabColor(
-            config.color,
-            config.backgroundColor,
-            config.colorDynamics,
-            dynamicsInput,
-            Math.random,
-            strokeColorJitterSample
-          );
-          dabColor = colorResult.color;
-        }
-
-        // Apply Scatter: generate one or more scattered positions
-        const scatteredPositions = useScatter
-          ? applyScatter(
-              {
-                x: dab.x,
-                y: dab.y,
-                strokeAngle: (direction * Math.PI) / 180, // Convert degrees to radians
-                diameter: dabSize,
-                dynamics: dynamicsInput,
-              },
-              config.scatter!
-            )
-          : [{ x: dab.x, y: dab.y }];
-
-        if (config.dualBrushEnabled && config.dualBrush?.texture?.imageData) {
-          // console.log('[useBrushRenderer] DualBrush has imageData prepared');
-        }
-
-        // Stamp dab at each scattered position
-        for (const pos of scatteredPositions) {
-          const effectiveTextureSettings =
-            config.textureEnabled && config.textureSettings
-              ? (() => {
-                  const settings = config.textureSettings!;
-                  const dynamicDepth = computeTextureDepth(settings.depth, settings, dynamicsInput);
-                  if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
-                    return settings;
-                  }
-                  return {
-                    ...settings,
-                    depth: dynamicDepth,
-                  };
-                })()
-              : undefined;
-
-          const renderDab = resolveRenderableDabSizeAndOpacity(dabSize, dabOpacity);
-          const dabParams: DabParams = {
-            x: pos.x,
-            y: pos.y,
-            size: renderDab.size,
-            flow: dabFlow,
-            hardness: config.hardness / 100,
-            maskType: config.maskType,
-            color: dabColor,
-            dabOpacity: renderDab.dabOpacity,
-            roundness: dabRoundness,
-            angle: dabAngle,
-            texture: config.texture ?? undefined,
-            flipX: dabFlipX,
-            flipY: dabFlipY,
-            wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
-            textureSettings: effectiveTextureSettings,
-            noiseEnabled: config.noiseEnabled,
-            noiseSize: config.noiseSize ?? 100,
-            noiseSizeJitter: config.noiseSizeJitter ?? 0,
-            noiseDensityJitter: config.noiseDensityJitter ?? 0,
-            dualBrush:
-              config.dualBrushEnabled && config.dualBrush
-                ? {
-                    ...config.dualBrush,
-                    enabled: config.dualBrushEnabled, // Sync enabled state
-                    brushTexture: config.dualBrush.texture,
-                  }
-                : undefined,
-            baseSize: config.size,
-            spacing: config.spacing,
-          };
-
-          stampDabToBackend(dabParams);
-        }
-      }
+      lastPointerDynamicsRef.current = { tiltX, tiltY, rotation };
+      renderPrimaryDabs(dabs, config, lastPointerDynamicsRef.current);
 
       // End CPU encode timing and trigger GPU sample if needed
       // NOTE: Disabled during active painting to avoid breaking batch processing
@@ -1064,8 +941,7 @@ export function useBrushRenderer({
       ensureCPUBuffer,
       mapInputPressureForStamper,
       mapStamperPressureToBrush,
-      resolveDabFlowAndOpacity,
-      stampDabToBackend,
+      renderPrimaryDabs,
     ]
   );
 

@@ -331,6 +331,19 @@ private smoothPressure(rawPressure: number): number {
 3. **调试可观测性必须常驻**
    - `window.__brushTailTaperDebug?.()` 能快速区分“阈值未触发”与“几何段缺失”等问题，否则会反复误判为算法参数问题。
 
+### 2026-02-16 实装校正补记（本次）
+
+针对“文档称已对齐 Krita，但实测仍有尾端发射感”的偏差，本次做了代码级校正：
+
+1. **去掉外推式 tail 几何**
+   - 删除 `finishStroke` 阶段沿末端方向继续外推 Bezier 尾段的实现，避免出现“被硬加一段”。
+
+2. **收尾限定在最后真实 segment**
+   - 收尾采样仅允许落在 `prevPoint -> lastPoint` 真实末段内，不再越过末点生成几何延长。
+
+3. **回归门槛补齐**
+   - `brushStamper.speedTail` 与 `useBrushRenderer.strokeEnd` 增补“末段边界约束”断言，防止后续回退到外推式 tail。
+
 ## 2026-02-16 收尾补充：压感入口语义统一与回归门槛
 
 ### 语义澄清（防止再次歧义）
@@ -365,3 +378,24 @@ private smoothPressure(rawPressure: number): number {
 ### 结论
 
 本轮后，#146 的“压感一致性”不再仅靠主观手感判断，已经由语义约束 + 关键回归用例共同锁定。
+
+## 2026-02-16 实装回补（Krita 收尾链路恢复）
+
+针对“文档写了 finish segment 收敛，但代码未真实提交 tail dabs”的漂移，本次做了回补：
+
+1. `BrushStamper.finishStroke()` 恢复真实返回 tail dabs
+   - 不再仅做 debug 评估后返回空数组。
+   - 收尾几何严格限定在 `prevPoint -> lastPoint` 真实末段内，不做末端外推。
+
+2. `useBrushRenderer` 收尾与主笔划同链路提交
+   - 抽离 `renderPrimaryDabs(...)`，主笔划与收尾统一复用同一套 pressure/shape/transfer/scatter/color dynamics 提交路径。
+   - `finalizeStrokeTailOnce()` 中接住 tail dabs 并提交，保留每 stroke 仅一次 finalize 的幂等锁。
+
+3. 触发语义改为“结构触发 + 自然衰减保护”
+   - 删除“速度阈值主导触发”，只要存在真实末段且未自然衰减，就执行收尾收敛。
+   - 若末段已呈持续压力衰减，则标记为 `pressure_already_decaying` 并跳过合成收尾。
+
+4. 回归测试口径同步
+   - `brushStamper.speedTail`：从“必须无 tail”改为“触发时必须有合法 tail，且不越界”。
+   - `brushStamper.tailDebug`：reason 集合收敛为 `disabled/missing_segment/insufficient_samples/pressure_already_decaying/triggered`，并验证 `triggered` 时存在 tail dabs。
+   - `useBrushRenderer.strokeEnd`：验证 `prepareStrokeEndGpu()` 会新增末段 tail dabs，且重复 prepare/end 不会重复注入。

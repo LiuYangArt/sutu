@@ -131,7 +131,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     gpuState.instances.length = 0;
   });
 
-  it('injects tail dabs from prepareStrokeEndGpu and keeps per-stroke finalize idempotent', async () => {
+  it('injects converging tail dabs in prepareStrokeEndGpu and keeps per-stroke finalize idempotent', async () => {
     const finishSpy = vi.spyOn(BrushStamper.prototype, 'finishStroke');
     const config = createConfig();
 
@@ -173,6 +173,21 @@ describe('useBrushRenderer stroke finalize path', () => {
     const finishCallsAfterPrepare = finishSpy.mock.calls.length;
     expect(finishCallsAfterPrepare).toBeGreaterThanOrEqual(2);
     expect(dabCountAfterPrepare).toBeGreaterThan(dabCountBeforePrepare);
+    const convergenceCalls = gpu.stampDabCalls.slice(dabCountBeforePrepare) as Array<{
+      x?: number;
+      y?: number;
+      pressure?: number;
+    }>;
+    expect(convergenceCalls.length).toBeGreaterThan(0);
+    for (const call of convergenceCalls) {
+      expect(typeof call.x).toBe('number');
+      expect(typeof call.y).toBe('number');
+      if (typeof call.x !== 'number' || typeof call.y !== 'number') continue;
+      // Convergence must stay inside the last real input segment [48, 54].
+      expect(call.x).toBeGreaterThanOrEqual(48 - 1e-6);
+      expect(call.x).toBeLessThanOrEqual(54 + 1e-6);
+      expect(call.y).toBeCloseTo(0, 6);
+    }
 
     await act(async () => {
       await result.current.prepareStrokeEndGpu();
@@ -189,7 +204,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     expect(finishSpy.mock.calls.length).toBe(finishCallsAfterPrepare);
   });
 
-  it('applies shape dynamics size control to tail dabs when toolbar pressure-size toggle is off', async () => {
+  it('applies shape dynamics size control to converging tail dabs', async () => {
     const config = createConfig();
     config.pressureSizeEnabled = false;
     config.shapeDynamicsEnabled = true;

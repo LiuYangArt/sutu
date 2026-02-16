@@ -93,26 +93,6 @@ describe('BrushStamper tail taper debug snapshot', () => {
         }).snapshot,
     ],
     [
-      'speed_below_threshold',
-      () =>
-        runStrokeWithSamples({
-          points: buildLinearPoints(8, 1),
-          pressures: new Array(8).fill(0.35),
-          timestampStepMs: 20,
-          maxBrushSpeedPxPerMs: 100,
-        }).snapshot,
-    ],
-    [
-      'pressure_below_threshold',
-      () =>
-        runStrokeWithSamples({
-          points: buildLinearPoints(8, 6),
-          pressures: new Array(8).fill(0.02),
-          timestampStepMs: 4,
-          maxBrushSpeedPxPerMs: 30,
-        }).snapshot,
-    ],
-    [
       'pressure_already_decaying',
       () =>
         runStrokeWithSamples({
@@ -140,7 +120,7 @@ describe('BrushStamper tail taper debug snapshot', () => {
     expect(snapshot.normalizedSpeed).toBeLessThanOrEqual(1);
   });
 
-  it('keeps generated tail dabs when reason is triggered', () => {
+  it('keeps debug reason and returns converging dabs when triggered', () => {
     const { tailDabs, snapshot } = runStrokeWithSamples({
       points: buildLinearPoints(9, 6),
       pressures: new Array(9).fill(0.42),

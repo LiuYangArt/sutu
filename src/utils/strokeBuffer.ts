@@ -70,8 +70,6 @@ export type TailTaperBlockReason =
   | 'disabled'
   | 'insufficient_samples'
   | 'missing_segment'
-  | 'speed_below_threshold'
-  | 'pressure_below_threshold'
   | 'pressure_already_decaying'
   | 'triggered';
 
@@ -1373,11 +1371,9 @@ export class BrushStamper {
   private static readonly LOW_PRESSURE_THRESHOLD = 0.15;
   private static readonly MAX_TAIL_HISTORY = 32;
   private static readonly MIN_TAIL_SAMPLES = 4;
-  private static readonly TAIL_SPEED_THRESHOLD = 0.03;
-  private static readonly TAIL_PRESSURE_THRESHOLD = 0.04;
+  private static readonly TAIL_PRESSURE_THRESHOLD = 0.02;
   private static readonly TAIL_DECAY_SLOPE_THRESHOLD = -0.05;
   private static readonly MIN_TAIL_SEGMENT_DISTANCE = 0.5;
-  private static readonly TAIL_DIRECTION_SAMPLE_WINDOW = 4;
 
   private static clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
@@ -1392,42 +1388,6 @@ export class BrushStamper {
   private static clamp(value: number, min: number, max: number): number {
     if (!Number.isFinite(value)) return min;
     return Math.max(min, Math.min(max, value));
-  }
-
-  private static sampleCubicHermite(
-    p0: number,
-    m0: number,
-    p1: number,
-    m1: number,
-    t: number
-  ): number {
-    const u = BrushStamper.clamp01(t);
-    const u2 = u * u;
-    const u3 = u2 * u;
-    const h00 = 2 * u3 - 3 * u2 + 1;
-    const h10 = u3 - 2 * u2 + u;
-    const h01 = -2 * u3 + 3 * u2;
-    const h11 = u3 - u2;
-    return h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
-  }
-
-  private static sampleCubicBezierPoint(
-    p0: { x: number; y: number },
-    c1: { x: number; y: number },
-    c2: { x: number; y: number },
-    p3: { x: number; y: number },
-    t: number
-  ): { x: number; y: number } {
-    const u = BrushStamper.clamp01(t);
-    const oneMinusU = 1 - u;
-    const oneMinusU2 = oneMinusU * oneMinusU;
-    const oneMinusU3 = oneMinusU2 * oneMinusU;
-    const u2 = u * u;
-    const u3 = u2 * u;
-    return {
-      x: oneMinusU3 * p0.x + 3 * oneMinusU2 * u * c1.x + 3 * oneMinusU * u2 * c2.x + u3 * p3.x,
-      y: oneMinusU3 * p0.y + 3 * oneMinusU2 * u * c1.y + 3 * oneMinusU * u2 * c2.y + u3 * p3.y,
-    };
   }
 
   private static clampInt(value: number, min: number, max: number): number {
@@ -1547,87 +1507,26 @@ export class BrushStamper {
     this.strokeStartSampleCount = 0;
   }
 
-  private resolveTailCurvatureOffset(dirX: number, dirY: number, tailLengthPx: number): number {
-    if (this.tailSampleHistory.length < 3) return 0;
-    const p0 = this.tailSampleHistory[this.tailSampleHistory.length - 3]!;
-    const p1 = this.tailSampleHistory[this.tailSampleHistory.length - 2]!;
-    const p2 = this.tailSampleHistory[this.tailSampleHistory.length - 1]!;
-    const v1x = p1.x - p0.x;
-    const v1y = p1.y - p0.y;
-    const v2x = p2.x - p1.x;
-    const v2y = p2.y - p1.y;
-    const len1 = Math.hypot(v1x, v1y);
-    const len2 = Math.hypot(v2x, v2y);
-    if (len1 <= 1e-6 || len2 <= 1e-6) return 0;
-
-    const n1x = v1x / len1;
-    const n1y = v1y / len1;
-    const n2x = v2x / len2;
-    const n2y = v2y / len2;
-    const cross = n1x * n2y - n1y * n2x;
-    const dot = BrushStamper.clamp(n1x * n2x + n1y * n2y, -1, 1);
-    const signedAngle = Math.atan2(cross, dot);
-    const angleFactor = BrushStamper.clamp(signedAngle / (Math.PI * 0.5), -1, 1);
-
-    const normalX = -dirY;
-    const normalY = dirX;
-    const alignment = n2x * normalX + n2y * normalY;
-    const alignmentFactor = BrushStamper.clamp(Math.abs(alignment), 0, 1);
-    const rawOffset = angleFactor * alignmentFactor * tailLengthPx * 0.18;
-    return BrushStamper.clamp(rawOffset, -tailLengthPx * 0.24, tailLengthPx * 0.24);
-  }
-
-  private resolveTailPressureStartSlope(
-    safeEndPressure: number,
-    speed: number,
-    pressureSlope: number | null
+  private resolveTailConvergenceLengthPx(
+    segmentDistance: number,
+    brushSize: number,
+    effectiveSpeed: number
   ): number {
-    const safeSlope = Number.isFinite(pressureSlope) ? Number(pressureSlope) : 0;
-    const risingFactor = BrushStamper.clamp01((safeSlope + 0.02) / 0.18);
-    const speedFactor = BrushStamper.clamp01(speed);
-    const slopeMagnitude = 0.55 + 0.55 * risingFactor + 0.2 * speedFactor;
-    return -safeEndPressure * slopeMagnitude;
-  }
+    const safeSegmentDistance = Math.max(0, segmentDistance);
+    if (safeSegmentDistance <= 1e-6) return 0;
 
-  private resolveTailDirectionVector(): {
-    dirX: number;
-    dirY: number;
-    segmentDistance: number;
-  } | null {
-    if (!this.lastPoint || !this.prevPoint) {
-      return null;
-    }
+    const safeBrushSize = Math.max(1, brushSize);
+    const speed = BrushStamper.clamp01(effectiveSpeed);
+    const minLengthPx = Math.max(
+      0.45,
+      Math.min(safeSegmentDistance * 0.25, Math.max(0.45, safeBrushSize * 0.08))
+    );
+    const maxLengthPx = Math.max(minLengthPx, safeSegmentDistance * 0.72);
+    const targetFromSize = safeBrushSize * (0.12 + 0.36 * speed);
+    const targetFromSegment = safeSegmentDistance * (0.32 + 0.24 * speed);
+    const target = Math.max(minLengthPx, targetFromSize, targetFromSegment);
 
-    let dx = this.lastPoint.x - this.prevPoint.x;
-    let dy = this.lastPoint.y - this.prevPoint.y;
-    let segmentDistance = Math.hypot(dx, dy);
-
-    if (this.tailSampleHistory.length >= 3) {
-      const sampleWindow = Math.min(
-        BrushStamper.TAIL_DIRECTION_SAMPLE_WINDOW,
-        this.tailSampleHistory.length
-      );
-      const startSample = this.tailSampleHistory[this.tailSampleHistory.length - sampleWindow]!;
-      const endSample = this.tailSampleHistory[this.tailSampleHistory.length - 1]!;
-      const historyDx = endSample.x - startSample.x;
-      const historyDy = endSample.y - startSample.y;
-      const historyDistance = Math.hypot(historyDx, historyDy);
-      if (historyDistance > segmentDistance) {
-        dx = historyDx;
-        dy = historyDy;
-        segmentDistance = historyDistance;
-      }
-    }
-
-    if (segmentDistance <= 1e-6) {
-      return null;
-    }
-
-    return {
-      dirX: dx / segmentDistance,
-      dirY: dy / segmentDistance,
-      segmentDistance,
-    };
+    return BrushStamper.clamp(target, minLengthPx, maxLengthPx);
   }
 
   private evaluateTailTaper(options: BrushStamperInputOptions): {
@@ -1682,48 +1581,46 @@ export class BrushStamper {
       };
     }
 
-    const direction = this.resolveTailDirectionVector();
-    if (!direction || direction.segmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) {
-      return {
-        reason: 'missing_segment',
-        effectiveSpeed: this.lastNormalizedSpeed,
-        pressureSlope: null,
-        lastPressure: null,
-        segmentDistance: direction?.segmentDistance ?? null,
-      };
-    }
-    const segmentDistance = direction.segmentDistance;
+    const segmentDistance = directSegmentDistance;
 
     const recent = this.tailSampleHistory.slice(-6);
-    const first = recent[0]!;
-    const last = recent[recent.length - 1]!;
+    let endIndex = recent.length - 1;
+    if (recent.length >= 2) {
+      const last = recent[recent.length - 1]!;
+      const prev = recent[recent.length - 2]!;
+      // Ignore a single terminal pressure cliff (common on pointer-up packets)
+      // so convergence can still kick in for fast lift-offs.
+      if (
+        last.pressure < BrushStamper.TAIL_PRESSURE_THRESHOLD &&
+        prev.pressure - last.pressure > 0.08
+      ) {
+        endIndex = recent.length - 2;
+      }
+    }
+    const evalRecent = recent.slice(0, endIndex + 1);
+    const first = evalRecent[0]!;
+    const last = evalRecent[evalRecent.length - 1]!;
     const avgSpeed =
-      recent.reduce((sum, sample) => sum + sample.normalizedSpeed, 0) / Math.max(1, recent.length);
+      evalRecent.reduce((sum, sample) => sum + sample.normalizedSpeed, 0) /
+      Math.max(1, evalRecent.length);
     const effectiveSpeed = Math.max(avgSpeed, this.lastNormalizedSpeed);
-    const pressureSlope = (last.pressure - first.pressure) / Math.max(1, recent.length - 1);
+    const pressureSlope = (last.pressure - first.pressure) / Math.max(1, evalRecent.length - 1);
     const lastPressure = last.pressure;
+    const descendingSteps = recent.slice(1).reduce((count, sample, idx) => {
+      const prev = recent[idx]!;
+      return sample.pressure <= prev.pressure - 0.005 ? count + 1 : count;
+    }, 0);
+    const fullDrop = recent[0]!.pressure - recent[recent.length - 1]!.pressure;
+    const mostlyDescending = descendingSteps >= Math.max(2, recent.length - 2);
+    const naturalDecayDetected = mostlyDescending && fullDrop >= 0.12;
 
-    // With Krita-style max speed defaults (30 px/ms), normalized speed is often low in real drawing.
-    // Keep threshold permissive enough to catch fast lift-offs on WinTab while still filtering slow tails.
-    if (effectiveSpeed < BrushStamper.TAIL_SPEED_THRESHOLD) {
-      return {
-        reason: 'speed_below_threshold',
-        effectiveSpeed,
-        pressureSlope,
-        lastPressure,
-        segmentDistance,
-      };
-    }
-    if (lastPressure < BrushStamper.TAIL_PRESSURE_THRESHOLD) {
-      return {
-        reason: 'pressure_below_threshold',
-        effectiveSpeed,
-        pressureSlope,
-        lastPressure,
-        segmentDistance,
-      };
-    }
-    if (pressureSlope < BrushStamper.TAIL_DECAY_SLOPE_THRESHOLD) {
+    // Krita-aligned structural trigger:
+    // if the stroke already decays naturally at the end, skip synthetic convergence.
+    if (
+      lastPressure < BrushStamper.TAIL_PRESSURE_THRESHOLD ||
+      pressureSlope < BrushStamper.TAIL_DECAY_SLOPE_THRESHOLD ||
+      naturalDecayDetected
+    ) {
       return {
         reason: 'pressure_already_decaying',
         effectiveSpeed,
@@ -1749,119 +1646,80 @@ export class BrushStamper {
     pressureSlope: number | null
   ): Array<{ x: number; y: number; pressure: number }> {
     if (!this.lastPoint || !this.prevPoint) return [];
-    const directSegmentDistance = Math.hypot(
-      this.lastPoint.x - this.prevPoint.x,
-      this.lastPoint.y - this.prevPoint.y
-    );
-    if (directSegmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) return [];
-
-    const direction = this.resolveTailDirectionVector();
-    if (!direction || direction.segmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) return [];
-
-    const { dirX, dirY, segmentDistance } = direction;
+    const segmentDx = this.lastPoint.x - this.prevPoint.x;
+    const segmentDy = this.lastPoint.y - this.prevPoint.y;
+    const segmentDistance = Math.hypot(segmentDx, segmentDy);
+    if (segmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) return [];
 
     const safeBrushSize = Math.max(1, brushSize);
     const speed = BrushStamper.clamp01(effectiveSpeed);
-    const targetLengthFromSize = safeBrushSize * (0.9 + 2.45 * speed);
-    const targetLengthFromSegment = segmentDistance * (1.55 + 1.05 * speed);
-    const tailLengthPx = Math.min(
-      safeBrushSize * 4.1,
-      Math.max(safeBrushSize * 0.75, targetLengthFromSize, targetLengthFromSegment)
-    );
     const safeEndPressure = BrushStamper.clamp01(endPressure);
-    const decayBias = 0.82 + (1 - speed) * 0.26;
-    const startPressureSlope = this.resolveTailPressureStartSlope(
-      safeEndPressure,
-      speed,
-      pressureSlope
+    const prevSamplePressure = BrushStamper.clamp01(
+      this.tailSampleHistory[this.tailSampleHistory.length - 2]?.pressure ?? safeEndPressure
     );
-    const curvatureOffset = this.resolveTailCurvatureOffset(dirX, dirY, tailLengthPx);
-    const normalX = -dirY;
-    const normalY = dirX;
-    const p0 = { x: this.lastPoint.x, y: this.lastPoint.y };
-    const c1 = {
-      x: p0.x + dirX * tailLengthPx * 0.34,
-      y: p0.y + dirY * tailLengthPx * 0.34,
-    };
-    const c2 = {
-      x: p0.x + dirX * tailLengthPx * 0.78 + normalX * curvatureOffset,
-      y: p0.y + dirY * tailLengthPx * 0.78 + normalY * curvatureOffset,
-    };
-    const p3 = {
-      x: p0.x + dirX * tailLengthPx + normalX * curvatureOffset * 0.4,
-      y: p0.y + dirY * tailLengthPx + normalY * curvatureOffset * 0.4,
-    };
-    const maxTailDabs = 256;
+    const pressureAnchor = BrushStamper.clamp01(
+      Math.max(safeEndPressure, prevSamplePressure * (0.78 + 0.22 * speed))
+    );
+    if (pressureAnchor <= 8e-4) return [];
 
+    const convergenceLengthPx = this.resolveTailConvergenceLengthPx(
+      segmentDistance,
+      safeBrushSize,
+      speed
+    );
+    if (convergenceLengthPx <= 1e-6) return [];
+
+    const slope = Number.isFinite(pressureSlope) ? Number(pressureSlope) : 0;
+    const slopeBoost = BrushStamper.clamp01(1 + BrushStamper.clamp(slope, -0.15, 0.15) * 1.5);
+    const startDistance = Math.max(0, segmentDistance - convergenceLengthPx);
+    const maxTailDabs = 128;
     const tailDabs: Array<{ x: number; y: number; pressure: number }> = [];
-    let currentT = 0;
-    let previousPoint = p0;
-    let previousPressure = safeEndPressure;
+    let traveled = startDistance;
+    let previousPressure = pressureAnchor;
+    let previousT = startDistance / segmentDistance;
 
-    while (currentT < 0.999 && tailDabs.length < maxTailDabs) {
-      const nominalDiameter = Math.max(1, safeBrushSize * Math.max(previousPressure, 0.015));
-      const minSpacing = Math.max(0.5, safeBrushSize * 0.006);
-      const maxSpacing = Math.max(minSpacing, safeBrushSize * 0.07);
-      const targetSpacing = Math.min(maxSpacing, Math.max(minSpacing, nominalDiameter * 0.095));
-
-      let lowT = currentT;
-      let highT = Math.min(1, currentT + 0.04);
-      let highPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, highT);
-      let highDistance = Math.hypot(highPoint.x - previousPoint.x, highPoint.y - previousPoint.y);
-      let seekGuard = 0;
-
-      while (highDistance < targetSpacing && highT < 1 && seekGuard < 20) {
-        highT = Math.min(1, highT + 0.04);
-        highPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, highT);
-        highDistance = Math.hypot(highPoint.x - previousPoint.x, highPoint.y - previousPoint.y);
-        seekGuard += 1;
-      }
-
-      if (highDistance < Math.max(0.08, targetSpacing * 0.35)) {
-        break;
-      }
-
-      for (let i = 0; i < 7; i += 1) {
-        const midT = (lowT + highT) * 0.5;
-        const midPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, midT);
-        const midDistance = Math.hypot(midPoint.x - previousPoint.x, midPoint.y - previousPoint.y);
-        if (midDistance < targetSpacing) {
-          lowT = midT;
-        } else {
-          highT = midT;
-        }
-      }
-
-      const nextT = highT;
-      if (nextT <= currentT + 1e-4) {
-        break;
-      }
-
-      const nextPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, nextT);
-      const easedT = Math.pow(nextT, decayBias);
-      const rawPressure = BrushStamper.sampleCubicHermite(
-        safeEndPressure,
-        startPressureSlope,
-        0,
-        0,
-        easedT
+    while (traveled < segmentDistance - 1e-4 && tailDabs.length < maxTailDabs) {
+      const localProgress = BrushStamper.clamp01(
+        (traveled - startDistance) / Math.max(1e-6, convergenceLengthPx)
       );
-      const clampedPressure = Math.max(0, Math.min(safeEndPressure, rawPressure));
+      const easedProgress = BrushStamper.smoothstep01(localProgress);
+      const rawPressure = pressureAnchor * slopeBoost * (1 - easedProgress);
+      const clampedPressure = Math.max(0, Math.min(pressureAnchor, rawPressure));
       const pressure = Math.min(previousPressure, clampedPressure);
 
-      if (pressure < 8e-4 && nextT > 0.12) {
-        break;
+      const t = BrushStamper.clamp01(traveled / segmentDistance);
+      if (t > previousT + 1e-4) {
+        tailDabs.push({
+          x: this.prevPoint.x + segmentDx * t,
+          y: this.prevPoint.y + segmentDy * t,
+          pressure,
+        });
+        previousT = t;
+        previousPressure = pressure;
       }
 
-      tailDabs.push({
-        x: nextPoint.x,
-        y: nextPoint.y,
-        pressure,
-      });
+      const nominalDiameter = Math.max(1, safeBrushSize * Math.max(pressure, 0.015));
+      const minSpacing = Math.max(0.35, safeBrushSize * 0.006);
+      const maxSpacing = Math.max(minSpacing, safeBrushSize * 0.06);
+      const targetSpacing = Math.min(maxSpacing, Math.max(minSpacing, nominalDiameter * 0.09));
+      traveled = Math.min(segmentDistance, traveled + targetSpacing);
+    }
 
-      previousPoint = nextPoint;
-      previousPressure = pressure;
-      currentT = nextT;
+    const endDab = {
+      x: this.lastPoint.x,
+      y: this.lastPoint.y,
+      pressure: 0,
+    };
+    if (tailDabs.length === 0) {
+      tailDabs.push(endDab);
+    } else {
+      const lastTail = tailDabs[tailDabs.length - 1]!;
+      const endpointGap = Math.hypot(endDab.x - lastTail.x, endDab.y - lastTail.y);
+      if (endpointGap > 0.05) {
+        tailDabs.push(endDab);
+      } else {
+        lastTail.pressure = Math.min(lastTail.pressure, endDab.pressure);
+      }
     }
 
     return tailDabs;
