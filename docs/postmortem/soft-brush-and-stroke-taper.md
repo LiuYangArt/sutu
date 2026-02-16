@@ -303,3 +303,65 @@ private smoothPressure(rawPressure: number): number {
      - `src/components/CurvesPanel/__tests__/CurvesPanel.test.tsx`
      - `src/components/SettingsPanel/__tests__/PressureCurveEditor.test.tsx`
      - `src/stores/__tests__/settings.test.ts`
+
+## 2026-02-16 收官补记：Krita 对齐最后一段的真实差异
+
+这轮实测里，视觉上“已经接近”但体感仍不自然，最终差异主要在三个点：
+
+1. **收尾虽然连续，但收敛方式不对**
+   - 旧实现本质仍偏“tail 注入思路”，容易出现短三角感或段间过渡发硬。
+   - 最终改为更接近 Krita 的收敛路径：沿 finish segment 做连续采样并提交，避免把收尾当作孤立补丁。
+
+2. **压力衰减曲线过于线性**
+   - 线性衰减会让尾端“几何上变细了，但观感仍突兀”。
+   - 改为平滑衰减（Hermite/ease-out 形态）后，尾端宽度与透明度过渡更连贯，尖端不再突兀。
+
+3. **起笔阶段方向未稳定时就放大了压力影响**
+   - 首样本方向噪声会被直接放大，导致起笔局部抖动。
+   - 增加起笔锚点与早期抗抖处理后，首端形态明显稳定，首尾对称性更接近 Krita。
+
+### 这次最关键的经验
+
+1. **“连续”不等于“自然”**
+   - 从离散点变为连续段，只是第一步；是否沿主笔划收敛路径退火，才决定最终体感。
+
+2. **不能把收尾当独立特效**
+   - 一旦收尾链路在 pressure 映射、spacing、提交时序上与主链路分叉，就会出现“看起来像贴上去的尾巴”。
+
+3. **调试可观测性必须常驻**
+   - `window.__brushTailTaperDebug?.()` 能快速区分“阈值未触发”与“几何段缺失”等问题，否则会反复误判为算法参数问题。
+
+## 2026-02-16 收尾补充：压感入口语义统一与回归门槛
+
+### 语义澄清（防止再次歧义）
+
+1. **工具栏 Pressure 开关是强制 Override 入口**
+   - 设计意图：即使 Brush Settings 内未开启 pressure control，工具栏开关也可以强制启用 pressure 驱动。
+
+2. **内部计算必须走同一条动态链路**
+   - 已收敛为 `effective dynamics`：
+     - size：统一走 Shape Dynamics 路径（工具栏 `P(size)` 强制覆盖为 `sizeControl=penPressure`）。
+     - flow/opacity：统一走 Transfer 路径（工具栏 `P(flow/opacity)` 强制覆盖为 `flowControl/opacityControl=penPressure`）。
+   - 主笔划与 tail 使用同一套 effective 配置，避免“主段和收尾两套语义”。
+
+3. **工具栏开关只做“强制开启”，不做“强制关闭”**
+   - `P=ON`：强制 pressure 生效。
+   - `P=OFF`：不覆盖 Brush Settings，若笔刷内已配置 pressure control 仍照常生效。
+
+### 新增自动化回归（本轮补齐）
+
+1. `src/components/Canvas/__tests__/useBrushRenderer.strokeEnd.test.ts`
+   - 覆盖：Shape Dynamics 非 pressure 控制时，工具栏 `P(size)` 仍可强制接管并影响主笔划/尾段。
+
+2. `src/components/Canvas/__tests__/useBrushRendererOpacity.test.ts`
+   - 覆盖：Transfer 非 pressure 控制时，工具栏 `P(flow)` 仍可强制接管并生效。
+
+3. `src/utils/__tests__/brushStamper.speedTail.test.ts`
+   - 覆盖：
+     - 起笔锚点抗抖（首段不被离群点拉偏）；
+     - 尾段首点压力与主段末点的连续交接；
+     - 小笔刷尾段 spacing 下限（防止回退为离散点串）。
+
+### 结论
+
+本轮后，#146 的“压感一致性”不再仅靠主观手感判断，已经由语义约束 + 关键回归用例共同锁定。

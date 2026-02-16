@@ -97,6 +97,72 @@ describe('useBrushRenderer opacity pipeline', () => {
     expect(compositeOpacity).toBeCloseTo(0.5, 5);
   });
 
+  it('forces toolbar pressure flow through transfer pipeline when transfer uses non-pressure control', async () => {
+    const config: BrushRenderConfig = {
+      size: 40,
+      flow: 1,
+      opacity: 1,
+      hardness: 100,
+      maskType: 'gaussian',
+      spacing: 0.2,
+      roundness: 100,
+      angle: 0,
+      color: '#000000',
+      backgroundColor: '#ffffff',
+      pressureSizeEnabled: false,
+      pressureFlowEnabled: true,
+      pressureOpacityEnabled: false,
+      pressureCurve: 'linear',
+      texture: null,
+      shapeDynamicsEnabled: false,
+      scatterEnabled: false,
+      colorDynamicsEnabled: false,
+      wetEdgeEnabled: false,
+      wetEdge: 0,
+      buildupEnabled: false,
+      transferEnabled: true,
+      transfer: {
+        opacityJitter: 0,
+        opacityControl: 'off',
+        minimumOpacity: 0,
+        flowJitter: 0,
+        flowControl: 'penTilt',
+        minimumFlow: 0,
+      },
+      textureEnabled: false,
+      noiseEnabled: false,
+      dualBrushEnabled: false,
+      strokeCompositeMode: 'paint',
+    };
+
+    const { result } = renderHook(() =>
+      useBrushRenderer({ width: 192, height: 120, renderMode: 'cpu' })
+    );
+
+    await act(async () => {
+      await result.current.beginStroke(100, 0);
+    });
+
+    act(() => {
+      result.current.processPoint(0, 0, 0.4, config, 0, { tiltX: 0, tiltY: 0, rotation: 0 });
+      for (let i = 1; i <= 8; i += 1) {
+        result.current.processPoint(i * 4, 0, 0.4, config, i, {
+          tiltX: 0,
+          tiltY: 0,
+          rotation: 0,
+        });
+      }
+    });
+
+    expect(stampSpy).toHaveBeenCalled();
+    const maxFlow = Math.max(
+      ...stampSpy.mock.calls
+        .map((call) => (call[0] as { flow?: number } | undefined)?.flow ?? 0)
+        .filter((flow) => Number.isFinite(flow))
+    );
+    expect(maxFlow).toBeGreaterThan(0.15);
+  });
+
   it('keeps sub-pixel pressure-size continuity by converting tiny size to alpha coverage', async () => {
     const config: BrushRenderConfig = {
       size: 2,

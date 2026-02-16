@@ -27,6 +27,8 @@ import {
   ColorDynamicsSettings,
   TransferSettings,
   DualBrushSettings,
+  DEFAULT_SHAPE_DYNAMICS,
+  DEFAULT_TRANSFER_SETTINGS,
   useToolStore,
 } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
@@ -108,6 +110,49 @@ function computeSpacingBasePx(
 ): number {
   const { width, height } = computeTipDimensions(size, roundness, texture);
   return Math.min(width, height);
+}
+
+interface EffectiveDynamicsConfig {
+  shapeDynamics: ShapeDynamicsSettings | null;
+  transfer: TransferSettings | null;
+}
+
+function resolveEffectiveDynamicsConfig(config: BrushRenderConfig): EffectiveDynamicsConfig {
+  let shapeDynamics: ShapeDynamicsSettings | null = null;
+  const baseShape = config.shapeDynamics ?? DEFAULT_SHAPE_DYNAMICS;
+  if (config.shapeDynamicsEnabled) {
+    shapeDynamics = config.pressureSizeEnabled
+      ? { ...baseShape, sizeControl: 'penPressure' }
+      : baseShape;
+  } else if (config.pressureSizeEnabled) {
+    shapeDynamics = {
+      ...DEFAULT_SHAPE_DYNAMICS,
+      sizeControl: 'penPressure',
+      minimumDiameter: 0,
+    };
+  }
+
+  const baseTransfer = config.transfer ?? DEFAULT_TRANSFER_SETTINGS;
+  let transfer: TransferSettings | null = null;
+  if (config.transferEnabled) {
+    transfer = baseTransfer;
+  } else if (config.pressureFlowEnabled || config.pressureOpacityEnabled) {
+    transfer = DEFAULT_TRANSFER_SETTINGS;
+  }
+
+  if (transfer) {
+    const forcedTransfer: TransferSettings = {
+      ...transfer,
+      flowControl: config.pressureFlowEnabled ? 'penPressure' : transfer.flowControl,
+      opacityControl: config.pressureOpacityEnabled ? 'penPressure' : transfer.opacityControl,
+    };
+    transfer = isTransferActive(forcedTransfer) ? forcedTransfer : null;
+  }
+
+  return {
+    shapeDynamics,
+    transfer,
+  };
 }
 
 function resolveRenderableDabSizeAndOpacity(
@@ -426,14 +471,18 @@ export function useBrushRenderer({
   );
 
   const resolveDabFlowAndOpacity = useCallback(
-    (config: BrushRenderConfig, dabPressure: number, dynamicsInput: DynamicsInput) => {
+    (
+      config: BrushRenderConfig,
+      dynamicsInput: DynamicsInput,
+      effectiveTransfer: TransferSettings | null
+    ) => {
       const strokeOpacity = strokeOpacityRef.current;
       const hasStrokeOpacity = strokeOpacity > 1e-6;
-      if (config.transferEnabled && config.transfer && isTransferActive(config.transfer)) {
+      if (effectiveTransfer) {
         const transferResult = computeDabTransfer(
           strokeOpacity,
           config.flow,
-          config.transfer,
+          effectiveTransfer,
           dynamicsInput
         );
         return {
@@ -442,8 +491,8 @@ export function useBrushRenderer({
         };
       }
       return {
-        flow: config.pressureFlowEnabled ? config.flow * dabPressure : config.flow,
-        dabOpacity: hasStrokeOpacity ? (config.pressureOpacityEnabled ? dabPressure : 1) : 0,
+        flow: config.flow,
+        dabOpacity: hasStrokeOpacity ? 1 : 0,
       };
     },
     []
@@ -499,15 +548,14 @@ export function useBrushRenderer({
       secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
 
       if (tailDabs.length > 0) {
+        const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
+        const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
+        const effectiveTransfer = effectiveDynamics.transfer;
         const selectionState = useSelectionStore.getState();
         const hasSelection = selectionState.hasSelection;
         const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
         const useShapeDynamics =
-          config.shapeDynamicsEnabled &&
-          config.shapeDynamics &&
-          isShapeDynamicsActive(config.shapeDynamics);
-        const hasShapeSizeControl =
-          config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off';
+          effectiveShapeDynamics !== null && isShapeDynamicsActive(effectiveShapeDynamics);
         const useScatter =
           config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
         let previousTailPoint = lastDabPosRef.current;
@@ -542,24 +590,21 @@ export function useBrushRenderer({
           };
           const { flow, dabOpacity } = resolveDabFlowAndOpacity(
             config,
-            mappedTailPressure,
-            neutralDynamicsInput
+            neutralDynamicsInput,
+            effectiveTransfer
           );
-          let tailSize =
-            !hasShapeSizeControl && config.pressureSizeEnabled
-              ? config.size * mappedTailPressure
-              : config.size;
+          let tailSize = config.size;
           let tailRoundness = config.roundness / 100;
           let tailAngle = config.angle;
           let tailFlipX = false;
           let tailFlipY = false;
 
-          if (useShapeDynamics && config.shapeDynamics) {
+          if (useShapeDynamics && effectiveShapeDynamics) {
             const shape = computeDabShape(
               tailSize,
               config.angle,
               config.roundness,
-              config.shapeDynamics,
+              effectiveShapeDynamics,
               neutralDynamicsInput
             );
             tailSize = shape.size;
@@ -677,22 +722,22 @@ export function useBrushRenderer({
 
       const globalPressure = mapInputPressureForStamper(config, pressure);
       const adjustedPressure = mapStamperPressureToBrush(config, globalPressure);
+      const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
+      const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
+      const effectiveTransfer = effectiveDynamics.transfer;
       const tiltX = dynamics?.tiltX ?? 0;
       const tiltY = dynamics?.tiltY ?? 0;
       const rotation = dynamics?.rotation ?? 0;
       const hasShapeSizeControl =
-        config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off';
+        effectiveShapeDynamics !== null && effectiveShapeDynamics.sizeControl !== 'off';
 
       // Store stroke-level opacity (applied at endStroke/compositeToLayer)
       const strokeOpacity = Math.max(0, Math.min(1, config.opacity));
       strokeOpacityRef.current = strokeOpacity;
 
-      // Legacy pressure-size toggle only applies when Shape Dynamics size control is not active.
-      // This avoids control source being multiplied twice (e.g. penPressure^2).
-      const size =
-        !hasShapeSizeControl && config.pressureSizeEnabled
-          ? config.size * adjustedPressure
-          : config.size;
+      // Toolbar pressure-size acts as a force override for size control.
+      // Effective shape dynamics converts sizeControl to penPressure when forced.
+      const size = config.size;
 
       // Shape Dynamics size control should affect spacing (jitter does not)
       let spacingSize = size;
@@ -706,7 +751,7 @@ export function useBrushRenderer({
           initialDirection: 0,
           fadeProgress: 0,
         };
-        spacingSize = computeControlledSize(size, config.shapeDynamics!, spacingInput);
+        spacingSize = computeControlledSize(size, effectiveShapeDynamics!, spacingInput);
       }
 
       // Get dab positions from stamper
@@ -800,11 +845,9 @@ export function useBrushRenderer({
 
       // Shape Dynamics: Check if we need to apply dynamics
       const useShapeDynamics =
-        config.shapeDynamicsEnabled &&
-        config.shapeDynamics &&
-        isShapeDynamicsActive(config.shapeDynamics);
+        effectiveShapeDynamics !== null && isShapeDynamicsActive(effectiveShapeDynamics);
       const delayFirstDabForInitialDirection =
-        useShapeDynamics && config.shapeDynamics?.angleControl === 'initial';
+        useShapeDynamics && effectiveShapeDynamics?.angleControl === 'initial';
 
       // Scatter: Check if we need to apply scatter
       const useScatter = config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
@@ -841,10 +884,7 @@ export function useBrushRenderer({
         lastDabPosRef.current = { x: dab.x, y: dab.y };
 
         const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
-        let dabSize =
-          !hasShapeSizeControl && config.pressureSizeEnabled
-            ? config.size * dabPressure
-            : config.size;
+        let dabSize = config.size;
 
         // Shape Dynamics: Calculate direction and apply dynamics
         let dabRoundness = config.roundness / 100;
@@ -891,17 +931,17 @@ export function useBrushRenderer({
 
         const { flow: dabFlow, dabOpacity } = resolveDabFlowAndOpacity(
           config,
-          dabPressure,
-          dynamicsInput
+          dynamicsInput,
+          effectiveTransfer
         );
 
-        if (useShapeDynamics && config.shapeDynamics) {
+        if (useShapeDynamics && effectiveShapeDynamics) {
           // Compute dynamic shape
           const shape = computeDabShape(
             dabSize,
             config.angle,
             config.roundness, // 0-100
-            config.shapeDynamics,
+            effectiveShapeDynamics,
             dynamicsInput
           );
 
