@@ -1,4 +1,4 @@
-import { buildCurveEvaluator } from '@/utils/curvesRenderer';
+import { buildCurveEvaluator, type CurveEndpointMode } from '@/utils/curvesRenderer';
 
 export interface SingleChannelCurvePoint {
   id: string;
@@ -75,10 +75,22 @@ export function getPointDragRange(
   const isLast = index === points.length - 1;
 
   if (isFirst) {
-    return { minX: CHANNEL_MIN, maxX: CHANNEL_MIN, minY: CHANNEL_MIN, maxY: CHANNEL_MAX };
+    const next = points[index + 1];
+    return {
+      minX: CHANNEL_MIN,
+      maxX: clamp((next?.x ?? CHANNEL_MAX) - 1, CHANNEL_MIN, CHANNEL_MAX),
+      minY: CHANNEL_MIN,
+      maxY: CHANNEL_MAX,
+    };
   }
   if (isLast) {
-    return { minX: CHANNEL_MAX, maxX: CHANNEL_MAX, minY: CHANNEL_MIN, maxY: CHANNEL_MAX };
+    const prev = points[index - 1];
+    return {
+      minX: clamp((prev?.x ?? CHANNEL_MIN) + 1, CHANNEL_MIN, CHANNEL_MAX),
+      maxX: CHANNEL_MAX,
+      minY: CHANNEL_MIN,
+      maxY: CHANNEL_MAX,
+    };
   }
 
   const prev = points[index - 1];
@@ -129,13 +141,14 @@ export function findHitPointId(
 
 export function buildSingleChannelCurvePath(
   points: readonly Pick<SingleChannelCurvePoint, 'x' | 'y'>[],
-  options: { sampleCount?: number; graphSize?: number } = {}
+  options: { sampleCount?: number; graphSize?: number; endpointMode?: CurveEndpointMode } = {}
 ): string {
   const sampleCount = Math.max(2, Math.floor(options.sampleCount ?? 128));
   const graphSize = options.graphSize ?? DEFAULT_GRAPH_SIZE;
+  const endpointMode = options.endpointMode ?? 'control_points';
   const evaluator = buildCurveEvaluator(
     points.map((point) => ({ x: point.x, y: point.y })),
-    { kernel: 'natural' }
+    { kernel: 'natural', endpointMode }
   );
 
   let path = '';

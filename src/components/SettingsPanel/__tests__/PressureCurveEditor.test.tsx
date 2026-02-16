@@ -96,6 +96,45 @@ describe('PressureCurveEditor', () => {
     expect(points[1]?.x).toBeLessThan(1);
   });
 
+  it('allows endpoint x to move horizontally while preserving point order', () => {
+    render(
+      <Harness
+        initialPoints={[
+          { x: 0, y: 0 },
+          { x: 0.5, y: 0.5 },
+          { x: 1, y: 1 },
+        ]}
+      />
+    );
+
+    const svg = screen.getByLabelText('Pressure curve editor') as unknown as SVGSVGElement;
+    mockGraphRect(svg);
+
+    act(() => {
+      fireEvent.pointerDown(svg, {
+        pointerId: 1,
+        clientX: clientXFromNormalized(1),
+        clientY: clientYFromNormalized(1),
+      });
+    });
+    act(() => {
+      fireEvent.pointerMove(window, {
+        pointerId: 1,
+        clientX: clientXFromNormalized(0.78),
+        clientY: clientYFromNormalized(0.8),
+      });
+    });
+    act(() => {
+      fireEvent.pointerUp(window, { pointerId: 1 });
+    });
+
+    const points = readPoints();
+    const lastPoint = points[points.length - 1];
+    const middlePoint = points[points.length - 2];
+    expect(lastPoint?.x).toBeLessThan(1);
+    expect(lastPoint?.x).toBeGreaterThan(middlePoint?.x ?? 0);
+  });
+
   it('renders editable points for provided curve', () => {
     render(
       <Harness

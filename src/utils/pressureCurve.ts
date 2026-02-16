@@ -215,35 +215,21 @@ export function normalizePressureCurvePoints(
     pointMap.set(x, y);
   }
 
-  if (!pointMap.has(0)) pointMap.set(0, 0);
-  if (!pointMap.has(1)) pointMap.set(1, 1);
-
   const sorted = Array.from(pointMap.entries())
     .sort((a, b) => a[0] - b[0])
     .map(([x, y]) => ({ x, y }));
 
   if (sorted.length < MIN_POINTS) return fallback;
-  if (sorted.length === MIN_POINTS) return sorted;
 
-  // Keep strict ordering after normalization to avoid drag/serialization precision collisions.
   const normalized: PressureCurveControlPoint[] = [];
   for (let i = 0; i < sorted.length; i += 1) {
     const point = sorted[i]!;
-    if (i === 0) {
-      normalized.push({ x: 0, y: clamp01(point.y) });
-      continue;
-    }
-    if (i === sorted.length - 1) {
-      normalized.push({ x: 1, y: clamp01(point.y) });
-      continue;
-    }
-
-    const prev = normalized[i - 1]!;
-    const nextRaw = sorted[i + 1]!;
-    const minX = Math.min(1, prev.x + MIN_X_GAP);
-    const maxX = Math.max(minX, nextRaw.x - MIN_X_GAP);
+    const prev = normalized[i - 1];
+    const minX = i === 0 ? 0 : Math.min(1, (prev?.x ?? 0) + MIN_X_GAP);
+    const remaining = sorted.length - i - 1;
+    const maxX = Math.max(minX, Math.min(1, 1 - remaining * MIN_X_GAP));
     normalized.push({
-      x: Math.max(minX, Math.min(maxX, point.x)),
+      x: clamp01(Math.max(minX, Math.min(maxX, point.x))),
       y: clamp01(point.y),
     });
   }
@@ -298,7 +284,10 @@ export function buildPressureCurveLut(
     x: point.x * 255,
     y: point.y * 255,
   }));
-  const evaluator = buildCurveEvaluator(scaledPoints, { kernel: 'natural' });
+  const evaluator = buildCurveEvaluator(scaledPoints, {
+    kernel: 'natural',
+    endpointMode: 'control_points',
+  });
 
   const lut = new Float32Array(size);
   for (let i = 0; i < size; i += 1) {

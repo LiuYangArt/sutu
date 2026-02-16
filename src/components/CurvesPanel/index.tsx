@@ -170,10 +170,10 @@ export function CurvesPanel(): JSX.Element {
 
   const luts = useMemo(() => {
     return {
-      rgb: buildCurveLut(pointsByChannel.rgb),
-      red: buildCurveLut(pointsByChannel.red),
-      green: buildCurveLut(pointsByChannel.green),
-      blue: buildCurveLut(pointsByChannel.blue),
+      rgb: buildCurveLut(pointsByChannel.rgb, { endpointMode: 'control_points' }),
+      red: buildCurveLut(pointsByChannel.red, { endpointMode: 'control_points' }),
+      green: buildCurveLut(pointsByChannel.green, { endpointMode: 'control_points' }),
+      blue: buildCurveLut(pointsByChannel.blue, { endpointMode: 'control_points' }),
     };
   }, [pointsByChannel]);
 
