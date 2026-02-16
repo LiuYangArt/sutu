@@ -1,78 +1,34 @@
-import {
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-  type MouseEvent as ReactMouseEvent,
-} from 'react';
-import { buildCurveEvaluator } from '@/utils/curvesRenderer';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type PressureCurveControlPoint,
   normalizePressureCurvePoints,
 } from '@/utils/pressureCurve';
+import {
+  DEFAULT_GRAPH_SIZE,
+  toGraphX,
+  toGraphY,
+  type SingleChannelCurvePoint,
+} from '@/components/CurveEditor/singleChannelCore';
+import { useSingleChannelCurveEditor } from '@/components/CurveEditor/useSingleChannelCurveEditor';
 
-const GRAPH_WIDTH = 360;
-const GRAPH_HEIGHT = 180;
-const GRAPH_PADDING = 14;
-const HIT_RADIUS_PX = 14;
-const INTERNAL_MIN_X_GAP = 0.01;
-const CURVE_SAMPLES = 96;
+const GRAPH_SIZE = DEFAULT_GRAPH_SIZE;
+const GRID_DIVISIONS = 4;
+const POINT_HIT_RADIUS_PX = 12;
+const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 18;
 
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
-}
+interface EditablePoint extends SingleChannelCurvePoint {}
 
-function toGraphX(value: number): number {
-  const innerWidth = GRAPH_WIDTH - GRAPH_PADDING * 2;
-  return GRAPH_PADDING + clamp01(value) * innerWidth;
-}
-
-function toGraphY(value: number): number {
-  const innerHeight = GRAPH_HEIGHT - GRAPH_PADDING * 2;
-  return GRAPH_HEIGHT - GRAPH_PADDING - clamp01(value) * innerHeight;
-}
-
-function fromClientPoint(
-  svg: SVGSVGElement,
-  clientX: number,
-  clientY: number
-): { x: number; y: number } {
-  const rect = svg.getBoundingClientRect();
-  const localX = ((clientX - rect.left) / Math.max(1, rect.width)) * GRAPH_WIDTH;
-  const localY = ((clientY - rect.top) / Math.max(1, rect.height)) * GRAPH_HEIGHT;
-  const innerWidth = GRAPH_WIDTH - GRAPH_PADDING * 2;
-  const innerHeight = GRAPH_HEIGHT - GRAPH_PADDING * 2;
-
-  const normalizedX = clamp01((localX - GRAPH_PADDING) / Math.max(1e-6, innerWidth));
-  const normalizedY = clamp01(
-    (GRAPH_HEIGHT - GRAPH_PADDING - localY) / Math.max(1e-6, innerHeight)
-  );
-
-  return { x: normalizedX, y: normalizedY };
-}
-
-function findNearestPointIndex(
-  points: readonly PressureCurveControlPoint[],
-  graphX: number,
-  graphY: number
-): number {
-  const radiusSq = HIT_RADIUS_PX * HIT_RADIUS_PX;
-  let bestIndex = -1;
-  let bestDistanceSq = radiusSq;
-
-  for (let i = 0; i < points.length; i += 1) {
-    const point = points[i]!;
-    const dx = toGraphX(point.x) - graphX;
-    const dy = toGraphY(point.y) - graphY;
-    const distSq = dx * dx + dy * dy;
-    if (distSq <= bestDistanceSq) {
-      bestDistanceSq = distSq;
-      bestIndex = i;
-    }
+function pointsEqual(
+  a: readonly PressureCurveControlPoint[],
+  b: readonly PressureCurveControlPoint[]
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const pa = a[i]!;
+    const pb = b[i]!;
+    if (Math.abs(pa.x - pb.x) > 1e-6 || Math.abs(pa.y - pb.y) > 1e-6) return false;
   }
-
-  return bestIndex;
+  return true;
 }
 
 interface PressureCurveEditorProps {
@@ -81,187 +37,146 @@ interface PressureCurveEditorProps {
 }
 
 export function PressureCurveEditor({ points, onChange }: PressureCurveEditorProps): JSX.Element {
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const graphRef = useRef<SVGSVGElement | null>(null);
+  const idRef = useRef(0);
 
-  const normalizedPoints = useMemo(() => normalizePressureCurvePoints(points), [points]);
+  const nextId = useCallback((): string => {
+    idRef.current += 1;
+    return `pressure-curve-point-${idRef.current}`;
+  }, []);
 
-  const curvePath = useMemo(() => {
-    const evaluator = buildCurveEvaluator(
-      normalizedPoints.map((point) => ({ x: point.x * 255, y: point.y * 255 })),
-      { kernel: 'natural' }
-    );
+  const toEditablePoints = useCallback(
+    (input: readonly PressureCurveControlPoint[]): EditablePoint[] => {
+      const normalized = normalizePressureCurvePoints(input);
+      return normalized.map((point) => ({
+        id: nextId(),
+        x: point.x * 255,
+        y: point.y * 255,
+      }));
+    },
+    [nextId]
+  );
 
-    let path = '';
-    for (let i = 0; i < CURVE_SAMPLES; i += 1) {
-      const t = i / (CURVE_SAMPLES - 1);
-      const input = t * 255;
-      const output = evaluator(input) / 255;
-      const x = toGraphX(t);
-      const y = toGraphY(output);
-      path += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
+  const [editablePoints, setEditablePoints] = useState<EditablePoint[]>(() =>
+    toEditablePoints(points)
+  );
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
+  const applyingExternalUpdateRef = useRef(false);
+  const lastExternalPointsRef = useRef<PressureCurveControlPoint[]>(
+    normalizePressureCurvePoints(points)
+  );
+
+  const normalizedExternalPoints = useMemo(() => normalizePressureCurvePoints(points), [points]);
+  const normalizedInternalPoints = useMemo(
+    () =>
+      normalizePressureCurvePoints(
+        editablePoints.map((point) => ({
+          x: point.x / 255,
+          y: point.y / 255,
+        }))
+      ),
+    [editablePoints]
+  );
+
+  useEffect(() => {
+    const externalChanged = !pointsEqual(lastExternalPointsRef.current, normalizedExternalPoints);
+    if (!externalChanged) return;
+    lastExternalPointsRef.current = normalizedExternalPoints.map((point) => ({ ...point }));
+    if (pointsEqual(normalizedExternalPoints, normalizedInternalPoints)) return;
+    applyingExternalUpdateRef.current = true;
+    setEditablePoints(toEditablePoints(normalizedExternalPoints));
+    setSelectedPointId(null);
+  }, [normalizedExternalPoints, normalizedInternalPoints, toEditablePoints]);
+
+  useEffect(() => {
+    if (applyingExternalUpdateRef.current) {
+      applyingExternalUpdateRef.current = false;
+      return;
     }
-    return path;
-  }, [normalizedPoints]);
+    if (pointsEqual(normalizedExternalPoints, normalizedInternalPoints)) return;
+    onChange(normalizedInternalPoints);
+  }, [normalizedExternalPoints, normalizedInternalPoints, onChange]);
 
-  const commitDragAt = (index: number, x: number, y: number) => {
-    const next = normalizedPoints.map((point) => ({ ...point }));
-    const lastIndex = next.length - 1;
+  const setCurvePoints = useCallback((updater: (prev: EditablePoint[]) => EditablePoint[]) => {
+    setEditablePoints((prev) => {
+      const next = updater(prev);
+      return next === prev ? prev : next;
+    });
+  }, []);
 
-    if (index === 0) {
-      next[index] = { x: 0, y: clamp01(y) };
-    } else if (index === lastIndex) {
-      next[index] = { x: 1, y: clamp01(y) };
-    } else {
-      const prevX = next[index - 1]!.x;
-      const nextX = next[index + 1]!.x;
-      const minX = Math.min(1, prevX + INTERNAL_MIN_X_GAP);
-      const maxX = Math.max(minX, nextX - INTERNAL_MIN_X_GAP);
-      next[index] = {
-        x: Math.max(minX, Math.min(maxX, x)),
-        y: clamp01(y),
-      };
-    }
-
-    onChange(normalizePressureCurvePoints(next));
-  };
-
-  const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
-    const svg = svgRef.current;
-    if (!svg) return;
-
-    const graphX =
-      ((event.clientX - svg.getBoundingClientRect().left) /
-        Math.max(1, svg.getBoundingClientRect().width)) *
-      GRAPH_WIDTH;
-    const graphY =
-      ((event.clientY - svg.getBoundingClientRect().top) /
-        Math.max(1, svg.getBoundingClientRect().height)) *
-      GRAPH_HEIGHT;
-    const nearestIndex = findNearestPointIndex(normalizedPoints, graphX, graphY);
-    const normalized = fromClientPoint(svg, event.clientX, event.clientY);
-
-    let nextDragIndex = nearestIndex;
-    if (nearestIndex < 0 && normalized.x > 0 && normalized.x < 1) {
-      const insertIndex = normalizedPoints.findIndex((point) => point.x > normalized.x);
-      const insertion = insertIndex < 0 ? normalizedPoints.length - 1 : insertIndex;
-      const next = normalizedPoints.map((point) => ({ ...point }));
-      next.splice(insertion, 0, normalized);
-      const normalizedNext = normalizePressureCurvePoints(next);
-      onChange(normalizedNext);
-      nextDragIndex = normalizedNext.findIndex(
-        (point) =>
-          Math.abs(point.x - normalized.x) < 1e-6 && Math.abs(point.y - normalized.y) < 1e-6
-      );
-      if (nextDragIndex < 0) {
-        nextDragIndex = insertion;
-      }
-    }
-
-    if (nextDragIndex >= 0) {
-      setDragIndex(nextDragIndex);
-      if (typeof svg.setPointerCapture === 'function') {
-        try {
-          svg.setPointerCapture(event.pointerId);
-        } catch {
-          // Ignore unsupported pointer capture in edge environments.
-        }
-      }
-      event.preventDefault();
-    }
-  };
-
-  const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (dragIndex === null) return;
-    const svg = svgRef.current;
-    if (!svg) return;
-    const normalized = fromClientPoint(svg, event.clientX, event.clientY);
-    commitDragAt(dragIndex, normalized.x, normalized.y);
-  };
-
-  const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (dragIndex === null) return;
-    const svg = svgRef.current;
-    if (
-      svg &&
-      typeof svg.hasPointerCapture === 'function' &&
-      svg.hasPointerCapture(event.pointerId)
-    ) {
-      if (typeof svg.releasePointerCapture === 'function') {
-        try {
-          svg.releasePointerCapture(event.pointerId);
-        } catch {
-          // Ignore unsupported pointer release in edge environments.
-        }
-      }
-    }
-    setDragIndex(null);
-  };
-
-  const handleDoubleClick = (event: ReactMouseEvent<SVGSVGElement>) => {
-    const svg = svgRef.current;
-    if (!svg || normalizedPoints.length <= 2) return;
-    const graphX =
-      ((event.clientX - svg.getBoundingClientRect().left) /
-        Math.max(1, svg.getBoundingClientRect().width)) *
-      GRAPH_WIDTH;
-    const graphY =
-      ((event.clientY - svg.getBoundingClientRect().top) /
-        Math.max(1, svg.getBoundingClientRect().height)) *
-      GRAPH_HEIGHT;
-    const nearestIndex = findNearestPointIndex(normalizedPoints, graphX, graphY);
-    if (nearestIndex <= 0 || nearestIndex >= normalizedPoints.length - 1) return;
-
-    const next = normalizedPoints.map((point) => ({ ...point }));
-    next.splice(nearestIndex, 1);
-    onChange(normalizePressureCurvePoints(next));
-  };
+  const { curvePath, handleGraphPointerDown } = useSingleChannelCurveEditor({
+    graphRef,
+    points: editablePoints,
+    setPoints: setCurvePoints,
+    selectedPointId,
+    setSelectedPointId,
+    createPointId: nextId,
+    pointHitRadiusPx: POINT_HIT_RADIUS_PX,
+    dragDeleteOvershootThresholdPx: DRAG_DELETE_OVERSHOOT_THRESHOLD_PX,
+    curveSampleCount: 128,
+    graphSize: GRAPH_SIZE,
+  });
 
   return (
     <svg
-      ref={svgRef}
+      ref={graphRef}
       className="pressure-curve-editor"
-      viewBox={`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`}
+      viewBox={`0 0 ${GRAPH_SIZE} ${GRAPH_SIZE}`}
+      role="img"
       aria-label="Pressure curve editor"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-      onDoubleClick={handleDoubleClick}
+      onPointerDown={handleGraphPointerDown}
     >
       <rect
-        x={GRAPH_PADDING}
-        y={GRAPH_PADDING}
-        width={GRAPH_WIDTH - GRAPH_PADDING * 2}
-        height={GRAPH_HEIGHT - GRAPH_PADDING * 2}
+        x={0}
+        y={0}
+        width={GRAPH_SIZE}
+        height={GRAPH_SIZE}
         className="pressure-curve-editor__bg"
       />
-      {[0.25, 0.5, 0.75].map((line) => (
-        <g key={line}>
-          <line
-            x1={toGraphX(line)}
-            y1={GRAPH_PADDING}
-            x2={toGraphX(line)}
-            y2={GRAPH_HEIGHT - GRAPH_PADDING}
-            className="pressure-curve-editor__grid"
-          />
-          <line
-            x1={GRAPH_PADDING}
-            y1={toGraphY(line)}
-            x2={GRAPH_WIDTH - GRAPH_PADDING}
-            y2={toGraphY(line)}
-            className="pressure-curve-editor__grid"
-          />
-        </g>
-      ))}
-      <path d={curvePath} className="pressure-curve-editor__curve" />
-      {normalizedPoints.map((point, index) => (
+      {Array.from({ length: GRID_DIVISIONS + 1 }).map((_, index) => {
+        const pos = (GRAPH_SIZE / GRID_DIVISIONS) * index;
+        return (
+          <g key={index}>
+            <line
+              x1={pos}
+              y1={0}
+              x2={pos}
+              y2={GRAPH_SIZE}
+              className="pressure-curve-editor__grid"
+            />
+            <line
+              x1={0}
+              y1={pos}
+              x2={GRAPH_SIZE}
+              y2={pos}
+              className="pressure-curve-editor__grid"
+            />
+          </g>
+        );
+      })}
+      <line
+        x1={0}
+        y1={GRAPH_SIZE}
+        x2={GRAPH_SIZE}
+        y2={0}
+        className="pressure-curve-editor__baseline"
+      />
+      <path
+        d={curvePath}
+        className="pressure-curve-editor__curve"
+        shapeRendering="geometricPrecision"
+      />
+      {editablePoints.map((point) => (
         <circle
-          key={`${index}-${point.x.toFixed(4)}-${point.y.toFixed(4)}`}
-          cx={toGraphX(point.x)}
-          cy={toGraphY(point.y)}
-          r={index === 0 || index === normalizedPoints.length - 1 ? 5 : 4.5}
-          className="pressure-curve-editor__point"
+          key={point.id}
+          cx={toGraphX(point.x, GRAPH_SIZE)}
+          cy={toGraphY(point.y, GRAPH_SIZE)}
+          r={point.id === selectedPointId ? 4.5 : 3.5}
+          className={
+            point.id === selectedPointId
+              ? 'pressure-curve-editor__point pressure-curve-editor__point--selected'
+              : 'pressure-curve-editor__point'
+          }
         />
       ))}
     </svg>

@@ -8,6 +8,7 @@ import {
 } from '@/utils/quickExport';
 import { detectPlatformKind, type PlatformKind } from '@/utils/platform';
 import {
+  compressPressureCurvePoints,
   type PressureCurveControlPoint,
   type PressureCurvePreset,
   getPressureCurvePresetPoints,
@@ -335,7 +336,7 @@ function normalizeTabletPressureCurvePoints(
   if (!parsed) {
     return getPressureCurvePresetPoints(fallbackPreset);
   }
-  return normalizePressureCurvePoints(parsed);
+  return compressPressureCurvePoints(normalizePressureCurvePoints(parsed));
 }
 
 function shouldAutoMigrateMacBackend(loadedTablet: unknown): boolean {

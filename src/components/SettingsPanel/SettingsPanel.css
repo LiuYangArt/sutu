@@ -418,37 +418,51 @@
 }
 
 .pressure-curve-editor {
-  width: 100%;
-  max-width: 420px;
+  width: 256px;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  max-width: 100%;
   align-self: flex-start;
+  display: block;
   touch-action: none;
   user-select: none;
-  border: 1px solid var(--border);
+  cursor: crosshair;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--bg-secondary);
+  background: #2f3032;
 }
 
 .pressure-curve-editor__bg {
-  fill: rgba(0, 0, 0, 0.18);
-  stroke: var(--border-subtle);
-  stroke-width: 1;
+  fill: #3b3c3f;
 }
 
 .pressure-curve-editor__grid {
-  stroke: var(--border-subtle);
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+}
+
+.pressure-curve-editor__baseline {
+  stroke: rgba(255, 255, 255, 0.24);
   stroke-width: 1;
 }
 
 .pressure-curve-editor__curve {
   fill: none;
-  stroke: var(--text-primary);
-  stroke-width: 2;
+  stroke: #f2f2f2;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .pressure-curve-editor__point {
-  fill: var(--primary);
-  stroke: var(--text-primary);
-  stroke-width: 1;
+  fill: #161616;
+  stroke: #f1f1f1;
+  stroke-width: 1.2;
+}
+
+.pressure-curve-editor__point--selected {
+  fill: #ffffff;
+  stroke: #111111;
 }
 
 .pressure-curve-labels {

@@ -100,8 +100,16 @@ export function useRawPointerInput({
       if (shouldUseNativeBackend) {
         nativeSeqCursorRef.current = nextSeq;
       }
+      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
 
-      for (const evt of coalescedEvents) {
+      for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
+        const evt = coalescedEvents[eventIndex]!;
+        const nativePoint =
+          shouldUseNativeBackend && bufferedPoints.length > 0
+            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
+              bufferedPoints[bufferedPoints.length - 1] ??
+              null)
+            : null;
         const { x: canvasX, y: canvasY } = clientToCanvasPoint(
           canvas,
           evt.clientX,
@@ -115,7 +123,8 @@ export function useRawPointerInput({
           shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
-          pe
+          pe,
+          nativePoint
         );
 
         const idx = pointIndexRef.current++;

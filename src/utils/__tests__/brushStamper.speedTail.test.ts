@@ -55,7 +55,7 @@ describe('BrushStamper speed-based smoothing and tail taper', () => {
     for (let i = 0; i < 9; i += 1) {
       stamper.processPoint(i * 6, 0, 0.38, 2, false, {
         timestampMs: i * 5,
-        maxBrushSpeedPxPerMs: 1,
+        maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
         tailTaperEnabled: true,
       });
@@ -69,6 +69,34 @@ describe('BrushStamper speed-based smoothing and tail taper', () => {
     for (let i = 1; i < tailDabs.length; i += 1) {
       expect(tailDabs[i]!.pressure).toBeLessThanOrEqual(tailDabs[i - 1]!.pressure + 1e-6);
     }
+  });
+
+  it('extends tail with enough samples to avoid short triangular caps', () => {
+    const stamper = new BrushStamper();
+    stamper.beginStroke();
+
+    for (let i = 0; i < 10; i += 1) {
+      stamper.processPoint(i * 6, 0, 0.42, 2, false, {
+        timestampMs: i * 4,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        tailTaperEnabled: true,
+      });
+    }
+
+    const brushSize = 24;
+    const tailDabs = stamper.finishStroke(brushSize, {
+      tailTaperEnabled: true,
+    });
+
+    expect(tailDabs.length).toBeGreaterThanOrEqual(7);
+    const first = tailDabs[0];
+    const last = tailDabs[tailDabs.length - 1];
+    expect(first).toBeTruthy();
+    expect(last).toBeTruthy();
+    if (!first || !last) return;
+    const tailDistance = Math.hypot(last.x - first.x, last.y - first.y);
+    expect(tailDistance).toBeGreaterThan(brushSize * 0.5);
   });
 
   it('does not generate tail dabs when pressure already decays naturally', () => {

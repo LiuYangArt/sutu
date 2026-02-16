@@ -128,6 +128,30 @@ describe('inputUtils.getEffectiveInputData', () => {
     });
   });
 
+  it('原生后端在提供 preferredNativePoint 时优先使用该样本', () => {
+    const evt = createPointerEvent({ pressure: 0.9, tiltX: 0, tiltY: 0, twist: 12 });
+    const buffered = [
+      createRawPoint({ pressure: 0.2, tilt_x: 1, tilt_y: 2, rotation: 10, timestamp_ms: 10 }),
+      createRawPoint({ pressure: 0.3, tilt_x: 3, tilt_y: 4, rotation: 20, timestamp_ms: 20 }),
+    ];
+    const preferred = createRawPoint({
+      pressure: 0.77,
+      tilt_x: 11,
+      tilt_y: -7,
+      rotation: 222,
+      timestamp_ms: 88,
+    });
+
+    const result = getEffectiveInputData(evt, true, buffered, null, evt, preferred);
+    expect(result).toEqual({
+      pressure: 0.77,
+      tiltX: 11 / 90,
+      tiltY: -7 / 90,
+      rotation: 222,
+      timestampMs: 88,
+    });
+  });
+
   it('原生后端无 buffered 时回退 currentPoint', () => {
     const evt = createPointerEvent({ pressure: 0.7, tiltX: 0, tiltY: 0, twist: 75 });
     const current = createRawPoint({

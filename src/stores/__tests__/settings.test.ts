@@ -20,6 +20,7 @@ import {
   DEFAULT_QUICK_EXPORT_SETTINGS,
   useSettingsStore,
 } from '../settings';
+import { buildPressureCurveLut } from '@/utils/pressureCurve';
 
 describe('settings store newFile persistence', () => {
   beforeEach(() => {
@@ -162,6 +163,47 @@ describe('settings store newFile persistence', () => {
     expect(state.tablet.pressureCurvePoints[state.tablet.pressureCurvePoints.length - 1]?.x).toBe(
       1
     );
+  });
+
+  it('compresses historical dense pressure curve points while preserving LUT error bounds', async () => {
+    const densePoints = Array.from({ length: 64 }, (_, index) => {
+      const x = index / 63;
+      const y = Math.min(1, Math.max(0, x * x * 0.82 + x * 0.18));
+      return { x, y };
+    });
+
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        tablet: {
+          backend: 'pointerevent',
+          pressureCurve: 'linear',
+          pressureCurvePoints: densePoints,
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    const state = useSettingsStore.getState();
+    const compressed = state.tablet.pressureCurvePoints;
+
+    expect(compressed.length).toBeLessThan(densePoints.length);
+    expect(compressed.length).toBeLessThanOrEqual(24);
+    expect(compressed[0]?.x).toBe(0);
+    expect(compressed[compressed.length - 1]?.x).toBe(1);
+
+    const baselineLut = buildPressureCurveLut(densePoints, 256);
+    const compressedLut = buildPressureCurveLut(compressed, 256);
+    let maxAbsError = 0;
+    let sumAbsError = 0;
+    for (let i = 0; i < baselineLut.length; i += 1) {
+      const delta = Math.abs((baselineLut[i] ?? 0) - (compressedLut[i] ?? 0));
+      maxAbsError = Math.max(maxAbsError, delta);
+      sumAbsError += delta;
+    }
+    const meanAbsError = sumAbsError / baselineLut.length;
+    expect(maxAbsError).toBeLessThanOrEqual(0.015);
+    expect(meanAbsError).toBeLessThanOrEqual(0.004);
   });
 
   it('normalizes loaded recent files and keeps max 10', async () => {

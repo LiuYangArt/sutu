@@ -66,6 +66,25 @@ export interface Rect {
   bottom: number;
 }
 
+export type TailTaperBlockReason =
+  | 'disabled'
+  | 'insufficient_samples'
+  | 'missing_segment'
+  | 'speed_below_threshold'
+  | 'pressure_below_threshold'
+  | 'pressure_already_decaying'
+  | 'triggered';
+
+export interface TailTaperDebugSnapshot {
+  reason: TailTaperBlockReason;
+  speedPxPerMs: number;
+  normalizedSpeed: number;
+  pressureSlope: number | null;
+  lastPressure: number | null;
+  sampleCount: number;
+  segmentDistance: number | null;
+}
+
 export type StrokeCompositeMode = 'paint' | 'erase';
 
 export function compositeStrokePixel(args: {
@@ -1327,6 +1346,7 @@ export class BrushStamper {
   // Smoothed pressure using EMA
   private smoothedPressure: number = 0;
   private readonly speedEstimator = new BrushSpeedEstimator();
+  private lastSpeedPxPerMs = 0;
   private lastNormalizedSpeed = 0;
   private tailSampleHistory: Array<{
     x: number;
@@ -1335,6 +1355,7 @@ export class BrushStamper {
     normalizedSpeed: number;
     timestampMs: number;
   }> = [];
+  private lastTailTaperDebugSnapshot: TailTaperDebugSnapshot | null = null;
 
   // Minimum movement in pixels before we start the stroke
   // This prevents pressure buildup at stationary position
@@ -1349,6 +1370,11 @@ export class BrushStamper {
   private static readonly LOW_PRESSURE_THRESHOLD = 0.15;
   private static readonly MAX_TAIL_HISTORY = 32;
   private static readonly MIN_TAIL_SAMPLES = 4;
+  private static readonly TAIL_SPEED_THRESHOLD = 0.03;
+  private static readonly TAIL_PRESSURE_THRESHOLD = 0.04;
+  private static readonly TAIL_DECAY_SLOPE_THRESHOLD = -0.05;
+  private static readonly MIN_TAIL_SEGMENT_DISTANCE = 0.5;
+  private static readonly TAIL_DIRECTION_SAMPLE_WINDOW = 4;
 
   private static clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
@@ -1382,8 +1408,10 @@ export class BrushStamper {
     this.hasMovedEnough = false;
     this.smoothedPressure = 0;
     this.speedEstimator.reset();
+    this.lastSpeedPxPerMs = 0;
     this.lastNormalizedSpeed = 0;
     this.tailSampleHistory = [];
+    this.lastTailTaperDebugSnapshot = null;
   }
 
   /**
@@ -1437,51 +1465,193 @@ export class BrushStamper {
     }
   }
 
-  private shouldGenerateTail(options: BrushStamperInputOptions): boolean {
-    if (options.tailTaperEnabled === false) return false;
-    if (!this.lastPoint || !this.prevPoint) return false;
-    if (this.tailSampleHistory.length < BrushStamper.MIN_TAIL_SAMPLES) return false;
+  private resolveTailDirectionVector(): {
+    dirX: number;
+    dirY: number;
+    segmentDistance: number;
+  } | null {
+    if (!this.lastPoint || !this.prevPoint) {
+      return null;
+    }
+
+    let dx = this.lastPoint.x - this.prevPoint.x;
+    let dy = this.lastPoint.y - this.prevPoint.y;
+    let segmentDistance = Math.hypot(dx, dy);
+
+    if (this.tailSampleHistory.length >= 3) {
+      const sampleWindow = Math.min(
+        BrushStamper.TAIL_DIRECTION_SAMPLE_WINDOW,
+        this.tailSampleHistory.length
+      );
+      const startSample = this.tailSampleHistory[this.tailSampleHistory.length - sampleWindow]!;
+      const endSample = this.tailSampleHistory[this.tailSampleHistory.length - 1]!;
+      const historyDx = endSample.x - startSample.x;
+      const historyDy = endSample.y - startSample.y;
+      const historyDistance = Math.hypot(historyDx, historyDy);
+      if (historyDistance > segmentDistance) {
+        dx = historyDx;
+        dy = historyDy;
+        segmentDistance = historyDistance;
+      }
+    }
+
+    if (segmentDistance <= 1e-6) {
+      return null;
+    }
+
+    return {
+      dirX: dx / segmentDistance,
+      dirY: dy / segmentDistance,
+      segmentDistance,
+    };
+  }
+
+  private evaluateTailTaper(options: BrushStamperInputOptions): {
+    reason: TailTaperBlockReason;
+    effectiveSpeed: number;
+    pressureSlope: number | null;
+    lastPressure: number | null;
+    segmentDistance: number | null;
+  } {
+    if (options.tailTaperEnabled === false) {
+      return {
+        reason: 'disabled',
+        effectiveSpeed: this.lastNormalizedSpeed,
+        pressureSlope: null,
+        lastPressure: null,
+        segmentDistance: null,
+      };
+    }
+    if (!this.lastPoint || !this.prevPoint) {
+      return {
+        reason: 'missing_segment',
+        effectiveSpeed: this.lastNormalizedSpeed,
+        pressureSlope: null,
+        lastPressure: null,
+        segmentDistance: null,
+      };
+    }
+    if (this.tailSampleHistory.length < BrushStamper.MIN_TAIL_SAMPLES) {
+      return {
+        reason: 'insufficient_samples',
+        effectiveSpeed: this.lastNormalizedSpeed,
+        pressureSlope: null,
+        lastPressure: null,
+        segmentDistance: Math.hypot(
+          this.lastPoint.x - this.prevPoint.x,
+          this.lastPoint.y - this.prevPoint.y
+        ),
+      };
+    }
+
+    const directSegmentDistance = Math.hypot(
+      this.lastPoint.x - this.prevPoint.x,
+      this.lastPoint.y - this.prevPoint.y
+    );
+    if (directSegmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) {
+      return {
+        reason: 'missing_segment',
+        effectiveSpeed: this.lastNormalizedSpeed,
+        pressureSlope: null,
+        lastPressure: null,
+        segmentDistance: directSegmentDistance,
+      };
+    }
+
+    const direction = this.resolveTailDirectionVector();
+    if (!direction || direction.segmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) {
+      return {
+        reason: 'missing_segment',
+        effectiveSpeed: this.lastNormalizedSpeed,
+        pressureSlope: null,
+        lastPressure: null,
+        segmentDistance: direction?.segmentDistance ?? null,
+      };
+    }
+    const segmentDistance = direction.segmentDistance;
 
     const recent = this.tailSampleHistory.slice(-6);
     const first = recent[0]!;
     const last = recent[recent.length - 1]!;
     const avgSpeed =
       recent.reduce((sum, sample) => sum + sample.normalizedSpeed, 0) / Math.max(1, recent.length);
+    const effectiveSpeed = Math.max(avgSpeed, this.lastNormalizedSpeed);
     const pressureSlope = (last.pressure - first.pressure) / Math.max(1, recent.length - 1);
+    const lastPressure = last.pressure;
 
-    if (avgSpeed < 0.35) return false;
-    if (last.pressure < 0.08) return false;
-    if (pressureSlope < -0.05) return false;
+    // With Krita-style max speed defaults (30 px/ms), normalized speed is often low in real drawing.
+    // Keep threshold permissive enough to catch fast lift-offs on WinTab while still filtering slow tails.
+    if (effectiveSpeed < BrushStamper.TAIL_SPEED_THRESHOLD) {
+      return {
+        reason: 'speed_below_threshold',
+        effectiveSpeed,
+        pressureSlope,
+        lastPressure,
+        segmentDistance,
+      };
+    }
+    if (lastPressure < BrushStamper.TAIL_PRESSURE_THRESHOLD) {
+      return {
+        reason: 'pressure_below_threshold',
+        effectiveSpeed,
+        pressureSlope,
+        lastPressure,
+        segmentDistance,
+      };
+    }
+    if (pressureSlope < BrushStamper.TAIL_DECAY_SLOPE_THRESHOLD) {
+      return {
+        reason: 'pressure_already_decaying',
+        effectiveSpeed,
+        pressureSlope,
+        lastPressure,
+        segmentDistance,
+      };
+    }
 
-    return true;
+    return {
+      reason: 'triggered',
+      effectiveSpeed,
+      pressureSlope,
+      lastPressure,
+      segmentDistance,
+    };
   }
 
-  private buildTailDabs(brushSize: number): Array<{ x: number; y: number; pressure: number }> {
+  private buildTailDabs(
+    brushSize: number,
+    effectiveSpeed: number,
+    endPressure: number
+  ): Array<{ x: number; y: number; pressure: number }> {
     if (!this.lastPoint || !this.prevPoint) return [];
+    const directSegmentDistance = Math.hypot(
+      this.lastPoint.x - this.prevPoint.x,
+      this.lastPoint.y - this.prevPoint.y
+    );
+    if (directSegmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) return [];
 
-    const dx = this.lastPoint.x - this.prevPoint.x;
-    const dy = this.lastPoint.y - this.prevPoint.y;
-    const segmentDistance = Math.hypot(dx, dy);
-    if (segmentDistance <= 1e-6) return [];
+    const direction = this.resolveTailDirectionVector();
+    if (!direction || direction.segmentDistance < BrushStamper.MIN_TAIL_SEGMENT_DISTANCE) return [];
 
-    const dirX = dx / segmentDistance;
-    const dirY = dy / segmentDistance;
-    const recent = this.tailSampleHistory.slice(-6);
-    const avgSpeed =
-      recent.reduce((sum, sample) => sum + sample.normalizedSpeed, 0) / Math.max(1, recent.length);
-    const endPressure = recent[recent.length - 1]!.pressure;
+    const { dirX, dirY, segmentDistance } = direction;
 
     const safeBrushSize = Math.max(1, brushSize);
+    const speed = BrushStamper.clamp01(effectiveSpeed);
+    const targetLengthFromSize = safeBrushSize * (0.65 + 2.15 * speed);
+    const targetLengthFromSegment = segmentDistance * (1.4 + 0.8 * speed);
     const tailLengthPx = Math.min(
-      safeBrushSize * 0.8,
-      Math.max(safeBrushSize * 0.12, safeBrushSize * (0.22 + 0.4 * avgSpeed))
+      safeBrushSize * 3.2,
+      Math.max(safeBrushSize * 0.55, targetLengthFromSize, targetLengthFromSegment)
     );
-    const steps = BrushStamper.clampInt(3 + avgSpeed * 4, 3, 8);
+    const stepDistancePx = Math.max(1, safeBrushSize * (0.14 + 0.08 * (1 - speed)));
+    const steps = BrushStamper.clampInt(Math.ceil(tailLengthPx / stepDistancePx), 8, 28);
+    const safeEndPressure = BrushStamper.clamp01(endPressure);
+    const pressureDecayExponent = 1.15 + (1 - speed) * 0.35;
 
     const tailDabs: Array<{ x: number; y: number; pressure: number }> = [];
     for (let i = 1; i <= steps; i += 1) {
-      const t = i / (steps + 1);
-      const pressure = Math.max(0, endPressure * Math.pow(1 - t, 1.8));
+      const t = i / steps;
+      const pressure = Math.max(0, safeEndPressure * Math.pow(1 - t, pressureDecayExponent));
       if (pressure < 1e-3) continue;
       tailDabs.push({
         x: this.lastPoint.x + dirX * tailLengthPx * t,
@@ -1511,6 +1681,7 @@ export class BrushStamper {
     const speedPxPerMs = this.speedEstimator.getNextSpeedPxPerMs(x, y, timestampMs, {
       smoothingSamples,
     });
+    this.lastSpeedPxPerMs = speedPxPerMs;
     const maxBrushSpeedPxPerMs = Math.max(1, options.maxBrushSpeedPxPerMs ?? 30);
     this.lastNormalizedSpeed = BrushStamper.clamp01(speedPxPerMs / maxBrushSpeedPxPerMs);
 
@@ -1656,8 +1827,31 @@ export class BrushStamper {
     brushSize: number,
     options: BrushStamperInputOptions = {}
   ): Array<{ x: number; y: number; pressure: number }> {
-    const tailDabs = this.shouldGenerateTail(options) ? this.buildTailDabs(brushSize) : [];
+    const evaluation = this.evaluateTailTaper(options);
+    const tailDabs =
+      evaluation.reason === 'triggered'
+        ? this.buildTailDabs(
+            brushSize,
+            evaluation.effectiveSpeed,
+            evaluation.lastPressure ?? BrushStamper.TAIL_PRESSURE_THRESHOLD
+          )
+        : [];
+    const snapshot: TailTaperDebugSnapshot = {
+      reason: evaluation.reason,
+      speedPxPerMs: this.lastSpeedPxPerMs,
+      normalizedSpeed: BrushStamper.clamp01(evaluation.effectiveSpeed),
+      pressureSlope: evaluation.pressureSlope,
+      lastPressure: evaluation.lastPressure,
+      sampleCount: this.tailSampleHistory.length,
+      segmentDistance: evaluation.segmentDistance,
+    };
     this.beginStroke();
+    this.lastTailTaperDebugSnapshot = snapshot;
     return tailDabs;
+  }
+
+  getTailTaperDebugSnapshot(): TailTaperDebugSnapshot | null {
+    if (!this.lastTailTaperDebugSnapshot) return null;
+    return { ...this.lastTailTaperDebugSnapshot };
   }
 }

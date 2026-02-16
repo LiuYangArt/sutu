@@ -352,15 +352,24 @@ export function usePointerHandlers({
       if (shouldUseNativeBackend) {
         nativeSeqCursorRef.current = nextSeq;
       }
+      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
 
-      for (const evt of coalescedEvents) {
+      for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
+        const evt = coalescedEvents[eventIndex]!;
+        const nativePoint =
+          shouldUseNativeBackend && bufferedPoints.length > 0
+            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
+              bufferedPoints[bufferedPoints.length - 1] ??
+              null)
+            : null;
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
         const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
           evt,
           shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
-          nativeEvent
+          nativeEvent,
+          nativePoint
         );
 
         const idx = pointIndexRef.current++;
@@ -616,12 +625,14 @@ export function usePointerHandlers({
         if (shouldUseNativeBackend) {
           nativeSeqCursorRef.current = nextSeq;
         }
+        const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
         const effectiveInput = getEffectiveInputData(
           pe,
           shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
-          pe
+          pe,
+          lastBufferedPoint
         );
         pressure = effectiveInput.pressure;
         tiltX = effectiveInput.tiltX;
@@ -629,7 +640,6 @@ export function usePointerHandlers({
         rotation = effectiveInput.rotation;
         timestampMs = effectiveInput.timestampMs;
         if (shouldUseNativeBackend) {
-          const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1];
           if (lastBufferedPoint) {
             pressure = lastBufferedPoint.pressure;
             timestampMs = lastBufferedPoint.timestamp_ms;

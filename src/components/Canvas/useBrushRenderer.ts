@@ -16,6 +16,7 @@ import {
   DabParams,
   MaskType,
   type Rect,
+  type TailTaperDebugSnapshot,
 } from '@/utils/strokeBuffer';
 import {
   applyPressureCurve,
@@ -212,7 +213,10 @@ export interface UseBrushRendererResult {
   getGpuRenderScale: () => number;
   getGpuDiagnosticsSnapshot: () => unknown;
   resetGpuDiagnostics: () => boolean;
+  getTailTaperDebugSnapshot: () => TailTaperDebugSnapshot | null;
 }
+
+type StrokeTailFinalizeTrigger = 'end-stroke' | 'prepare-gpu';
 
 export function useBrushRenderer({
   width,
@@ -243,6 +247,13 @@ export function useBrushRenderer({
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
   const gpuCommitLockActiveRef = useRef(false);
   const gpuCommitLockResolveRef = useRef<(() => void) | null>(null);
+  const strokeTailFinalizeRef = useRef<{
+    finalized: boolean;
+    trigger: StrokeTailFinalizeTrigger | null;
+  }>({
+    finalized: false,
+    trigger: null,
+  });
   const strokeCancelledRef = useRef(false);
   const dualBrushTextureIdRef = useRef<string | null>(null);
 
@@ -366,6 +377,10 @@ export function useBrushRenderer({
       strokeCompositeModeLockedRef.current = false;
       strokeColorJitterSampleRef.current = null;
       lastConfigRef.current = null;
+      strokeTailFinalizeRef.current = {
+        finalized: false,
+        trigger: null,
+      };
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         gpuBufferRef.current.beginStroke();
@@ -375,6 +390,154 @@ export function useBrushRenderer({
       }
     },
     [backend, ensureCPUBuffer]
+  );
+
+  const mapInputPressureForStamper = useCallback(
+    (config: BrushRenderConfig, rawPressure: number): number => {
+      return samplePressureCurveLut(config.globalPressureLut, rawPressure);
+    },
+    []
+  );
+
+  const mapStamperPressureToBrush = useCallback(
+    (config: BrushRenderConfig, stamperPressure: number): number => {
+      return applyPressureCurve(stamperPressure, config.pressureCurve);
+    },
+    []
+  );
+
+  const resolveDabFlowAndOpacity = useCallback(
+    (config: BrushRenderConfig, dabPressure: number, dynamicsInput: DynamicsInput) => {
+      const strokeOpacity = strokeOpacityRef.current;
+      const hasStrokeOpacity = strokeOpacity > 1e-6;
+      if (config.transferEnabled && config.transfer && isTransferActive(config.transfer)) {
+        const transferResult = computeDabTransfer(
+          strokeOpacity,
+          config.flow,
+          config.transfer,
+          dynamicsInput
+        );
+        return {
+          flow: transferResult.flow,
+          dabOpacity: hasStrokeOpacity ? transferResult.opacity / strokeOpacity : 0,
+        };
+      }
+      return {
+        flow: config.pressureFlowEnabled ? config.flow * dabPressure : config.flow,
+        dabOpacity: hasStrokeOpacity ? (config.pressureOpacityEnabled ? dabPressure : 1) : 0,
+      };
+    },
+    []
+  );
+
+  const stampDabToBackend = useCallback(
+    (dabParams: DabParams): void => {
+      if (backend === 'gpu' && gpuBufferRef.current) {
+        gpuBufferRef.current.stampDab(dabParams);
+      } else if (cpuBufferRef.current) {
+        const cpuBuffer = cpuBufferRef.current;
+        if (cpuBuffer.isUsingRustPath()) {
+          void cpuBuffer.stampDabRust(dabParams);
+        } else {
+          cpuBuffer.stampDab(dabParams);
+        }
+      }
+    },
+    [backend]
+  );
+
+  const finalizeStrokeTailOnce = useCallback(
+    (trigger: StrokeTailFinalizeTrigger): void => {
+      if (strokeTailFinalizeRef.current.finalized) {
+        return;
+      }
+      strokeTailFinalizeRef.current = {
+        finalized: true,
+        trigger,
+      };
+
+      if (strokeCancelledRef.current) {
+        stamperRef.current.finishStroke(0);
+        secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
+        lastConfigRef.current = null;
+        strokeCancelledRef.current = false;
+        return;
+      }
+
+      const config = lastConfigRef.current;
+      if (!config) {
+        stamperRef.current.finishStroke(0);
+        secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
+        return;
+      }
+
+      const tailDabs = stamperRef.current.finishStroke(Math.max(1, config.size), {
+        maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
+        brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
+        lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
+        tailTaperEnabled: config.tailTaperEnabled,
+      });
+      secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
+
+      if (tailDabs.length > 0) {
+        const selectionState = useSelectionStore.getState();
+        const hasSelection = selectionState.hasSelection;
+        const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
+
+        for (const tailDab of tailDabs) {
+          if (
+            !skipCpuSelectionCheck &&
+            hasSelection &&
+            !selectionState.isPointInSelection(tailDab.x, tailDab.y)
+          ) {
+            continue;
+          }
+
+          const mappedTailPressure = mapStamperPressureToBrush(config, tailDab.pressure);
+          const neutralDynamicsInput: DynamicsInput = {
+            pressure: mappedTailPressure,
+            tiltX: 0,
+            tiltY: 0,
+            rotation: 0,
+            direction: 0,
+            initialDirection: 0,
+            fadeProgress: 0,
+          };
+          const { flow, dabOpacity } = resolveDabFlowAndOpacity(
+            config,
+            mappedTailPressure,
+            neutralDynamicsInput
+          );
+          const size = config.pressureSizeEnabled ? config.size * mappedTailPressure : config.size;
+
+          const dabParams: DabParams = {
+            x: tailDab.x,
+            y: tailDab.y,
+            size: Math.max(1, size),
+            flow,
+            hardness: config.hardness / 100,
+            maskType: config.maskType,
+            color: config.color,
+            dabOpacity,
+            roundness: config.roundness / 100,
+            angle: config.angle,
+            texture: config.texture ?? undefined,
+            wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
+            textureSettings: config.textureEnabled ? config.textureSettings : undefined,
+            noiseEnabled: config.noiseEnabled,
+            noiseSize: config.noiseSize ?? 100,
+            noiseSizeJitter: config.noiseSizeJitter ?? 0,
+            noiseDensityJitter: config.noiseDensityJitter ?? 0,
+            baseSize: config.size,
+            spacing: config.spacing,
+          };
+          stampDabToBackend(dabParams);
+        }
+      }
+
+      lastConfigRef.current = null;
+    },
+    [backend, mapStamperPressureToBrush, resolveDabFlowAndOpacity, stampDabToBackend]
   );
 
   /**
@@ -414,9 +577,8 @@ export function useBrushRenderer({
         tailTaperEnabled: config.tailTaperEnabled,
       };
 
-      // Apply pressure curve
-      const globalPressure = samplePressureCurveLut(config.globalPressureLut, pressure);
-      const adjustedPressure = applyPressureCurve(globalPressure, config.pressureCurve);
+      const globalPressure = mapInputPressureForStamper(config, pressure);
+      const adjustedPressure = mapStamperPressureToBrush(config, globalPressure);
       const tiltX = dynamics?.tiltX ?? 0;
       const tiltY = dynamics?.tiltY ?? 0;
       const rotation = dynamics?.rotation ?? 0;
@@ -426,7 +588,6 @@ export function useBrushRenderer({
       // Store stroke-level opacity (applied at endStroke/compositeToLayer)
       const strokeOpacity = Math.max(0, Math.min(1, config.opacity));
       strokeOpacityRef.current = strokeOpacity;
-      const hasStrokeOpacity = strokeOpacity > 1e-6;
 
       // Legacy pressure-size toggle only applies when Shape Dynamics size control is not active.
       // This avoids control source being multiplied twice (e.g. penPressure^2).
@@ -564,10 +725,6 @@ export function useBrushRenderer({
         strokeColorJitterSample = strokeColorJitterSampleRef.current;
       }
 
-      // Transfer: Check if we need to apply transfer dynamics
-      const useTransfer =
-        config.transferEnabled && config.transfer && isTransferActive(config.transfer);
-
       // Selection constraint: get state once before loop for performance
       const selectionState = useSelectionStore.getState();
       const hasSelection = selectionState.hasSelection;
@@ -634,25 +791,11 @@ export function useBrushRenderer({
           fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
         };
 
-        // Calculate Flow and Opacity using Transfer system or legacy pressure toggles
-        let dabFlow: number;
-        let dabOpacity: number;
-
-        if (useTransfer && config.transfer) {
-          // Use Transfer dynamics system (Photoshop-compatible)
-          const transferResult = computeDabTransfer(
-            strokeOpacity,
-            config.flow,
-            config.transfer,
-            dynamicsInput
-          );
-          dabFlow = transferResult.flow;
-          dabOpacity = hasStrokeOpacity ? transferResult.opacity / strokeOpacity : 0.0;
-        } else {
-          // Legacy pressure toggles (backward compatibility)
-          dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
-          dabOpacity = hasStrokeOpacity ? (config.pressureOpacityEnabled ? dabPressure : 1.0) : 0.0;
-        }
+        const { flow: dabFlow, dabOpacity } = resolveDabFlowAndOpacity(
+          config,
+          dabPressure,
+          dynamicsInput
+        );
 
         if (useShapeDynamics && config.shapeDynamics) {
           // Compute dynamic shape
@@ -755,16 +898,7 @@ export function useBrushRenderer({
             spacing: config.spacing,
           };
 
-          if (backend === 'gpu' && gpuBufferRef.current) {
-            gpuBufferRef.current.stampDab(dabParams);
-          } else if (cpuBufferRef.current) {
-            const cpuBuffer = cpuBufferRef.current;
-            if (cpuBuffer.isUsingRustPath()) {
-              void cpuBuffer.stampDabRust(dabParams);
-            } else {
-              cpuBuffer.stampDab(dabParams);
-            }
-          }
+          stampDabToBackend(dabParams);
         }
       }
 
@@ -785,7 +919,15 @@ export function useBrushRenderer({
         void benchmarkProfiler.markRenderSubmit(pointIndex);
       }
     },
-    [backend, benchmarkProfiler, ensureCPUBuffer]
+    [
+      backend,
+      benchmarkProfiler,
+      ensureCPUBuffer,
+      mapInputPressureForStamper,
+      mapStamperPressureToBrush,
+      resolveDabFlowAndOpacity,
+      stampDabToBackend,
+    ]
   );
 
   /**
@@ -801,113 +943,11 @@ export function useBrushRenderer({
   const endStroke = useCallback(
     async (layerCtx: CanvasRenderingContext2D): Promise<void> => {
       if (strokeCancelledRef.current) {
-        stamperRef.current.finishStroke(0);
-        secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
-        lastConfigRef.current = null;
-        strokeCancelledRef.current = false;
+        finalizeStrokeTailOnce('end-stroke');
         return;
       }
 
-      const config = lastConfigRef.current;
-      if (config) {
-        const tailDabs = stamperRef.current.finishStroke(Math.max(1, config.size), {
-          maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
-          brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
-          lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
-          tailTaperEnabled: config.tailTaperEnabled,
-        });
-        secondaryStamperRef.current.finishStroke(0, {
-          tailTaperEnabled: false,
-        });
-
-        if (tailDabs.length > 0) {
-          const selectionState = useSelectionStore.getState();
-          const hasSelection = selectionState.hasSelection;
-          const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
-          const hasStrokeOpacity = strokeOpacityRef.current > 1e-6;
-
-          for (const tailDab of tailDabs) {
-            if (
-              !skipCpuSelectionCheck &&
-              hasSelection &&
-              !selectionState.isPointInSelection(tailDab.x, tailDab.y)
-            ) {
-              continue;
-            }
-
-            const tailPressure = applyPressureCurve(tailDab.pressure, config.pressureCurve);
-            const dynamicsInput: DynamicsInput = {
-              pressure: tailPressure,
-              tiltX: 0,
-              tiltY: 0,
-              rotation: 0,
-              direction: 0,
-              initialDirection: 0,
-              fadeProgress: 0,
-            };
-
-            let tailFlow: number;
-            let tailDabOpacity: number;
-            if (config.transferEnabled && config.transfer && isTransferActive(config.transfer)) {
-              const transferResult = computeDabTransfer(
-                strokeOpacityRef.current,
-                config.flow,
-                config.transfer,
-                dynamicsInput
-              );
-              tailFlow = transferResult.flow;
-              tailDabOpacity = hasStrokeOpacity
-                ? transferResult.opacity / strokeOpacityRef.current
-                : 0;
-            } else {
-              tailFlow = config.pressureFlowEnabled ? config.flow * tailPressure : config.flow;
-              tailDabOpacity = hasStrokeOpacity
-                ? config.pressureOpacityEnabled
-                  ? tailPressure
-                  : 1
-                : 0;
-            }
-
-            const tailSize = config.pressureSizeEnabled ? config.size * tailPressure : config.size;
-            const dabParams: DabParams = {
-              x: tailDab.x,
-              y: tailDab.y,
-              size: Math.max(1, tailSize),
-              flow: tailFlow,
-              hardness: config.hardness / 100,
-              maskType: config.maskType,
-              color: config.color,
-              dabOpacity: tailDabOpacity,
-              roundness: config.roundness / 100,
-              angle: config.angle,
-              texture: config.texture ?? undefined,
-              wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
-              textureSettings: config.textureEnabled ? config.textureSettings : undefined,
-              noiseEnabled: config.noiseEnabled,
-              noiseSize: config.noiseSize ?? 100,
-              noiseSizeJitter: config.noiseSizeJitter ?? 0,
-              noiseDensityJitter: config.noiseDensityJitter ?? 0,
-              baseSize: config.size,
-              spacing: config.spacing,
-            };
-
-            if (backend === 'gpu' && gpuBufferRef.current) {
-              gpuBufferRef.current.stampDab(dabParams);
-            } else if (cpuBufferRef.current) {
-              const cpuBuffer = cpuBufferRef.current;
-              if (cpuBuffer.isUsingRustPath()) {
-                void cpuBuffer.stampDabRust(dabParams);
-              } else {
-                cpuBuffer.stampDab(dabParams);
-              }
-            }
-          }
-        }
-      } else {
-        stamperRef.current.finishStroke(0);
-        secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
-      }
-      lastConfigRef.current = null;
+      finalizeStrokeTailOnce('end-stroke');
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         const gpuBuffer = gpuBufferRef.current;
@@ -941,7 +981,7 @@ export function useBrushRenderer({
         );
       }
     },
-    [backend]
+    [backend, finalizeStrokeTailOnce]
   );
 
   /**
@@ -1006,6 +1046,8 @@ export function useBrushRenderer({
 
   const prepareStrokeEndGpu = useCallback(async (): Promise<GpuStrokePrepareResult> => {
     if (backend === 'gpu' && gpuBufferRef.current) {
+      finalizeStrokeTailOnce('prepare-gpu');
+
       // Align GPU commit path with legacy endStroke lock to prevent tailgating.
       if (!gpuCommitLockActiveRef.current && !finishingPromiseRef.current) {
         gpuCommitLockActiveRef.current = true;
@@ -1039,7 +1081,7 @@ export function useBrushRenderer({
       compositeMode: strokeCompositeModeRef.current,
       scratch: null,
     };
-  }, [backend, releaseGpuCommitLock]);
+  }, [backend, finalizeStrokeTailOnce, releaseGpuCommitLock]);
 
   const clearScratchGpu = useCallback(() => {
     try {
@@ -1091,6 +1133,10 @@ export function useBrushRenderer({
     return true;
   }, []);
 
+  const getTailTaperDebugSnapshot = useCallback((): TailTaperDebugSnapshot | null => {
+    return stamperRef.current.getTailTaperDebugSnapshot();
+  }, []);
+
   /**
    * Flush pending dabs to GPU (called once per frame by RAF loop)
    * This ensures all dabs accumulated during the frame are rendered together
@@ -1137,5 +1183,6 @@ export function useBrushRenderer({
     getGpuRenderScale,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
+    getTailTaperDebugSnapshot,
   };
 }

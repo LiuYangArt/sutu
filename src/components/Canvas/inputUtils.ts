@@ -205,7 +205,8 @@ export function getEffectiveInputData(
   isNativeBackendActive: boolean,
   bufferedPoints: RawInputPoint[],
   currentPoint: RawInputPoint | null,
-  fallbackEvent?: PointerEvent
+  fallbackEvent?: PointerEvent,
+  preferredNativePoint?: RawInputPoint | null
 ): { pressure: number; tiltX: number; tiltY: number; rotation: number; timestampMs: number } {
   const pointerOrientation = resolvePointerOrientation(evt, fallbackEvent);
   const pointerPressure = resolvePointerPressure(evt, fallbackEvent);
@@ -223,7 +224,17 @@ export function getEffectiveInputData(
 
   // Note: Native backend timestamps are not guaranteed to share a time origin with
   // PointerEvent.timeStamp, so we avoid time-based matching here.
-  // Use the most recent native sample we have for this event batch.
+  // Prefer the caller-provided sample for this event, then fallback to batch tail.
+  if (preferredNativePoint) {
+    return {
+      pressure: preferredNativePoint.pressure,
+      tiltX: normalizeTiltComponent(preferredNativePoint.tilt_x),
+      tiltY: normalizeTiltComponent(preferredNativePoint.tilt_y),
+      rotation: resolveTabletRotation(preferredNativePoint, pointerOrientation.rotation),
+      timestampMs: resolveNativeTimestampMs(preferredNativePoint, pointerTimestampMs),
+    };
+  }
+
   if (bufferedPoints.length > 0) {
     const pt = bufferedPoints[bufferedPoints.length - 1]!;
     return {
