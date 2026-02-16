@@ -1,23 +1,24 @@
 import type { HistoryEntry } from '@/stores/history';
+import { t } from '@/i18n';
 
 export interface HistoryTimeline {
   entries: HistoryEntry[];
   currentIndex: number;
 }
 
-const STROKE_LABEL_BY_PREFIX: Array<{ prefix: string; label: string }> = [
-  { prefix: 'fill-selection-', label: 'Fill Selection' },
-  { prefix: 'fill-layer-', label: 'Fill Layer' },
-  { prefix: 'selection-fill-', label: 'Selection Fill' },
-  { prefix: 'clear-selection-', label: 'Clear Selection' },
-  { prefix: 'clear-layer-', label: 'Clear Layer' },
-  { prefix: 'gradient-', label: 'Gradient Fill' },
-  { prefix: 'curves-', label: 'Curves Adjustment' },
+const STROKE_LABEL_BY_PREFIX: Array<{ prefix: string; key: string }> = [
+  { prefix: 'fill-selection-', key: 'historyPanel.entry.fillSelection' },
+  { prefix: 'fill-layer-', key: 'historyPanel.entry.fillLayer' },
+  { prefix: 'selection-fill-', key: 'historyPanel.entry.selectionFill' },
+  { prefix: 'clear-selection-', key: 'historyPanel.entry.clearSelection' },
+  { prefix: 'clear-layer-', key: 'historyPanel.entry.clearLayer' },
+  { prefix: 'gradient-', key: 'historyPanel.entry.gradientFill' },
+  { prefix: 'curves-', key: 'historyPanel.entry.curvesAdjustment' },
 ];
 
 function resolveStrokeLabel(entryId: string): string | null {
   for (const candidate of STROKE_LABEL_BY_PREFIX) {
-    if (entryId.startsWith(candidate.prefix)) return candidate.label;
+    if (entryId.startsWith(candidate.prefix)) return t(candidate.key);
   }
   return null;
 }
@@ -37,22 +38,26 @@ export function formatHistoryEntryLabel(entry: HistoryEntry): string {
     case 'stroke': {
       const actionLabel = resolveStrokeLabel(entry.entryId);
       if (actionLabel) return actionLabel;
-      return entry.snapshotMode === 'gpu' ? 'Brush Stroke (GPU)' : 'Brush Stroke';
+      return entry.snapshotMode === 'gpu'
+        ? t('historyPanel.entry.brushStrokeGpu')
+        : t('historyPanel.entry.brushStroke');
     }
     case 'addLayer':
-      return 'Add Layer';
+      return t('historyPanel.entry.addLayer');
     case 'removeLayer':
-      return 'Delete Layer';
+      return t('historyPanel.entry.deleteLayer');
     case 'removeLayers':
-      return entry.layers.length > 1 ? `Delete ${entry.layers.length} Layers` : 'Delete Layer';
+      return entry.layers.length > 1
+        ? t('historyPanel.entry.deleteLayers', { count: entry.layers.length })
+        : t('historyPanel.entry.deleteLayer');
     case 'mergeLayers':
-      return 'Merge Layers';
+      return t('historyPanel.entry.mergeLayers');
     case 'layerProps':
-      return 'Layer Properties';
+      return t('historyPanel.entry.layerProperties');
     case 'resizeCanvas':
-      return 'Resize Canvas';
+      return t('historyPanel.entry.resizeCanvas');
     case 'selection':
-      return 'Selection Change';
+      return t('historyPanel.entry.selectionChange');
   }
 }
 

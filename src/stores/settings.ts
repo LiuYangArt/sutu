@@ -112,6 +112,7 @@ export interface NewFileSettings {
 }
 
 export interface GeneralSettings {
+  language: string;
   autosaveIntervalMinutes: number;
   openLastFileOnStartup: boolean;
   recentFiles: string[];
@@ -176,6 +177,7 @@ interface SettingsState extends PersistedSettings {
   setNewFileLastUsed: (lastUsed: NewFileLastUsedSettings) => void;
 
   // General actions
+  setLanguage: (language: string) => void;
   setAutosaveIntervalMinutes: (minutes: number) => void;
   setOpenLastFileOnStartup: (enabled: boolean) => void;
   setSelectionAutoFillEnabled: (enabled: boolean) => void;
@@ -397,6 +399,13 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
+function normalizeLanguage(value: unknown): string {
+  if (typeof value !== 'string') return 'en-US';
+  const normalized = value.trim();
+  if (normalized.length === 0) return 'en-US';
+  return normalized;
+}
+
 function buildRecentFilesWith(path: string, current: string[]): string[] {
   const normalizedPath = normalizeRecentFilePath(path);
   if (!normalizedPath) {
@@ -438,6 +447,7 @@ const defaultSettings: PersistedSettings = {
   },
   newFile: cloneDefaultNewFileSettings(),
   general: {
+    language: 'en-US',
     autosaveIntervalMinutes: 10,
     openLastFileOnStartup: true,
     recentFiles: [],
@@ -652,6 +662,14 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setLanguage: (language) => {
+      const normalized = normalizeLanguage(language);
+      set((state) => {
+        state.general.language = normalized;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     setAutosaveIntervalMinutes: (minutes) => {
       const normalized = clampAutosaveIntervalMinutes(minutes);
       set((state) => {
@@ -768,6 +786,9 @@ export const useSettingsStore = create<SettingsState>()(
               state.general = {
                 ...defaultSettings.general,
                 ...loaded.general,
+                language: normalizeLanguage(
+                  loaded.general.language ?? defaultSettings.general.language
+                ),
                 autosaveIntervalMinutes: clampAutosaveIntervalMinutes(
                   loaded.general.autosaveIntervalMinutes ??
                     defaultSettings.general.autosaveIntervalMinutes

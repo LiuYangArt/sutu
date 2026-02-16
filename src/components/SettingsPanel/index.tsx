@@ -11,7 +11,9 @@ import {
   RenderMode,
   GPURenderScaleMode,
 } from '@/stores/settings';
-import { useTabletStore, BackendType, InputBackpressureMode } from '@/stores/tablet';
+import { useI18n } from '@/i18n';
+import { useI18nStore } from '@/stores/i18n';
+import { useTabletStore, BackendType, InputBackpressureMode, TabletStatus } from '@/stores/tablet';
 import { detectPlatformKind } from '@/utils/platform';
 import { formatTabletFallbackReason } from '@/utils/tabletFallback';
 import './SettingsPanel.css';
@@ -19,7 +21,7 @@ import './SettingsPanel.css';
 // Tab configuration
 interface TabConfig {
   id: string;
-  label: string;
+  labelKey: string;
   icon: React.ReactNode;
 }
 
@@ -36,19 +38,19 @@ interface ColorSwatchProps {
 }
 
 const TABS: TabConfig[] = [
-  { id: 'appearance', label: 'Appearance', icon: <Palette size={16} /> },
-  { id: 'general', label: 'General', icon: <Settings2 size={16} /> },
-  { id: 'brush', label: 'Brush', icon: <Brush size={16} /> },
-  { id: 'tablet', label: 'Tablet', icon: <Tablet size={16} /> },
+  { id: 'appearance', labelKey: 'settings.tab.appearance', icon: <Palette size={16} /> },
+  { id: 'general', labelKey: 'settings.tab.general', icon: <Settings2 size={16} /> },
+  { id: 'brush', labelKey: 'settings.tab.brush', icon: <Brush size={16} /> },
+  { id: 'tablet', labelKey: 'settings.tab.tablet', icon: <Tablet size={16} /> },
 ];
 const PRESSURE_CURVE_OPTIONS: Array<{
   value: 'linear' | 'soft' | 'hard' | 'scurve';
-  label: string;
+  labelKey: string;
 }> = [
-  { value: 'linear', label: 'Linear' },
-  { value: 'soft', label: 'Soft' },
-  { value: 'hard', label: 'Hard' },
-  { value: 'scurve', label: 'S-Curve' },
+  { value: 'linear', labelKey: 'settings.tablet.pressureCurve.linear' },
+  { value: 'soft', labelKey: 'settings.tablet.pressureCurve.soft' },
+  { value: 'hard', labelKey: 'settings.tablet.pressureCurve.hard' },
+  { value: 'scurve', labelKey: 'settings.tablet.pressureCurve.sCurve' },
 ];
 
 const POINTER_DIAG_UPDATE_INTERVAL_MS = 66;
@@ -57,10 +59,30 @@ const FALLBACK_SCROLLBAR_HIT_HEIGHT = 18;
 const SETTINGS_SCROLL_DRAG_BLOCK_SELECTOR =
   'button, input, textarea, select, option, a, [role="button"], .toggle-switch, .settings-select, .settings-number-input';
 
-function getTabletStatusColor(status: string): string {
+function getTabletStatusColor(status: TabletStatus): string {
   if (status === 'Connected') return '#4f4';
   if (status === 'Error') return '#f44';
   return '#888';
+}
+
+function getTabletStatusLabel(status: TabletStatus, t: (key: string) => string): string {
+  if (status === 'Connected') return t('settings.tablet.status.value.connected');
+  if (status === 'Error') return t('settings.tablet.status.value.error');
+  return t('settings.tablet.status.value.disconnected');
+}
+
+function getBackpressureModeLabel(mode: InputBackpressureMode, t: (key: string) => string): string {
+  if (mode === 'latency_capped') {
+    return t('settings.tablet.inputPipeline.latencyCapped');
+  }
+  return t('settings.tablet.inputPipeline.lossless');
+}
+
+function getPollingRateLabel(
+  rate: number,
+  t: (key: string, params?: Record<string, number>) => string
+): string {
+  return t('settings.tablet.configuration.pollingRateHz', { rate });
 }
 
 function normalizeBackendType(value: string | null | undefined): BackendType {
@@ -211,6 +233,7 @@ function releasePointerCaptureSafely(container: HTMLDivElement, pointerId: numbe
 
 // Sidebar component
 function SettingsSidebar({ tabs, activeTabId, onTabSelect }: SettingsSidebarProps) {
+  const { t } = useI18n();
   return (
     <div className="settings-sidebar">
       {tabs.map((tab) => (
@@ -220,7 +243,7 @@ function SettingsSidebar({ tabs, activeTabId, onTabSelect }: SettingsSidebarProp
           onClick={() => onTabSelect(tab.id)}
         >
           {tab.icon}
-          <span>{tab.label}</span>
+          <span>{t(tab.labelKey)}</span>
         </button>
       ))}
     </div>
@@ -244,14 +267,15 @@ function ColorSwatch({ color, isSelected, onClick }: ColorSwatchProps) {
 function AppearanceSettings() {
   const { appearance, setAccentColor, setPanelBgColor, setCanvasBgColor, setEnableBlur } =
     useSettingsStore();
+  const { t } = useI18n();
 
   return (
     <div className="settings-content">
-      <h3 className="settings-section-title">Appearance</h3>
+      <h3 className="settings-section-title">{t('settings.tab.appearance')}</h3>
 
       {/* Accent Color */}
       <div className="settings-section">
-        <label className="settings-label">ACCENT COLOR</label>
+        <label className="settings-label">{t('settings.appearance.accentColor')}</label>
         <div className="color-grid">
           {ACCENT_COLORS.map((color) => (
             <ColorSwatch
@@ -266,7 +290,7 @@ function AppearanceSettings() {
 
       {/* Panel Background */}
       <div className="settings-section">
-        <label className="settings-label">PANEL BACKGROUND</label>
+        <label className="settings-label">{t('settings.appearance.panelBackground')}</label>
         <div className="color-grid">
           {PANEL_BG_COLORS.map((color) => (
             <ColorSwatch
@@ -281,7 +305,7 @@ function AppearanceSettings() {
 
       {/* Canvas Background */}
       <div className="settings-section">
-        <label className="settings-label">CANVAS BACKGROUND</label>
+        <label className="settings-label">{t('settings.appearance.canvasBackground')}</label>
         <div className="color-grid">
           {CANVAS_BG_COLORS.map((color) => (
             <ColorSwatch
@@ -296,9 +320,9 @@ function AppearanceSettings() {
 
       {/* Blur Effect Toggle */}
       <div className="settings-section">
-        <label className="settings-label">BLUR EFFECT</label>
+        <label className="settings-label">{t('settings.appearance.blurEffect')}</label>
         <div className="settings-row">
-          <span className="settings-description">Enable panel transparency and blur</span>
+          <span className="settings-description">{t('settings.appearance.blurEffectDesc')}</span>
           <label className="toggle-switch">
             <input
               type="checkbox"
@@ -315,8 +339,11 @@ function AppearanceSettings() {
 
 function GeneralSettings() {
   const general = useSettingsStore((s) => s.general);
+  const setLanguage = useSettingsStore((s) => s.setLanguage);
   const setAutosaveIntervalMinutes = useSettingsStore((s) => s.setAutosaveIntervalMinutes);
   const setOpenLastFileOnStartup = useSettingsStore((s) => s.setOpenLastFileOnStartup);
+  const setLocale = useI18nStore((s) => s.setLocale);
+  const { t, availableLocales } = useI18n();
   const [intervalInput, setIntervalInput] = useState(String(general.autosaveIntervalMinutes));
 
   useEffect(() => {
@@ -336,12 +363,34 @@ function GeneralSettings() {
 
   return (
     <div className="settings-content">
-      <h3 className="settings-section-title">General</h3>
+      <h3 className="settings-section-title">{t('settings.tab.general')}</h3>
 
       <div className="settings-section">
-        <label className="settings-label">AUTO SAVE</label>
+        <label className="settings-label">{t('settings.general.language')}</label>
         <div className="settings-row">
-          <span className="settings-description">Autosave interval (minutes)</span>
+          <span className="settings-description">{t('settings.general.languageDesc')}</span>
+          <select
+            className="settings-select"
+            value={general.language}
+            onChange={(e) => {
+              const resolved = setLocale(e.target.value);
+              setLanguage(resolved);
+            }}
+            aria-label={t('settings.general.language')}
+          >
+            {availableLocales.map((locale) => (
+              <option key={locale.code} value={locale.code}>
+                {locale.displayName} ({locale.nativeName})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <label className="settings-label">{t('settings.general.autoSave')}</label>
+        <div className="settings-row">
+          <span className="settings-description">{t('settings.general.autoSaveDesc')}</span>
           <input
             type="number"
             min={1}
@@ -360,9 +409,11 @@ function GeneralSettings() {
       </div>
 
       <div className="settings-section">
-        <label className="settings-label">STARTUP</label>
+        <label className="settings-label">{t('settings.general.startup')}</label>
         <div className="settings-row">
-          <span className="settings-description">Open last file on startup</span>
+          <span className="settings-description">
+            {t('settings.general.openLastFileOnStartup')}
+          </span>
           <label className="toggle-switch">
             <input
               type="checkbox"
@@ -379,6 +430,7 @@ function GeneralSettings() {
 
 // Tablet settings tab
 function TabletSettings() {
+  const { t } = useI18n();
   const {
     tablet,
     setTabletBackend,
@@ -409,6 +461,8 @@ function TabletSettings() {
   } = useTabletStore();
 
   const statusColor = getTabletStatusColor(status);
+  const statusLabel = getTabletStatusLabel(status, t);
+  const backpressureModeLabel = getBackpressureModeLabel(backpressureMode, t);
   const [pointerDiag, setPointerDiag] = useState<PointerEventDiagnosticsSnapshot | null>(null);
   const [isApplyingPipelineConfig, setIsApplyingPipelineConfig] = useState(false);
   const platformKind = detectPlatformKind();
@@ -425,18 +479,18 @@ function TabletSettings() {
     ? 'pointerevent'
     : preferredNativeBackend;
   const toggleBackendLabel = isNativeBackendActive
-    ? 'Use PointerEvent'
+    ? t('settings.tablet.backendSwitch.usePointerEvent')
     : platformKind === 'macos'
-      ? 'Use Mac Native'
+      ? t('settings.tablet.backendSwitch.useMacNative')
       : platformKind === 'windows'
-        ? 'Use WinTab'
-        : 'Use PointerEvent';
+        ? t('settings.tablet.backendSwitch.useWinTab')
+        : t('settings.tablet.backendSwitch.usePointerEvent');
   const autoBackendLabel =
     platformKind === 'macos'
-      ? 'Auto (prefer Mac Native)'
+      ? t('settings.tablet.backend.autoPreferMacNative')
       : platformKind === 'windows'
-        ? 'Auto (prefer WinTab)'
-        : 'Auto (prefer PointerEvent)';
+        ? t('settings.tablet.backend.autoPreferWinTab')
+        : t('settings.tablet.backend.autoPreferPointerEvent');
   const backendSwitchOptions = {
     pollingRate: tablet.pollingRate,
     pressureCurve: tablet.pressureCurve,
@@ -570,11 +624,11 @@ function TabletSettings() {
   const pointerRawUpdateSupported = typeof window !== 'undefined' && 'onpointerrawupdate' in window;
   const liveInputSourceHint = isNativeBackendActive
     ? activeBackendLower === 'macnative'
-      ? 'Source: backend tablet-event-v2 (MacNative packet stream)'
-      : 'Source: backend tablet-event-v2 (WinTab packet stream)'
-    : `Source: window PointerEvent (all pointer types) | pointerrawupdate support: ${
-        pointerRawUpdateSupported ? 'Yes' : 'No'
-      }`;
+      ? t('settings.tablet.liveInput.macnative')
+      : t('settings.tablet.liveInput.wintab')
+    : t('settings.tablet.liveInput.pointerEvent', {
+        support: pointerRawUpdateSupported ? t('common.yes') : t('common.no'),
+      });
   const pointerEventLooksMouseOnly =
     !isNativeBackendActive &&
     pointerDiag !== null &&
@@ -584,11 +638,11 @@ function TabletSettings() {
 
   return (
     <div className="settings-content">
-      <h3 className="settings-section-title">Tablet</h3>
+      <h3 className="settings-section-title">{t('settings.tab.tablet')}</h3>
 
       {isInitialized && showBackendToggle && (
         <div className="settings-section">
-          <label className="settings-label">BACKEND SWITCH</label>
+          <label className="settings-label">{t('settings.tablet.backendSwitch.title')}</label>
           <div className="settings-actions">
             <button className="settings-btn" onClick={handleToggleBackend}>
               {toggleBackendLabel}
@@ -598,9 +652,9 @@ function TabletSettings() {
       )}
 
       <div className="settings-section">
-        <label className="settings-label">PRESSURE CURVE</label>
+        <label className="settings-label">{t('settings.tablet.pressureCurve.title')}</label>
         <div className="settings-row">
-          <span>Curve:</span>
+          <span>{t('settings.tablet.pressureCurve.curve')}</span>
           <select
             className="settings-select"
             value={tablet.pressureCurve}
@@ -610,7 +664,7 @@ function TabletSettings() {
           >
             {PRESSURE_CURVE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {t(option.labelKey)}
               </option>
             ))}
           </select>
@@ -619,36 +673,36 @@ function TabletSettings() {
 
       {/* Status */}
       <div className="settings-section">
-        <label className="settings-label">STATUS</label>
+        <label className="settings-label">{t('settings.tablet.status.title')}</label>
         <div className="tablet-status-info">
           <div className="status-row">
-            <span>Status:</span>
-            <span style={{ color: statusColor }}>{status}</span>
+            <span>{t('settings.tablet.status.status')}</span>
+            <span style={{ color: statusColor }}>{statusLabel}</span>
           </div>
           <div className="status-row">
-            <span>Requested Backend:</span>
+            <span>{t('settings.tablet.status.requestedBackend')}</span>
             <span>{requestedBackend}</span>
           </div>
           <div className="status-row">
-            <span>Active Backend:</span>
+            <span>{t('settings.tablet.status.activeBackend')}</span>
             <span>{activeBackend}</span>
           </div>
           <div className="status-row">
-            <span>Backpressure:</span>
-            <span>{backpressureMode}</span>
+            <span>{t('settings.tablet.status.backpressure')}</span>
+            <span>{backpressureModeLabel}</span>
           </div>
           {info && (
             <>
               <div className="status-row">
-                <span>Device:</span>
+                <span>{t('settings.tablet.status.device')}</span>
                 <span>{info.name}</span>
               </div>
               <div className="status-row">
-                <span>Backend:</span>
+                <span>{t('settings.tablet.status.backend')}</span>
                 <span>{backend}</span>
               </div>
               <div className="status-row">
-                <span>Pressure Range:</span>
+                <span>{t('settings.tablet.status.pressureRange')}</span>
                 <span>
                   {info.pressure_range[0]} - {info.pressure_range[1]}
                 </span>
@@ -657,7 +711,7 @@ function TabletSettings() {
           )}
           {fallbackDisplayReason && (
             <div className="status-row status-row-warning">
-              <span>Fallback:</span>
+              <span>{t('settings.tablet.status.fallback')}</span>
               <span>{fallbackDisplayReason}</span>
             </div>
           )}
@@ -665,36 +719,38 @@ function TabletSettings() {
       </div>
 
       <div className="settings-section">
-        <label className="settings-label">INPUT PIPELINE</label>
+        <label className="settings-label">{t('settings.tablet.inputPipeline.title')}</label>
         <div className="settings-row">
-          <span>Backpressure mode:</span>
+          <span>{t('settings.tablet.inputPipeline.backpressureMode')}</span>
           <select
             className="settings-select"
             value={tablet.backpressureMode}
             onChange={(e) => setBackpressureMode(e.target.value as InputBackpressureMode)}
           >
-            <option value="lossless">Lossless (no sample drop)</option>
-            <option value="latency_capped">Latency capped (drop old samples)</option>
+            <option value="lossless">{t('settings.tablet.inputPipeline.lossless')}</option>
+            <option value="latency_capped">
+              {t('settings.tablet.inputPipeline.latencyCapped')}
+            </option>
           </select>
         </div>
         <div className="settings-row">
-          <span>Queue enqueued / dequeued:</span>
+          <span>{t('settings.tablet.inputPipeline.queueEnqueuedDequeued')}</span>
           <span>
             {queueMetrics.enqueued} / {queueMetrics.dequeued}
           </span>
         </div>
         <div className="settings-row">
-          <span>Queue dropped:</span>
+          <span>{t('settings.tablet.inputPipeline.queueDropped')}</span>
           <span>{queueMetrics.dropped}</span>
         </div>
         <div className="settings-row">
-          <span>Queue depth (current / max):</span>
+          <span>{t('settings.tablet.inputPipeline.queueDepth')}</span>
           <span>
             {queueMetrics.current_depth} / {queueMetrics.max_depth}
           </span>
         </div>
         <div className="settings-row">
-          <span>Queue latency (p50 / p95 / p99):</span>
+          <span>{t('settings.tablet.inputPipeline.queueLatencyPercentiles')}</span>
           <span>
             {formatLatencyUs(queueMetrics.latency_p50_us)} /{' '}
             {formatLatencyUs(queueMetrics.latency_p95_us)} /{' '}
@@ -702,7 +758,7 @@ function TabletSettings() {
           </span>
         </div>
         <div className="settings-row">
-          <span>Queue latency (last):</span>
+          <span>{t('settings.tablet.inputPipeline.queueLatencyLast')}</span>
           <span>{formatLatencyUs(queueMetrics.latency_last_us)}</span>
         </div>
         {isInitialized && (
@@ -713,13 +769,12 @@ function TabletSettings() {
                 disabled={isApplyingPipelineConfig}
                 onClick={handleApplyPipelineConfig}
               >
-                {isApplyingPipelineConfig ? 'Applying...' : 'Apply Pipeline Config'}
+                {isApplyingPipelineConfig
+                  ? t('settings.tablet.inputPipeline.applying')
+                  : t('settings.tablet.inputPipeline.applyConfig')}
               </button>
             </div>
-            <div className="tablet-live-hint">
-              Applying this will rebuild the current input backend. If streaming is active, it will
-              restart seamlessly.
-            </div>
+            <div className="tablet-live-hint">{t('settings.tablet.inputPipeline.applyHint')}</div>
           </>
         )}
       </div>
@@ -728,57 +783,57 @@ function TabletSettings() {
         <label className="settings-label">
           {isNativeBackendActive
             ? activeBackendLower === 'macnative'
-              ? 'MAC NATIVE LIVE'
-              : 'WINTAB LIVE'
-            : 'POINTEREVENT LIVE'}
+              ? t('settings.tablet.live.macnativeTitle')
+              : t('settings.tablet.live.wintabTitle')
+            : t('settings.tablet.live.pointerEventTitle')}
         </label>
         <div className="tablet-live-card">
           {isNativeBackendActive ? (
             currentPoint ? (
               <>
                 <div className="status-row">
-                  <span>In Proximity:</span>
-                  <span>{inProximity ? 'true' : 'false'}</span>
+                  <span>{t('settings.tablet.live.inProximity')}</span>
+                  <span>{inProximity ? t('common.true') : t('common.false')}</span>
                 </div>
                 <div className="status-row">
-                  <span>Sample Seq / Stream:</span>
+                  <span>{t('settings.tablet.live.sampleSeqStream')}</span>
                   <span>
                     {currentPoint.seq} / {currentPoint.stream_id}
                   </span>
                 </div>
                 <div className="status-row">
-                  <span>Phase:</span>
+                  <span>{t('settings.tablet.live.phase')}</span>
                   <span>{currentPoint.phase}</span>
                 </div>
                 <div className="status-row">
-                  <span>Pressure:</span>
+                  <span>{t('settings.tablet.live.pressure')}</span>
                   <span>{toFixed(currentPoint.pressure, 4)}</span>
                 </div>
                 <div className="status-row">
-                  <span>Tilt X / Y (raw deg):</span>
+                  <span>{t('settings.tablet.live.tiltRaw')}</span>
                   <span>
                     {toFixed(currentPoint.tilt_x, 1)} / {toFixed(currentPoint.tilt_y, 1)}
                   </span>
                 </div>
                 <div className="status-row">
-                  <span>Tilt X / Y (normalized):</span>
+                  <span>{t('settings.tablet.live.tiltNormalized')}</span>
                   <span>
                     {toFixed(normalizeTiltDegrees(currentPoint.tilt_x), 4)} /{' '}
                     {toFixed(normalizeTiltDegrees(currentPoint.tilt_y), 4)}
                   </span>
                 </div>
                 <div className="status-row">
-                  <span>Rotation:</span>
+                  <span>{t('settings.tablet.live.rotation')}</span>
                   <span>{toFixed(normalizeRotationDegrees(currentPoint.rotation), 1)}°</span>
                 </div>
                 <div className="status-row">
-                  <span>Source / Pointer ID:</span>
+                  <span>{t('settings.tablet.live.sourcePointerId')}</span>
                   <span>
                     {currentPoint.source} / {currentPoint.pointer_id}
                   </span>
                 </div>
                 <div className="status-row">
-                  <span>Host / Device Time:</span>
+                  <span>{t('settings.tablet.live.hostDeviceTime')}</span>
                   <span>
                     {toFixed(currentPoint.host_time_us / 1000, 3)} ms /{' '}
                     {toFixed(currentPoint.device_time_us / 1000, 3)} ms
@@ -786,52 +841,49 @@ function TabletSettings() {
                 </div>
               </>
             ) : (
-              <div className="tablet-live-empty">
-                No native backend sample yet. Keep the pen in proximity and move or press on the
-                canvas to see live values here.
-              </div>
+              <div className="tablet-live-empty">{t('settings.tablet.live.noNativeSample')}</div>
             )
           ) : pointerDiag ? (
             <>
               <div className="status-row">
-                <span>Last Event:</span>
+                <span>{t('settings.tablet.live.lastEvent')}</span>
                 <span>{pointerDiag.eventType}</span>
               </div>
               <div className="status-row">
-                <span>Pointer Type:</span>
+                <span>{t('settings.tablet.live.pointerType')}</span>
                 <span>{pointerDiag.pointerType}</span>
               </div>
               <div className="status-row">
-                <span>Pointer ID:</span>
+                <span>{t('settings.tablet.live.pointerId')}</span>
                 <span>{pointerDiag.pointerId}</span>
               </div>
               <div className="status-row">
-                <span>Pressure:</span>
+                <span>{t('settings.tablet.live.pressure')}</span>
                 <span>{toFixed(pointerDiag.pressure, 4)}</span>
               </div>
               <div className="status-row">
-                <span>WebKit Force:</span>
+                <span>{t('settings.tablet.live.webkitForce')}</span>
                 <span>{toFixed(pointerDiag.webkitForce ?? Number.NaN, 4)}</span>
               </div>
               <div className="status-row">
-                <span>Tilt X / Y (raw deg):</span>
+                <span>{t('settings.tablet.live.tiltRaw')}</span>
                 <span>
                   {toFixed(pointerDiag.tiltX, 1)} / {toFixed(pointerDiag.tiltY, 1)}
                 </span>
               </div>
               <div className="status-row">
-                <span>Tilt X / Y (normalized):</span>
+                <span>{t('settings.tablet.live.tiltNormalized')}</span>
                 <span>
                   {toFixed(pointerDiag.normalizedTiltX, 4)} /{' '}
                   {toFixed(pointerDiag.normalizedTiltY, 4)}
                 </span>
               </div>
               <div className="status-row">
-                <span>Twist / Rotation:</span>
+                <span>{t('settings.tablet.live.twistRotation')}</span>
                 <span>{toFixed(pointerDiag.twist, 1)}°</span>
               </div>
               <div className="status-row">
-                <span>Altitude / Azimuth:</span>
+                <span>{t('settings.tablet.live.altitudeAzimuth')}</span>
                 <span>
                   {toFixed(pointerDiag.altitudeAngleRad ?? Number.NaN, 4)} rad (
                   {toDegreesString(pointerDiag.altitudeAngleRad)}°) /{' '}
@@ -840,29 +892,25 @@ function TabletSettings() {
                 </span>
               </div>
               <div className="status-row">
-                <span>Buttons / Primary:</span>
+                <span>{t('settings.tablet.live.buttonsPrimary')}</span>
                 <span>
-                  {pointerDiag.buttons} / {pointerDiag.isPrimary ? 'true' : 'false'}
+                  {pointerDiag.buttons} /{' '}
+                  {pointerDiag.isPrimary ? t('common.true') : t('common.false')}
                 </span>
               </div>
               <div className="status-row">
-                <span>Event Timestamp:</span>
+                <span>{t('settings.tablet.live.eventTimestamp')}</span>
                 <span>{toFixed(pointerDiag.timeStamp, 1)} ms</span>
               </div>
               {pointerEventLooksMouseOnly && (
                 <div className="status-row status-row-warning">
-                  <span>Warning:</span>
-                  <span>
-                    Stylus is reported as mouse by current WebView path; pressure is unavailable.
-                  </span>
+                  <span>{t('settings.tablet.live.warning')}</span>
+                  <span>{t('settings.tablet.live.mouseOnlyWarning')}</span>
                 </div>
               )}
             </>
           ) : (
-            <div className="tablet-live-empty">
-              No PointerEvent received yet. Move the pen into the app window and hover or touch down
-              to see live updates here.
-            </div>
+            <div className="tablet-live-empty">{t('settings.tablet.live.noPointerEvent')}</div>
           )}
           <div className="tablet-live-hint">{liveInputSourceHint}</div>
         </div>
@@ -871,38 +919,46 @@ function TabletSettings() {
       {/* Configuration (only before init) */}
       {!isInitialized && (
         <div className="settings-section">
-          <label className="settings-label">CONFIGURATION</label>
+          <label className="settings-label">{t('settings.tablet.configuration.title')}</label>
 
           <div className="settings-row">
-            <span>Backend:</span>
+            <span>{t('settings.tablet.configuration.backend')}</span>
             <select
               className="settings-select"
               value={tablet.backend}
               onChange={(e) => setTabletBackend(e.target.value as BackendType)}
             >
               <option value="auto">{autoBackendLabel}</option>
-              {platformKind !== 'macos' && <option value="wintab">WinTab only</option>}
-              {platformKind === 'macos' && <option value="macnative">Mac Native only</option>}
-              <option value="pointerevent">PointerEvent only</option>
+              {platformKind !== 'macos' && (
+                <option value="wintab">{t('settings.tablet.configuration.winTabOnly')}</option>
+              )}
+              {platformKind === 'macos' && (
+                <option value="macnative">
+                  {t('settings.tablet.configuration.macNativeOnly')}
+                </option>
+              )}
+              <option value="pointerevent">
+                {t('settings.tablet.configuration.pointerEventOnly')}
+              </option>
             </select>
           </div>
 
           <div className="settings-row">
-            <span>Polling Rate:</span>
+            <span>{t('settings.tablet.configuration.pollingRate')}</span>
             <select
               className="settings-select"
               value={tablet.pollingRate}
               onChange={(e) => setPollingRate(Number(e.target.value))}
             >
-              <option value={100}>100 Hz</option>
-              <option value={200}>200 Hz</option>
-              <option value={500}>500 Hz</option>
-              <option value={1000}>1000 Hz</option>
+              <option value={100}>{getPollingRateLabel(100, t)}</option>
+              <option value={200}>{getPollingRateLabel(200, t)}</option>
+              <option value={500}>{getPollingRateLabel(500, t)}</option>
+              <option value={1000}>{getPollingRateLabel(1000, t)}</option>
             </select>
           </div>
 
           <div className="settings-row">
-            <span>Auto-start on init:</span>
+            <span>{t('settings.tablet.configuration.autoStart')}</span>
             <label className="toggle-switch">
               <input
                 type="checkbox"
@@ -917,11 +973,11 @@ function TabletSettings() {
 
       {/* Actions */}
       <div className="settings-section">
-        <label className="settings-label">ACTIONS</label>
+        <label className="settings-label">{t('settings.tablet.actions.title')}</label>
         <div className="settings-actions">
           {!isInitialized ? (
             <button className="settings-btn primary" onClick={handleInit}>
-              Initialize Tablet
+              {t('settings.tablet.actions.initialize')}
             </button>
           ) : (
             <>
@@ -929,10 +985,12 @@ function TabletSettings() {
                 className={`settings-btn ${isStreaming ? 'danger' : 'primary'}`}
                 onClick={handleToggleStream}
               >
-                {isStreaming ? 'Stop' : 'Start'}
+                {isStreaming
+                  ? t('settings.tablet.actions.stop')
+                  : t('settings.tablet.actions.start')}
               </button>
               <button className="settings-btn" onClick={refresh}>
-                Refresh
+                {t('settings.tablet.actions.refresh')}
               </button>
             </>
           )}
@@ -943,18 +1001,33 @@ function TabletSettings() {
 }
 
 // Brush settings tab (Renderer settings)
-const RENDER_MODES: { id: RenderMode; label: string; description: string }[] = [
-  { id: 'gpu', label: 'GPU', description: 'WebGPU accelerated' },
-  { id: 'cpu', label: 'CPU', description: 'Canvas 2D fallback' },
+const RENDER_MODES: { id: RenderMode; labelKey: string; descriptionKey: string }[] = [
+  {
+    id: 'gpu',
+    labelKey: 'settings.brush.renderer.mode.gpu.label',
+    descriptionKey: 'settings.brush.renderer.mode.gpu.description',
+  },
+  {
+    id: 'cpu',
+    labelKey: 'settings.brush.renderer.mode.cpu.label',
+    descriptionKey: 'settings.brush.renderer.mode.cpu.description',
+  },
 ];
 
-const GPU_RENDER_SCALE_MODES: { id: GPURenderScaleMode; label: string; description: string }[] = [
-  { id: 'off', label: 'Off', description: 'Always render at full resolution' },
+const GPU_RENDER_SCALE_MODES: {
+  id: GPURenderScaleMode;
+  labelKey: string;
+  descriptionKey: string;
+}[] = [
+  {
+    id: 'off',
+    labelKey: 'settings.brush.renderer.downsample.off.label',
+    descriptionKey: 'settings.brush.renderer.downsample.off.description',
+  },
   {
     id: 'auto',
-    label: 'Auto',
-    description:
-      'Auto downsample for large brushes (size > 300). Procedural tips also require hardness < 70.',
+    labelKey: 'settings.brush.renderer.downsample.auto.label',
+    descriptionKey: 'settings.brush.renderer.downsample.auto.description',
   },
 ];
 
@@ -962,26 +1035,30 @@ function BrushSettings() {
   const brush = useSettingsStore((s) => s.brush);
   const setRenderMode = useSettingsStore((s) => s.setRenderMode);
   const setGpuRenderScaleMode = useSettingsStore((s) => s.setGpuRenderScaleMode);
+  const { t } = useI18n();
 
   return (
     <div className="settings-content">
-      <h3 className="settings-section-title">Brush</h3>
+      <h3 className="settings-section-title">{t('settings.tab.brush')}</h3>
 
       {/* Renderer Settings */}
       <div className="settings-section">
-        <label className="settings-label">RENDERER</label>
+        <label className="settings-label">{t('settings.brush.renderer.title')}</label>
 
         <div className="settings-row">
-          <span>Mode:</span>
+          <span>{t('settings.brush.renderer.mode')}</span>
           <select
             className="settings-select"
             value={brush.renderMode}
             onChange={(e) => setRenderMode(e.target.value as RenderMode)}
-            title={RENDER_MODES.find((m) => m.id === brush.renderMode)?.description}
+            title={t(
+              RENDER_MODES.find((m) => m.id === brush.renderMode)?.descriptionKey ??
+                'settings.brush.renderer.mode.gpu.description'
+            )}
           >
             {RENDER_MODES.map((mode) => (
               <option key={mode.id} value={mode.id}>
-                {mode.label}
+                {t(mode.labelKey)}
               </option>
             ))}
           </select>
@@ -990,18 +1067,19 @@ function BrushSettings() {
         {brush.renderMode === 'gpu' && (
           <>
             <div className="settings-row">
-              <span>Downsample:</span>
+              <span>{t('settings.brush.renderer.downsample')}</span>
               <select
                 className="settings-select"
                 value={brush.gpuRenderScaleMode}
                 onChange={(e) => setGpuRenderScaleMode(e.target.value as GPURenderScaleMode)}
-                title={
-                  GPU_RENDER_SCALE_MODES.find((m) => m.id === brush.gpuRenderScaleMode)?.description
-                }
+                title={t(
+                  GPU_RENDER_SCALE_MODES.find((m) => m.id === brush.gpuRenderScaleMode)
+                    ?.descriptionKey ?? 'settings.brush.renderer.downsample.off.description'
+                )}
               >
                 {GPU_RENDER_SCALE_MODES.map((mode) => (
                   <option key={mode.id} value={mode.id}>
-                    {mode.label}
+                    {t(mode.labelKey)}
                   </option>
                 ))}
               </select>
@@ -1016,6 +1094,7 @@ function BrushSettings() {
 // Main Settings Panel
 export function SettingsPanel() {
   const { isOpen, activeTab, closeSettings, setActiveTab } = useSettingsStore();
+  const { t } = useI18n();
   const scrollDragRef = useRef<SettingsScrollDragState | null>(null);
 
   const clearScrollDragSession = useCallback((pointerId?: number): boolean => {
@@ -1170,7 +1249,7 @@ export function SettingsPanel() {
       <div className="settings-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="settings-header">
-          <h2>Settings</h2>
+          <h2>{t('settings.title')}</h2>
           <button className="settings-close-btn" onClick={closeSettings}>
             <X size={18} />
           </button>

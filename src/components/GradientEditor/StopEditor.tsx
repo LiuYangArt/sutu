@@ -1,5 +1,6 @@
 import type { ColorStop, OpacityStop } from '@/stores/gradient';
 import { clamp01, resolveStopDisplayColor } from './utils';
+import { useI18n } from '@/i18n';
 
 interface StopEditorProps {
   colorStop: ColorStop | null;
@@ -36,6 +37,7 @@ export function StopEditor({
   onUpdateOpacityStop,
   onRemoveOpacityStop,
 }: StopEditorProps): JSX.Element {
+  const { t } = useI18n();
   const canDeleteOpacityStop = opacityStopCount > 2;
   const canDeleteColorStop = colorStopCount > 2;
 
@@ -77,11 +79,11 @@ export function StopEditor({
 
   return (
     <section className="gradient-stop-editor">
-      <h4>Stops</h4>
+      <h4>{t('gradientEditor.stops')}</h4>
 
       {opacityStop && (
         <div className="stop-editor-grid opacity-grid">
-          <span className="stop-editor-label">Opacity</span>
+          <span className="stop-editor-label">{t('gradientEditor.opacity')}</span>
           <input
             type="number"
             min={0}
@@ -90,7 +92,7 @@ export function StopEditor({
             value={toPercent(opacityStop.opacity)}
             onChange={(event) => updateOpacity(event.target.value)}
           />
-          <span className="stop-editor-label">Location</span>
+          <span className="stop-editor-label">{t('gradientEditor.location')}</span>
           <input
             type="number"
             min={0}
@@ -105,23 +107,23 @@ export function StopEditor({
             disabled={!canDeleteOpacityStop}
             onClick={() => onRemoveOpacityStop(opacityStop.id)}
           >
-            Delete
+            {t('gradientEditor.delete')}
           </button>
         </div>
       )}
 
       {colorStop && (
         <div className="stop-editor-grid color-grid">
-          <span className="stop-editor-label">Source</span>
+          <span className="stop-editor-label">{t('gradientEditor.source')}</span>
           <select
             value={colorStop.source}
             onChange={(event) => updateColorSource(event.target.value)}
           >
-            <option value="fixed">Fixed Color</option>
-            <option value="foreground">Foreground</option>
-            <option value="background">Background</option>
+            <option value="fixed">{t('gradientEditor.sourceFixedColor')}</option>
+            <option value="foreground">{t('gradientEditor.sourceForeground')}</option>
+            <option value="background">{t('gradientEditor.sourceBackground')}</option>
           </select>
-          <span className="stop-editor-label">Location</span>
+          <span className="stop-editor-label">{t('gradientEditor.location')}</span>
           <input
             type="number"
             min={0}
@@ -130,7 +132,7 @@ export function StopEditor({
             value={toPercent(colorStop.position)}
             onChange={(event) => updateColorLocation(event.target.value)}
           />
-          <span className="stop-editor-label">Color</span>
+          <span className="stop-editor-label">{t('gradientEditor.color')}</span>
           <input
             type="color"
             disabled={colorStop.source !== 'fixed'}
@@ -143,12 +145,14 @@ export function StopEditor({
             disabled={!canDeleteColorStop}
             onClick={() => onRemoveColorStop(colorStop.id)}
           >
-            Delete
+            {t('gradientEditor.delete')}
           </button>
         </div>
       )}
 
-      {!colorStop && !opacityStop && <p className="empty-hint">Select a stop to edit details.</p>}
+      {!colorStop && !opacityStop && (
+        <p className="empty-hint">{t('gradientEditor.selectStopToEditDetails')}</p>
+      )}
     </section>
   );
 }

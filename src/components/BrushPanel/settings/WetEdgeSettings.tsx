@@ -1,22 +1,21 @@
 // import { useToolStore } from '@/stores/tool';
+import { useI18n } from '@/i18n';
 
 export function WetEdgeSettings(): JSX.Element {
+  const { t } = useI18n();
   // const { wetEdgeEnabled, toggleWetEdge } = useToolStore();
 
   return (
     <div className="brush-panel-section">
-      <h4>Wet Edges</h4>
+      <h4>{t('brushPanel.tab.wetEdges')}</h4>
 
       <div className="setting-row">
         <label className="checkbox-label">
-          <span>Enable Wet Edges</span>
+          <span>{t('brushPanel.wetEdges.enableWetEdges')}</span>
         </label>
       </div>
 
-      <p className="setting-description">
-        Creates a watercolor-like effect with darker edges and a lighter center, simulating paint
-        pooling at the edges of brush strokes.
-      </p>
+      <p className="setting-description">{t('brushPanel.wetEdges.description')}</p>
     </div>
   );
 }

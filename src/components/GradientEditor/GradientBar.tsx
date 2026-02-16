@@ -20,6 +20,7 @@ import {
   sampleColorHexAt,
   sampleOpacityAt,
 } from './utils';
+import { useI18n } from '@/i18n';
 
 interface GradientBarProps {
   colorStops: ColorStop[];
@@ -184,6 +185,7 @@ export function GradientBar({
   onUpdateColorStop,
   onUpdateOpacityStop,
 }: GradientBarProps): JSX.Element {
+  const { t } = useI18n();
   const stripRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState>(null);
 
@@ -295,7 +297,7 @@ export function GradientBar({
         ref={stripRef}
         className="gradient-control-strip"
         onPointerDown={handleStripPointerDown}
-        title="Click top to add opacity stop, click bottom to add color stop"
+        title={t('gradientEditor.addStopHint')}
       >
         <div className="gradient-preview-band" style={{ backgroundImage: previewCss }} />
 

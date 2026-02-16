@@ -8,15 +8,11 @@ import {
 import { usePanelStore } from '@/stores/panel';
 import { useToolStore } from '@/stores/tool';
 import { buildGradientPreviewCss } from '@/components/GradientEditor/utils';
-import { BLEND_MODE_MENU_ITEMS, getBlendModeLabel } from '@/utils/blendModeMenu';
+import { BLEND_MODE_MENU_ITEMS, getBlendModeLabelKey } from '@/utils/blendModeMenu';
+import { useI18n } from '@/i18n';
+import { getGradientPresetDisplayName } from '@/components/GradientEditor/presetI18n';
 
-const SHAPE_OPTIONS: Array<{ value: GradientShape; label: string }> = [
-  { value: 'linear', label: 'Linear' },
-  { value: 'radial', label: 'Radial' },
-  { value: 'angle', label: 'Angle' },
-  { value: 'reflected', label: 'Reflected' },
-  { value: 'diamond', label: 'Diamond' },
-];
+const SHAPE_OPTIONS: GradientShape[] = ['linear', 'radial', 'angle', 'reflected', 'diamond'];
 
 function buildPresetPreviewCss(
   colorStops: ColorStop[],
@@ -28,6 +24,7 @@ function buildPresetPreviewCss(
 }
 
 export function GradientToolbar(): JSX.Element {
+  const { t } = useI18n();
   const [blendMenuOpen, setBlendMenuOpen] = useState(false);
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const blendMenuRef = useRef<HTMLDivElement | null>(null);
@@ -50,7 +47,7 @@ export function GradientToolbar(): JSX.Element {
   const openPanel = usePanelStore((s) => s.openPanel);
   const closePanel = usePanelStore((s) => s.closePanel);
 
-  const activeBlendModeLabel = getBlendModeLabel(settings.blendMode);
+  const activeBlendModeLabel = t(getBlendModeLabelKey(settings.blendMode));
   const toggleGradientEditor = () =>
     (isGradientPanelOpen ? closePanel : openPanel)('gradient-panel');
 
@@ -84,7 +81,7 @@ export function GradientToolbar(): JSX.Element {
         <div className="toolbar-gradient-preview-group">
           <button
             className={`gradient-preview-trigger ${isGradientPanelOpen ? 'active' : ''}`}
-            title="Open Gradient Editor"
+            title={t('toolbar.gradient.openGradientEditor')}
             onClick={toggleGradientEditor}
           >
             <span className="gradient-preview-chip" style={{ backgroundImage: previewCss }} />
@@ -92,7 +89,7 @@ export function GradientToolbar(): JSX.Element {
           <button
             type="button"
             className={`toolbar-gradient-preset-toggle ${presetMenuOpen ? 'active' : ''}`}
-            title="Quick Presets"
+            title={t('toolbar.gradient.quickPresets')}
             onClick={() => setPresetMenuOpen((open) => !open)}
             aria-haspopup="listbox"
             aria-expanded={presetMenuOpen}
@@ -105,10 +102,11 @@ export function GradientToolbar(): JSX.Element {
           <div
             className="toolbar-gradient-preset-dropdown"
             role="listbox"
-            aria-label="Gradient Presets"
+            aria-label={t('toolbar.gradient.gradientPresets')}
           >
             {presets.map((preset) => {
               const active = preset.id === settings.activePresetId;
+              const displayName = getGradientPresetDisplayName(preset, t);
               const presetPreview = buildPresetPreviewCss(
                 preset.colorStops,
                 preset.opacityStops,
@@ -127,13 +125,13 @@ export function GradientToolbar(): JSX.Element {
                     setActivePreset(preset.id);
                     setPresetMenuOpen(false);
                   }}
-                  title={preset.name}
+                  title={displayName}
                 >
                   <span
                     className="toolbar-gradient-preset-option-preview"
                     style={{ backgroundImage: presetPreview }}
                   />
-                  <span className="toolbar-gradient-preset-option-name">{preset.name}</span>
+                  <span className="toolbar-gradient-preset-option-name">{displayName}</span>
                 </button>
               );
             })}
@@ -142,20 +140,23 @@ export function GradientToolbar(): JSX.Element {
       </div>
 
       <div className="gradient-shape-group">
-        {SHAPE_OPTIONS.map((shape) => (
-          <button
-            key={shape.value}
-            className={`shape-btn ${settings.shape === shape.value ? 'active' : ''}`}
-            onClick={() => setShape(shape.value)}
-            title={shape.label}
-          >
-            {shape.label[0]}
-          </button>
-        ))}
+        {SHAPE_OPTIONS.map((shape) => {
+          const label = t(`toolbar.gradient.shape.${shape}`);
+          return (
+            <button
+              key={shape}
+              className={`shape-btn ${settings.shape === shape ? 'active' : ''}`}
+              onClick={() => setShape(shape)}
+              title={label}
+            >
+              {label[0]}
+            </button>
+          );
+        })}
       </div>
 
       <div className="setting gradient-setting compact">
-        <span className="setting-label">Mode</span>
+        <span className="setting-label">{t('toolbar.gradient.mode')}</span>
         <div className="blend-mode-select gradient-blend-mode-select" ref={blendMenuRef}>
           <button
             type="button"
@@ -175,7 +176,7 @@ export function GradientToolbar(): JSX.Element {
             <div
               className="blend-mode-dropdown gradient-blend-mode-dropdown"
               role="listbox"
-              aria-label="Blend Mode"
+              aria-label={t('toolbar.gradient.blendMode')}
             >
               {BLEND_MODE_MENU_ITEMS.map((item) => {
                 if (item.kind === 'separator') {
@@ -195,7 +196,7 @@ export function GradientToolbar(): JSX.Element {
                       setBlendMenuOpen(false);
                     }}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                   </button>
                 );
               })}
@@ -205,7 +206,7 @@ export function GradientToolbar(): JSX.Element {
       </div>
 
       <label className="setting gradient-setting">
-        <span className="setting-label">Opacity</span>
+        <span className="setting-label">{t('toolbar.gradient.opacity')}</span>
         <input
           type="range"
           min={0}
@@ -221,23 +222,23 @@ export function GradientToolbar(): JSX.Element {
         <button
           className={`tool-option-btn ${settings.reverse ? 'active' : ''}`}
           onClick={() => setReverse(!settings.reverse)}
-          title="Reverse gradient"
+          title={t('toolbar.gradient.reverseGradient')}
         >
-          Reverse
+          {t('toolbar.gradient.reverse')}
         </button>
         <button
           className={`tool-option-btn ${settings.dither ? 'active' : ''}`}
           onClick={() => setDither(!settings.dither)}
-          title="Dither gradient"
+          title={t('toolbar.gradient.ditherGradient')}
         >
-          Dither
+          {t('toolbar.gradient.dither')}
         </button>
         <button
           className={`tool-option-btn ${settings.transparency ? 'active' : ''}`}
           onClick={() => setTransparency(!settings.transparency)}
-          title="Use opacity stops"
+          title={t('toolbar.gradient.useOpacityStops')}
         >
-          Transparency
+          {t('toolbar.gradient.transparency')}
         </button>
       </div>
     </div>

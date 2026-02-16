@@ -12,6 +12,7 @@ import { DualBrushSettings } from './settings/DualBrushSettings';
 import { BuildupSettings } from './settings/BuildupSettings';
 import { NoiseSettings } from './settings/NoiseSettings';
 import { useBrushLibraryStore, useSelectedPresetIdForCurrentTool } from '@/stores/brushLibrary';
+import { useI18n } from '@/i18n';
 
 interface PresetDialogResult {
   name: string;
@@ -19,15 +20,17 @@ interface PresetDialogResult {
 }
 
 function promptPresetInfo(
+  promptNameLabel: string,
+  promptGroupLabel: string,
   defaultName: string,
   defaultGroup: string | null | undefined
 ): PresetDialogResult | null {
-  const name = window.prompt('Preset name', defaultName)?.trim();
+  const name = window.prompt(promptNameLabel, defaultName)?.trim();
   if (!name) {
     return null;
   }
 
-  const group = window.prompt('Group name (optional)', defaultGroup ?? '')?.trim();
+  const group = window.prompt(promptGroupLabel, defaultGroup ?? '')?.trim();
   return {
     name,
     group: group || null,
@@ -35,6 +38,7 @@ function promptPresetInfo(
 }
 
 export function BrushPanel(): JSX.Element {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState('tip_shape');
   const loadLibrary = useBrushLibraryStore((state) => state.loadLibrary);
   const presets = useBrushLibraryStore((state) => state.presets);
@@ -54,19 +58,19 @@ export function BrushPanel(): JSX.Element {
 
   // Tab Configuration - Renderer moved to Settings panel
   const tabs: TabConfig[] = [
-    { id: 'tip_shape', label: 'Brush Tip Shape' },
-    { id: 'shape_dynamics', label: 'Shape Dynamics' },
-    { id: 'scattering', label: 'Scattering' },
-    { id: 'texture', label: 'Texture' },
-    { id: 'dual_brush', label: 'Dual Brush' },
-    { id: 'color_dynamics', label: 'Color Dynamics' },
-    { id: 'transfer', label: 'Transfer' },
-    { id: 'brush_pose', label: 'Brush Pose', disabled: true },
-    { id: 'noise', label: 'Noise' },
-    { id: 'wet_edges', label: 'Wet Edges' },
-    { id: 'build_up', label: 'Build-up' },
-    { id: 'smoothing', label: 'Smoothing', disabled: true },
-    { id: 'protect_texture', label: 'Protect Texture', disabled: true },
+    { id: 'tip_shape', label: t('brushPanel.tab.tipShape') },
+    { id: 'shape_dynamics', label: t('brushPanel.tab.shapeDynamics') },
+    { id: 'scattering', label: t('brushPanel.tab.scattering') },
+    { id: 'texture', label: t('brushPanel.tab.texture') },
+    { id: 'dual_brush', label: t('brushPanel.tab.dualBrush') },
+    { id: 'color_dynamics', label: t('brushPanel.tab.colorDynamics') },
+    { id: 'transfer', label: t('brushPanel.tab.transfer') },
+    { id: 'brush_pose', label: t('brushPanel.tab.brushPose'), disabled: true },
+    { id: 'noise', label: t('brushPanel.tab.noise') },
+    { id: 'wet_edges', label: t('brushPanel.tab.wetEdges') },
+    { id: 'build_up', label: t('brushPanel.tab.buildUp') },
+    { id: 'smoothing', label: t('brushPanel.tab.smoothing'), disabled: true },
+    { id: 'protect_texture', label: t('brushPanel.tab.protectTexture'), disabled: true },
   ];
 
   const tabContentMap: Record<string, JSX.Element> = {
@@ -90,7 +94,9 @@ export function BrushPanel(): JSX.Element {
 
     return (
       <div className="p-4 text-gray-500 text-sm">
-        Section &quot;{tabs.find((t) => t.id === activeTab)?.label}&quot; is coming soon.
+        {t('brushPanel.sectionComingSoon', {
+          section: tabs.find((t) => t.id === activeTab)?.label ?? '',
+        })}
       </div>
     );
   };
@@ -100,7 +106,9 @@ export function BrushPanel(): JSX.Element {
       const saved = await saveActivePreset();
       if (!saved) {
         const presetInfo = promptPresetInfo(
-          activePreset?.name ?? 'New Brush Preset',
+          t('brushPanel.prompt.presetName'),
+          t('brushPanel.prompt.groupNameOptional'),
+          activePreset?.name ?? t('brushPanel.defaultNewBrushPreset'),
           activePreset?.group
         );
         if (!presetInfo) return;
@@ -116,8 +124,15 @@ export function BrushPanel(): JSX.Element {
 
   const handleSaveAs = async () => {
     try {
-      const defaultName = activePreset?.name ? `${activePreset.name} Copy` : 'New Brush Preset';
-      const presetInfo = promptPresetInfo(defaultName, activePreset?.group);
+      const defaultName = activePreset?.name
+        ? `${activePreset.name} ${t('brushPanel.copySuffix')}`
+        : t('brushPanel.defaultNewBrushPreset');
+      const presetInfo = promptPresetInfo(
+        t('brushPanel.prompt.presetName'),
+        t('brushPanel.prompt.groupNameOptional'),
+        defaultName,
+        activePreset?.group
+      );
       if (!presetInfo) {
         return;
       }

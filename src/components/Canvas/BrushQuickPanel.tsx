@@ -10,9 +10,6 @@ import {
 import { BrushPresetThumbnail } from '@/components/BrushPanel/BrushPresetThumbnail';
 import { BRUSH_SIZE_SLIDER_CONFIG } from '@/utils/sliderScales';
 import { SliderRow } from '@/components/BrushPanel/BrushPanelComponents';
-import { SaturationSquare } from '@/components/ColorPanel/SaturationSquare';
-import { VerticalHueSlider } from '@/components/ColorPanel/VerticalHueSlider';
-import { hexToHsva, hsvaToHex } from '@/utils/colorUtils';
 import { calculateBrushQuickPanelPosition } from './brushQuickPanelPosition';
 import { appHyphenStorageKey } from '@/constants/appMeta';
 import './BrushQuickPanel.css';
@@ -53,13 +50,6 @@ interface PanelDragState {
   startTop: number;
 }
 
-interface HsvaColor {
-  h: number;
-  s: number;
-  v: number;
-  a: number;
-}
-
 const DEFAULT_PANEL_SIZE: PanelSize = {
   width: 560,
   height: 434,
@@ -71,7 +61,7 @@ const MIN_PANEL_HEIGHT = 360;
 const PANEL_RESIZE_HANDLE_SIZE = 20;
 const PANEL_SIZE_STORAGE_KEY = appHyphenStorageKey('brush-quick-panel-size-v1');
 const PANEL_INTERACTIVE_SELECTOR =
-  'button, input, textarea, select, .saturation-square, .vertical-hue-slider, .brush-quick-search, .brush-quick-library';
+  'button, input, textarea, select, .brush-setting-value, .brush-quick-search, .brush-quick-library';
 const PANEL_SCROLLABLE_SELECTOR = '.brush-quick-library';
 
 function groupPresets(
@@ -180,14 +170,6 @@ function isSamePanelPosition(a: PanelPosition, b: PanelPosition): boolean {
   return a.left === b.left && a.top === b.top;
 }
 
-function isSameHsva(a: HsvaColor, b: HsvaColor): boolean {
-  return a.h === b.h && a.s === b.s && a.v === b.v && a.a === b.a;
-}
-
-function isSameColorToken(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
-}
-
 function isPanelInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return !!target.closest(PANEL_INTERACTIVE_SELECTOR);
@@ -278,8 +260,7 @@ export function BrushQuickPanel({
   const lastAnchorRef = useRef<{ x: number; y: number } | null>(null);
   const dragRef = useRef<PanelDragState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const { currentTool, brushSize, eraserSize, setCurrentSize, brushColor, setBrushColor } =
-    useToolStore();
+  const { currentTool, brushSize, eraserSize, setCurrentSize } = useToolStore();
   const currentSize = currentTool === 'eraser' ? eraserSize : brushSize;
 
   const presets = useBrushLibraryStore((state) => state.presets);
@@ -295,14 +276,6 @@ export function BrushQuickPanel({
     () => groupPresets(presets, groups, searchQuery),
     [presets, groups, searchQuery]
   );
-
-  const [hsva, setHsva] = useState<HsvaColor>(() => hexToHsva(brushColor));
-  const hsvaRef = useRef<HsvaColor>(hsva);
-  hsvaRef.current = hsva;
-  const brushColorRef = useRef(brushColor);
-  brushColorRef.current = brushColor;
-  const queuedBrushColorRef = useRef<string | null>(null);
-  const brushColorRafRef = useRef<number | null>(null);
 
   const updatePanelLayout = useCallback((nextSize: PanelSize, viewport: ViewportSize): void => {
     setPanelSize((prev) => (isSamePanelSize(prev, nextSize) ? prev : nextSize));
@@ -331,37 +304,6 @@ export function BrushQuickPanel({
     updatePanelLayout(measured, viewport);
     return measured;
   }, [updatePanelLayout]);
-
-  useEffect(() => {
-    const nextHsva = hexToHsva(brushColor);
-    setHsva((prev) => (isSameHsva(prev, nextHsva) ? prev : nextHsva));
-  }, [brushColor]);
-
-  const flushQueuedBrushColor = useCallback(() => {
-    brushColorRafRef.current = null;
-    const nextColor = queuedBrushColorRef.current;
-    queuedBrushColorRef.current = null;
-    if (!nextColor) return;
-    if (isSameColorToken(brushColorRef.current, nextColor)) return;
-    setBrushColor(nextColor);
-  }, [setBrushColor]);
-
-  const queueBrushColorUpdate = useCallback(
-    (nextColor: string) => {
-      queuedBrushColorRef.current = nextColor;
-      if (brushColorRafRef.current !== null) return;
-      brushColorRafRef.current = window.requestAnimationFrame(flushQueuedBrushColor);
-    },
-    [flushQueuedBrushColor]
-  );
-
-  useEffect(() => {
-    return () => {
-      if (brushColorRafRef.current !== null) {
-        window.cancelAnimationFrame(brushColorRafRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -485,23 +427,6 @@ export function BrushQuickPanel({
     };
   }, [isOpen, updatePanelLayout]);
 
-  const handleSaturationChange = useCallback(
-    (nextHsva: HsvaColor) => {
-      const hex = hsvaToHex(nextHsva);
-      queueBrushColorUpdate(hex);
-    },
-    [queueBrushColorUpdate]
-  );
-
-  const handleHueChange = useCallback(
-    (nextHue: number) => {
-      const nextHsva = { ...hsvaRef.current, h: nextHue };
-      const hex = hsvaToHex(nextHsva);
-      queueBrushColorUpdate(hex);
-    },
-    [queueBrushColorUpdate]
-  );
-
   const handlePanelPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
     if (event.button !== 0) return;
@@ -589,18 +514,6 @@ export function BrushQuickPanel({
     >
       <div className="brush-quick-panel-body">
         <div className="brush-quick-top">
-          <section className="brush-quick-color-card">
-            <div className="brush-quick-color-title">Color</div>
-            <div className="brush-quick-picker-area">
-              <div className="brush-quick-saturation-wrapper">
-                <SaturationSquare hsva={hsva} onChange={handleSaturationChange} />
-              </div>
-              <div className="brush-quick-hue-wrapper">
-                <VerticalHueSlider hue={hsva.h} onChange={handleHueChange} />
-              </div>
-            </div>
-          </section>
-
           <section className="brush-quick-size-card">
             <SliderRow
               label="Size"

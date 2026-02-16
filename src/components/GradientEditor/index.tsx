@@ -4,6 +4,8 @@ import { useToolStore } from '@/stores/tool';
 import { GradientBar } from './GradientBar';
 import { StopEditor } from './StopEditor';
 import { PresetGrid } from './PresetGrid';
+import { useI18n } from '@/i18n';
+import { getGradientPresetDisplayName } from './presetI18n';
 import './GradientEditor.css';
 
 function askName(message: string, initialValue: string): string | null {
@@ -25,6 +27,7 @@ function resolveSelectedStop<T extends { id: string }>(
 }
 
 export function GradientEditor(): JSX.Element {
+  const { t } = useI18n();
   const presets = useGradientStore((s) => s.presets);
   const settings = useGradientStore((s) => s.settings);
   const selectedColorStopId = useGradientStore((s) => s.selectedColorStopId);
@@ -59,9 +62,18 @@ export function GradientEditor(): JSX.Element {
     () => resolveSelectedStop(customGradient.opacityStops, selectedOpacityStopId),
     [customGradient.opacityStops, selectedOpacityStopId]
   );
+  const activePreset = useMemo(
+    () => (settings.activePresetId ? resolvePreset(presets, settings.activePresetId) : null),
+    [presets, settings.activePresetId]
+  );
+  const displayGradientName = useMemo(() => {
+    if (!activePreset) return customGradient.name;
+    if (customGradient.name !== activePreset.name) return customGradient.name;
+    return getGradientPresetDisplayName(activePreset, t);
+  }, [activePreset, customGradient.name, t]);
 
   function handleSaveCustomPreset(): void {
-    const name = askName('Save gradient preset as', customGradient.name);
+    const name = askName(t('gradientEditor.prompt.savePresetAs'), displayGradientName);
     if (!name) return;
     saveCustomAsPreset(name);
   }
@@ -69,7 +81,10 @@ export function GradientEditor(): JSX.Element {
   function handleRenamePreset(id: string): void {
     const preset = resolvePreset(presets, id);
     if (!preset) return;
-    const name = askName('Rename gradient preset', preset.name);
+    const name = askName(
+      t('gradientEditor.prompt.renamePreset'),
+      getGradientPresetDisplayName(preset, t)
+    );
     if (!name) return;
     renamePreset(id, name);
   }
@@ -77,7 +92,11 @@ export function GradientEditor(): JSX.Element {
   function handleDeletePreset(id: string): void {
     const preset = resolvePreset(presets, id);
     if (!preset) return;
-    const ok = window.confirm(`Delete preset "${preset.name}"?`);
+    const ok = window.confirm(
+      t('gradientEditor.confirm.deletePreset', {
+        presetName: getGradientPresetDisplayName(preset, t),
+      })
+    );
     if (!ok) return;
     deletePreset(id);
   }
@@ -98,10 +117,10 @@ export function GradientEditor(): JSX.Element {
 
       <section className="gradient-editor-main">
         <label className="gradient-name-field">
-          Name
+          {t('gradientEditor.name')}
           <input
             type="text"
-            value={customGradient.name}
+            value={displayGradientName}
             onChange={(event) => setCustomGradientName(event.target.value)}
           />
         </label>

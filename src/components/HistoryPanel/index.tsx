@@ -5,6 +5,7 @@ import {
   formatHistoryEntryLabel,
   getHistoryEntryKey,
 } from './historyTimeline';
+import { useI18n } from '@/i18n';
 import './HistoryPanel.css';
 
 type HistoryPanelWindow = Window & {
@@ -21,6 +22,7 @@ interface DisplayHistoryItem {
 }
 
 export function HistoryPanel(): JSX.Element {
+  const { t } = useI18n();
   const undoStack = useHistoryStore((s) => s.undoStack);
   const redoStack = useHistoryStore((s) => s.redoStack);
   const [pendingIndex, setPendingIndex] = useState<number | null>(null);
@@ -64,7 +66,7 @@ export function HistoryPanel(): JSX.Element {
   );
 
   if (entries.length === 0) {
-    return <div className="history-panel__empty">No history yet.</div>;
+    return <div className="history-panel__empty">{t('historyPanel.empty')}</div>;
   }
 
   return (
@@ -83,9 +85,11 @@ export function HistoryPanel(): JSX.Element {
               onClick={() => void handleJump(item.index)}
             >
               <span className="history-panel__label">{item.label}</span>
-              {item.isCurrent && <span className="history-panel__status">Current</span>}
+              {item.isCurrent && (
+                <span className="history-panel__status">{t('historyPanel.current')}</span>
+              )}
               {!item.isCurrent && item.isFuture && (
-                <span className="history-panel__status">Future</span>
+                <span className="history-panel__status">{t('historyPanel.future')}</span>
               )}
             </button>
           </li>

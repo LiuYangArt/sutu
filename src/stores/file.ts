@@ -9,6 +9,7 @@ import { BaseDirectory, exists, mkdir, readTextFile, writeTextFile } from '@taur
 import { useDocumentStore, FileFormat, Layer } from './document';
 import { useSettingsStore } from './settings';
 import { appHyphenStorageKey } from '@/constants/appMeta';
+import { t } from '@/i18n';
 
 const SESSION_FILE = 'autosave-session.json';
 const TEMP_AUTOSAVE_FILE_NAME = `${appHyphenStorageKey('autosave')}.ora`;
@@ -457,7 +458,7 @@ async function saveProjectToTarget(
       project: projectDataV2,
     });
     if (!v2Result.success) {
-      const message = v2Result.error || 'Unknown save error';
+      const message = v2Result.error || t('fileStore.error.unknownSaveError');
       set({ isSaving: false, error: message });
       return { success: false, error: message };
     }
@@ -486,13 +487,13 @@ export const useFileStore = create<FileState>((set, get) => ({
     // If no path or saveAs requested, show save dialog
     if (!targetPath || saveAs) {
       const result = await save({
-        title: 'Save Project',
+        title: t('fileStore.dialog.saveProject.title'),
         filters: [
-          { name: 'Photoshop', extensions: ['psd'] },
-          { name: 'OpenRaster', extensions: ['ora'] },
+          { name: t('fileStore.dialog.filter.photoshop'), extensions: ['psd'] },
+          { name: t('fileStore.dialog.filter.openRaster'), extensions: ['ora'] },
           // TIFF layer support disabled - see docs/postmortem/tiff-layer-support.md
         ],
-        defaultPath: targetPath || 'Untitled.psd',
+        defaultPath: targetPath || t('fileStore.dialog.saveProject.defaultPath'),
       });
 
       if (!result) {
@@ -540,11 +541,11 @@ export const useFileStore = create<FileState>((set, get) => ({
 
   open: async () => {
     const result = await open({
-      title: 'Open Project',
+      title: t('fileStore.dialog.openProject.title'),
       filters: [
-        { name: 'All Supported', extensions: ['ora', 'psd'] },
-        { name: 'OpenRaster', extensions: ['ora'] },
-        { name: 'Photoshop', extensions: ['psd'] },
+        { name: t('fileStore.dialog.filter.allSupported'), extensions: ['ora', 'psd'] },
+        { name: t('fileStore.dialog.filter.openRaster'), extensions: ['ora'] },
+        { name: t('fileStore.dialog.filter.photoshop'), extensions: ['psd'] },
         // TIFF layer support disabled - see docs/postmortem/tiff-layer-support.md
       ],
       multiple: false,

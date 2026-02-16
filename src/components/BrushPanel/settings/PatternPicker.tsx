@@ -15,6 +15,7 @@ import {
   PatternResource,
 } from '@/stores/pattern';
 import { patternManager } from '@/utils/patternManager';
+import { useI18n } from '@/i18n';
 import './PatternPicker.css';
 
 interface PatternPickerProps {
@@ -42,6 +43,7 @@ export function PatternPicker({
   thumbnailSize = 48,
   fallbackPattern = null,
 }: PatternPickerProps): JSX.Element {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -77,7 +79,7 @@ export function PatternPicker({
           name:
             fallbackPattern && fallbackPattern.id === selectedId
               ? fallbackPattern.name
-              : 'Current Pattern',
+              : t('brushPanel.patternPicker.currentPattern'),
           width:
             fallbackPattern && fallbackPattern.id === selectedId
               ? fallbackPattern.width
@@ -125,10 +127,12 @@ export function PatternPicker({
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
           ) : (
-            <span className="pattern-picker-empty">None</span>
+            <span className="pattern-picker-empty">{t('brushPanel.patternPicker.none')}</span>
           )}
         </div>
-        <span className="pattern-picker-name">{displayedPattern?.name || 'Select Pattern'}</span>
+        <span className="pattern-picker-name">
+          {displayedPattern?.name || t('brushPanel.patternPicker.selectPattern')}
+        </span>
         <ChevronDown size={14} className="pattern-picker-chevron" />
       </button>
 
@@ -140,7 +144,7 @@ export function PatternPicker({
             <Search size={14} />
             <input
               type="text"
-              placeholder="Search patterns..."
+              placeholder={t('brushPanel.patternPicker.searchPatterns')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus
@@ -153,7 +157,7 @@ export function PatternPicker({
             <button
               className={`pattern-grid-item ${selectedId === null ? 'selected' : ''}`}
               onClick={handleClear}
-              title="No Pattern"
+              title={t('brushPanel.patternPicker.noPattern')}
             >
               <div className="pattern-grid-thumbnail empty">
                 <span>×</span>
@@ -165,7 +169,9 @@ export function PatternPicker({
 
           {shouldShowCurrentBrushPatternRow && displayedPattern && (
             <div className="pattern-picker-current-row-wrap">
-              <div className="pattern-picker-current-row-label">Current Brush Pattern</div>
+              <div className="pattern-picker-current-row-label">
+                {t('brushPanel.patternPicker.currentBrushPattern')}
+              </div>
               <button
                 className={`pattern-picker-current-row ${selectedId === displayedPattern.id ? 'selected' : ''}`}
                 onClick={handleCurrentBrushPatternClick}
@@ -203,15 +209,15 @@ export function PatternPicker({
 
   function renderGridContent(): JSX.Element | JSX.Element[] {
     if (isLoading) {
-      return <div className="pattern-picker-loading">Loading...</div>;
+      return <div className="pattern-picker-loading">{t('brushPanel.patternPicker.loading')}</div>;
     }
 
     if (filteredPatterns.length === 0) {
       return (
         <div className="pattern-picker-empty-state">
-          No patterns found.
+          {t('brushPanel.patternPicker.noPatternsFound')}
           <br />
-          Import a .pat file to get started.
+          {t('brushPanel.patternPicker.importPatHint')}
         </div>
       );
     }
@@ -250,19 +256,24 @@ export function PatternPreviewButton({
   onClick,
   size = 40,
 }: PatternPreviewButtonProps): JSX.Element {
+  const { t } = useI18n();
   const patternUrl = patternId ? getPatternThumbnailUrl(patternId, size) : null;
 
   return (
     <button
       className="pattern-preview-button"
       onClick={onClick}
-      title={patternId ? 'Click to change pattern' : 'Select a pattern'}
+      title={
+        patternId
+          ? t('brushPanel.patternPicker.clickToChangePattern')
+          : t('brushPanel.patternPicker.selectAPattern')
+      }
       style={{ width: size, height: size }}
     >
       {patternUrl ? (
         <LZ4Image
           src={patternUrl}
-          alt="Pattern"
+          alt={t('brushPanel.texture.pattern')}
           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
       ) : (

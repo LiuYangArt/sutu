@@ -102,6 +102,25 @@ pnpm format           # 格式化代码
 - 新增或修改共享数据结构时，需要同步补充跨端一致性测试（至少 path-vs-bytes 或 roundtrip 之一）。
 - 新增 UI 文案默认使用 i18n key，不在业务代码中新增硬编码文案（调试日志除外）。
 
+### i18n 执行规范
+
+- 语言资源目录固定为 `src/locales/`，文件命名使用 BCP-47（如 `en-US.json`、`zh-CN.json`）。
+- 语言文件 schema 固定为：
+  - `meta.code`、`meta.displayName`、`meta.nativeName`
+  - `messages`（扁平 key-value，key 采用 `feature.module.item`）。
+- 运行时回退链路固定为：`current locale -> en-US -> key`。
+- 新增功能若出现用户可见文案，必须同时补齐 `en-US` 与 `zh-CN` 的 key，不允许只加单语。
+- 默认语言固定为 `en-US`，settings 持久化字段为 `general.language`。
+- key 命名要求：
+  - 公共按钮与状态使用 `common.*`
+  - 组件内文案按 `componentName.section.item`
+  - 禁止将句子本身作为 key。
+- Code Review 清单（i18n）：
+  - 本次改动文件无新增硬编码 UI 文案
+  - 新 key 在 `en-US/zh-CN` 同步存在
+  - 可见文案切换后无 key 泄漏（直接显示 key）
+  - 缺失 key 行为符合回退链路
+
 ### 文件大小限制
 
 - **单个文件不超过 1000 行**

@@ -156,6 +156,7 @@ describe('file store autosave and startup restore', () => {
     useSettingsStore.setState((state) => ({
       ...state,
       general: {
+        language: 'en-US',
         autosaveIntervalMinutes: 10,
         openLastFileOnStartup: true,
         recentFiles: [],
