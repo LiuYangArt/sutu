@@ -4,6 +4,7 @@ import { SaturationSquare } from './SaturationSquare';
 import { VerticalHueSlider } from './VerticalHueSlider';
 import { useToolStore, RECENT_SWATCH_LIMIT } from '@/stores/tool';
 import { useToastStore } from '@/stores/toast';
+import { useI18n } from '@/i18n';
 import { hexToHsva, hsvaToHex, normalizeHex } from '@/utils/colorUtils';
 import './ColorPanel.css';
 
@@ -64,6 +65,7 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 }
 
 export function ColorPanel() {
+  const { t } = useI18n();
   const {
     brushColor,
     backgroundColor,
@@ -128,11 +130,11 @@ export function ColorPanel() {
     const hex = toCanonicalHex(brushColor);
     const copied = await copyTextToClipboard(hex);
     if (copied) {
-      pushToast(`Copied ${hex}`, { variant: 'success' });
+      pushToast(t('colorPanel.toast.copied', { value: hex }), { variant: 'success' });
     } else {
-      pushToast('Copy failed', { variant: 'error' });
+      pushToast(t('colorPanel.toast.copyFailed'), { variant: 'error' });
     }
-  }, [brushColor, pushToast]);
+  }, [brushColor, pushToast, t]);
 
   const handleAddSwatch = useCallback(() => {
     addRecentSwatch(brushColor);
@@ -147,15 +149,15 @@ export function ColorPanel() {
               type="button"
               className="main-color-swatch background"
               style={{ backgroundColor: backgroundColor }}
-              title="Background Color"
-              aria-label="Background Color"
+              title={t('colorPanel.backgroundColor')}
+              aria-label={t('colorPanel.backgroundColor')}
             />
             <button
               type="button"
               className="main-color-swatch foreground"
               style={{ backgroundColor: brushColor }}
-              title="Foreground Color"
-              aria-label="Foreground Color"
+              title={t('colorPanel.foregroundColor')}
+              aria-label={t('colorPanel.foregroundColor')}
             />
           </div>
 
@@ -164,8 +166,8 @@ export function ColorPanel() {
               type="button"
               className="control-cell-btn color-action-btn"
               onClick={swapColors}
-              title="Swap Colors (X)"
-              aria-label="Swap Colors"
+              title={t('colorPanel.swapColors')}
+              aria-label={t('colorPanel.swapColors')}
             >
               <ArrowLeftRight size={CONTROL_ICON_SIZE} />
             </button>
@@ -173,8 +175,8 @@ export function ColorPanel() {
               type="button"
               className="control-cell-btn color-action-btn"
               onClick={resetColors}
-              title="Reset Colors (D)"
-              aria-label="Reset Colors"
+              title={t('colorPanel.resetColors')}
+              aria-label={t('colorPanel.resetColors')}
             >
               <RotateCcw size={CONTROL_ICON_SIZE} />
             </button>
@@ -182,8 +184,8 @@ export function ColorPanel() {
               type="button"
               className="control-cell-btn color-action-btn"
               onClick={() => void handleCopyHex()}
-              title="Copy HEX"
-              aria-label="HEX"
+              title={t('colorPanel.copyHex')}
+              aria-label={t('colorPanel.copyHex')}
             >
               <Hash size={CONTROL_ICON_SIZE} />
             </button>
@@ -191,14 +193,14 @@ export function ColorPanel() {
               type="button"
               className="control-cell-btn color-action-btn"
               onClick={handleAddSwatch}
-              title="Add current foreground color to swatches"
-              aria-label="Add Swatch"
+              title={t('colorPanel.addSwatch')}
+              aria-label={t('colorPanel.addSwatch')}
             >
               <Plus size={CONTROL_ICON_SIZE} />
             </button>
           </div>
 
-          <div className="swatch-grid" role="list" aria-label="Recent Swatches">
+          <div className="swatch-grid" role="list" aria-label={t('colorPanel.recentSwatches')}>
             {Array.from({ length: RECENT_SWATCH_LIMIT }).map((_, index) => {
               const swatch = recentSwatches[index];
               if (!swatch) {
@@ -208,7 +210,7 @@ export function ColorPanel() {
                     type="button"
                     className="recent-swatch-slot empty"
                     data-testid="recent-swatch-slot"
-                    aria-label={`Empty swatch slot ${index + 1}`}
+                    aria-label={t('colorPanel.emptySwatchSlot', { index: index + 1 })}
                     disabled
                   />
                 );
@@ -221,7 +223,7 @@ export function ColorPanel() {
                   className="recent-swatch-slot"
                   data-testid="recent-swatch-slot"
                   style={{ backgroundColor: swatch }}
-                  aria-label={`Swatch ${index + 1}: ${swatch}`}
+                  aria-label={t('colorPanel.swatchLabel', { index: index + 1, color: swatch })}
                   title={swatch}
                   onClick={() => setBrushColor(swatch)}
                 />

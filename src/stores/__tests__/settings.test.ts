@@ -50,6 +50,7 @@ describe('settings store newFile persistence', () => {
         gpuRenderScaleMode: 'off',
       },
       general: {
+        language: 'en-US',
         autosaveIntervalMinutes: 10,
         openLastFileOnStartup: true,
         recentFiles: [],
@@ -106,6 +107,7 @@ describe('settings store newFile persistence', () => {
     expect('colorBlendMode' in (state.brush as unknown as Record<string, unknown>)).toBe(false);
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
+    expect(state.general.language).toBe('en-US');
     expect(state.general.recentFiles).toEqual([]);
     expect(state.general.selectionAutoFillEnabled).toBe(false);
     expect(state.general.selectionPreviewTranslucent).toBe(true);
@@ -121,6 +123,7 @@ describe('settings store newFile persistence', () => {
     fsMocks.readTextFile.mockResolvedValue(
       JSON.stringify({
         general: {
+          language: 'en-US',
           autosaveIntervalMinutes: 8,
           openLastFileOnStartup: true,
           recentFiles: [
@@ -160,6 +163,27 @@ describe('settings store newFile persistence', () => {
     ]);
   });
 
+  it('migrates legacy general settings without language to en-US', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        general: {
+          autosaveIntervalMinutes: 6,
+          openLastFileOnStartup: false,
+          recentFiles: ['C:\\legacy.psd'],
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    const state = useSettingsStore.getState();
+
+    expect(state.general.language).toBe('en-US');
+    expect(state.general.autosaveIntervalMinutes).toBe(6);
+    expect(state.general.openLastFileOnStartup).toBe(false);
+    expect(state.general.recentFiles).toEqual(['C:\\legacy.psd']);
+  });
+
   it('persists general settings fields', async () => {
     fsMocks.exists.mockResolvedValue(false);
     fsMocks.mkdir.mockResolvedValue(undefined);
@@ -189,6 +213,7 @@ describe('settings store newFile persistence', () => {
     const content = String(lastCall?.[1] ?? '{}');
     const parsed = JSON.parse(content) as {
       general?: {
+        language?: string;
         autosaveIntervalMinutes?: number;
         openLastFileOnStartup?: boolean;
         recentFiles?: string[];
@@ -211,6 +236,7 @@ describe('settings store newFile persistence', () => {
     };
     expect(parsed.general?.autosaveIntervalMinutes).toBe(15);
     expect(parsed.general?.openLastFileOnStartup).toBe(false);
+    expect(parsed.general?.language).toBe('en-US');
     expect(parsed.general?.recentFiles).toEqual([
       'C:\\projects\\ALPHA.psd',
       'C:\\projects\\beta.ora',
@@ -224,6 +250,22 @@ describe('settings store newFile persistence', () => {
     expect(parsed.quickExport?.backgroundPreset).toBe('black');
     expect(parsed.brushLibrary?.selectedPresetByTool?.brush).toBe('preset-soft-round');
     expect(parsed.brushLibrary?.selectedPresetByTool?.eraser).toBe('preset-hard-eraser');
+  });
+
+  it('persists language changes', async () => {
+    fsMocks.exists.mockResolvedValue(false);
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    useSettingsStore.getState().setLanguage('zh-CN');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as { general?: { language?: string } };
+
+    expect(parsed.general?.language).toBe('zh-CN');
   });
 
   it('migrates legacy quickExport width/height into maxSize', async () => {
@@ -252,6 +294,7 @@ describe('settings store newFile persistence', () => {
     fsMocks.readTextFile.mockResolvedValue(
       JSON.stringify({
         general: {
+          language: 'en-US',
           autosaveIntervalMinutes: 12,
           openLastFileOnStartup: true,
           recentFiles: [],
@@ -264,6 +307,7 @@ describe('settings store newFile persistence', () => {
     fsMocks.writeTextFile.mockResolvedValue(undefined);
 
     await useSettingsStore.getState()._loadSettings();
+    expect(useSettingsStore.getState().general.language).toBe('en-US');
     expect(useSettingsStore.getState().general.selectionAutoFillEnabled).toBe(true);
     expect(useSettingsStore.getState().general.selectionPreviewTranslucent).toBe(false);
 
@@ -274,8 +318,13 @@ describe('settings store newFile persistence', () => {
     const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
     const content = String(lastCall?.[1] ?? '{}');
     const parsed = JSON.parse(content) as {
-      general?: { selectionAutoFillEnabled?: boolean; selectionPreviewTranslucent?: boolean };
+      general?: {
+        language?: string;
+        selectionAutoFillEnabled?: boolean;
+        selectionPreviewTranslucent?: boolean;
+      };
     };
+    expect(parsed.general?.language).toBe('en-US');
     expect(parsed.general?.selectionAutoFillEnabled).toBe(false);
     expect(parsed.general?.selectionPreviewTranslucent).toBe(true);
   });

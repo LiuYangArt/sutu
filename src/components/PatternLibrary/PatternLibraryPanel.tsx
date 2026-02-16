@@ -18,6 +18,7 @@ import {
   getPatternThumbnailUrl,
   PatternResource,
 } from '@/stores/pattern';
+import { useI18n } from '@/i18n';
 import './PatternLibraryPanel.css';
 
 interface PatternLibraryPanelProps {
@@ -32,6 +33,7 @@ export function PatternLibraryPanel({
   onClose,
   onSelect,
 }: PatternLibraryPanelProps): JSX.Element | null {
+  const { t } = useI18n();
   const patternCount = usePatternLibraryStore((s) => s.patterns.length);
   const {
     isLoading,
@@ -128,7 +130,7 @@ export function PatternLibraryPanel({
       <div className="pattern-library-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="mica-panel-header pattern-library-header">
-          <h2>Pattern Library</h2>
+          <h2>{t('patternLibrary.title')}</h2>
           <button className="pattern-library-close-btn" onClick={onClose}>
             <X size={18} />
           </button>
@@ -140,7 +142,7 @@ export function PatternLibraryPanel({
             <Search size={14} />
             <input
               type="text"
-              placeholder="Search patterns..."
+              placeholder={t('patternLibrary.searchPlaceholder')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -150,16 +152,16 @@ export function PatternLibraryPanel({
             <button
               className="pattern-library-btn primary"
               onClick={handleImport}
-              title="Import .pat file"
+              title={t('patternLibrary.importPat')}
             >
               <Upload size={14} />
-              Import
+              {t('patternLibrary.import')}
             </button>
             <button
               className="pattern-library-btn"
               onClick={handleDelete}
               disabled={!selectedId}
-              title="Delete selected pattern"
+              title={t('patternLibrary.deleteSelectedPattern')}
             >
               <Trash2 size={14} />
             </button>
@@ -172,7 +174,7 @@ export function PatternLibraryPanel({
                 if (pattern) handleRenameStart(pattern);
               }}
               disabled={!selectedId}
-              title="Rename selected pattern"
+              title={t('patternLibrary.renameSelectedPattern')}
             >
               <Edit2 size={14} />
             </button>
@@ -190,15 +192,15 @@ export function PatternLibraryPanel({
         {/* Content */}
         <div className="pattern-library-content">
           {isLoading ? (
-            <div className="pattern-library-loading">Loading patterns...</div>
+            <div className="pattern-library-loading">{t('patternLibrary.loading')}</div>
           ) : groupedPatterns.length === 0 ? (
             <div className="pattern-library-empty">
               <FolderPlus size={48} strokeWidth={1} />
-              <h3>No Patterns</h3>
-              <p>Import a .pat file to get started.</p>
+              <h3>{t('patternLibrary.noPatterns')}</h3>
+              <p>{t('patternLibrary.importHint')}</p>
               <button className="pattern-library-btn primary" onClick={handleImport}>
                 <Upload size={14} />
-                Import Patterns
+                {t('patternLibrary.importPatterns')}
               </button>
             </div>
           ) : (

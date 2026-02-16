@@ -394,9 +394,27 @@ interface InputStateEvent {
 
 ### 8.3 多语言（i18n）策略
 
-1. 先做共享 i18n 地基，不要求当前阶段完成全量翻译。  
-2. 复用边界：文案 key 与语言资源文件跨端共享，React/iOS runtime 各端实现。  
-3. 新增 UI 文案使用 key 管理，避免桌面与 iPad 各自硬编码导致术语漂移。
+1. 资源目录与 schema：
+   - 前端语言资源固定在 `src/locales/*.json`。
+   - 每个语言文件必须包含：
+     - `meta.code`（BCP-47，例如 `en-US` / `zh-CN`）
+     - `meta.displayName`
+     - `meta.nativeName`
+     - `messages`（扁平 key-value）
+2. 运行时加载与扩展：
+   - 内置语言：通过 `import.meta.glob('../locales/*.json', { eager: true })` 加载。
+   - 外部扩展：启动时扫描 `$APPCONFIG/locales/*.json`。
+   - 合并策略：同 locale 时外部覆盖内置；同 key 时外部优先。
+3. 回退策略：
+   - 文案查询固定链路：`current locale -> en-US -> key`。
+   - 默认语言固定为 `en-US`，并持久化到 `settings.general.language`。
+4. 跨端边界：
+   - 文案 key 与语言资源文件作为共享 contract，可由 Desktop/iPad 共用。
+   - 各端 runtime 可独立实现，但必须遵守同一 key 与回退约定。
+5. 工程约束：
+   - 新增用户可见文案必须走 key，不在业务代码新增硬编码文本。
+   - 新 key 必须同步补齐 `en-US` 与 `zh-CN`。
+   - PR 验收至少覆盖：语言切换即时生效、缺失 key 回退正确、外部语言扩展可被发现。
 
 ---
 

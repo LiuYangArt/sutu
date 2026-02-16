@@ -7,6 +7,7 @@ import { useDocumentStore } from '@/stores/document';
 import { useSettingsStore } from '@/stores/settings';
 import { useToolStore } from '@/stores/tool';
 import { useToastStore } from '@/stores/toast';
+import { useI18n } from '@/i18n';
 import {
   buildDefaultQuickExportPath,
   getExtensionForQuickExportFormat,
@@ -29,14 +30,17 @@ function parsePositiveInt(value: string): number | null {
   return parsed;
 }
 
-function getFilters(format: QuickExportFormat): Array<{ name: string; extensions: string[] }> {
+function getFilters(
+  format: QuickExportFormat,
+  t: (key: string) => string
+): Array<{ name: string; extensions: string[] }> {
   switch (format) {
     case 'jpg':
-      return [{ name: 'JPEG Image', extensions: ['jpg', 'jpeg'] }];
+      return [{ name: t('quickExport.filter.jpegImage'), extensions: ['jpg', 'jpeg'] }];
     case 'webp':
-      return [{ name: 'WebP Image', extensions: ['webp'] }];
+      return [{ name: t('quickExport.filter.webpImage'), extensions: ['webp'] }];
     case 'png':
-      return [{ name: 'PNG Image', extensions: ['png'] }];
+      return [{ name: t('quickExport.filter.pngImage'), extensions: ['png'] }];
   }
 }
 
@@ -94,6 +98,7 @@ interface QuickExportPanelProps {
 }
 
 export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JSX.Element | null {
+  const { t } = useI18n();
   const doc = useDocumentStore((s) => ({
     width: s.width,
     height: s.height,
@@ -193,9 +198,9 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
 
     try {
       const selected = await save({
-        title: 'Select Export Path',
+        title: t('quickExport.dialog.selectExportPath'),
         defaultPath,
-        filters: getFilters(format),
+        filters: getFilters(format, t),
       });
 
       if (typeof selected !== 'string') {
@@ -208,20 +213,24 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
       setExportPath(normalized);
       setQuickExport({ lastPath: normalized });
     } catch (error) {
-      pushToast(`Failed to choose export path: ${getErrorMessage(error)}`, { variant: 'error' });
+      pushToast(t('quickExport.toast.choosePathFailed', { message: getErrorMessage(error) }), {
+        variant: 'error',
+      });
     }
   };
 
   const handleReveal = async () => {
     const path = exportPath.trim();
     if (!isLikelyValidQuickExportPath(path)) {
-      pushToast('Please configure a valid export path first.', { variant: 'error' });
+      pushToast(t('quickExport.toast.configureValidPathFirst'), { variant: 'error' });
       return;
     }
     try {
       await invoke('reveal_in_explorer', { path });
     } catch (error) {
-      pushToast(`Failed to open explorer: ${getErrorMessage(error)}`, { variant: 'error' });
+      pushToast(t('quickExport.toast.openExplorerFailed', { message: getErrorMessage(error) }), {
+        variant: 'error',
+      });
     }
   };
 
@@ -229,7 +238,7 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
     const maxSize = parsedMaxSize;
     const path = exportPath.trim();
     if (!maxSize || !isLikelyValidQuickExportPath(path)) {
-      pushToast('Please enter valid max size and path.', { variant: 'error' });
+      pushToast(t('quickExport.toast.invalidMaxSizeOrPath'), { variant: 'error' });
       return;
     }
 
@@ -242,12 +251,12 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
       };
       const getFlattenedImage = win.__getFlattenedImage;
       if (typeof getFlattenedImage !== 'function') {
-        throw new Error('Missing API: window.__getFlattenedImage');
+        throw new Error(t('quickExport.error.missingFlattenApi'));
       }
 
       const flattenedDataUrl = await getFlattenedImage();
       if (!flattenedDataUrl) {
-        throw new Error('Flattened image is not available');
+        throw new Error(t('quickExport.error.flattenedImageUnavailable'));
       }
 
       const image = await loadImageFromDataUrl(flattenedDataUrl);
@@ -256,7 +265,7 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
       exportCanvas.height = outputSize.height;
       const ctx = exportCanvas.getContext('2d');
       if (!ctx) {
-        throw new Error('Failed to create export canvas context');
+        throw new Error(t('quickExport.error.canvasContextUnavailable'));
       }
 
       if (!effectiveTransparentBackground) {
@@ -287,9 +296,11 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
         transparentBackground: effectiveTransparentBackground,
         backgroundPreset,
       });
-      pushToast(`Exported to ${outputPath}`, { variant: 'success' });
+      pushToast(t('quickExport.toast.exportedTo', { path: outputPath }), { variant: 'success' });
     } catch (error) {
-      pushToast(`Quick export failed: ${getErrorMessage(error)}`, { variant: 'error' });
+      pushToast(t('quickExport.toast.exportFailed', { message: getErrorMessage(error) }), {
+        variant: 'error',
+      });
     } finally {
       setIsExporting(false);
     }
@@ -301,39 +312,39 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
     <div className="quick-export-overlay">
       <div className="quick-export-panel mica-panel" onClick={(e) => e.stopPropagation()}>
         <div className="mica-panel-header quick-export-header">
-          <h2>Quick Export</h2>
-          <button className="quick-export-close-btn" onClick={onClose} title="Close">
+          <h2>{t('quickExport.title')}</h2>
+          <button className="quick-export-close-btn" onClick={onClose} title={t('common.close')}>
             <X size={18} />
           </button>
         </div>
 
         <div className="quick-export-body">
           <div className="quick-export-field">
-            <label>Path</label>
+            <label>{t('quickExport.path')}</label>
             <div className="quick-export-path-row">
               <button
                 className="quick-export-run-btn"
                 onClick={handleExport}
                 disabled={!canExport}
                 type="button"
-                title="Export"
+                title={t('quickExport.export')}
               >
                 <Share size={14} />
-                <span>{isExporting ? 'Exporting...' : 'Export'}</span>
+                <span>{isExporting ? t('quickExport.exporting') : t('quickExport.export')}</span>
               </button>
               <input
                 className="quick-export-path-input"
-                aria-label="Export Path"
+                aria-label={t('quickExport.aria.exportPath')}
                 value={exportPath}
                 onChange={(e) => setExportPath(e.target.value)}
                 onBlur={handlePathBlur}
-                placeholder="Select export path..."
+                placeholder={t('quickExport.selectExportPathPlaceholder')}
               />
               <button
                 className="quick-export-path-btn"
                 onClick={handlePickPath}
                 type="button"
-                title="Choose Path"
+                title={t('quickExport.choosePath')}
               >
                 <FolderOpen size={15} />
               </button>
@@ -342,7 +353,7 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
                 onClick={handleReveal}
                 disabled={!isLikelyValidQuickExportPath(exportPath)}
                 type="button"
-                title="Reveal in Explorer"
+                title={t('quickExport.revealInExplorer')}
               >
                 <ArrowUp size={15} />
               </button>
@@ -350,17 +361,17 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
           </div>
 
           <div className="quick-export-field">
-            <label>Output Size</label>
+            <label>{t('quickExport.outputSize')}</label>
             <div className="quick-export-current">
               {resolvedOutputSize.width} × {resolvedOutputSize.height} px
             </div>
           </div>
 
           <div className="quick-export-field">
-            <label>Max Size</label>
+            <label>{t('quickExport.maxSize')}</label>
             <input
               type="number"
-              aria-label="Export Max Size"
+              aria-label={t('quickExport.aria.exportMaxSize')}
               min={1}
               step={1}
               value={maxSizeInput}
@@ -370,10 +381,10 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
 
           <div className="quick-export-row">
             <div className="quick-export-field">
-              <label>File Format</label>
+              <label>{t('quickExport.fileFormat')}</label>
               <select
                 className="quick-export-select"
-                aria-label="Export Format"
+                aria-label={t('quickExport.aria.exportFormat')}
                 value={format}
                 onChange={(e) => handleFormatChange(e.target.value as QuickExportFormat)}
               >
@@ -384,14 +395,14 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
             </div>
 
             <div className="quick-export-field">
-              <label>Transparent Background</label>
+              <label>{t('quickExport.transparentBackground')}</label>
               <label
                 className="quick-export-toggle"
-                title={canUseTransparency ? '' : 'JPG does not support alpha'}
+                title={canUseTransparency ? '' : t('quickExport.jpgNoAlpha')}
               >
                 <input
                   type="checkbox"
-                  aria-label="Transparent Background"
+                  aria-label={t('quickExport.aria.transparentBackground')}
                   checked={effectiveTransparentBackground}
                   disabled={!canUseTransparency}
                   onChange={(e) => handleTransparentChange(e.target.checked)}
@@ -402,19 +413,19 @@ export function QuickExportPanel({ isOpen, onClose }: QuickExportPanelProps): JS
           </div>
 
           <div className="quick-export-field">
-            <label>Background Fill</label>
+            <label>{t('quickExport.backgroundFill')}</label>
             <select
               className="quick-export-select"
-              aria-label="Background Fill"
+              aria-label={t('quickExport.aria.backgroundFill')}
               value={backgroundPreset}
               onChange={(e) =>
                 handleBackgroundPresetChange(e.target.value as QuickExportBackgroundPreset)
               }
               disabled={effectiveTransparentBackground}
             >
-              <option value="white">White</option>
-              <option value="black">Black</option>
-              <option value="current-bg">Current Background</option>
+              <option value="white">{t('quickExport.background.white')}</option>
+              <option value="black">{t('quickExport.background.black')}</option>
+              <option value="current-bg">{t('quickExport.background.currentBackground')}</option>
             </select>
           </div>
         </div>

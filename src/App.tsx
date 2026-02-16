@@ -15,6 +15,7 @@ import { useSelectionStore } from './stores/selection';
 import { useTabletStore } from './stores/tablet';
 import { useToolStore } from './stores/tool';
 import { useSettingsStore, initializeSettings } from './stores/settings';
+import { initializeI18n } from './stores/i18n';
 import { useFileStore } from './stores/file';
 import { restoreStartupBrushPresetSelection } from './stores/startupBrushPreset';
 import { LeftToolbar, RightPanel } from './components/SidePanel';
@@ -26,6 +27,7 @@ import { useViewportStore } from './stores/viewport';
 import { useToastStore } from './stores/toast';
 import { initializeGradientStore } from './stores/gradient';
 import { APP_DISPLAY_NAME } from './constants/appMeta';
+import { useI18n } from './i18n';
 import { detectPlatformKind } from './utils/platform';
 import { formatTabletFallbackReason } from './utils/tabletFallback';
 
@@ -88,6 +90,7 @@ function resolveBackgroundFillColor(
 }
 
 function App() {
+  const { t, currentLocale } = useI18n();
   const [isReady, setIsReady] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showPatternLibrary, setShowPatternLibrary] = useState(false);
@@ -341,6 +344,11 @@ function App() {
     const initialize = async () => {
       // Initialize settings first (load from file, apply CSS variables)
       await initializeSettings();
+      const preferredLocale = useSettingsStore.getState().general.language;
+      const resolvedLocale = await initializeI18n(preferredLocale);
+      if (resolvedLocale !== preferredLocale) {
+        useSettingsStore.getState().setLanguage(resolvedLocale);
+      }
       await initializeGradientStore();
 
       // Restore brush preset selection metadata from settings file.
@@ -549,7 +557,7 @@ function App() {
     // Brush and Gradient editors use FloatingPanel.
     registerPanel({
       id: 'brush-panel',
-      title: 'Brush Settings',
+      title: t('app.panel.brushSettings'),
       defaultGeometry: { x: window.innerWidth - 300, y: 420, width: 280, height: 440 },
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 320, offsetY: 80 },
       minWidth: 240,
@@ -558,7 +566,7 @@ function App() {
     });
     registerPanel({
       id: 'gradient-panel',
-      title: 'Gradient Editor',
+      title: t('app.panel.gradientEditor'),
       defaultGeometry: { x: window.innerWidth - 360, y: 120, width: 340, height: 460 },
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 80 },
       minWidth: 300,
@@ -566,7 +574,7 @@ function App() {
     });
     registerPanel({
       id: 'curves-panel',
-      title: 'Curves',
+      title: t('app.panel.curves'),
       defaultGeometry: { x: window.innerWidth - 520, y: 120, width: 380, height: 540 },
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 380, offsetY: 80 },
       resizable: false,
@@ -574,7 +582,7 @@ function App() {
     });
     registerPanel({
       id: 'history-panel',
-      title: 'History',
+      title: t('app.panel.history'),
       defaultGeometry: { x: window.innerWidth - 420, y: 120, width: 280, height: 420 },
       defaultAlignment: { horizontal: 'right', vertical: 'top', offsetX: 20, offsetY: 80 },
       minWidth: 240,
@@ -586,12 +594,12 @@ function App() {
     closePanel('gradient-panel');
     closePanel('curves-panel');
     closePanel('history-panel');
-  }, [registerPanel, closePanel]);
+  }, [registerPanel, closePanel, currentLocale, t]);
 
   if (!isReady) {
     return (
       <div className="loading">
-        <span>Loading {APP_DISPLAY_NAME}...</span>
+        <span>{t('app.loading', { appName: APP_DISPLAY_NAME })}</span>
       </div>
     );
   }

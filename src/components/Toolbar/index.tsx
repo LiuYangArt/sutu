@@ -24,6 +24,7 @@ import { usePanelStore } from '@/stores/panel';
 import { useSettingsStore } from '@/stores/settings';
 import { useFileStore } from '@/stores/file';
 import { useDocumentStore } from '@/stores/document';
+import { useI18n } from '@/i18n';
 import { GradientToolIcon } from '@/components/common/GradientToolIcon';
 import { BrushToolbar } from './BrushToolbar';
 import { GradientToolbar } from './GradientToolbar';
@@ -42,6 +43,7 @@ function getFileNameFromPath(path: string): string {
 
 /** App Menu component */
 function AppMenu(): JSX.Element {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [activeSubmenu, setActiveSubmenu] = useState<AppMenuSubmenu>('none');
   const menuRef = useRef<HTMLDivElement>(null);
@@ -159,7 +161,7 @@ function AppMenu(): JSX.Element {
 
   return (
     <div className="app-menu" ref={menuRef}>
-      <button className="menu-btn" onClick={handleToggleMenu} title="Menu">
+      <button className="menu-btn" onClick={handleToggleMenu} title={t('toolbar.menu.title')}>
         <Menu size={20} strokeWidth={1.5} />
       </button>
 
@@ -167,13 +169,13 @@ function AppMenu(): JSX.Element {
         <div className="menu-dropdown">
           <button className="menu-item" onClick={handleNew}>
             <FilePlus size={16} />
-            <span>New</span>
+            <span>{t('toolbar.menu.new')}</span>
             <span className="shortcut">Ctrl+N</span>
           </button>
 
           <button className="menu-item" onClick={handleOpen} disabled={isLoading}>
             <FolderOpen size={16} />
-            <span>Open</span>
+            <span>{t('toolbar.menu.open')}</span>
             <span className="shortcut">Ctrl+O</span>
           </button>
 
@@ -183,13 +185,13 @@ function AppMenu(): JSX.Element {
             onMouseLeave={() => setActiveSubmenu('none')}
           >
             <FolderOpen size={16} />
-            <span>Open Recent</span>
+            <span>{t('toolbar.menu.openRecent')}</span>
             <ChevronRight size={14} className="submenu-arrow" />
 
             {activeSubmenu === 'openRecent' && (
               <div className="submenu">
                 {recentFiles.length === 0 ? (
-                  <div className="menu-item submenu-empty">No recent files</div>
+                  <div className="menu-item submenu-empty">{t('toolbar.menu.noRecentFiles')}</div>
                 ) : (
                   recentFiles.map((path) => (
                     <button
@@ -210,19 +212,22 @@ function AppMenu(): JSX.Element {
 
           <button className="menu-item" onClick={handleSave} disabled={isSaving}>
             <Save size={16} />
-            <span>Save{showUnsavedIndicator ? ' *' : ''}</span>
+            <span>
+              {t('toolbar.menu.save')}
+              {showUnsavedIndicator ? ' *' : ''}
+            </span>
             <span className="shortcut">Ctrl+S</span>
           </button>
 
           <button className="menu-item" onClick={handleSaveAs} disabled={isSaving}>
             <Save size={16} />
-            <span>Save As...</span>
+            <span>{t('toolbar.menu.saveAs')}</span>
             <span className="shortcut">Ctrl+Shift+S</span>
           </button>
 
           <button className="menu-item" onClick={handleOpenQuickExport}>
             <Share size={16} />
-            <span>Export</span>
+            <span>{t('toolbar.menu.export')}</span>
             <span className="shortcut">Ctrl+Shift+E</span>
           </button>
 
@@ -230,7 +235,7 @@ function AppMenu(): JSX.Element {
 
           <button className="menu-item" onClick={handleOpenSettings}>
             <Settings size={16} />
-            <span>Settings</span>
+            <span>{t('toolbar.menu.settings')}</span>
           </button>
 
           <div
@@ -239,23 +244,23 @@ function AppMenu(): JSX.Element {
             onMouseLeave={() => setActiveSubmenu('none')}
           >
             <LayoutGrid size={16} />
-            <span>Panels</span>
+            <span>{t('toolbar.menu.panels')}</span>
             <ChevronRight size={14} className="submenu-arrow" />
 
             {activeSubmenu === 'panels' && (
               <div className="submenu">
                 <button className="menu-item" onClick={handleToggleBrushPanel}>
                   <Paintbrush size={14} />
-                  <span>Brush Settings</span>
+                  <span>{t('toolbar.menu.panels.brushSettings')}</span>
                   <span className="shortcut">F5</span>
                 </button>
                 <button className="menu-item" onClick={handleToggleGradientPanel}>
                   <GradientToolIcon size={14} strokeWidth={1.5} />
-                  <span>Gradient Editor</span>
+                  <span>{t('toolbar.menu.panels.gradientEditor')}</span>
                 </button>
                 <button className="menu-item" onClick={handleToggleHistoryPanel}>
                   <Undo2 size={14} />
-                  <span>History</span>
+                  <span>{t('toolbar.menu.panels.history')}</span>
                   <span className="shortcut">Ctrl+H</span>
                 </button>
                 <button
@@ -267,7 +272,7 @@ function AppMenu(): JSX.Element {
                   }}
                 >
                   <Grid3x3 size={14} />
-                  <span>Pattern Library</span>
+                  <span>{t('toolbar.menu.panels.patternLibrary')}</span>
                   <span className="shortcut">F6</span>
                 </button>
                 <button
@@ -279,7 +284,7 @@ function AppMenu(): JSX.Element {
                   }}
                 >
                   <Paintbrush size={14} />
-                  <span>Brush Library</span>
+                  <span>{t('toolbar.menu.panels.brushLibrary')}</span>
                   <span className="shortcut">Ctrl+F5</span>
                 </button>
               </div>
@@ -290,7 +295,7 @@ function AppMenu(): JSX.Element {
 
           <button className="menu-item" onClick={handleExit}>
             <LogOut size={16} />
-            <span>Exit</span>
+            <span>{t('toolbar.menu.exit')}</span>
           </button>
         </div>
       )}
@@ -299,6 +304,7 @@ function AppMenu(): JSX.Element {
 }
 
 export function Toolbar(): JSX.Element {
+  const { t } = useI18n();
   const currentTool = useToolStore((s) => s.currentTool);
 
   const { scale, zoomIn, zoomOut, resetZoom } = useViewportStore();
@@ -343,10 +349,10 @@ export function Toolbar(): JSX.Element {
       <div className="toolbar-spacer" />
 
       <div className="toolbar-section canvas-actions">
-        <button onClick={handleOpenCanvasSizePanel} title="Canvas Size">
+        <button onClick={handleOpenCanvasSizePanel} title={t('toolbar.canvasSize')}>
           <ImageUpscale {...ICON_PROPS} />
         </button>
-        <button onClick={handleOpenQuickExportPanel} title="Quick Export (Ctrl+Shift+E)">
+        <button onClick={handleOpenQuickExportPanel} title={t('toolbar.quickExportShortcutTitle')}>
           <Share {...ICON_PROPS} />
         </button>
       </div>
@@ -354,13 +360,13 @@ export function Toolbar(): JSX.Element {
       <div className="toolbar-divider" />
 
       <div className="toolbar-section zoom-controls">
-        <button onClick={() => zoomOut()} title="Zoom Out">
+        <button onClick={() => zoomOut()} title={t('toolbar.zoomOut')}>
           <ZoomOut {...ICON_PROPS} />
         </button>
-        <button className="zoom-level" onClick={resetZoom} title="Reset Zoom (100%)">
+        <button className="zoom-level" onClick={resetZoom} title={t('toolbar.resetZoom')}>
           {zoomPercent}%
         </button>
-        <button onClick={() => zoomIn()} title="Zoom In">
+        <button onClick={() => zoomIn()} title={t('toolbar.zoomIn')}>
           <ZoomIn {...ICON_PROPS} />
         </button>
       </div>
@@ -372,7 +378,7 @@ export function Toolbar(): JSX.Element {
           data-testid="undo-btn"
           disabled={!canUndo()}
           onClick={handleUndo}
-          title="Undo (Ctrl+Z)"
+          title={t('toolbar.undo')}
         >
           <Undo2 {...ICON_PROPS} />
         </button>
@@ -380,7 +386,7 @@ export function Toolbar(): JSX.Element {
           data-testid="redo-btn"
           disabled={!canRedo()}
           onClick={handleRedo}
-          title="Redo (Ctrl+Y)"
+          title={t('toolbar.redo')}
         >
           <Redo2 {...ICON_PROPS} />
         </button>

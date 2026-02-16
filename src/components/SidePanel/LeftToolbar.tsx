@@ -15,11 +15,12 @@ import {
 import type { ComponentType } from 'react';
 import { useToolStore, ToolType } from '@/stores/tool';
 import { useViewportStore } from '@/stores/viewport';
+import { useI18n } from '@/i18n';
 import { GradientToolIcon } from '@/components/common/GradientToolIcon';
 import './SidePanel.css';
 
 const ICON_PROPS = { size: 24, strokeWidth: 1.5 } as const;
-type ToolItem = { id: ToolType; label: string; icon: ComponentType<LucideProps> };
+type ToolItem = { id: ToolType; icon: ComponentType<LucideProps> };
 
 const TOOL_SHORTCUTS: Record<ToolType, string> = {
   brush: 'B',
@@ -33,25 +34,26 @@ const TOOL_SHORTCUTS: Record<ToolType, string> = {
 };
 
 const TOOLS: ToolItem[] = [
-  { id: 'brush', label: 'Brush', icon: Brush },
-  { id: 'eraser', label: 'Eraser', icon: Eraser },
-  { id: 'eyedropper', label: 'Eyedropper', icon: Pipette },
-  { id: 'gradient', label: 'Gradient', icon: GradientToolIcon },
-  { id: 'move', label: 'Move', icon: Move },
-  { id: 'select', label: 'Rectangular Select', icon: SquareDashed },
-  { id: 'lasso', label: 'Lasso', icon: Lasso },
-  { id: 'zoom', label: 'Zoom', icon: ZoomIcon },
+  { id: 'brush', icon: Brush },
+  { id: 'eraser', icon: Eraser },
+  { id: 'eyedropper', icon: Pipette },
+  { id: 'gradient', icon: GradientToolIcon },
+  { id: 'move', icon: Move },
+  { id: 'select', icon: SquareDashed },
+  { id: 'lasso', icon: Lasso },
+  { id: 'zoom', icon: ZoomIcon },
 ];
 
-function getToolTooltip(tool: ToolItem): string {
+function getToolTooltip(tool: ToolItem, t: (key: string) => string): string {
   const shortcut = TOOL_SHORTCUTS[tool.id];
   if (tool.id === 'zoom') {
-    return `${tool.label} (${shortcut}) - Double-click to reset to 100%`;
+    return `${t(`leftToolbar.tool.${tool.id}`)} (${shortcut}) - ${t('leftToolbar.zoomDoubleClickHint')}`;
   }
-  return `${tool.label} (${shortcut})`;
+  return `${t(`leftToolbar.tool.${tool.id}`)} (${shortcut})`;
 }
 
 export function LeftToolbar(): JSX.Element {
+  const { t } = useI18n();
   const { currentTool, setTool } = useToolStore();
   const setScale = useViewportStore((s) => s.setScale);
 
@@ -70,7 +72,7 @@ export function LeftToolbar(): JSX.Element {
             className={`tool-grid-btn ${currentTool === tool.id ? 'active' : ''}`}
             onClick={() => setTool(tool.id)}
             onDoubleClick={() => handleToolDoubleClick(tool.id)}
-            title={getToolTooltip(tool)}
+            title={getToolTooltip(tool, t)}
           >
             <tool.icon {...ICON_PROPS} />
           </button>
