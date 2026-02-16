@@ -72,6 +72,35 @@ describe('BrushQuickPanel', () => {
     expect(applyPresetById).toHaveBeenCalledWith('hard-chalk');
   });
 
+  it('removes color card and keeps size value directly editable', async () => {
+    useBrushLibraryStore.setState((state) => ({
+      ...state,
+      presets: [createPreset('soft-round', 'Soft Round', 'Basics')],
+      groups: [{ name: 'Basics', presetIds: ['soft-round'] }],
+      selectedPresetByTool: { brush: null, eraser: null },
+      searchQuery: '',
+      isLoading: false,
+      error: null,
+      loadLibrary: vi.fn(),
+      applyPresetById: vi.fn(),
+      clearError: vi.fn(),
+    }));
+
+    render(<BrushQuickPanel isOpen anchorX={120} anchorY={120} onRequestClose={vi.fn()} />);
+
+    expect(screen.queryByText('Color')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('32px'));
+    const input = screen.getByDisplayValue('32');
+    fireEvent.change(input, { target: { value: '48' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(useToolStore.getState().brushSize).toBe(48);
+    });
+    expect(screen.getByText('48px')).toBeInTheDocument();
+  });
+
   it('打开时以锚点为中心定位面板', () => {
     useBrushLibraryStore.setState((state) => ({
       ...state,
