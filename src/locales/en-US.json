@@ -314,7 +314,6 @@
     "settings.tablet.brushSpeed.smoothing": "Brush speed smoothing: {{value}} samples",
     "settings.tablet.brushSpeed.title": "Brush Speed",
     "settings.tablet.dynamics.lowPressureAdaptiveSmoothing": "Low pressure adaptive smoothing",
-    "settings.tablet.dynamics.tailTaper": "Tail taper compensation",
     "settings.tablet.dynamics.title": "Stroke Dynamics",
     "settings.tablet.pressureCurve.curve": "Curve",
     "settings.tablet.pressureCurve.hard": "Hard",

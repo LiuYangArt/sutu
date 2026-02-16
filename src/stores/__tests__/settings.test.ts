@@ -50,7 +50,6 @@ describe('settings store newFile persistence', () => {
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
         lowPressureAdaptiveSmoothingEnabled: true,
-        tailTaperEnabled: true,
         backpressureMode: 'lossless',
         autoStart: true,
       },
@@ -129,7 +128,6 @@ describe('settings store newFile persistence', () => {
     expect(state.tablet.maxBrushSpeedPxPerMs).toBe(30);
     expect(state.tablet.brushSpeedSmoothingSamples).toBe(3);
     expect(state.tablet.lowPressureAdaptiveSmoothingEnabled).toBe(true);
-    expect(state.tablet.tailTaperEnabled).toBe(true);
   });
 
   it('clamps tablet speed config and normalizes pressure curve points when loading', async () => {
@@ -147,7 +145,6 @@ describe('settings store newFile persistence', () => {
           maxBrushSpeedPxPerMs: 999,
           brushSpeedSmoothingSamples: 1,
           lowPressureAdaptiveSmoothingEnabled: false,
-          tailTaperEnabled: false,
         },
       })
     );
@@ -158,7 +155,6 @@ describe('settings store newFile persistence', () => {
     expect(state.tablet.maxBrushSpeedPxPerMs).toBe(100);
     expect(state.tablet.brushSpeedSmoothingSamples).toBe(3);
     expect(state.tablet.lowPressureAdaptiveSmoothingEnabled).toBe(false);
-    expect(state.tablet.tailTaperEnabled).toBe(false);
     expect(state.tablet.pressureCurvePoints[0]?.x).toBe(0);
     expect(state.tablet.pressureCurvePoints[state.tablet.pressureCurvePoints.length - 1]?.x).toBe(
       1

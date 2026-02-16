@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { BrushStamper } from '@/utils/strokeBuffer';
+import * as shapeDynamicsModule from '@/utils/shapeDynamics';
+import type { DynamicsInput } from '@/utils/shapeDynamics';
 import { useBrushRenderer, type BrushRenderConfig } from '../useBrushRenderer';
 
 const gpuState = vi.hoisted(() => ({
@@ -104,7 +106,6 @@ function createConfig(): BrushRenderConfig {
     maxBrushSpeedPxPerMs: 30,
     brushSpeedSmoothingSamples: 3,
     lowPressureAdaptiveSmoothingEnabled: true,
-    tailTaperEnabled: true,
     pressureCurve: 'linear',
     texture: null,
     shapeDynamicsEnabled: false,
@@ -131,7 +132,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     gpuState.instances.length = 0;
   });
 
-  it('injects converging tail dabs in prepareStrokeEndGpu and keeps per-stroke finalize idempotent', async () => {
+  it('flushes finalize segment dabs in prepareStrokeEndGpu and keeps per-stroke finalize idempotent', async () => {
     const finishSpy = vi.spyOn(BrushStamper.prototype, 'finishStroke');
     const config = createConfig();
 
@@ -173,17 +174,17 @@ describe('useBrushRenderer stroke finalize path', () => {
     const finishCallsAfterPrepare = finishSpy.mock.calls.length;
     expect(finishCallsAfterPrepare).toBeGreaterThanOrEqual(2);
     expect(dabCountAfterPrepare).toBeGreaterThan(dabCountBeforePrepare);
-    const convergenceCalls = gpu.stampDabCalls.slice(dabCountBeforePrepare) as Array<{
+    const finalizeCalls = gpu.stampDabCalls.slice(dabCountBeforePrepare) as Array<{
       x?: number;
       y?: number;
       pressure?: number;
     }>;
-    expect(convergenceCalls.length).toBeGreaterThan(0);
-    for (const call of convergenceCalls) {
+    expect(finalizeCalls.length).toBeGreaterThan(0);
+    for (const call of finalizeCalls) {
       expect(typeof call.x).toBe('number');
       expect(typeof call.y).toBe('number');
       if (typeof call.x !== 'number' || typeof call.y !== 'number') continue;
-      // Convergence must stay inside the last real input segment [48, 54].
+      // Finalize segment must stay inside the last real input segment [48, 54].
       expect(call.x).toBeGreaterThanOrEqual(48 - 1e-6);
       expect(call.x).toBeLessThanOrEqual(54 + 1e-6);
       expect(call.y).toBeCloseTo(0, 6);
@@ -204,13 +205,14 @@ describe('useBrushRenderer stroke finalize path', () => {
     expect(finishSpy.mock.calls.length).toBe(finishCallsAfterPrepare);
   });
 
-  it('applies shape dynamics size control to converging tail dabs', async () => {
+  it('feeds non-constant fadeProgress to shape dynamics on main/finalize chain', async () => {
     const config = createConfig();
     config.pressureSizeEnabled = false;
     config.shapeDynamicsEnabled = true;
+    const shapeSpy = vi.spyOn(shapeDynamicsModule, 'computeDabShape');
     config.shapeDynamics = {
       sizeJitter: 0,
-      sizeControl: 'penPressure',
+      sizeControl: 'fade',
       minimumDiameter: 0,
       angleJitter: 0,
       angleControl: 'off',
@@ -250,19 +252,36 @@ describe('useBrushRenderer stroke finalize path', () => {
       throw new Error('expected gpu instance to exist');
     }
     const beforeTailCount = gpu.stampDabCalls.length;
+    const beforeFinalizeShapeCallCount = shapeSpy.mock.calls.length;
 
     await act(async () => {
       await result.current.prepareStrokeEndGpu();
     });
 
-    const tailCalls = gpu.stampDabCalls.slice(beforeTailCount) as Array<{ size?: number }>;
-    expect(tailCalls.length).toBeGreaterThan(0);
+    const finalizeCalls = gpu.stampDabCalls.slice(beforeTailCount) as Array<{ size?: number }>;
+    expect(finalizeCalls.length).toBeGreaterThan(0);
 
-    const tailSizes = tailCalls
-      .map((call) => call.size)
-      .filter((size): size is number => typeof size === 'number' && Number.isFinite(size));
-    expect(tailSizes.length).toBeGreaterThan(0);
-    expect(Math.min(...tailSizes)).toBeLessThan(config.size * 0.4);
+    const calls = shapeSpy.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+
+    const dynamicsInputs = calls.map((call) => call[4] as DynamicsInput);
+    expect(dynamicsInputs.length).toBeGreaterThan(4);
+
+    const fadeValues = dynamicsInputs.map((input) => input.fadeProgress);
+    const minFade = Math.min(...fadeValues);
+    const maxFade = Math.max(...fadeValues);
+    expect(maxFade - minFade).toBeGreaterThan(0.05);
+
+    const finalizeDynamics = calls
+      .slice(beforeFinalizeShapeCallCount)
+      .map((call) => call[4] as DynamicsInput);
+    expect(finalizeDynamics.length).toBeGreaterThan(0);
+    for (const input of finalizeDynamics) {
+      expect(input.fadeProgress).toBeGreaterThanOrEqual(0);
+      expect(input.fadeProgress).toBeLessThanOrEqual(1);
+      expect(typeof input.distanceProgress).toBe('number');
+      expect(typeof input.timeProgress).toBe('number');
+    }
   });
 
   it('forces size pressure override from toolbar even when Shape Dynamics size control is non-pressure', async () => {

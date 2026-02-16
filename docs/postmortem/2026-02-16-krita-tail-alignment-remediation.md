@@ -5,6 +5,17 @@
 你的需求已经足够明确，不是“需求不清”导致的。  
 问题在于实现时我把目标错误收敛成了“尾段补偿要像 Krita”，而不是“整条笔划求解链路要像 Krita”。
 
+## 0. 2026-02-16 P0+P1 落地状态（更新）
+
+本次已完成“去注入式 tail + 主链路收束 + 自动化验收”落地，关键状态如下：
+
+1. `BrushStamper` 已移除独立 tail 注入求解（`evaluateTailTaper` / `buildTailDabs` / 末点强制 `pressure=0`）。
+2. `finishStroke()` 语义改为“输出主链路末段收束采样”，不再是“触发 tail 特效”。
+3. 新增 `KritaLikeFreehandSmoother` 与 `SegmentSampler`（distance + timing 联合采样）并接入主链路。
+4. `useBrushRenderer` 已统一为 `finalizeStrokeOnce`，主段/末段共享同一 dynamics 输入链路（含真实 `fadeProgress`）。
+5. `tailTaperEnabled` 已从 settings/store/UI/i18n 删除，旧配置读取自动忽略。
+6. 调试快照升级为 `StrokeFinalizeDebugSnapshot`；`window.__brushTailTaperDebug` 仅保留一版 deprecated alias，新增 `window.__brushStrokeFinalizeDebug`。
+
 ---
 
 ## 1. 为什么会出现偏差（复盘）
@@ -19,14 +30,13 @@
 这两点是必要条件，但不是充分条件。  
 Krita 的尖尾核心是**工具层轨迹收敛 + 采样层 + 动态传感器层**同时连续工作，而不是尾端补一段。
 
-### 1.2 当前实现仍是“补偿型 tail 生成器”
+### 1.2 历史实现曾是“补偿型 tail 生成器”（现已移除）
 
-当前代码仍是条件触发的 tail 机制，而非 Krita 的主链路收敛：
+以下机制已在本轮 P0+P1 中删除或替换：
 
-- `evaluateTailTaper()` 触发/拦截：`src/utils/strokeBuffer.ts:1532`
-- `buildTailDabs()` 人工构造收尾：`src/utils/strokeBuffer.ts:1642`
-- 末点强制 `pressure: 0`：`src/utils/strokeBuffer.ts:1708`
-- `finishStroke()` 以 tail 生成器为入口：`src/utils/strokeBuffer.ts:1955`
+1. 独立 tail 判定与构造函数（`evaluateTailTaper()`、`buildTailDabs()`）。
+2. 收笔末点强制 `pressure: 0` 的补丁式写法。
+3. 以“tail 特效触发”为主语义的 `finishStroke()` 路径。
 
 ### 1.3 验收口径偏“代码行为”，缺少“视觉同构”
 
@@ -175,4 +185,3 @@ Krita 的尖尾核心是**工具层轨迹收敛 + 采样层 + 动态传感器层
 3. 最后做 Phase D + E（动态补全与 A/B 验收封口）。
 
 这是最快达到“Krita 观感一致”且可持续维护的路径。
-

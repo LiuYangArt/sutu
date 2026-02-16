@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   BrushStamper,
-  type TailTaperBlockReason,
-  type TailTaperDebugSnapshot,
+  type StrokeFinalizeDebugSnapshot,
+  type StrokeFinalizeReason,
 } from '@/utils/strokeBuffer';
+import strokeBufferSource from '@/utils/strokeBuffer.ts?raw';
 
 function buildLinearPoints(count: number, stepX: number): Array<{ x: number; y: number }> {
   const points: Array<{ x: number; y: number }> = [];
@@ -18,11 +19,12 @@ function runStrokeWithSamples(params: {
   pressures: number[];
   timestampStepMs: number;
   maxBrushSpeedPxPerMs: number;
-  tailTaperEnabled?: boolean;
   spacingPx?: number;
+  finishSpacingPx?: number;
+  maxDabIntervalMs?: number;
 }): {
-  tailDabs: Array<{ x: number; y: number; pressure: number }>;
-  snapshot: TailTaperDebugSnapshot;
+  finalizeDabs: Array<{ x: number; y: number; pressure: number }>;
+  snapshot: StrokeFinalizeDebugSnapshot;
 } {
   const stamper = new BrushStamper();
   stamper.beginStroke();
@@ -35,99 +37,109 @@ function runStrokeWithSamples(params: {
       timestampMs: i * params.timestampStepMs,
       maxBrushSpeedPxPerMs: params.maxBrushSpeedPxPerMs,
       brushSpeedSmoothingSamples: 3,
-      tailTaperEnabled: params.tailTaperEnabled ?? true,
+      maxDabIntervalMs: params.maxDabIntervalMs,
     });
   }
 
-  const tailDabs = stamper.finishStroke(24, {
-    tailTaperEnabled: params.tailTaperEnabled ?? true,
+  const finalizeDabs = stamper.finishStroke(params.finishSpacingPx ?? 24, {
     maxBrushSpeedPxPerMs: params.maxBrushSpeedPxPerMs,
     brushSpeedSmoothingSamples: 3,
+    maxDabIntervalMs: params.maxDabIntervalMs,
   });
-  const snapshot = stamper.getTailTaperDebugSnapshot();
+  const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
   if (!snapshot) {
-    throw new Error('tail debug snapshot must exist after finishStroke');
+    throw new Error('finalize debug snapshot must exist after finishStroke');
   }
-  return { tailDabs, snapshot };
+  return { finalizeDabs, snapshot };
 }
 
-describe('BrushStamper tail taper debug snapshot', () => {
-  it.each<[TailTaperBlockReason, () => TailTaperDebugSnapshot]>([
+describe('BrushStamper finalize debug snapshot', () => {
+  it.each<[StrokeFinalizeReason, () => StrokeFinalizeDebugSnapshot]>([
     [
-      'disabled',
+      'no_active_stroke',
+      () => {
+        const stamper = new BrushStamper();
+        stamper.finishStroke(24);
+        return stamper.getStrokeFinalizeDebugSnapshot()!;
+      },
+    ],
+    [
+      'no_pending_segment',
       () =>
         runStrokeWithSamples({
-          points: buildLinearPoints(8, 6),
-          pressures: new Array(8).fill(0.38),
+          points: [{ x: 0, y: 0 }],
+          pressures: [0.4],
           timestampStepMs: 5,
           maxBrushSpeedPxPerMs: 30,
-          tailTaperEnabled: false,
         }).snapshot,
     ],
     [
-      'insufficient_samples',
-      () =>
-        runStrokeWithSamples({
-          points: buildLinearPoints(2, 3),
-          pressures: [0.4, 0.4],
-          timestampStepMs: 5,
-          maxBrushSpeedPxPerMs: 30,
-          spacingPx: 4,
-        }).snapshot,
-    ],
-    [
-      'missing_segment',
+      'segment_below_threshold',
       () =>
         runStrokeWithSamples({
           points: [
             { x: 0, y: 0 },
-            { x: 6, y: 0 },
-            { x: 12, y: 0 },
-            { x: 18, y: 0 },
-            { x: 18, y: 0 },
-            { x: 18, y: 0 },
+            { x: 4, y: 0 },
+            { x: 4.1, y: 0 },
+            { x: 4.2, y: 0 },
           ],
-          pressures: [0.35, 0.35, 0.35, 0.35, 0.35, 0.35],
-          timestampStepMs: 5,
+          pressures: [0.4, 0.4, 0.4, 0.4],
+          timestampStepMs: 1,
           maxBrushSpeedPxPerMs: 30,
+          spacingPx: 4,
+          finishSpacingPx: 24,
+          maxDabIntervalMs: 1000,
         }).snapshot,
     ],
     [
-      'pressure_already_decaying',
-      () =>
-        runStrokeWithSamples({
-          points: buildLinearPoints(8, 6),
-          pressures: [0.95, 0.92, 0.9, 0.32, 0.2, 0.12, 0.08, 0.06],
-          timestampStepMs: 4,
-          maxBrushSpeedPxPerMs: 30,
-        }).snapshot,
-    ],
-    [
-      'triggered',
+      'emitted_segment',
       () =>
         runStrokeWithSamples({
           points: buildLinearPoints(8, 6),
           pressures: new Array(8).fill(0.4),
           timestampStepMs: 4,
           maxBrushSpeedPxPerMs: 30,
+          maxDabIntervalMs: 1,
         }).snapshot,
     ],
   ])('records reason=%s', (reason, runCase) => {
     const snapshot = runCase();
     expect(snapshot.reason).toBe(reason);
-    expect(snapshot.sampleCount).toBeGreaterThanOrEqual(0);
     expect(snapshot.normalizedSpeed).toBeGreaterThanOrEqual(0);
     expect(snapshot.normalizedSpeed).toBeLessThanOrEqual(1);
+    expect(snapshot.emittedDabCount).toBeGreaterThanOrEqual(0);
+    expect(snapshot.remainingDistancePx).toBeGreaterThanOrEqual(0);
+    expect(snapshot.remainingTimeMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('keeps debug reason and returns converging dabs when triggered', () => {
-    const { tailDabs, snapshot } = runStrokeWithSamples({
+  it('keeps finalize dabs in the final real segment parameter domain', () => {
+    const { finalizeDabs, snapshot } = runStrokeWithSamples({
       points: buildLinearPoints(9, 6),
       pressures: new Array(9).fill(0.42),
       timestampStepMs: 4,
       maxBrushSpeedPxPerMs: 30,
+      maxDabIntervalMs: 1,
     });
-    expect(snapshot.reason).toBe('triggered');
-    expect(tailDabs.length).toBeGreaterThan(0);
+    expect(snapshot.reason).toBe('emitted_segment');
+    expect(finalizeDabs.length).toBeGreaterThan(0);
+    for (const dab of finalizeDabs) {
+      expect(dab.x).toBeGreaterThanOrEqual(42 - 1e-6);
+      expect(dab.x).toBeLessThanOrEqual(48 + 1e-6);
+      expect(dab.y).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('removes legacy tail-injection code path from strokeBuffer source', () => {
+    const source = strokeBufferSource;
+
+    expect(source).not.toMatch(/evaluateTailTaper/);
+    expect(source).not.toMatch(/buildTailDabs/);
+
+    const finishStart = source.indexOf('finishStroke(');
+    const finishEnd = source.indexOf('getStrokeFinalizeDebugSnapshot');
+    expect(finishStart).toBeGreaterThanOrEqual(0);
+    expect(finishEnd).toBeGreaterThan(finishStart);
+    const finishBody = source.slice(finishStart, finishEnd);
+    expect(finishBody).not.toMatch(/pressure\s*:\s*0/);
   });
 });

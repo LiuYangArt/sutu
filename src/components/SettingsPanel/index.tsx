@@ -445,7 +445,6 @@ function TabletSettings() {
     setMaxBrushSpeedPxPerMs,
     setBrushSpeedSmoothingSamples,
     setLowPressureAdaptiveSmoothingEnabled,
-    setTailTaperEnabled,
     setBackpressureMode,
   } = useSettingsStore();
 
@@ -745,17 +744,6 @@ function TabletSettings() {
               type="checkbox"
               checked={tablet.lowPressureAdaptiveSmoothingEnabled}
               onChange={(e) => setLowPressureAdaptiveSmoothingEnabled(e.target.checked)}
-            />
-            <span className="toggle-slider" />
-          </label>
-        </div>
-        <div className="settings-row">
-          <span className="settings-description">{t('settings.tablet.dynamics.tailTaper')}</span>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={tablet.tailTaperEnabled}
-              onChange={(e) => setTailTaperEnabled(e.target.checked)}
             />
             <span className="toggle-slider" />
           </label>

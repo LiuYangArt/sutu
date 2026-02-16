@@ -32,7 +32,6 @@ function seedI18n(): void {
           'settings.tablet.dynamics.title': 'Stroke Dynamics',
           'settings.tablet.dynamics.lowPressureAdaptiveSmoothing':
             'Low pressure adaptive smoothing',
-          'settings.tablet.dynamics.tailTaper': 'Tail taper compensation',
           'settings.tablet.status.title': 'Status',
           'settings.tablet.status.status': 'Status',
           'settings.tablet.status.value.disconnected': 'Disconnected',

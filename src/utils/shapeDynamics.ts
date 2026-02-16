@@ -30,6 +30,12 @@ export interface DynamicsInput {
   initialDirection: number;
   /** Fade progress (0-1, where 0=start, 1=fully faded) */
   fadeProgress: number;
+  /** Distance progress (0-1) */
+  distanceProgress?: number;
+  /** Time progress (0-1) */
+  timeProgress?: number;
+  /** Unified stroke progress (0-1) */
+  strokeProgress?: number;
 }
 
 /**

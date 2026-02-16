@@ -10,7 +10,7 @@ function meanAdjacentDelta(values: number[]): number {
   return sum / (values.length - 1);
 }
 
-describe('BrushStamper speed-based smoothing and tail taper', () => {
+describe('BrushStamper speed-based smoothing and finalize sampling', () => {
   it('uses averaged stroke-start anchor to suppress start jitter spikes', () => {
     const stamper = new BrushStamper();
     stamper.beginStroke();
@@ -88,60 +88,86 @@ describe('BrushStamper speed-based smoothing and tail taper', () => {
     expect(meanAdjacentDelta(adaptivePressures)).toBeLessThan(meanAdjacentDelta(baselinePressures));
   });
 
-  it('generates converging tail dabs on the last real segment when taper is triggered', () => {
+  it('finalize dabs stay on the last real segment and keep pressure continuity', () => {
     const stamper = new BrushStamper();
     stamper.beginStroke();
+    const mainDabs: Array<{ x: number; y: number; pressure: number }> = [];
 
     for (let i = 0; i < 9; i += 1) {
-      stamper.processPoint(i * 6, 0, 0.4, 2, false, {
+      const dabs = stamper.processPoint(i * 6, 0, 0.4, 2, false, {
         timestampMs: i * 4,
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
-        tailTaperEnabled: true,
       });
+      mainDabs.push(...dabs);
     }
 
-    const tailDabs = stamper.finishStroke(24, { tailTaperEnabled: true });
-    const snapshot = stamper.getTailTaperDebugSnapshot();
-    expect(tailDabs.length).toBeGreaterThan(0);
+    const finalizeDabs = stamper.finishStroke(24, {
+      maxBrushSpeedPxPerMs: 30,
+      brushSpeedSmoothingSamples: 3,
+      maxDabIntervalMs: 1,
+    });
+    const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
+    expect(mainDabs.length).toBeGreaterThan(0);
+    expect(finalizeDabs.length).toBeGreaterThan(0);
     expect(snapshot).toBeTruthy();
-    expect(snapshot?.reason).toBe('triggered');
-    const first = tailDabs[0];
-    const last = tailDabs[tailDabs.length - 1];
+    expect(snapshot?.reason).toBe('emitted_segment');
+    const firstMain = mainDabs[mainDabs.length - 1];
+    const first = finalizeDabs[0];
+    const last = finalizeDabs[finalizeDabs.length - 1];
     expect(first).toBeTruthy();
     expect(last).toBeTruthy();
-    if (!first || !last) return;
+    expect(firstMain).toBeTruthy();
+    if (!first || !last || !firstMain) return;
 
-    for (let i = 1; i < tailDabs.length; i += 1) {
-      expect(tailDabs[i]!.pressure).toBeLessThanOrEqual(tailDabs[i - 1]!.pressure + 1e-6);
-    }
-    expect(last.pressure).toBeCloseTo(0, 6);
+    // Main segment and finalize segment should remain continuous in pressure,
+    // instead of dropping to synthetic near-zero values.
+    expect(Math.abs(first.pressure - firstMain.pressure)).toBeLessThan(0.2);
+    expect(last.pressure).toBeGreaterThan(0.15);
 
-    // Tail must stay inside the final real segment [42, 48] and never overshoot.
-    for (const dab of tailDabs) {
+    // Finalize dabs must stay inside the final real segment domain and never overshoot.
+    for (const dab of finalizeDabs) {
       expect(dab.x).toBeGreaterThanOrEqual(42 - 1e-6);
       expect(dab.x).toBeLessThanOrEqual(48 + 1e-6);
       expect(dab.y).toBeCloseTo(0, 6);
     }
   });
 
-  it('skips synthetic convergence when pressure already decays naturally', () => {
-    const stamper = new BrushStamper();
-    stamper.beginStroke();
+  it('timing channel emits extra dabs when distance movement is tiny', () => {
+    const emitMicroSegmentDabs = (maxDabIntervalMs: number): number => {
+      const stamper = new BrushStamper();
+      stamper.beginStroke();
 
-    const pressures = [0.5, 0.42, 0.35, 0.24, 0.16, 0.08, 0.03];
-    for (let i = 0; i < pressures.length; i += 1) {
-      stamper.processPoint(i * 6, 0, pressures[i]!, 2, false, {
-        timestampMs: i * 5,
-        maxBrushSpeedPxPerMs: 100,
+      stamper.processPoint(0, 0, 0.45, 6, false, {
+        timestampMs: 0,
+        maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
-        tailTaperEnabled: true,
+        maxDabIntervalMs,
       });
-    }
+      stamper.processPoint(4, 0, 0.45, 6, false, {
+        timestampMs: 8,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        maxDabIntervalMs,
+      });
 
-    const tailDabs = stamper.finishStroke(24, { tailTaperEnabled: true });
-    const snapshot = stamper.getTailTaperDebugSnapshot();
-    expect(tailDabs).toEqual([]);
-    expect(snapshot?.reason).toBe('pressure_already_decaying');
+      let emitted = 0;
+      for (let i = 0; i < 6; i += 1) {
+        const dabs = stamper.processPoint(4 + (i + 1) * 0.08, 0, 0.45, 6, false, {
+          timestampMs: 48 + i * 40,
+          maxBrushSpeedPxPerMs: 30,
+          brushSpeedSmoothingSamples: 3,
+          maxDabIntervalMs,
+        });
+        emitted += dabs.length;
+      }
+      return emitted;
+    };
+
+    const timingDriven = emitMicroSegmentDabs(10);
+    const distanceOnly = emitMicroSegmentDabs(1000);
+
+    expect(timingDriven).toBeGreaterThan(0);
+    expect(timingDriven).toBeGreaterThan(distanceOnly);
   });
 });

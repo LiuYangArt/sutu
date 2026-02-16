@@ -1,100 +1,183 @@
 /**
- * @description 功能测试: [Feature]: 画笔压感优化：低压平滑与收笔过渡对齐 Krita/Photoshop
+ * @description 功能测试: [Feature] Krita 尾端对齐（主链路收束 + 联合采样）
  * @issue #146
  */
 import { describe, expect, it } from 'vitest';
 import { BrushStamper } from '@/utils/strokeBuffer';
 
-function calcVariance(values: number[]): number {
-  if (values.length === 0) return 0;
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  return values.reduce((sum, value) => sum + (value - mean) * (value - mean), 0) / values.length;
-}
+type StrokeSample = {
+  x: number;
+  y: number;
+  pressure: number;
+  timestampMs: number;
+};
 
-function calcTailDropRate(values: number[]): number {
+function calcMaxAdjacentDrop(values: number[]): number {
   if (values.length < 2) return 0;
-  const start = values[0]!;
-  const end = values[values.length - 1]!;
-  if (start <= 1e-6) return 0;
-  return Math.max(0, (start - end) / start);
+  let maxDrop = 0;
+  for (let i = 1; i < values.length; i += 1) {
+    const prev = values[i - 1] ?? 0;
+    const curr = values[i] ?? 0;
+    maxDrop = Math.max(maxDrop, Math.max(0, prev - curr));
+  }
+  return maxDrop;
 }
 
-function simulateFastLiftStroke(tailTaperEnabled: boolean): number[] {
+function tailSlice(values: number[], ratio: number = 0.2): number[] {
+  if (values.length === 0) return [];
+  const start = Math.max(0, Math.floor(values.length * (1 - ratio)));
+  return values.slice(start);
+}
+
+function runProgramStroke(
+  samples: StrokeSample[],
+  options?: { spacingPx?: number; finishSpacingPx?: number; maxDabIntervalMs?: number }
+): {
+  mainPressures: number[];
+  finalizePressures: number[];
+  finalizeDabs: Array<{ x: number; y: number; pressure: number }>;
+} {
   const stamper = new BrushStamper();
   stamper.beginStroke();
 
-  const allPressures: number[] = [];
-  for (let i = 0; i < 14; i += 1) {
-    const dabs = stamper.processPoint(i * 5, 0, 0.42, 2, false, {
-      timestampMs: i * 4,
-      maxBrushSpeedPxPerMs: 1,
+  const spacingPx = options?.spacingPx ?? 2;
+  const finishSpacingPx = options?.finishSpacingPx ?? 24;
+  const maxDabIntervalMs = options?.maxDabIntervalMs;
+
+  const mainPressures: number[] = [];
+  for (const sample of samples) {
+    const dabs = stamper.processPoint(sample.x, sample.y, sample.pressure, spacingPx, false, {
+      timestampMs: sample.timestampMs,
+      maxBrushSpeedPxPerMs: 30,
       brushSpeedSmoothingSamples: 3,
       lowPressureAdaptiveSmoothingEnabled: true,
-      tailTaperEnabled,
+      maxDabIntervalMs,
     });
-    allPressures.push(...dabs.map((dab) => dab.pressure));
+    mainPressures.push(...dabs.map((dab) => dab.pressure));
   }
 
-  const tailDabs = stamper.finishStroke(24, {
-    maxBrushSpeedPxPerMs: 1,
+  const finalizeDabs = stamper.finishStroke(finishSpacingPx, {
+    maxBrushSpeedPxPerMs: 30,
     brushSpeedSmoothingSamples: 3,
     lowPressureAdaptiveSmoothingEnabled: true,
-    tailTaperEnabled,
+    maxDabIntervalMs,
   });
-  allPressures.push(...tailDabs.map((dab) => dab.pressure));
+  const finalizePressures = finalizeDabs.map((dab) => dab.pressure);
 
-  return allPressures;
+  return {
+    mainPressures,
+    finalizePressures,
+    finalizeDabs,
+  };
 }
 
-function simulateLowPressureStroke(lowPressureAdaptiveSmoothingEnabled: boolean): number[] {
-  const stamper = new BrushStamper();
-  stamper.beginStroke();
-  const pressurePattern = [0.02, 0.1, 0.03, 0.11, 0.02, 0.09, 0.04, 0.1, 0.03, 0.11, 0.02];
-  const pressures: number[] = [];
+function buildFastFlingSamples(): StrokeSample[] {
+  return [
+    { x: 0, y: 0, pressure: 0.45, timestampMs: 0 },
+    { x: 7, y: 0, pressure: 0.45, timestampMs: 3 },
+    { x: 14, y: 0, pressure: 0.44, timestampMs: 6 },
+    { x: 21, y: 0, pressure: 0.43, timestampMs: 9 },
+    { x: 28, y: 0, pressure: 0.42, timestampMs: 12 },
+    { x: 35, y: 0, pressure: 0.42, timestampMs: 15 },
+    { x: 42, y: 0, pressure: 0.41, timestampMs: 18 },
+    { x: 49, y: 0, pressure: 0.4, timestampMs: 21 },
+  ];
+}
 
-  for (let i = 0; i < pressurePattern.length; i += 1) {
-    const dabs = stamper.processPoint(i * 4, 0, pressurePattern[i]!, 2, false, {
-      timestampMs: i * 4,
-      maxBrushSpeedPxPerMs: 1,
-      brushSpeedSmoothingSamples: 3,
-      lowPressureAdaptiveSmoothingEnabled,
-      tailTaperEnabled: false,
+function buildSlowLiftSamples(): StrokeSample[] {
+  return [
+    { x: 0, y: 0, pressure: 0.5, timestampMs: 0 },
+    { x: 4, y: 0, pressure: 0.46, timestampMs: 10 },
+    { x: 8, y: 0, pressure: 0.42, timestampMs: 20 },
+    { x: 12, y: 0, pressure: 0.35, timestampMs: 30 },
+    { x: 16, y: 0, pressure: 0.28, timestampMs: 40 },
+    { x: 20, y: 0, pressure: 0.2, timestampMs: 50 },
+    { x: 24, y: 0, pressure: 0.14, timestampMs: 60 },
+    { x: 28, y: 0, pressure: 0.1, timestampMs: 70 },
+  ];
+}
+
+function buildAbruptStopSamples(): StrokeSample[] {
+  return [
+    { x: 0, y: 0, pressure: 0.48, timestampMs: 0 },
+    { x: 8, y: 0, pressure: 0.48, timestampMs: 4 },
+    { x: 16, y: 0, pressure: 0.48, timestampMs: 8 },
+    { x: 24, y: 0, pressure: 0.47, timestampMs: 12 },
+    { x: 32, y: 0, pressure: 0.47, timestampMs: 16 },
+    { x: 40, y: 0, pressure: 0.46, timestampMs: 20 },
+    { x: 41, y: 0, pressure: 0.46, timestampMs: 24 },
+  ];
+}
+
+describe('[Feature] Krita 尾端对齐（主链路收束 + 联合采样）', () => {
+  it('固定程序样本下尾段压力曲线连续，不出现补丁式突降', () => {
+    const cases = [buildFastFlingSamples(), buildSlowLiftSamples(), buildAbruptStopSamples()];
+
+    for (const samples of cases) {
+      const result = runProgramStroke(samples);
+      const allPressures = [...result.mainPressures, ...result.finalizePressures];
+      expect(allPressures.length).toBeGreaterThan(3);
+
+      const tailPressures = tailSlice(allPressures, 0.25);
+      expect(tailPressures.length).toBeGreaterThan(1);
+      expect(calcMaxAdjacentDrop(tailPressures)).toBeLessThan(0.35);
+
+      if (result.mainPressures.length > 0 && result.finalizePressures.length > 0) {
+        const lastMain = result.mainPressures[result.mainPressures.length - 1] ?? 0;
+        const firstFinalize = result.finalizePressures[0] ?? 0;
+        expect(Math.abs(firstFinalize - lastMain)).toBeLessThan(0.2);
+      }
+    }
+  });
+
+  it('联合采样下，低位移高时差输入可由 timing 通道触发额外采样', () => {
+    const microSamples: StrokeSample[] = [
+      { x: 0, y: 0, pressure: 0.45, timestampMs: 0 },
+      { x: 4, y: 0, pressure: 0.45, timestampMs: 8 },
+      { x: 4.08, y: 0, pressure: 0.45, timestampMs: 48 },
+      { x: 4.16, y: 0, pressure: 0.45, timestampMs: 88 },
+      { x: 4.24, y: 0, pressure: 0.45, timestampMs: 128 },
+      { x: 4.32, y: 0, pressure: 0.45, timestampMs: 168 },
+      { x: 4.4, y: 0, pressure: 0.45, timestampMs: 208 },
+    ];
+
+    const timingDriven = runProgramStroke(microSamples, {
+      spacingPx: 6,
+      finishSpacingPx: 24,
+      maxDabIntervalMs: 10,
     });
-    pressures.push(...dabs.map((dab) => dab.pressure));
-  }
+    const distanceOnly = runProgramStroke(microSamples, {
+      spacingPx: 6,
+      finishSpacingPx: 24,
+      maxDabIntervalMs: 1000,
+    });
 
-  stamper.finishStroke(20, {
-    lowPressureAdaptiveSmoothingEnabled,
-    tailTaperEnabled: false,
+    const timingCount = timingDriven.mainPressures.length + timingDriven.finalizePressures.length;
+    const distanceOnlyCount =
+      distanceOnly.mainPressures.length + distanceOnly.finalizePressures.length;
+
+    expect(timingCount).toBeGreaterThan(0);
+    expect(timingCount).toBeGreaterThan(distanceOnlyCount);
   });
 
-  return pressures;
-}
+  it('收笔新增 dabs 保持在真实末段参数域内（不越界外推）', () => {
+    const samples = Array.from({ length: 9 }, (_, index) => ({
+      x: index * 6,
+      y: 0,
+      pressure: 0.42,
+      timestampMs: index * 4,
+    }));
 
-describe('[Feature]: 画笔压感优化：低压平滑与收笔过渡对齐 Krita/Photoshop', () => {
-  it('末端 10% 笔程平均线宽下降率（压力代理）在 tail taper 启用后提升', () => {
-    const baseline = simulateFastLiftStroke(false);
-    const improved = simulateFastLiftStroke(true);
-
-    const baselineTail = baseline.slice(Math.max(0, Math.floor(baseline.length * 0.9)));
-    const improvedTail = improved.slice(Math.max(0, Math.floor(improved.length * 0.9)));
-
-    const baselineDropRate = calcTailDropRate(baselineTail);
-    const improvedDropRate = calcTailDropRate(improvedTail);
-
-    expect(improvedDropRate).toBeGreaterThan(baselineDropRate);
-  });
-
-  it('低压段线宽方差（压力代理）在自适应平滑启用后下降', () => {
-    const baseline = simulateLowPressureStroke(false);
-    const improved = simulateLowPressureStroke(true);
-
-    const baselineVariance = calcVariance(baseline);
-    const improvedVariance = calcVariance(improved);
-
-    expect(improved.length).toBeGreaterThan(3);
-    expect(baseline.length).toBeGreaterThan(3);
-    expect(improvedVariance).toBeLessThan(baselineVariance);
+    const { finalizeDabs } = runProgramStroke(samples, {
+      spacingPx: 2,
+      finishSpacingPx: 24,
+      maxDabIntervalMs: 1,
+    });
+    expect(finalizeDabs.length).toBeGreaterThan(0);
+    for (const dab of finalizeDabs) {
+      expect(dab.x).toBeGreaterThanOrEqual(42 - 1e-6);
+      expect(dab.x).toBeLessThanOrEqual(48 + 1e-6);
+      expect(dab.y).toBeCloseTo(0, 6);
+    }
   });
 });
-

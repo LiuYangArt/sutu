@@ -30,7 +30,7 @@ import type {
 } from '@/test/strokeCaptureFixedFile';
 import type { StrokeCaptureData, StrokeReplayOptions } from '@/test/StrokeCapture';
 import { appDotStorageKey, appHyphenStorageKey } from '@/constants/appMeta';
-import type { TailTaperDebugSnapshot } from '@/utils/strokeBuffer';
+import type { StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
 import {
   GPUContext,
   type GpuBrushCommitReadbackMode,
@@ -64,7 +64,7 @@ interface UseGlobalExportsParams {
   setGpuBrushCommitReadbackMode?: (mode: GpuBrushCommitReadbackMode) => boolean;
   getGpuBrushNoReadbackPilot?: () => boolean;
   setGpuBrushNoReadbackPilot?: (enabled: boolean) => boolean;
-  getTailTaperDebugSnapshot?: () => TailTaperDebugSnapshot | null;
+  getStrokeFinalizeDebugSnapshot?: () => StrokeFinalizeDebugSnapshot | null;
   markGpuLayerDirty?: (layerIds?: string | string[]) => void;
   exportGpuLayerImageData?: (layerId: string) => Promise<ImageData | null>;
   exportGpuFlattenedImageData?: () => Promise<ImageData | null>;
@@ -221,7 +221,7 @@ export function useGlobalExports({
   setGpuBrushCommitReadbackMode,
   getGpuBrushNoReadbackPilot,
   setGpuBrushNoReadbackPilot,
-  getTailTaperDebugSnapshot,
+  getStrokeFinalizeDebugSnapshot,
   markGpuLayerDirty,
   exportGpuLayerImageData,
   exportGpuFlattenedImageData,
@@ -281,7 +281,8 @@ export function useGlobalExports({
       __gpuBrushCommitReadbackModeSet?: (mode: GpuBrushCommitReadbackMode) => boolean;
       __gpuBrushNoReadbackPilot?: () => boolean;
       __gpuBrushNoReadbackPilotSet?: (enabled: boolean) => boolean;
-      __brushTailTaperDebug?: () => TailTaperDebugSnapshot | null;
+      __brushStrokeFinalizeDebug?: () => StrokeFinalizeDebugSnapshot | null;
+      __brushTailTaperDebug?: () => StrokeFinalizeDebugSnapshot | null;
       __strokeCaptureStart?: () => boolean;
       __strokeCaptureStop?: () => StrokeCaptureData | null;
       __strokeCaptureLast?: () => StrokeCaptureData | null;
@@ -435,8 +436,12 @@ export function useGlobalExports({
       if (typeof enabled !== 'boolean') return false;
       return setGpuBrushNoReadbackPilot?.(enabled) ?? false;
     };
+    win.__brushStrokeFinalizeDebug = () => {
+      return getStrokeFinalizeDebugSnapshot?.() ?? null;
+    };
+    // Deprecated alias kept for one release cycle.
     win.__brushTailTaperDebug = () => {
-      return getTailTaperDebugSnapshot?.() ?? null;
+      return getStrokeFinalizeDebugSnapshot?.() ?? null;
     };
 
     const applyReplayContext = async (capture: StrokeCaptureData): Promise<void> => {
@@ -1175,6 +1180,7 @@ export function useGlobalExports({
       delete win.__gpuBrushCommitReadbackModeSet;
       delete win.__gpuBrushNoReadbackPilot;
       delete win.__gpuBrushNoReadbackPilotSet;
+      delete win.__brushStrokeFinalizeDebug;
       delete win.__brushTailTaperDebug;
       delete win.__strokeCaptureStart;
       delete win.__strokeCaptureStop;
@@ -1209,7 +1215,7 @@ export function useGlobalExports({
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
-    getTailTaperDebugSnapshot,
+    getStrokeFinalizeDebugSnapshot,
     markGpuLayerDirty,
     exportGpuLayerImageData,
     exportGpuFlattenedImageData,

@@ -274,17 +274,17 @@ private smoothPressure(rawPressure: number): number {
 本次已按 “P0 -> P1” 连续落地，关键点如下：
 
 1. **GPU/CPU 收笔路径同源化已完成**
-   - `prepareStrokeEndGpu()` 与 `endStroke()` 统一走 `finalizeStrokeTailOnce(trigger)`。
-   - 每个 stroke 只允许一次 tail finalize（幂等锁），避免重复注入。
+   - `prepareStrokeEndGpu()` 与 `endStroke()` 统一走 `finalizeStrokeOnce(trigger)`。
+   - 每个 stroke 只允许一次 finalize（幂等锁），避免重复提交末段。
 
 2. **tail 压感映射链路已统一**
    - 进入 stamper 前统一走 global pressure LUT。
-   - 主 dab 与 tail dab 统一走 `stamper pressure -> brush pressure curve` 映射。
+   - 主段 dab 与 finalize 末段 dab 统一走 `stamper pressure -> brush pressure curve` 映射。
 
 3. **tail 调试可观测性已接入**
-   - `BrushStamper` 新增 `TailTaperDebugSnapshot` 与 `TailTaperBlockReason`。
-   - `useBrushRenderer` 暴露 `getTailTaperDebugSnapshot()`。
-   - `Canvas` 全局新增 `window.__brushTailTaperDebug?.()`。
+   - `BrushStamper` 使用 `StrokeFinalizeDebugSnapshot`。
+   - `useBrushRenderer` 暴露 `getStrokeFinalizeDebugSnapshot()`。
+   - `Canvas` 全局新增 `window.__brushStrokeFinalizeDebug?.()`，并保留 `window.__brushTailTaperDebug?.()` 兼容别名（deprecated）。
 
 4. **曲线交互内核复用已完成**
    - 新增 `src/components/CurveEditor/singleChannelCore.ts`。
@@ -329,7 +329,7 @@ private smoothPressure(rawPressure: number): number {
    - 一旦收尾链路在 pressure 映射、spacing、提交时序上与主链路分叉，就会出现“看起来像贴上去的尾巴”。
 
 3. **调试可观测性必须常驻**
-   - `window.__brushTailTaperDebug?.()` 能快速区分“阈值未触发”与“几何段缺失”等问题，否则会反复误判为算法参数问题。
+   - `window.__brushStrokeFinalizeDebug?.()`（兼容别名 `window.__brushTailTaperDebug?.()`）能快速区分“无有效末段”与“末段采样不足”等问题，否则会反复误判为参数问题。
 
 ### 2026-02-16 实装校正补记（本次）
 
@@ -379,7 +379,7 @@ private smoothPressure(rawPressure: number): number {
 
 本轮后，#146 的“压感一致性”不再仅靠主观手感判断，已经由语义约束 + 关键回归用例共同锁定。
 
-## 2026-02-16 实装回补（Krita 收尾链路恢复）
+## 2026-02-16 实装回补（历史记录，已被 P0+P1 替换）
 
 针对“文档写了 finish segment 收敛，但代码未真实提交 tail dabs”的漂移，本次做了回补：
 
@@ -399,3 +399,11 @@ private smoothPressure(rawPressure: number): number {
    - `brushStamper.speedTail`：从“必须无 tail”改为“触发时必须有合法 tail，且不越界”。
    - `brushStamper.tailDebug`：reason 集合收敛为 `disabled/missing_segment/insufficient_samples/pressure_already_decaying/triggered`，并验证 `triggered` 时存在 tail dabs。
    - `useBrushRenderer.strokeEnd`：验证 `prepareStrokeEndGpu()` 会新增末段 tail dabs，且重复 prepare/end 不会重复注入。
+
+## 2026-02-16 P0+P1 全自动验收更新（当前生效）
+
+1. 已移除注入式 tail 架构，不再存在独立 tail 触发器与外推几何。
+2. 收笔仅通过主链路 finalize 输出真实末段采样，禁止末点强制 `pressure=0`。
+3. 新增 distance + timing 联合采样器，并在低位移高时差输入下由 timing 通道补样。
+4. `fadeProgress`、`distanceProgress`、`timeProgress` 已进入统一 DynamicsInput，主段/末段同链路计算。
+5. 设置项 `tailTaperEnabled`、对应 UI 和 i18n key 已删除；旧配置字段读取时自动忽略。

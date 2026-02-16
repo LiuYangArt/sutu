@@ -16,7 +16,7 @@ import {
   DabParams,
   MaskType,
   type Rect,
-  type TailTaperDebugSnapshot,
+  type StrokeFinalizeDebugSnapshot,
 } from '@/utils/strokeBuffer';
 import {
   applyPressureCurve,
@@ -65,6 +65,39 @@ import { useToastStore } from '@/stores/toast';
 import { samplePressureCurveLut } from '@/utils/pressureCurve';
 
 const MIN_ROUNDNESS = 0.01;
+const STROKE_PROGRESS_DISTANCE_PX = 1200;
+const STROKE_PROGRESS_TIME_MS = 1500;
+const STROKE_PROGRESS_DAB_COUNT = 180;
+
+function resolveStrokeProgress(metrics: {
+  distancePx: number;
+  dabCount: number;
+  startTimestampMs: number | null;
+  currentTimestampMs: number | null;
+}): {
+  fadeProgress: number;
+  distanceProgress: number;
+  timeProgress: number;
+  strokeProgress: number;
+} {
+  const distanceProgress = Math.max(
+    0,
+    Math.min(1, metrics.distancePx / STROKE_PROGRESS_DISTANCE_PX)
+  );
+  const timeElapsedMs =
+    metrics.startTimestampMs !== null && metrics.currentTimestampMs !== null
+      ? Math.max(0, metrics.currentTimestampMs - metrics.startTimestampMs)
+      : 0;
+  const timeProgress = Math.max(0, Math.min(1, timeElapsedMs / STROKE_PROGRESS_TIME_MS));
+  const dabProgress = Math.max(0, Math.min(1, metrics.dabCount / STROKE_PROGRESS_DAB_COUNT));
+  const strokeProgress = Math.max(distanceProgress, timeProgress, dabProgress);
+  return {
+    fadeProgress: strokeProgress,
+    distanceProgress,
+    timeProgress,
+    strokeProgress,
+  };
+}
 
 function clampRoundness(roundness: number): number {
   return Math.max(MIN_ROUNDNESS, Math.min(1, roundness));
@@ -192,7 +225,6 @@ export interface BrushRenderConfig {
   maxBrushSpeedPxPerMs?: number;
   brushSpeedSmoothingSamples?: number;
   lowPressureAdaptiveSmoothingEnabled?: boolean;
-  tailTaperEnabled?: boolean;
   pressureCurve: PressureCurve;
   texture?: BrushTexture | null; // Texture for sampled brushes (from ABR import)
   // Shape Dynamics settings (Photoshop-compatible)
@@ -277,10 +309,10 @@ export interface UseBrushRendererResult {
   getGpuRenderScale: () => number;
   getGpuDiagnosticsSnapshot: () => unknown;
   resetGpuDiagnostics: () => boolean;
-  getTailTaperDebugSnapshot: () => TailTaperDebugSnapshot | null;
+  getStrokeFinalizeDebugSnapshot: () => StrokeFinalizeDebugSnapshot | null;
 }
 
-type StrokeTailFinalizeTrigger = 'end-stroke' | 'prepare-gpu';
+type StrokeFinalizeTrigger = 'end-stroke' | 'prepare-gpu';
 
 export function useBrushRenderer({
   width,
@@ -311,9 +343,9 @@ export function useBrushRenderer({
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
   const gpuCommitLockActiveRef = useRef(false);
   const gpuCommitLockResolveRef = useRef<(() => void) | null>(null);
-  const strokeTailFinalizeRef = useRef<{
+  const strokeFinalizeRef = useRef<{
     finalized: boolean;
-    trigger: StrokeTailFinalizeTrigger | null;
+    trigger: StrokeFinalizeTrigger | null;
   }>({
     finalized: false,
     trigger: null,
@@ -340,6 +372,11 @@ export function useBrushRenderer({
     tiltY: 0,
     rotation: 0,
   });
+  const lastSpacingPxRef = useRef(1);
+  const strokeDabCountRef = useRef(0);
+  const strokeDistanceRef = useRef(0);
+  const strokeStartTimestampMsRef = useRef<number | null>(null);
+  const strokeCurrentTimestampMsRef = useRef<number | null>(null);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -447,7 +484,12 @@ export function useBrushRenderer({
       strokeColorJitterSampleRef.current = null;
       lastConfigRef.current = null;
       lastPointerDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
-      strokeTailFinalizeRef.current = {
+      lastSpacingPxRef.current = 1;
+      strokeDabCountRef.current = 0;
+      strokeDistanceRef.current = 0;
+      strokeStartTimestampMsRef.current = null;
+      strokeCurrentTimestampMsRef.current = null;
+      strokeFinalizeRef.current = {
         finalized: false,
         trigger: null,
       };
@@ -522,7 +564,7 @@ export function useBrushRenderer({
 
   const renderPrimaryDabs = useCallback(
     (
-      dabs: Array<{ x: number; y: number; pressure: number }>,
+      dabs: Array<{ x: number; y: number; pressure: number; timestampMs?: number }>,
       config: BrushRenderConfig,
       dynamics: { tiltX: number; tiltY: number; rotation: number }
     ): void => {
@@ -569,6 +611,18 @@ export function useBrushRenderer({
         }
 
         lastDabPosRef.current = { x: dab.x, y: dab.y };
+        strokeDabCountRef.current += 1;
+
+        const dabTimestampMs =
+          typeof dab.timestampMs === 'number' && Number.isFinite(dab.timestampMs)
+            ? dab.timestampMs
+            : null;
+        if (dabTimestampMs !== null) {
+          if (strokeStartTimestampMsRef.current === null) {
+            strokeStartTimestampMsRef.current = dabTimestampMs;
+          }
+          strokeCurrentTimestampMsRef.current = dabTimestampMs;
+        }
 
         const dabPressure = mapStamperPressureToBrush(config, dab.pressure);
         let dabSize = config.size;
@@ -579,6 +633,10 @@ export function useBrushRenderer({
 
         let direction = 0;
         if (prevDabPosRef.current) {
+          strokeDistanceRef.current += Math.hypot(
+            dab.x - prevDabPosRef.current.x,
+            dab.y - prevDabPosRef.current.y
+          );
           direction = calculateDirection(
             prevDabPosRef.current.x,
             prevDabPosRef.current.y,
@@ -606,7 +664,12 @@ export function useBrushRenderer({
           rotation,
           direction,
           initialDirection: initialDirectionRef.current ?? direction,
-          fadeProgress: 0,
+          ...resolveStrokeProgress({
+            distancePx: strokeDistanceRef.current,
+            dabCount: strokeDabCountRef.current,
+            startTimestampMs: strokeStartTimestampMsRef.current,
+            currentTimestampMs: strokeCurrentTimestampMsRef.current,
+          }),
         };
 
         const { flow: dabFlow, dabOpacity } = resolveDabFlowAndOpacity(
@@ -715,19 +778,19 @@ export function useBrushRenderer({
     [backend, mapStamperPressureToBrush, resolveDabFlowAndOpacity, stampDabToBackend]
   );
 
-  const finalizeStrokeTailOnce = useCallback(
-    (trigger: StrokeTailFinalizeTrigger): void => {
-      if (strokeTailFinalizeRef.current.finalized) {
+  const finalizeStrokeOnce = useCallback(
+    (trigger: StrokeFinalizeTrigger): void => {
+      if (strokeFinalizeRef.current.finalized) {
         return;
       }
-      strokeTailFinalizeRef.current = {
+      strokeFinalizeRef.current = {
         finalized: true,
         trigger,
       };
 
       if (strokeCancelledRef.current) {
         stamperRef.current.finishStroke(0);
-        secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
+        secondaryStamperRef.current.finishStroke(0);
         lastConfigRef.current = null;
         strokeCancelledRef.current = false;
         return;
@@ -736,19 +799,18 @@ export function useBrushRenderer({
       const config = lastConfigRef.current;
       if (!config) {
         stamperRef.current.finishStroke(0);
-        secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
+        secondaryStamperRef.current.finishStroke(0);
         return;
       }
 
-      const tailDabs = stamperRef.current.finishStroke(Math.max(1, config.size), {
+      const finalizeDabs = stamperRef.current.finishStroke(lastSpacingPxRef.current, {
         maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
         brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
         lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
-        tailTaperEnabled: config.tailTaperEnabled,
       });
-      secondaryStamperRef.current.finishStroke(0, { tailTaperEnabled: false });
-      if (tailDabs.length > 0) {
-        renderPrimaryDabs(tailDabs, config, lastPointerDynamicsRef.current);
+      secondaryStamperRef.current.finishStroke(0);
+      if (finalizeDabs.length > 0) {
+        renderPrimaryDabs(finalizeDabs, config, lastPointerDynamicsRef.current);
       }
 
       lastConfigRef.current = null;
@@ -790,7 +852,6 @@ export function useBrushRenderer({
         maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
         brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
         lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
-        tailTaperEnabled: config.tailTaperEnabled,
       };
 
       const globalPressure = mapInputPressureForStamper(config, pressure);
@@ -814,6 +875,15 @@ export function useBrushRenderer({
       // Shape Dynamics size control should affect spacing (jitter does not)
       let spacingSize = size;
       if (hasShapeSizeControl) {
+        const spacingProgress = resolveStrokeProgress({
+          distancePx: strokeDistanceRef.current,
+          dabCount: strokeDabCountRef.current,
+          startTimestampMs: strokeStartTimestampMsRef.current,
+          currentTimestampMs:
+            typeof inputMeta?.timestampMs === 'number' && Number.isFinite(inputMeta.timestampMs)
+              ? inputMeta.timestampMs
+              : strokeCurrentTimestampMsRef.current,
+        });
         const spacingInput: DynamicsInput = {
           pressure: adjustedPressure,
           tiltX,
@@ -821,7 +891,7 @@ export function useBrushRenderer({
           rotation,
           direction: 0,
           initialDirection: 0,
-          fadeProgress: 0,
+          ...spacingProgress,
         };
         spacingSize = computeControlledSize(size, effectiveShapeDynamics!, spacingInput);
       }
@@ -829,6 +899,7 @@ export function useBrushRenderer({
       // Get dab positions from stamper
       const spacingBase = computeSpacingBasePx(spacingSize, config.roundness / 100, config.texture);
       const spacingPx = spacingBase * config.spacing;
+      lastSpacingPxRef.current = Math.max(0.5, spacingPx);
       const buildupMode = config.buildupEnabled;
       const dabs = stamper.processPoint(
         x,
@@ -958,11 +1029,11 @@ export function useBrushRenderer({
   const endStroke = useCallback(
     async (layerCtx: CanvasRenderingContext2D): Promise<void> => {
       if (strokeCancelledRef.current) {
-        finalizeStrokeTailOnce('end-stroke');
+        finalizeStrokeOnce('end-stroke');
         return;
       }
 
-      finalizeStrokeTailOnce('end-stroke');
+      finalizeStrokeOnce('end-stroke');
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         const gpuBuffer = gpuBufferRef.current;
@@ -996,7 +1067,7 @@ export function useBrushRenderer({
         );
       }
     },
-    [backend, finalizeStrokeTailOnce]
+    [backend, finalizeStrokeOnce]
   );
 
   /**
@@ -1061,7 +1132,7 @@ export function useBrushRenderer({
 
   const prepareStrokeEndGpu = useCallback(async (): Promise<GpuStrokePrepareResult> => {
     if (backend === 'gpu' && gpuBufferRef.current) {
-      finalizeStrokeTailOnce('prepare-gpu');
+      finalizeStrokeOnce('prepare-gpu');
 
       // Align GPU commit path with legacy endStroke lock to prevent tailgating.
       if (!gpuCommitLockActiveRef.current && !finishingPromiseRef.current) {
@@ -1096,7 +1167,7 @@ export function useBrushRenderer({
       compositeMode: strokeCompositeModeRef.current,
       scratch: null,
     };
-  }, [backend, finalizeStrokeTailOnce, releaseGpuCommitLock]);
+  }, [backend, finalizeStrokeOnce, releaseGpuCommitLock]);
 
   const clearScratchGpu = useCallback(() => {
     try {
@@ -1148,8 +1219,8 @@ export function useBrushRenderer({
     return true;
   }, []);
 
-  const getTailTaperDebugSnapshot = useCallback((): TailTaperDebugSnapshot | null => {
-    return stamperRef.current.getTailTaperDebugSnapshot();
+  const getStrokeFinalizeDebugSnapshot = useCallback((): StrokeFinalizeDebugSnapshot | null => {
+    return stamperRef.current.getStrokeFinalizeDebugSnapshot();
   }, []);
 
   /**
@@ -1198,6 +1269,6 @@ export function useBrushRenderer({
     getGpuRenderScale,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
-    getTailTaperDebugSnapshot,
+    getStrokeFinalizeDebugSnapshot,
   };
 }

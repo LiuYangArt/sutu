@@ -80,7 +80,6 @@ export interface TabletSettings {
   maxBrushSpeedPxPerMs: number;
   brushSpeedSmoothingSamples: number;
   lowPressureAdaptiveSmoothingEnabled: boolean;
-  tailTaperEnabled: boolean;
   backpressureMode: 'lossless' | 'latency_capped';
   autoStart: boolean;
 }
@@ -180,7 +179,6 @@ interface SettingsState extends PersistedSettings {
   setMaxBrushSpeedPxPerMs: (value: number) => void;
   setBrushSpeedSmoothingSamples: (value: number) => void;
   setLowPressureAdaptiveSmoothingEnabled: (enabled: boolean) => void;
-  setTailTaperEnabled: (enabled: boolean) => void;
   setBackpressureMode: (mode: TabletSettings['backpressureMode']) => void;
   setAutoStart: (enabled: boolean) => void;
 
@@ -526,7 +524,6 @@ const defaultSettings: PersistedSettings = {
     maxBrushSpeedPxPerMs: DEFAULT_MAX_BRUSH_SPEED_PX_PER_MS,
     brushSpeedSmoothingSamples: DEFAULT_BRUSH_SPEED_SMOOTHING_SAMPLES,
     lowPressureAdaptiveSmoothingEnabled: true,
-    tailTaperEnabled: true,
     backpressureMode: 'lossless',
     autoStart: true,
   },
@@ -720,13 +717,6 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
-    setTailTaperEnabled: (enabled) => {
-      set((state) => {
-        state.tablet.tailTaperEnabled = enabled;
-      });
-      debouncedSave(() => get()._saveSettings());
-    },
-
     setBackpressureMode: (mode) => {
       set((state) => {
         state.tablet.backpressureMode = mode;
@@ -914,10 +904,6 @@ export const useSettingsStore = create<SettingsState>()(
                 lowPressureAdaptiveSmoothingEnabled: normalizeBoolean(
                   mergedTablet.lowPressureAdaptiveSmoothingEnabled,
                   defaultSettings.tablet.lowPressureAdaptiveSmoothingEnabled
-                ),
-                tailTaperEnabled: normalizeBoolean(
-                  mergedTablet.tailTaperEnabled,
-                  defaultSettings.tablet.tailTaperEnabled
                 ),
               };
             }

@@ -37,7 +37,7 @@ import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LagometerMonitor } from '@/benchmark/LagometerMonitor';
 import { FPSCounter } from '@/benchmark/FPSCounter';
 import { LayerRenderer, type LayerMovePreview } from '@/utils/layerRenderer';
-import type { Rect, TailTaperDebugSnapshot } from '@/utils/strokeBuffer';
+import type { Rect, StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
 import type {
   StrokeCaptureController,
   StrokeCaptureData,
@@ -211,7 +211,8 @@ declare global {
     }>;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
-    __brushTailTaperDebug?: () => TailTaperDebugSnapshot | null;
+    __brushTailTaperDebug?: () => StrokeFinalizeDebugSnapshot | null;
+    __brushStrokeFinalizeDebug?: () => StrokeFinalizeDebugSnapshot | null;
     __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
     __canvasCurvesPreview?: (
       sessionId: string,
@@ -533,7 +534,6 @@ export function Canvas() {
       maxBrushSpeedPxPerMs,
       brushSpeedSmoothingSamples,
       lowPressureAdaptiveSmoothingEnabled,
-      tailTaperEnabled,
     },
   } = useSettingsStore();
   const globalPressureLut = useMemo(
@@ -762,7 +762,7 @@ export function Canvas() {
     getGpuRenderScale,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
-    getTailTaperDebugSnapshot,
+    getStrokeFinalizeDebugSnapshot,
   } = useBrushRenderer({
     width,
     height,
@@ -1987,7 +1987,7 @@ export function Canvas() {
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
-    getTailTaperDebugSnapshot,
+    getStrokeFinalizeDebugSnapshot,
     markGpuLayerDirty: markLayerDirty,
     exportGpuLayerImageData,
     exportGpuFlattenedImageData,
@@ -2165,7 +2165,6 @@ export function Canvas() {
       maxBrushSpeedPxPerMs,
       brushSpeedSmoothingSamples,
       lowPressureAdaptiveSmoothingEnabled,
-      tailTaperEnabled,
       pressureCurve,
       texture: brushTexture,
       shapeDynamicsEnabled,
@@ -2217,7 +2216,6 @@ export function Canvas() {
     maxBrushSpeedPxPerMs,
     brushSpeedSmoothingSamples,
     lowPressureAdaptiveSmoothingEnabled,
-    tailTaperEnabled,
     pressureCurve,
     brushTexture,
     shapeDynamicsEnabled,

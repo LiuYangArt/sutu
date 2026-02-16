@@ -314,7 +314,6 @@
     "settings.tablet.brushSpeed.smoothing": "笔刷速度平滑：{{value}} 个样本",
     "settings.tablet.brushSpeed.title": "笔刷速度",
     "settings.tablet.dynamics.lowPressureAdaptiveSmoothing": "低压自适应平滑",
-    "settings.tablet.dynamics.tailTaper": "收笔尾端补偿",
     "settings.tablet.dynamics.title": "笔画动态",
     "settings.tablet.pressureCurve.curve": "曲线",
     "settings.tablet.pressureCurve.hard": "硬",
