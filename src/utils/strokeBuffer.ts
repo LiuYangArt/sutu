@@ -1341,6 +1341,9 @@ export class BrushStamper {
   private prevPoint: { x: number; y: number; pressure: number } | null = null;
   private isStrokeStart: boolean = true;
   private strokeStartPoint: { x: number; y: number } | null = null;
+  private strokeStartSampleSumX: number = 0;
+  private strokeStartSampleSumY: number = 0;
+  private strokeStartSampleCount: number = 0;
   private hasMovedEnough: boolean = false;
 
   // Smoothed pressure using EMA
@@ -1386,9 +1389,45 @@ export class BrushStamper {
     return t * t * (3 - 2 * t);
   }
 
-  private static smootherstep01(value: number): number {
-    const t = BrushStamper.clamp01(value);
-    return t * t * t * (t * (t * 6 - 15) + 10);
+  private static clamp(value: number, min: number, max: number): number {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, value));
+  }
+
+  private static sampleCubicHermite(
+    p0: number,
+    m0: number,
+    p1: number,
+    m1: number,
+    t: number
+  ): number {
+    const u = BrushStamper.clamp01(t);
+    const u2 = u * u;
+    const u3 = u2 * u;
+    const h00 = 2 * u3 - 3 * u2 + 1;
+    const h10 = u3 - 2 * u2 + u;
+    const h01 = -2 * u3 + 3 * u2;
+    const h11 = u3 - u2;
+    return h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
+  }
+
+  private static sampleCubicBezierPoint(
+    p0: { x: number; y: number },
+    c1: { x: number; y: number },
+    c2: { x: number; y: number },
+    p3: { x: number; y: number },
+    t: number
+  ): { x: number; y: number } {
+    const u = BrushStamper.clamp01(t);
+    const oneMinusU = 1 - u;
+    const oneMinusU2 = oneMinusU * oneMinusU;
+    const oneMinusU3 = oneMinusU2 * oneMinusU;
+    const u2 = u * u;
+    const u3 = u2 * u;
+    return {
+      x: oneMinusU3 * p0.x + 3 * oneMinusU2 * u * c1.x + 3 * oneMinusU * u2 * c2.x + u3 * p3.x,
+      y: oneMinusU3 * p0.y + 3 * oneMinusU2 * u * c1.y + 3 * oneMinusU * u2 * c2.y + u3 * p3.y,
+    };
   }
 
   private static clampInt(value: number, min: number, max: number): number {
@@ -1415,6 +1454,9 @@ export class BrushStamper {
     this.prevPoint = null;
     this.isStrokeStart = true;
     this.strokeStartPoint = null;
+    this.strokeStartSampleSumX = 0;
+    this.strokeStartSampleSumY = 0;
+    this.strokeStartSampleCount = 0;
     this.hasMovedEnough = false;
     this.smoothedPressure = 0;
     this.speedEstimator.reset();
@@ -1473,6 +1515,78 @@ export class BrushStamper {
     if (this.tailSampleHistory.length > BrushStamper.MAX_TAIL_HISTORY) {
       this.tailSampleHistory.shift();
     }
+  }
+
+  private appendStrokeStartSample(x: number, y: number): void {
+    if (this.strokeStartPoint) {
+      const jitterRadius = BrushStamper.MIN_MOVEMENT_DISTANCE * 0.35;
+      const dx = x - this.strokeStartPoint.x;
+      const dy = y - this.strokeStartPoint.y;
+      if (Math.hypot(dx, dy) > jitterRadius) {
+        return;
+      }
+    }
+    this.strokeStartSampleSumX += x;
+    this.strokeStartSampleSumY += y;
+    this.strokeStartSampleCount += 1;
+  }
+
+  private resolveStrokeStartAnchor(): { x: number; y: number } {
+    if (this.strokeStartSampleCount > 0) {
+      return {
+        x: this.strokeStartSampleSumX / this.strokeStartSampleCount,
+        y: this.strokeStartSampleSumY / this.strokeStartSampleCount,
+      };
+    }
+    return this.strokeStartPoint ? { ...this.strokeStartPoint } : { x: 0, y: 0 };
+  }
+
+  private clearStrokeStartSamples(): void {
+    this.strokeStartSampleSumX = 0;
+    this.strokeStartSampleSumY = 0;
+    this.strokeStartSampleCount = 0;
+  }
+
+  private resolveTailCurvatureOffset(dirX: number, dirY: number, tailLengthPx: number): number {
+    if (this.tailSampleHistory.length < 3) return 0;
+    const p0 = this.tailSampleHistory[this.tailSampleHistory.length - 3]!;
+    const p1 = this.tailSampleHistory[this.tailSampleHistory.length - 2]!;
+    const p2 = this.tailSampleHistory[this.tailSampleHistory.length - 1]!;
+    const v1x = p1.x - p0.x;
+    const v1y = p1.y - p0.y;
+    const v2x = p2.x - p1.x;
+    const v2y = p2.y - p1.y;
+    const len1 = Math.hypot(v1x, v1y);
+    const len2 = Math.hypot(v2x, v2y);
+    if (len1 <= 1e-6 || len2 <= 1e-6) return 0;
+
+    const n1x = v1x / len1;
+    const n1y = v1y / len1;
+    const n2x = v2x / len2;
+    const n2y = v2y / len2;
+    const cross = n1x * n2y - n1y * n2x;
+    const dot = BrushStamper.clamp(n1x * n2x + n1y * n2y, -1, 1);
+    const signedAngle = Math.atan2(cross, dot);
+    const angleFactor = BrushStamper.clamp(signedAngle / (Math.PI * 0.5), -1, 1);
+
+    const normalX = -dirY;
+    const normalY = dirX;
+    const alignment = n2x * normalX + n2y * normalY;
+    const alignmentFactor = BrushStamper.clamp(Math.abs(alignment), 0, 1);
+    const rawOffset = angleFactor * alignmentFactor * tailLengthPx * 0.18;
+    return BrushStamper.clamp(rawOffset, -tailLengthPx * 0.24, tailLengthPx * 0.24);
+  }
+
+  private resolveTailPressureStartSlope(
+    safeEndPressure: number,
+    speed: number,
+    pressureSlope: number | null
+  ): number {
+    const safeSlope = Number.isFinite(pressureSlope) ? Number(pressureSlope) : 0;
+    const risingFactor = BrushStamper.clamp01((safeSlope + 0.02) / 0.18);
+    const speedFactor = BrushStamper.clamp01(speed);
+    const slopeMagnitude = 0.55 + 0.55 * risingFactor + 0.2 * speedFactor;
+    return -safeEndPressure * slopeMagnitude;
   }
 
   private resolveTailDirectionVector(): {
@@ -1631,7 +1745,8 @@ export class BrushStamper {
   private buildTailDabs(
     brushSize: number,
     effectiveSpeed: number,
-    endPressure: number
+    endPressure: number,
+    pressureSlope: number | null
   ): Array<{ x: number; y: number; pressure: number }> {
     if (!this.lastPoint || !this.prevPoint) return [];
     const directSegmentDistance = Math.hypot(
@@ -1655,30 +1770,98 @@ export class BrushStamper {
     );
     const safeEndPressure = BrushStamper.clamp01(endPressure);
     const decayBias = 0.82 + (1 - speed) * 0.26;
+    const startPressureSlope = this.resolveTailPressureStartSlope(
+      safeEndPressure,
+      speed,
+      pressureSlope
+    );
+    const curvatureOffset = this.resolveTailCurvatureOffset(dirX, dirY, tailLengthPx);
+    const normalX = -dirY;
+    const normalY = dirX;
+    const p0 = { x: this.lastPoint.x, y: this.lastPoint.y };
+    const c1 = {
+      x: p0.x + dirX * tailLengthPx * 0.34,
+      y: p0.y + dirY * tailLengthPx * 0.34,
+    };
+    const c2 = {
+      x: p0.x + dirX * tailLengthPx * 0.78 + normalX * curvatureOffset,
+      y: p0.y + dirY * tailLengthPx * 0.78 + normalY * curvatureOffset,
+    };
+    const p3 = {
+      x: p0.x + dirX * tailLengthPx + normalX * curvatureOffset * 0.4,
+      y: p0.y + dirY * tailLengthPx + normalY * curvatureOffset * 0.4,
+    };
     const maxTailDabs = 256;
 
     const tailDabs: Array<{ x: number; y: number; pressure: number }> = [];
-    let traveled = Math.min(Math.max(0.12, safeBrushSize * 0.004), tailLengthPx * 0.03);
+    let currentT = 0;
+    let previousPoint = p0;
+    let previousPressure = safeEndPressure;
 
-    while (traveled <= tailLengthPx && tailDabs.length < maxTailDabs) {
-      const t = BrushStamper.clamp01(traveled / tailLengthPx);
-      const easedT = Math.pow(t, decayBias);
-      const pressure = Math.max(0, safeEndPressure * (1 - BrushStamper.smootherstep01(easedT)));
-      if (pressure < 8e-4 && traveled > safeBrushSize * 0.2) {
+    while (currentT < 0.999 && tailDabs.length < maxTailDabs) {
+      const nominalDiameter = Math.max(1, safeBrushSize * Math.max(previousPressure, 0.015));
+      const minSpacing = Math.max(0.5, safeBrushSize * 0.006);
+      const maxSpacing = Math.max(minSpacing, safeBrushSize * 0.07);
+      const targetSpacing = Math.min(maxSpacing, Math.max(minSpacing, nominalDiameter * 0.095));
+
+      let lowT = currentT;
+      let highT = Math.min(1, currentT + 0.04);
+      let highPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, highT);
+      let highDistance = Math.hypot(highPoint.x - previousPoint.x, highPoint.y - previousPoint.y);
+      let seekGuard = 0;
+
+      while (highDistance < targetSpacing && highT < 1 && seekGuard < 20) {
+        highT = Math.min(1, highT + 0.04);
+        highPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, highT);
+        highDistance = Math.hypot(highPoint.x - previousPoint.x, highPoint.y - previousPoint.y);
+        seekGuard += 1;
+      }
+
+      if (highDistance < Math.max(0.08, targetSpacing * 0.35)) {
+        break;
+      }
+
+      for (let i = 0; i < 7; i += 1) {
+        const midT = (lowT + highT) * 0.5;
+        const midPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, midT);
+        const midDistance = Math.hypot(midPoint.x - previousPoint.x, midPoint.y - previousPoint.y);
+        if (midDistance < targetSpacing) {
+          lowT = midT;
+        } else {
+          highT = midT;
+        }
+      }
+
+      const nextT = highT;
+      if (nextT <= currentT + 1e-4) {
+        break;
+      }
+
+      const nextPoint = BrushStamper.sampleCubicBezierPoint(p0, c1, c2, p3, nextT);
+      const easedT = Math.pow(nextT, decayBias);
+      const rawPressure = BrushStamper.sampleCubicHermite(
+        safeEndPressure,
+        startPressureSlope,
+        0,
+        0,
+        easedT
+      );
+      const clampedPressure = Math.max(0, Math.min(safeEndPressure, rawPressure));
+      const pressure = Math.min(previousPressure, clampedPressure);
+
+      if (pressure < 8e-4 && nextT > 0.12) {
         break;
       }
 
       tailDabs.push({
-        x: this.lastPoint.x + dirX * traveled,
-        y: this.lastPoint.y + dirY * traveled,
+        x: nextPoint.x,
+        y: nextPoint.y,
         pressure,
       });
 
-      const nominalDiameter = Math.max(1, safeBrushSize * pressure);
-      const minSpacing = Math.max(0.18, safeBrushSize * 0.006);
-      const maxSpacing = Math.max(minSpacing, safeBrushSize * 0.07);
-      const spacingPx = Math.min(maxSpacing, Math.max(minSpacing, nominalDiameter * 0.095));
-      traveled += spacingPx;
+      previousPoint = nextPoint;
+      previousPressure = pressure;
+      currentT = nextT;
     }
 
     return tailDabs;
@@ -1705,7 +1888,7 @@ export class BrushStamper {
       return;
     }
 
-    const stepSpacing = Math.max(0.25, Math.min(1.5, spacingPx * 0.55));
+    const stepSpacing = Math.max(0.5, Math.min(1.5, spacingPx * 0.55));
     const rampLengthPx = Math.max(BrushStamper.MIN_MOVEMENT_DISTANCE * 1.35, stepSpacing * 3.2);
     let traveled = Math.min(distance, Math.max(0.1, stepSpacing * 0.3));
 
@@ -1753,9 +1936,12 @@ export class BrushStamper {
     if (this.isStrokeStart) {
       this.isStrokeStart = false;
       this.strokeStartPoint = { x, y };
+      this.clearStrokeStartSamples();
+      this.appendStrokeStartSample(x, y);
       if (buildupEnabled) {
         // Build-up: allow stationary accumulation from stroke start
         this.hasMovedEnough = true;
+        this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
         this.lastPoint = { x, y, pressure };
         this.prevPoint = null;
@@ -1773,8 +1959,11 @@ export class BrushStamper {
       this.lastPoint = { x, y, pressure: buildupEnabled ? pressure : 0 };
       this.prevPoint = null;
       this.strokeStartPoint = { x, y };
+      this.clearStrokeStartSamples();
+      this.appendStrokeStartSample(x, y);
       if (buildupEnabled) {
         this.hasMovedEnough = true;
+        this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
         dabs.push({ x, y, pressure });
         this.recordTailSample(x, y, pressure, this.lastNormalizedSpeed, timestampMs);
@@ -1787,6 +1976,7 @@ export class BrushStamper {
       if (buildupEnabled) {
         // Build-up: skip the minimum movement gate entirely
         this.hasMovedEnough = true;
+        this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
         this.prevPoint = this.lastPoint;
         this.lastPoint = { x, y, pressure };
@@ -1795,8 +1985,10 @@ export class BrushStamper {
         return dabs;
       }
 
-      const dxFromStart = x - this.strokeStartPoint.x;
-      const dyFromStart = y - this.strokeStartPoint.y;
+      this.appendStrokeStartSample(x, y);
+      const strokeStartAnchor = this.resolveStrokeStartAnchor();
+      const dxFromStart = x - strokeStartAnchor.x;
+      const dyFromStart = y - strokeStartAnchor.y;
       const distFromStart = Math.sqrt(dxFromStart * dxFromStart + dyFromStart * dyFromStart);
 
       if (distFromStart < BrushStamper.MIN_MOVEMENT_DISTANCE) {
@@ -1811,11 +2003,12 @@ export class BrushStamper {
 
       // We've moved enough - NOW initialize EMA with current pressure
       this.hasMovedEnough = true;
+      this.clearStrokeStartSamples();
       this.smoothedPressure = pressure; // Initialize EMA with current pressure
       this.appendStrokeStartTransitionDabs(
         dabs,
-        this.strokeStartPoint.x,
-        this.strokeStartPoint.y,
+        strokeStartAnchor.x,
+        strokeStartAnchor.y,
         x,
         y,
         pressure,
@@ -1827,7 +2020,7 @@ export class BrushStamper {
       const finalDab = dabs[dabs.length - 1];
       this.prevPoint = previousDab
         ? { x: previousDab.x, y: previousDab.y, pressure: previousDab.pressure }
-        : { x: this.strokeStartPoint.x, y: this.strokeStartPoint.y, pressure: 0 };
+        : { x: strokeStartAnchor.x, y: strokeStartAnchor.y, pressure: 0 };
       this.lastPoint = finalDab
         ? { x: finalDab.x, y: finalDab.y, pressure: finalDab.pressure }
         : { x, y, pressure };
@@ -1873,7 +2066,7 @@ export class BrushStamper {
     }
 
     // Spacing threshold based on precomputed tip size
-    const threshold = Math.max(effectiveSpacing, 0.2);
+    const threshold = Math.max(effectiveSpacing, 0.5);
 
     this.accumulatedDistance += distance;
 
@@ -1911,7 +2104,8 @@ export class BrushStamper {
         ? this.buildTailDabs(
             brushSize,
             evaluation.effectiveSpeed,
-            evaluation.lastPressure ?? BrushStamper.TAIL_PRESSURE_THRESHOLD
+            evaluation.lastPressure ?? BrushStamper.TAIL_PRESSURE_THRESHOLD,
+            evaluation.pressureSlope
           )
         : [];
     const snapshot: TailTaperDebugSnapshot = {
