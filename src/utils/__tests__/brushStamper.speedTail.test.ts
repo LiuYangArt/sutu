@@ -97,6 +97,14 @@ describe('BrushStamper speed-based smoothing and tail taper', () => {
     if (!first || !last) return;
     const tailDistance = Math.hypot(last.x - first.x, last.y - first.y);
     expect(tailDistance).toBeGreaterThan(brushSize * 0.5);
+
+    for (let i = 1; i < tailDabs.length; i += 1) {
+      const prev = tailDabs[i - 1]!;
+      const curr = tailDabs[i]!;
+      const gap = Math.hypot(curr.x - prev.x, curr.y - prev.y);
+      const prevNominalDiameter = Math.max(1, brushSize * prev.pressure);
+      expect(gap).toBeLessThanOrEqual(Math.max(0.9, prevNominalDiameter * 0.75));
+    }
   });
 
   it('does not generate tail dabs when pressure already decays naturally', () => {

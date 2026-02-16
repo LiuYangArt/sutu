@@ -188,4 +188,65 @@ describe('useBrushRenderer stroke finalize path', () => {
     expect(gpu.stampDabCalls.length).toBe(dabCountAfterPrepare);
     expect(finishSpy.mock.calls.length).toBe(finishCallsAfterPrepare);
   });
+
+  it('applies shape dynamics size control to tail dabs when toolbar pressure-size toggle is off', async () => {
+    const config = createConfig();
+    config.pressureSizeEnabled = false;
+    config.shapeDynamicsEnabled = true;
+    config.shapeDynamics = {
+      sizeJitter: 0,
+      sizeControl: 'penPressure',
+      minimumDiameter: 0,
+      angleJitter: 0,
+      angleControl: 'off',
+      roundnessJitter: 0,
+      roundnessControl: 'off',
+      minimumRoundness: 25,
+      flipXJitter: false,
+      flipYJitter: false,
+    };
+
+    const { result } = renderHook(() =>
+      useBrushRenderer({
+        width: 256,
+        height: 256,
+        renderMode: 'gpu',
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.backend).toBe('gpu');
+    });
+
+    await act(async () => {
+      await result.current.beginStroke(100, 0);
+    });
+
+    act(() => {
+      for (let i = 0; i < 9; i += 1) {
+        result.current.processPoint(i * 6, 0, 0.4, config, i, undefined, {
+          timestampMs: i * 4,
+        });
+      }
+    });
+
+    const gpu = gpuState.instances[0];
+    if (!gpu) {
+      throw new Error('expected gpu instance to exist');
+    }
+    const beforeTailCount = gpu.stampDabCalls.length;
+
+    await act(async () => {
+      await result.current.prepareStrokeEndGpu();
+    });
+
+    const tailCalls = gpu.stampDabCalls.slice(beforeTailCount) as Array<{ size?: number }>;
+    expect(tailCalls.length).toBeGreaterThan(0);
+
+    const tailSizes = tailCalls
+      .map((call) => call.size)
+      .filter((size): size is number => typeof size === 'number' && Number.isFinite(size));
+    expect(tailSizes.length).toBeGreaterThan(0);
+    expect(Math.min(...tailSizes)).toBeLessThan(config.size * 0.4);
+  });
 });

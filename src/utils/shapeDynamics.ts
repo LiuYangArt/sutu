@@ -48,6 +48,8 @@ export interface ComputedDabShape {
   flipY: boolean;
 }
 
+const MIN_DYNAMIC_DAB_SIZE = 0.05;
+
 /**
  * Random number generator interface for testability
  */
@@ -171,7 +173,7 @@ export function computeControlledSize(
 ): number {
   const sizeControl = getControlValue(settings.sizeControl, input);
   const size = applyControlWithMinimum(baseSize, sizeControl, settings.minimumDiameter);
-  return Math.max(1, size);
+  return Math.max(MIN_DYNAMIC_DAB_SIZE, size);
 }
 
 /**
@@ -200,7 +202,7 @@ export function computeDabShape(
   const sizeControl = getControlValue(settings.sizeControl, input);
   let size = applyControlWithMinimum(baseSize, sizeControl, settings.minimumDiameter);
   size = applyJitter(size, settings.sizeJitter, random);
-  size = Math.max(1, size); // Minimum 1px
+  size = Math.max(MIN_DYNAMIC_DAB_SIZE, size);
 
   // --- Angle ---
   let angle = baseAngle;

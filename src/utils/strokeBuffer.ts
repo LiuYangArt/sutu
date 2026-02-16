@@ -1643,22 +1643,33 @@ export class BrushStamper {
       safeBrushSize * 3.2,
       Math.max(safeBrushSize * 0.55, targetLengthFromSize, targetLengthFromSegment)
     );
-    const stepDistancePx = Math.max(1, safeBrushSize * (0.14 + 0.08 * (1 - speed)));
-    const steps = BrushStamper.clampInt(Math.ceil(tailLengthPx / stepDistancePx), 8, 28);
     const safeEndPressure = BrushStamper.clamp01(endPressure);
-    const pressureDecayExponent = 1.15 + (1 - speed) * 0.35;
+    const pressureDecayExponent = 1.1 + (1 - speed) * 0.28;
+    const maxTailDabs = 256;
 
     const tailDabs: Array<{ x: number; y: number; pressure: number }> = [];
-    for (let i = 1; i <= steps; i += 1) {
-      const t = i / steps;
+    let traveled = Math.min(Math.max(0.12, safeBrushSize * 0.004), tailLengthPx * 0.03);
+
+    while (traveled <= tailLengthPx && tailDabs.length < maxTailDabs) {
+      const t = BrushStamper.clamp01(traveled / tailLengthPx);
       const pressure = Math.max(0, safeEndPressure * Math.pow(1 - t, pressureDecayExponent));
-      if (pressure < 1e-3) continue;
+      if (pressure < 8e-4 && traveled > safeBrushSize * 0.2) {
+        break;
+      }
+
       tailDabs.push({
-        x: this.lastPoint.x + dirX * tailLengthPx * t,
-        y: this.lastPoint.y + dirY * tailLengthPx * t,
+        x: this.lastPoint.x + dirX * traveled,
+        y: this.lastPoint.y + dirY * traveled,
         pressure,
       });
+
+      const nominalDiameter = Math.max(1, safeBrushSize * pressure);
+      const minSpacing = Math.max(0.18, safeBrushSize * 0.006);
+      const maxSpacing = Math.max(minSpacing, safeBrushSize * 0.07);
+      const spacingPx = Math.min(maxSpacing, Math.max(minSpacing, nominalDiameter * 0.1));
+      traveled += spacingPx;
     }
+
     return tailDabs;
   }
 
@@ -1795,7 +1806,7 @@ export class BrushStamper {
     }
 
     // Spacing threshold based on precomputed tip size
-    const threshold = Math.max(effectiveSpacing, 1);
+    const threshold = Math.max(effectiveSpacing, 0.2);
 
     this.accumulatedDistance += distance;
 

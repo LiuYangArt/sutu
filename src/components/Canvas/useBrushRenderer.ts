@@ -110,6 +110,25 @@ function computeSpacingBasePx(
   return Math.min(width, height);
 }
 
+function resolveRenderableDabSizeAndOpacity(
+  rawSize: number,
+  baseDabOpacity: number
+): { size: number; dabOpacity: number } {
+  const safeOpacity = Number.isFinite(baseDabOpacity) ? Math.max(0, baseDabOpacity) : 0;
+  const safeSize = Number.isFinite(rawSize) ? rawSize : 0;
+  if (safeSize >= 1) {
+    return { size: safeSize, dabOpacity: safeOpacity };
+  }
+
+  // Keep sub-pixel width information via alpha coverage while rendering a 1px footprint.
+  const clampedSubPixelSize = Math.max(0.01, safeSize);
+  const coverage = Math.min(1, clampedSubPixelSize * clampedSubPixelSize);
+  return {
+    size: 1,
+    dabOpacity: safeOpacity * coverage,
+  };
+}
+
 export interface BrushRenderConfig {
   size: number;
   flow: number;
@@ -483,6 +502,15 @@ export function useBrushRenderer({
         const selectionState = useSelectionStore.getState();
         const hasSelection = selectionState.hasSelection;
         const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
+        const useShapeDynamics =
+          config.shapeDynamicsEnabled &&
+          config.shapeDynamics &&
+          isShapeDynamicsActive(config.shapeDynamics);
+        const hasShapeSizeControl =
+          config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off';
+        const useScatter =
+          config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
+        let previousTailPoint = lastDabPosRef.current;
 
         for (const tailDab of tailDabs) {
           if (
@@ -494,13 +522,22 @@ export function useBrushRenderer({
           }
 
           const mappedTailPressure = mapStamperPressureToBrush(config, tailDab.pressure);
+          let direction = 0;
+          if (previousTailPoint) {
+            direction = calculateDirection(
+              previousTailPoint.x,
+              previousTailPoint.y,
+              tailDab.x,
+              tailDab.y
+            );
+          }
           const neutralDynamicsInput: DynamicsInput = {
             pressure: mappedTailPressure,
             tiltX: 0,
             tiltY: 0,
             rotation: 0,
-            direction: 0,
-            initialDirection: 0,
+            direction,
+            initialDirection: initialDirectionRef.current ?? direction,
             fadeProgress: 0,
           };
           const { flow, dabOpacity } = resolveDabFlowAndOpacity(
@@ -508,30 +545,91 @@ export function useBrushRenderer({
             mappedTailPressure,
             neutralDynamicsInput
           );
-          const size = config.pressureSizeEnabled ? config.size * mappedTailPressure : config.size;
+          let tailSize =
+            !hasShapeSizeControl && config.pressureSizeEnabled
+              ? config.size * mappedTailPressure
+              : config.size;
+          let tailRoundness = config.roundness / 100;
+          let tailAngle = config.angle;
+          let tailFlipX = false;
+          let tailFlipY = false;
 
-          const dabParams: DabParams = {
-            x: tailDab.x,
-            y: tailDab.y,
-            size: Math.max(1, size),
-            flow,
-            hardness: config.hardness / 100,
-            maskType: config.maskType,
-            color: config.color,
-            dabOpacity,
-            roundness: config.roundness / 100,
-            angle: config.angle,
-            texture: config.texture ?? undefined,
-            wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
-            textureSettings: config.textureEnabled ? config.textureSettings : undefined,
-            noiseEnabled: config.noiseEnabled,
-            noiseSize: config.noiseSize ?? 100,
-            noiseSizeJitter: config.noiseSizeJitter ?? 0,
-            noiseDensityJitter: config.noiseDensityJitter ?? 0,
-            baseSize: config.size,
-            spacing: config.spacing,
-          };
-          stampDabToBackend(dabParams);
+          if (useShapeDynamics && config.shapeDynamics) {
+            const shape = computeDabShape(
+              tailSize,
+              config.angle,
+              config.roundness,
+              config.shapeDynamics,
+              neutralDynamicsInput
+            );
+            tailSize = shape.size;
+            tailRoundness = shape.roundness;
+            tailAngle = shape.angle;
+            tailFlipX = shape.flipX;
+            tailFlipY = shape.flipY;
+          }
+
+          const tailPositions = useScatter
+            ? applyScatter(
+                {
+                  x: tailDab.x,
+                  y: tailDab.y,
+                  strokeAngle: (direction * Math.PI) / 180,
+                  diameter: tailSize,
+                  dynamics: neutralDynamicsInput,
+                },
+                config.scatter!
+              )
+            : [{ x: tailDab.x, y: tailDab.y }];
+
+          for (const pos of tailPositions) {
+            const effectiveTextureSettings =
+              config.textureEnabled && config.textureSettings
+                ? (() => {
+                    const settings = config.textureSettings!;
+                    const dynamicDepth = computeTextureDepth(
+                      settings.depth,
+                      settings,
+                      neutralDynamicsInput
+                    );
+                    if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
+                      return settings;
+                    }
+                    return {
+                      ...settings,
+                      depth: dynamicDepth,
+                    };
+                  })()
+                : undefined;
+
+            const renderTail = resolveRenderableDabSizeAndOpacity(tailSize, dabOpacity);
+            const dabParams: DabParams = {
+              x: pos.x,
+              y: pos.y,
+              size: renderTail.size,
+              flow,
+              hardness: config.hardness / 100,
+              maskType: config.maskType,
+              color: config.color,
+              dabOpacity: renderTail.dabOpacity,
+              roundness: tailRoundness,
+              angle: tailAngle,
+              texture: config.texture ?? undefined,
+              flipX: tailFlipX,
+              flipY: tailFlipY,
+              wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
+              textureSettings: effectiveTextureSettings,
+              noiseEnabled: config.noiseEnabled,
+              noiseSize: config.noiseSize ?? 100,
+              noiseSizeJitter: config.noiseSizeJitter ?? 0,
+              noiseDensityJitter: config.noiseDensityJitter ?? 0,
+              baseSize: config.size,
+              spacing: config.spacing,
+            };
+            stampDabToBackend(dabParams);
+            previousTailPoint = { x: pos.x, y: pos.y };
+            lastDabPosRef.current = previousTailPoint;
+          }
         }
       }
 
@@ -866,15 +964,16 @@ export function useBrushRenderer({
                 })()
               : undefined;
 
+          const renderDab = resolveRenderableDabSizeAndOpacity(dabSize, dabOpacity);
           const dabParams: DabParams = {
             x: pos.x,
             y: pos.y,
-            size: Math.max(1, dabSize),
+            size: renderDab.size,
             flow: dabFlow,
             hardness: config.hardness / 100,
             maskType: config.maskType,
             color: dabColor,
-            dabOpacity,
+            dabOpacity: renderDab.dabOpacity,
             roundness: dabRoundness,
             angle: dabAngle,
             texture: config.texture ?? undefined,
