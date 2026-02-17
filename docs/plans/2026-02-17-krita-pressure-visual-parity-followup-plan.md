@@ -1,7 +1,7 @@
 # Krita 压感视觉一致性后续计划（Pressure-Only 严格一致专项）
 
 **日期**：2026-02-17  
-**状态**：待实施（替代“仅 tail 指标通过即完成”的旧口径）  
+**状态**：执行中（5A/5B 已落地，strict 数值收口未完成）  
 **关联文档**：
 - `docs/plans/2026-02-17-krita-pressure-tail-parity-plan.md`
 - `docs/research/2026-02-17-krita-pressure-chain-analysis-no-trajectory-smoothing.md`
@@ -9,11 +9,46 @@
 
 ---
 
+## 当前进度快照（2026-02-17 20:43）
+
+### A. 已完成（可复现）
+
+1. 5A 工具链主改造已落地（trace v2、语义前置检查、strict profile、后端 blocking）。
+2. 5B 起笔语义改造已落地（旧起笔逻辑实验开关保留，默认关闭）。
+3. Krita v2 基线采集链路打通，四个 case 已导出为 v2：
+   - `tests/fixtures/krita-tail/krita-baseline/slow_lift/trace.krita.json`
+   - `tests/fixtures/krita-tail/krita-baseline/fast_flick/trace.krita.json`
+   - `tests/fixtures/krita-tail/krita-baseline/abrupt_stop/trace.krita.json`
+   - `tests/fixtures/krita-tail/krita-baseline/low_pressure_drag/trace.krita.json`
+4. 四个 case 基线文件均满足最小有效性（`schemaVersion=krita-tail-trace-v2`，`dab_emit[].sizePx > 0`）。
+
+### B. 本轮实测结果（证据）
+
+1. Gate 运行结果：`debug_output/krita-tail-gate/2026-02-17T12-43-46-239Z/summary.json`
+2. 总结：
+   - `overall_passed=false`
+   - 三后端均为 `mode=blocking`
+   - 三后端 `semanticFailures=0`（语义项全通过）
+   - 三后端 4/4 case 均存在 `numericFailures`（数值项未收口）
+3. 代表性失败簇：
+   - `head_pressure_mae / head_pressure_p95`
+   - `stroke_width_profile_emd`
+   - `sampler_t_missing_ratio`
+   - `dab_tail_count_delta / dab_tail_mean_spacing_delta_px`
+
+### C. 结论（当前阶段）
+
+1. 计划方向正确，且已从“无基线可测”推进到“可稳定产出 strict FAIL 向量”。
+2. 当前可以继续推进原计划，不需要新增人工流程。
+3. 尚不满足最终“严格一致通过”验收，卡点在数值收口（不是语义漏检）。
+
+---
+
 ## 0. 范围冻结（先对齐共识）
 
 ### 0.1 本专项唯一目标
 
-在 **不引入、不依赖、不讨论轨迹平滑（smoothing）** 的前提下，使 PaintBoard 的**压感链路输出**与 Krita 严格一致。
+在 **不引入、不依赖、不讨论轨迹平滑（smoothing）** 的前提下，使 PaintBoard 的**压感链路输出**达到与 Krita 的语义等价与量化一致。
 
 ### 0.2 明确排除项（继续排除，且不回流）
 
@@ -26,6 +61,12 @@
 1. smoothing 只影响轨迹，不是压感真值来源；本专项不把 smoothing 作为解释或修复手段。
 2. 若某改动只有在开启 smoothing 才“看起来正确”，则判定该改动**未解决压感一致性问题**。
 3. 所有验收结论必须可在 `Brush Smoothing = None` 下复现。
+
+### 0.4 “严格一致”可达定义（避免不可达表述）
+
+1. 本专项的“严格一致”指：**语义等价 + 指标达标 + 视觉稳定复现**。
+2. 不把“逐事件逐浮点位完全相等”作为目标；跨框架事件采样率、时间戳精度与浮点路径存在系统级差异。
+3. 最终结论以 strict profile 下的量化阈值与重复性报告为准，不使用“完全一致（bitwise identical）”措辞。
 
 ---
 
@@ -70,6 +111,17 @@
 2. 与 Krita 对照时，不出现“首段突粗/突细、尾段尖点断层、局部收束跳变”。
 3. 视觉结论必须被数值指标支持，不允许“只靠主观描述判通过”。
 
+### 2.4 量化上限（v1，Pressure-Only 收口值）
+
+以下上限用于最终 strict 收口（不足以支撑视觉一致时可收紧，不可放宽后直接宣称完成）：
+
+1. `head_pressure_mae <= 0.020`
+2. `head_pressure_p95 <= 0.050`
+3. `head_pressure_jump_p95 <= 0.080`
+4. `body_pressure_emd <= 0.040`
+5. `stroke_width_profile_emd <= 0.060`
+6. `tail` 维度沿用 strict 阈值（且 `terminal_sample_drop_count == 0`）
+
 ---
 
 ## 3. 与 Krita 的主要差异锚点（当前）
@@ -96,6 +148,15 @@ Krita 对应锚点：
 ### 3.3 CLI 路径与配置风险
 
 `--thresholds` 当前按 `path.resolve(fixturesDir, cli.thresholds)` 解析，仓库相对路径易被错误拼接：`scripts/debug/gate-krita-tail.mjs:484`
+
+### 3.4 仍需收敛的 Krita 语义细节（新增）
+
+1. `needsSpacingUpdate` / `needsTimingUpdate`（`kis_paintop_utils.h:97-102`）：
+   - 当前 Pressure-Only 基线通常为固定 spacing/timing，本专项先冻结为固定配置。
+   - 但需在语义检查中显式确认“本轮 case 未触发动态 spacing/timing”，避免误把 scope 外差异混入结论。
+2. 首 dab `lastDabInfoValid=false` 路径：
+   - 该路径会影响首段第一次循环与首 dab 输出。
+   - 需补充 head 场景与语义检查，确保首 dab 处理不被本地初始化逻辑改写。
 
 ---
 
@@ -128,6 +189,8 @@ Krita 对应锚点：
 3. `no_forced_zero_initial_pressure_non_buildup`
 4. `linear_pressure_mix`
 5. `pointerup_fallback_policy_matches_spec`
+6. `pressure_only_scope_has_no_dynamic_spacing_update`
+7. `first_dab_path_matches_lastDabInfoValid_semantics`
 
 ### 4.4 失败策略（统一）
 
@@ -143,11 +206,20 @@ Krita 对应锚点：
 4. 任何阈值放宽都需单独评审，且必须附“旧阈值 FAIL / 新阈值 PASS / 视觉对照”三联证据。
 5. 增加异常保护：若三后端阈值完全一致且持续出现，脚本输出 `suspicious_threshold_profile` 警告并拒绝写入 strict。
 
+### 4.6 指标计算口径（防“同名不同算”）
+
+1. `head/body/tail` 按弧长切片，先重采样到相同长度再计算分布型指标（EMD）。
+2. `stroke_width_profile_emd` 基于弧长归一化后的宽度序列（0..1）计算，禁止直接按原始 dab 索引比较。
+3. `head_pressure_jump_p95` 仅在 head 窗口内计算相邻 dab 压差，不跨窗口取样。
+4. 指标实现与文档定义不一致时，以文档口径为准并阻塞验收。
+
 ---
 
 ## Implementation Plan（实施方案）
 
 ### Phase 5A（P0）：工具链升级为 Gate v2（先修判定能力）
+
+状态：已完成（首轮）
 
 目标：保证工具能稳定发现 head/body/tail 的真实差异。
 
@@ -155,14 +227,18 @@ Krita 对应锚点：
 1. 扩展 `src/test/kritaTailTrace/compare.ts` 三窗口 + 新指标 + semantic checks。
 2. 修复 `scripts/debug/gate-krita-tail.mjs` 的失败策略与 `--thresholds` 路径解析。
 3. 升级 `scripts/debug/calibrate-krita-tail-thresholds.mjs`：强制输出 `stats`、校准输出与 strict 分离。
-4. 更新 `docs/testing/krita-tail-gate.md` 运行与验收说明。
+4. 增加首 dab 与动态 spacing/timing 的语义检查（Pressure-Only 作用域冻结 + 触发标记）。
+5. 更新 `docs/testing/krita-tail-gate.md` 运行与验收说明。
 
 完成标准：
 1. 现有已知坏样本在 strict gate 下稳定 FAIL。
 2. 自检用例覆盖 `v1/v2` 兼容、strict/calibrated 两套阈值路径。
 3. `summary.json` 可区分“语义失败”和“数值失败”。
+4. `summary.json` 明确记录首 dab 路径检查结果与动态 spacing/timing 触发标记。
 
 ### Phase 5B（P0）：起笔语义收敛到 Krita
+
+状态：已完成（首轮）
 
 目标：去除起笔非 Krita 分支，统一采样推进语义。
 
@@ -179,6 +255,8 @@ Krita 对应锚点：
 
 ### Phase 5C（P1）：重建基线与阈值（按后端分组）
 
+状态：进行中（已完成真实基线导出与 strict 首轮验证，待数值收敛）
+
 目标：形成可复现、可回归的严格基线。
 
 任务：
@@ -192,6 +270,8 @@ Krita 对应锚点：
 2. `windows_winink_pointer`、`mac_native` 至少 `rawPassed=true`，且不依赖 warning 通过。
 
 ### Phase 5D（P1）：Pressure-Only 严格收口
+
+状态：待开始（依赖 5C 数值收口）
 
 目标：把“压感严格一致”收口为可交付结论。
 
@@ -211,6 +291,7 @@ Krita 对应锚点：
 1. 工具链（P0）：
    - 扩展 `compare.ts` 到三窗口和新指标；
    - 增加 `semantic_checks` 短路失败；
+   - 增加首 dab 与动态 spacing/timing 语义检查；
    - 修复 gate/calibrate 路径与阈值治理逻辑。
 2. 实现链路（P0）：
    - 去除起笔人工过渡与硬门槛；
@@ -239,6 +320,7 @@ Krita 对应锚点：
 3. `windows_wintab` blocking 全绿。
 4. `windows_winink_pointer` 与 `mac_native` 均 `rawPassed=true`，不得仅靠 warning。
 5. `terminal_sample_drop_count == 0` 全后端保持强制约束。
+6. `pressure_only_scope_has_no_dynamic_spacing_update` 与 `first_dab_path_matches_lastDabInfoValid_semantics` 必须为 PASS。
 
 ### 5.2 人工验收（必须）
 
