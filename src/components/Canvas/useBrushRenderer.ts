@@ -207,6 +207,17 @@ function resolveRenderableDabSizeAndOpacity(
   };
 }
 
+/**
+ * Isolate speed-driven heuristics from the current pressure-tail parity work.
+ * We keep these runtime options fixed so tablet speed UI settings cannot
+ * influence dab emission while debugging pressure-only tail behavior.
+ */
+const PRESSURE_TAIL_PARITY_STAMPER_OPTIONS = Object.freeze({
+  maxBrushSpeedPxPerMs: 30,
+  brushSpeedSmoothingSamples: 3,
+  lowPressureAdaptiveSmoothingEnabled: false as const,
+});
+
 export interface BrushRenderConfig {
   size: number;
   flow: number;
@@ -804,9 +815,7 @@ export function useBrushRenderer({
       }
 
       const finalizeDabs = stamperRef.current.finishStroke(lastSpacingPxRef.current, {
-        maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
-        brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
-        lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
+        ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
         trajectorySmoothingEnabled: false,
       });
       secondaryStamperRef.current.finishStroke(0);
@@ -850,9 +859,7 @@ export function useBrushRenderer({
       const stamper = stamperRef.current;
       const stamperOptions = {
         timestampMs: inputMeta?.timestampMs,
-        maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
-        brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
-        lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
+        ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
         trajectorySmoothingEnabled: false,
       };
 

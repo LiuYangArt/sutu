@@ -2,116 +2,217 @@
 
 **日期**：2026-02-17  
 **当前分支**：`perf/146-krita-photoshop`  
-**目标**：只解决压感尖尾一致性，不在本 issue 内推进轨迹平滑功能。
+**目标**：只解决压感尖尾一致性；当前 issue 不推进轨迹平滑与 speed 调参。
 
-## 0. 范围定义（防止跑偏）
+## 0. 范围与固定口径
 
-### 0.1 In Scope（本 issue 要做）
+### 0.1 In Scope（本 issue 必做）
 
-1. 压感映射链路对齐（输入压感到 dab 压感）。  
-2. 采样触发语义对齐（distance/timing 触发与 carry 行为）。  
-3. 收笔末样本完整消费（避免快抬笔丢最后低压段）。  
-4. 自动化链路对比（替代高频手工回归）。
+1. 压感映射链路对齐（输入 pressure -> 最终 dab pressure）。
+2. 采样触发语义对齐（distance/timing 的触发、carry、reset）。
+3. 收笔末样本完整消费（快抬笔不丢尾端低压段）。
+4. 自动化对比与 gate（替代高频手工回归）。
 
 ### 0.2 Out of Scope（本 issue 不做）
 
-1. 轨迹平滑模式对齐（`NONE/BASIC/WEIGHTED/STABILIZER/PIXEL`）。  
-2. Brush Smoothing UI 与参数策略调优。  
+1. Tool Options 轨迹平滑模式对齐（`NONE/BASIC/WEIGHTED/STABILIZER/PIXEL`）。
+2. Brush Smoothing UI/参数调优。
+3. Tablet speed slider 调参优化（`Maximum brush speed` / `Brush speed smoothing`）。
 
 独立文档：`docs/plans/2026-02-17-krita-trajectory-smoothing-plan.md`
 
+### 0.3 速度参数执行口径（固定）
+
+1. Krita 里 speed 参数不直接改 pressure；它们影响 `drawingSpeed`，再由画笔是否启用 `Speed` 传感器决定是否影响笔迹。
+2. 当前尖尾对齐基线使用 Pressure-only 画笔配置，不把 speed 当主变量。
+3. 当前分支运行时已隔离 speed 启发式，不读取 Tablet speed slider（UI/持久化仍保留）：
+   - `src/components/Canvas/useBrushRenderer.ts:215`
+   - `src/components/Canvas/useBrushRenderer.ts:818`
+   - `src/components/Canvas/useBrushRenderer.ts:862`
+
+### 0.4 冻结基线工况（复现前提）
+
+1. Krita 画笔：Pixel Engine，`Size` 仅启用 `Pressure`，`Speed/Fade/Distance/Time` 全关闭。
+2. Krita Tool Options：`Brush Smoothing = None`。
+3. Sutu：轨迹平滑关闭、speed 启发式隔离开启。
+4. Case 集合（固定顺序）：`slow_lift`、`fast_flick`、`abrupt_stop`、`low_pressure_drag`。
+5. 画布与笔刷基线：由 Phase 0 产出的 `baseline-config.json` 固化，不允许口头约定。
+
 ---
 
-## 1. Krita 侧必须对照的源码锚点（按执行顺序）
+## 1. Krita 侧源码锚点（执行顺序）
 
 ### 1.1 输入压感与速度
 
 1. Tablet 压感曲线配置读写：  
    - `F:\CodeProjects\krita\libs\ui\kis_config.cc:1584`  
    - `F:\CodeProjects\krita\libs\ui\kis_config.cc:1601`
-2. Preferences 页面对应项（压感曲线 + brush speed smoothing）：  
+2. Preferences 页面项（压感曲线 + speed 设置）：  
    - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1645`  
    - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1677`  
    - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1692`  
    - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1701`
-3. 构建 `KisPaintInformation` 时应用压感曲线：  
-   - `F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:46`  
+3. Builder 应用 pressure/speed：  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:128`  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:131`  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:137`  
    - `F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:179`
-4. 速度平滑读取与估计：  
+4. Speed smoother：  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:83`  
    - `F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:103`  
    - `F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:149`  
    - `F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:157`
 
-### 1.2 采样触发（核心）
+### 1.2 采样触发与插值
 
-1. `paintLine()` 循环触发 `getNextPointPosition()` 并做 `mix(t, ...)`：  
+1. `paintLine` 主循环（`getNextPointPosition` + `mix` + `paintAt`）：  
    - `F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:67`  
-   - `F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:68`
-2. `getNextPointPosition()` 取 `distanceFactor/timeFactor` 最小值：  
+   - `F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:68`  
+   - `F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:84`
+2. 触发语义（distance/time 取最早触发）：  
    - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:405`  
    - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:424`  
    - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:431`
-3. 未命中与命中时的时间累积与重置：  
+3. 未命中/命中时累积与重置：  
    - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:436`  
    - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:443`
-4. distance 触发插值：  
-   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:460`  
-   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:482`
 
-### 1.3 动态传感器（尾端参数变化来源）
+### 1.3 动态传感器
 
-1. 传感器曲线映射入口：  
+1. 传感器曲线入口：  
    - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensor.cpp:35`  
    - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensor.cpp:42`
-2. Fade 归一：  
-   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorFade.cpp:21`  
-   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorFade.cpp:27`
-3. Distance 归一：  
-   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorDistance.cpp:21`  
-   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorDistance.cpp:27`
-4. Speed 传感器：  
-   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensors.h:19`
+2. Speed/Pressure 值来源：  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensors.h:20`  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensors.h:43`
 
 ---
 
-## 2. Sutu 当前差异（仅保留本 issue 相关）
+## 2. Sutu 当前差异（本 issue 相关）
 
 ### 2.1 压感与采样启发式
 
-1. EMA 压感平滑：`src/utils/strokeBuffer.ts:1432`、`src/utils/strokeBuffer.ts:1445`。  
-2. 压感插值是 smoothstep，不是线性：`src/utils/strokeBuffer.ts:1558`、`src/utils/strokeBuffer.ts:1562`。  
-3. 压力变化触发 spacing 减半：`src/utils/strokeBuffer.ts:1694`、`src/utils/strokeBuffer.ts:1697`。  
-4. 低压 density boost：`src/utils/strokeBuffer.ts:1699`、`src/utils/strokeBuffer.ts:1705`。  
-5. 采样器当前是 distance/time 并集去重：`src/utils/freehand/segmentSampler.ts:54`、`src/utils/freehand/segmentSampler.ts:64`、`src/utils/freehand/segmentSampler.ts:81`。
+1. EMA 压感平滑：`src/utils/strokeBuffer.ts:1432`、`src/utils/strokeBuffer.ts:1445`。
+2. pressure 插值使用 smoothstep：`src/utils/strokeBuffer.ts:1558`、`src/utils/strokeBuffer.ts:1562`。
+3. pressure change 触发 spacing 减半：`src/utils/strokeBuffer.ts:1694`、`src/utils/strokeBuffer.ts:1697`。
+4. low pressure density boost：`src/utils/strokeBuffer.ts:1699`、`src/utils/strokeBuffer.ts:1705`。
+5. 采样器为 distance/time 并集合并：`src/utils/freehand/segmentSampler.ts:54`、`src/utils/freehand/segmentSampler.ts:64`、`src/utils/freehand/segmentSampler.ts:81`。
 
 ### 2.2 收笔末样本风险
 
-1. `finalizeStroke()` 起始就清 point buffer：`src/components/Canvas/useStrokeProcessor.ts:515`、`src/components/Canvas/useStrokeProcessor.ts:517`。  
-2. `pointerup` 直接 `finishCurrentStroke()`，未补拉 native 末样本：`src/components/Canvas/usePointerHandlers.ts:430`、`src/components/Canvas/usePointerHandlers.ts:480`。
+1. `finalizeStroke` 起始即清 point buffer：`src/components/Canvas/useStrokeProcessor.ts:515`、`src/components/Canvas/useStrokeProcessor.ts:517`。
+2. `pointerup` 直接结束笔触，未显式补拉末样本：`src/components/Canvas/usePointerHandlers.ts:430`、`src/components/Canvas/usePointerHandlers.ts:480`。
 
-### 2.3 轨迹平滑状态（仅记录，不执行）
+### 2.3 已隔离项（本 issue 不执行）
 
-1. 本分支已将轨迹平滑从主链路隔离并默认关闭：  
-   - `src/utils/strokeBuffer.ts:1342`  
-   - `src/utils/strokeBuffer.ts:1377`  
-   - `src/components/Canvas/useBrushRenderer.ts:810`  
-   - `src/components/Canvas/useBrushRenderer.ts:856`
-2. 轨迹平滑后续工作移至独立文档，不在本计划内推进。
+1. 轨迹平滑默认关闭并隔离：
+   - `src/utils/strokeBuffer.ts:1342`
+   - `src/utils/strokeBuffer.ts:1377`
+   - `src/components/Canvas/useBrushRenderer.ts:819`
+   - `src/components/Canvas/useBrushRenderer.ts:863`
+2. speed 启发式默认固定并隔离：
+   - `src/components/Canvas/useBrushRenderer.ts:215`
+   - `src/components/Canvas/useBrushRenderer.ts:218`
+   - `src/components/Canvas/useBrushRenderer.ts:818`
+   - `src/components/Canvas/useBrushRenderer.ts:862`
 
 ---
 
-## 3. 实施阶段（本 issue）
+## 3. Phase 0 阻塞项：Trace 契约与 Gate（必须先落地）
 
-### Phase 0（P0）：链路对比基建
+### 3.1 Trace 文件结构（`krita-tail-trace-v1`）
 
-目标：同输入下自动导出并对比 `input_raw / pressure_mapped / sampler_t / dab_emit`。
+1. 顶层结构固定：
+   - `schemaVersion`
+   - `strokeId`
+   - `meta`
+   - `stages.input_raw[]`
+   - `stages.pressure_mapped[]`
+   - `stages.sampler_t[]`
+   - `stages.dab_emit[]`
+2. `meta` 最少包含：
+   - `caseId`
+   - `canvas`（宽高、dpi）
+   - `brushPreset`
+   - `runtimeFlags`（trajectory smoothing、speed isolation、heuristics 开关）
+   - `build`（app/krita commit、平台、输入后端）
+
+### 3.2 Stage 字段协议（单位固定）
+
+1. `input_raw`：
+   - `seq`（int）
+   - `timestampMs`（float, ms）
+   - `x`/`y`（float, px）
+   - `pressureRaw`（float, 0..1）
+   - `phase`（`down|move|up`）
+2. `pressure_mapped`：
+   - `seq`
+   - `pressureAfterGlobalCurve`
+   - `pressureAfterBrushCurve`
+   - `pressureAfterHeuristic`（若关闭启发式应等于上一字段）
+   - `speedPxPerMs`（monitor-only）
+   - `normalizedSpeed`（monitor-only）
+3. `sampler_t`：
+   - `segmentId`
+   - `segmentStartSeq` / `segmentEndSeq`
+   - `sampleIndex`
+   - `t`（0..1）
+   - `triggerKind`（`distance|time`）
+   - `distanceCarryBefore/After`（px）
+   - `timeCarryBefore/After`（ms）
+4. `dab_emit`：
+   - `dabIndex`
+   - `segmentId`
+   - `sampleIndex`
+   - `x`/`y`（px）
+   - `pressure`
+   - `spacingUsedPx`
+   - `timestampMs`
+   - `source`（`normal|finalize|pointerup_fallback`）
+
+### 3.3 对齐键与尾段窗口定义
+
+1. `input_raw`、`pressure_mapped`：按 `seq` 对齐。
+2. `sampler_t`：先按 `segmentId + sampleIndex` 对齐，缺失时按同段 `t` 最近邻补齐并打 `alignedByNearest=true`。
+3. `dab_emit`：按 `dabIndex` 对齐；若总数不同，补 `missing/extra` 标记。
+4. 尾段窗口固定为：
+   - `max(最后20个 dab, 最后15% 弧长)`。
+
+### 3.4 输出产物与命令
+
+1. `trace.sutu.json`
+2. `trace.krita.json`
+3. `report.json`
+4. `stage_diff.csv`
+5. `tail_chart.png`
+6. gate 命令（目标命令名）：`pnpm -s run gate:krita-tail`
+
+### 3.5 Krita harness 落点（实操必须按锚点）
+
+1. `pressure_mapped`：`kis_painting_information_builder.cpp` 的 `createPaintingInformation()`（`128/131/137/179`）打点导出。
+2. `sampler_t`：`kis_paintop_utils.h` 的 `paintLine()` 循环（`67/68`）打点导出。
+3. `dab_emit`：`paintLine()` 中 `paintAt` 调用前后（`84`）导出最终采样点。
+4. 若需判定触发来源与 carry，补打点 `kis_distance_information.cpp`（`405/424/431/436/443`）。
+
+---
+
+## 4. 实施阶段（按顺序执行）
+
+### Phase 0（P0）：对比基建与阈值校准
+
+目标：拿到稳定、可重复、可 gate 的差异报告。
 
 任务：
 
-1. Sutu 导出 `trace.sutu.json`。  
-2. Krita 本地 harness 导出 `trace.krita.json`。  
-3. 对比脚本输出 `report.json + stage_diff.csv + tail_chart.png`。  
-4. 新增本地 gate 命令。
+1. 落地 trace v1 导出器（Sutu + Krita harness）。
+2. 落地对比脚本与可视化。
+3. 生成 `baseline-config.json`（冻结画布/笔刷/case）。
+4. 做 10 轮校准，产出 `thresholds.json`（见第 5 节规则）。
+
+完成标准：
+
+1. 同一输入重复运行 10 次，指标抖动在预设范围内。
+2. gate 输出可稳定复现 PASS/FAIL。
 
 ### Phase 1（P0）：压感链路去启发式
 
@@ -119,10 +220,10 @@
 
 任务：
 
-1. 段内 pressure 改线性插值。  
-2. EMA / pressure-change-spacing / low-pressure-density 改可配置。  
-3. 新增 `kritaParityProfile`，默认关闭这三项启发式。  
-4. 用 trace 比较尾段压力曲线和 dab 密度。
+1. 段内 pressure 从 smoothstep 改为线性插值。
+2. EMA / pressure-change-spacing / low-pressure-density 全部可开关。
+3. `kritaParityProfile` 默认关闭上述三项。
+4. 用 trace 比较尾段 pressure 曲线与 dab 密度。
 
 ### Phase 2（P0）：收笔末样本完整消费
 
@@ -130,43 +231,79 @@
 
 任务：
 
-1. 调整顺序：先消费末段输入，再清 buffer。  
-2. pointerup 时补读一次 native buffer。  
-3. 无 native 点时使用 pointerup 事件兜底。  
-4. 增加快抬笔/慢抬笔/停笔抬起自动测试。
+1. `pointerup` 流程改为“先补读后 finalize，最后清 buffer”。
+2. 引入 `seq` 水位协议：
+   - 记录 `upSeqSnapshot`。
+   - 仅消费 `seq > currentCursor` 的新点。
+3. 引入短暂补读窗口（grace window）：
+   - 推荐：`8ms`，最多 `2` 次轮询。
+4. 无 native 末点时，用 `pointerup` 事件构造 `pointerup_fallback` 样本。
+5. 增加快抬笔/慢抬笔/停笔抬起自动测试。
 
 ### Phase 3（P0）：采样器语义对齐 Krita
 
-目标：把 `sampler_t` 分布收敛到 Krita 基线。
+目标：`sampler_t` 分布收敛到 Krita 基线。
 
 任务：
 
-1. 改为按“最早触发者”推进，不再并集合并后排序。  
-2. timed sampling 改成显式配置控制。  
-3. carry/reset 语义按 Krita 对齐。  
-4. finalize 路径复用同一采样推进器。
+1. 从“distance/time 并集合并”改为“最早触发者推进”。
+2. carry/reset 语义按 Krita 对齐。
+3. finalize 路径复用同一采样推进器。
+4. 对齐 `triggerKind`、`carryBefore/After` 差异。
 
 ---
 
-## 4. 验收标准（本 issue）
+## 5. Gate 指标与阈值（可执行）
 
-### 4.1 自动化（必须全过）
+### 5.1 阈值生成规则（一次性）
 
-1. `pressure_mapped` 尾段误差低于阈值。  
-2. `sampler_t` 分布误差低于阈值。  
-3. `dab_emit` 尾段 dab 数量、间距、pressure slope 通过阈值。  
-4. 快抬笔 case 不丢终样本。
+1. 在冻结基线工况下跑 10 轮。
+2. 指标阈值取：`max(默认下限, mean + 3 * std)`。
+3. 生成并固化到 `thresholds.json`，后续仅允许显式变更。
 
-### 4.2 手动（仅里程碑）
+### 5.2 默认下限（首次可用）
 
-1. 场景：慢抬、快甩、急停、低压慢移。  
-2. 仅在 gate 失败或阶段合并前做抽检。
+1. `pressure_tail_mae <= 0.015`
+2. `pressure_tail_p95 <= 0.035`
+3. `sampler_t_emd <= 0.050`
+4. `sampler_t_missing_ratio <= 0.030`
+5. `dab_tail_count_delta <= 1`
+6. `dab_tail_mean_spacing_delta_px <= 0.50`
+7. `dab_tail_pressure_slope_delta <= 0.060`
+8. `terminal_sample_drop_count == 0`（20 轮 stress case）
+
+### 5.3 speed 字段策略（仅监控，不参与 gate）
+
+1. 记录并展示：
+   - `speedPxPerMs_mae`
+   - `normalizedSpeed_mae`
+   - `normalizedSpeed_p95`
+2. 触发 warning（不 fail）：
+   - `normalizedSpeed_mae > 0.15` 或 `normalizedSpeed_p95 > 0.25`
+3. 只有“启用 Speed 传感器专项”才将 speed 指标升级为 gate。
 
 ---
 
-## 5. 当前执行顺序
+## 6. 自动化与人工验收
 
-1. 先做 Phase 0（把比对系统搭起来）。  
-2. 再做 Phase 1 + 2（先修压感钝化与末样本丢失）。  
-3. 最后做 Phase 3（采样器语义）。  
-4. 轨迹平滑工作严格按独立文档执行，不混入本 issue。
+### 6.1 自动化（必须全过）
+
+1. Phase 0：trace 导出完整、schema 校验通过。
+2. Phase 1：pressure 与 dab 尾段指标满足 gate。
+3. Phase 2：`terminal_sample_drop_count == 0`。
+4. Phase 3：`sampler_t` 指标满足 gate。
+
+### 6.2 人工抽检（仅里程碑）
+
+1. 场景：慢抬、快甩、急停、低压慢移。
+2. 仅在 gate 失败定位、阶段合并前做抽检。
+
+---
+
+## 7. 当前执行顺序
+
+1. 先做 Phase 0（没有 trace 契约与阈值，不允许改算法）。
+2. 再做 Phase 1（压感钝化启发式）。
+3. 再做 Phase 2（末样本消费顺序与补读协议）。
+4. 最后做 Phase 3（采样器语义）。
+5. 轨迹平滑与 speed 调参严格留在独立计划，不混入本 issue。
