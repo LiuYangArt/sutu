@@ -1,13 +1,19 @@
-# Krita 压感尖尾一致性执行计划（当前 issue 范围）
+# Krita 压感处理一致性执行计划（当前 issue 范围）
 
 **日期**：2026-02-17  
 **当前分支**：`perf/146-krita-photoshop`  
-**目标**：只解决压感尖尾一致性；当前 issue 不推进轨迹平滑与 speed 调参。
+**目标**：最高优先级是“与 Krita 压感处理语义完全一致”。当前 issue 聚焦压感尖尾一致性，不推进轨迹平滑与 speed 调参优化，但所有实现必须服从该一致性目标。
   krita压感方案分析文档： `docs/research/2026-02-17-krita-pressure-chain-analysis-no-trajectory-smoothing.md`
 
 > 2026-02-17 Phase0 执行补充：所有 gate/校准脚本、默认配置与文档示例统一固定使用 `http://localhost:1420/`，不再使用 `127.0.0.1` 作为默认地址。
 
 ## 0. 范围与固定口径
+
+### 0.0 最高优先级（不可让步）
+
+1. 与 Krita 源码语义一致优先于“主观手感更顺”或“局部性能更好”的本地策略。
+2. 任何无法用 Krita 锚点解释的启发式，默认不得进入主链路；若保留仅允许以 `experimental` 开关存在且默认关闭。
+3. 验收以语义等价为第一门槛，数值阈值仅用于自动化量化，不允许“指标过线但语义不一致”判定通过。
 
 ### 0.1 In Scope（本 issue 必做）
 
@@ -15,6 +21,7 @@
 2. 采样触发语义对齐（distance/timing 的触发、carry、reset）。
 3. 收笔末样本完整消费（快抬笔不丢尾端低压段）。
 4. 自动化对比与 gate（替代高频手工回归）。
+5. 跨输入后端一致性（`windows_wintab`、`windows_winink_pointer`、`mac_native`），其中 `windows_wintab` 为 blocking 优先级。
 
 ### 0.2 Out of Scope（本 issue 不做）
 
@@ -28,7 +35,7 @@
 
 1. Krita 里 speed 参数不直接改 pressure；它们影响 `drawingSpeed`，再由画笔是否启用 `Speed` 传感器决定是否影响笔迹。
 2. 当前尖尾对齐基线使用 Pressure-only 画笔配置，不把 speed 当主变量。
-3. 当前分支运行时已隔离 speed 启发式，不读取 Tablet speed slider（UI/持久化仍保留）：
+3. 当前分支运行时已隔离 speed 启发式，不读取 Tablet speed slider（UI/持久化仍保留）；该隔离只用于本 issue 降噪，不代表最终语义目标。
    - `src/components/Canvas/useBrushRenderer.ts:215`
    - `src/components/Canvas/useBrushRenderer.ts:818`
    - `src/components/Canvas/useBrushRenderer.ts:862`
@@ -40,6 +47,8 @@
 3. Sutu：轨迹平滑关闭、speed 启发式隔离开启。
 4. Case 集合（固定顺序）：`slow_lift`、`fast_flick`、`abrupt_stop`、`low_pressure_drag`。
 5. 画布与笔刷基线：由 Phase 0 产出的 `baseline-config.json` 固化，不允许口头约定。
+6. 输入后端矩阵固定记录：`windows_wintab`、`windows_winink_pointer`、`mac_native`。
+7. `baseline-config.json` 与 `thresholds.json` 必须按输入后端分组，不允许共用同一组阈值。
 
 ---
 
@@ -105,6 +114,7 @@
 
 1. `finalizeStroke` 起始即清 point buffer：`src/components/Canvas/useStrokeProcessor.ts:515`、`src/components/Canvas/useStrokeProcessor.ts:517`。
 2. `pointerup` 直接结束笔触，未显式补拉末样本：`src/components/Canvas/usePointerHandlers.ts:430`、`src/components/Canvas/usePointerHandlers.ts:480`。
+3. `pointerup_fallback` 当前使用 `pressureRaw: 0`，会在无 native `up` 点场景压扁尾压：`src/components/Canvas/usePointerHandlers.ts:545`。
 
 ### 2.3 已隔离项（本 issue 不执行）
 
@@ -137,6 +147,9 @@
    - `caseId`
    - `canvas`（宽高、dpi）
    - `brushPreset`
+   - `inputBackend`（`windows_wintab|windows_winink_pointer|mac_native`）
+   - `device`（设备型号、驱动版本、采样率）
+   - `timestampSource`（`driver|event|performance_now`）
    - `runtimeFlags`（trajectory smoothing、speed isolation、heuristics 开关）
    - `build`（app/krita commit、平台、输入后端）
 
@@ -147,6 +160,7 @@
    - `timestampMs`（float, ms）
    - `x`/`y`（float, px）
    - `pressureRaw`（float, 0..1）
+   - `seqSource`（`native|fallback`）
    - `phase`（`down|move|up`）
 2. `pressure_mapped`：
    - `seq`
@@ -172,6 +186,7 @@
    - `spacingUsedPx`
    - `timestampMs`
    - `source`（`normal|finalize|pointerup_fallback`）
+   - `fallbackPressurePolicy`（`none|last_nonzero|event_raw|zero`）
 
 ### 3.3 对齐键与尾段窗口定义
 
@@ -197,6 +212,14 @@
 3. `dab_emit`：`paintLine()` 中 `paintAt` 调用前后（`84`）导出最终采样点。
 4. 若需判定触发来源与 carry，补打点 `kis_distance_information.cpp`（`405/424/431/436/443`）。
 
+### 3.6 等价判定规则（Gate 之前先判语义）
+
+1. 若出现以下任一情况，直接判定为“语义不一致”，即使数值指标过线也必须 FAIL：
+   - `sampler_t` 仍为 distance/time 并集合并而非“最早触发者逐步推进”。
+   - `pressure` 段内插值不是线性插值。
+   - `pointerup_fallback` 压感策略与文档约定不一致。
+2. 只有通过语义判定后，才进入第 5 节数值 gate 判定。
+
 ---
 
 ## 4. 实施阶段（按顺序执行）
@@ -209,13 +232,13 @@
 
 1. 落地 trace v1 导出器（Sutu + Krita harness）。
 2. 落地对比脚本与可视化。
-3. 生成 `baseline-config.json`（冻结画布/笔刷/case）。
-4. 做 10 轮校准，产出 `thresholds.json`（见第 5 节规则）。
+3. 生成 `baseline-config.json`（冻结画布/笔刷/case，按输入后端分组）。
+4. 对每个输入后端分别做 10 轮校准，产出分组 `thresholds.json`（见第 5 节规则）。
 
 完成标准：
 
-1. 同一输入重复运行 10 次，指标抖动在预设范围内。
-2. gate 输出可稳定复现 PASS/FAIL。
+1. 同一输入后端重复运行 10 次，指标抖动在预设范围内。
+2. gate 输出可稳定复现 PASS/FAIL，且报告内可区分输入后端。
 
 ### Phase 1（P0）：压感链路去启发式
 
@@ -226,7 +249,8 @@
 1. 段内 pressure 从 smoothstep 改为线性插值。
 2. EMA / pressure-change-spacing / low-pressure-density 全部可开关。
 3. `kritaParityProfile` 默认关闭上述三项。
-4. 用 trace 比较尾段 pressure 曲线与 dab 密度。
+4. 全局压感映射对齐 Krita `pressureToCurve` 语义（LUT + `interpolateLinear`）。
+5. 用 trace 比较尾段 pressure 曲线与 dab 密度。
 
 ### Phase 2（P0）：收笔末样本完整消费
 
@@ -239,8 +263,10 @@
    - 记录 `upSeqSnapshot`。
    - 仅消费 `seq > currentCursor` 的新点。
 3. 引入短暂补读窗口（grace window）：
-   - 推荐：`8ms`，最多 `2` 次轮询。
+   - 固定实现：`pointerup` 同步补读 1 次 + `setTimeout(4ms)` 轮询最多 2 次（总窗口 8ms）。
+   - 每次轮询必须校验 finalize token，避免与 `finalizeStroke` 并发竞争。
 4. 无 native 末点时，用 `pointerup` 事件构造 `pointerup_fallback` 样本。
+   - `fallbackPressurePolicy` 固定为：优先 `last_nonzero_pressure`，其次 `event_raw`，最后 `0`。
 5. 增加快抬笔/慢抬笔/停笔抬起自动测试。
 
 ### Phase 3（P0）：采样器语义对齐 Krita
@@ -249,10 +275,22 @@
 
 任务：
 
-1. 从“distance/time 并集合并”改为“最早触发者推进”。
-2. carry/reset 语义按 Krita 对齐。
-3. finalize 路径复用同一采样推进器。
-4. 对齐 `triggerKind`、`carryBefore/After` 差异。
+1. 从“distance/time 并集合并”改为“最早触发者逐步推进”。
+2. `SegmentSampler` 由批量输出改为逐样本推进（或证明语义等价），复刻 Krita `paintLine` while 循环。
+3. carry/reset 语义按 Krita 对齐，确保 distance/time carry 在触发后保持耦合状态。
+4. finalize 路径复用同一采样推进器。
+5. 对齐 `triggerKind`、`carryBefore/After` 差异，并补充同触发时的优先级测试。
+
+### Phase 4（P1）：跨输入后端一致性收口（WinTab 优先）
+
+目标：同一套方案对 `windows_wintab`、`windows_winink_pointer`、`mac_native` 均有效，且 `windows_wintab` 先达到 blocking 标准。
+
+任务：
+
+1. 对三类输入后端分别生成基线 trace 与阈值。
+2. Gate 执行按后端出报告并支持单后端重跑。
+3. 建立后端差异白名单（仅允许时间戳精度/事件粒度差异），禁止压力链路语义分叉。
+4. `windows_wintab` 达标后，逐步将 `windows_winink_pointer`、`mac_native` 从 warning 升级到 blocking。
 
 ---
 
@@ -260,9 +298,9 @@
 
 ### 5.1 阈值生成规则（一次性）
 
-1. 在冻结基线工况下跑 10 轮。
+1. 在冻结基线工况下按输入后端分别跑 10 轮。
 2. 指标阈值取：`max(默认下限, mean + 3 * std)`。
-3. 生成并固化到 `thresholds.json`，后续仅允许显式变更。
+3. 生成并固化到 `thresholds.json`（按后端分组），后续仅允许显式变更。
 
 ### 5.2 默认下限（首次可用）
 
@@ -285,6 +323,13 @@
    - `normalizedSpeed_mae > 0.15` 或 `normalizedSpeed_p95 > 0.25`
 3. 只有“启用 Speed 传感器专项”才将 speed 指标升级为 gate。
 
+### 5.4 后端 Gate 分级（WinTab 优先）
+
+1. `windows_wintab`：`blocking`（所有 Phase 指标必须 PASS）。
+2. `windows_winink_pointer`：初期 `warning`，连续 5 次稳定后升级 `blocking`。
+3. `mac_native`：初期 `warning`，接入稳定设备后升级 `blocking`。
+4. 任何后端若出现 `terminal_sample_drop_count > 0`，直接 FAIL（不走 warning）。
+
 ---
 
 ## 6. 自动化与人工验收
@@ -295,6 +340,7 @@
 2. Phase 1：pressure 与 dab 尾段指标满足 gate。
 3. Phase 2：`terminal_sample_drop_count == 0`。
 4. Phase 3：`sampler_t` 指标满足 gate。
+5. Phase 4：三类输入后端均产出报告；`windows_wintab` 必须 PASS。
 
 ### 6.2 人工抽检（仅里程碑）
 
@@ -308,8 +354,9 @@
 1. 先做 Phase 0（没有 trace 契约与阈值，不允许改算法）。
 2. 再做 Phase 1（压感钝化启发式）。
 3. 再做 Phase 2（末样本消费顺序与补读协议）。
-4. 最后做 Phase 3（采样器语义）。
-5. 轨迹平滑与 speed 调参严格留在独立计划，不混入本 issue。
+4. 再做 Phase 3（采样器语义）。
+5. 最后做 Phase 4（跨后端收口，WinTab 先 blocking）。
+6. 轨迹平滑与 speed 调参严格留在独立计划，不混入本 issue。
 
 ---
 
@@ -329,6 +376,9 @@
 4. PASS/FAIL 复现（通过）：
    - 校准阈值下重复运行 gate 3 次，均 PASS。
    - 严格阈值（5.2 默认下限）下运行 gate，稳定 FAIL。
+5. 覆盖范围说明（必须保留）：
+   - 当前验证结论仅证明 Phase0 工具链可用；
+   - 未形成 `windows_wintab/windows_winink_pointer/mac_native` 的完整分后端验收结论。
 
 ### 8.2 对“设计目的”的判定
 
@@ -337,7 +387,7 @@
    - 能稳定复现 PASS/FAIL，满足 Phase0“可 gate、可重复”的目标。
 2. **整体 issue 终态尚未达成（算法对齐层）**：
    - 当前仅证明 Phase0 基建可用；
-   - 压感尖尾的实质对齐仍需继续执行 Phase1~Phase3（去启发式、末样本消费、采样器语义对齐）。
+   - 压感尖尾的实质对齐仍需继续执行 Phase1~Phase4（去启发式、末样本消费、采样器语义、跨后端收口）。
 3. **结论**：
    - 当前提交可作为 Phase0 验收基线进入后续 Phase1 开发；
    - 不应将当前状态解读为“已完成 Krita 尖尾手感对齐”。
