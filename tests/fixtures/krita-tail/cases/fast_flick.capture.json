@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "createdAt": "2026-02-17T00:00:00.000Z",
+  "metadata": {
+    "canvasWidth": 2048,
+    "canvasHeight": 1536,
+    "viewportScale": 1,
+    "activeLayerId": "layer-1",
+    "tool": {
+      "currentTool": "brush",
+      "brushColor": "#000000",
+      "brushSize": 24,
+      "brushFlow": 1,
+      "brushOpacity": 1,
+      "brushHardness": 0.65,
+      "brushSpacing": 0.16,
+      "pressureCurve": "linear",
+      "pressureSizeEnabled": true,
+      "pressureFlowEnabled": true,
+      "pressureOpacityEnabled": false,
+      "scatterEnabled": false,
+      "textureEnabled": false,
+      "dualBrushEnabled": false,
+      "wetEdgeEnabled": false,
+      "noiseEnabled": false,
+      "buildupEnabled": false
+    }
+  },
+  "samples": [
+    { "type": "pointerdown", "timeMs": 0, "x": 740, "y": 680, "pressure": 0.78, "tiltX": 0, "tiltY": 0, "pointerType": "pen", "pointerId": 1, "buttons": 1 },
+    { "type": "pointermove", "timeMs": 8, "x": 782, "y": 642, "pressure": 0.82, "tiltX": 0, "tiltY": 0, "pointerType": "pen", "pointerId": 1, "buttons": 1 },
+    { "type": "pointermove", "timeMs": 16, "x": 840, "y": 598, "pressure": 0.68, "tiltX": 0, "tiltY": 0, "pointerType": "pen", "pointerId": 1, "buttons": 1 },
+    { "type": "pointermove", "timeMs": 24, "x": 910, "y": 556, "pressure": 0.42, "tiltX": 0, "tiltY": 0, "pointerType": "pen", "pointerId": 1, "buttons": 1 },
+    { "type": "pointermove", "timeMs": 34, "x": 972, "y": 528, "pressure": 0.18, "tiltX": 0, "tiltY": 0, "pointerType": "pen", "pointerId": 1, "buttons": 1 },
+    { "type": "pointerup", "timeMs": 46, "x": 998, "y": 520, "pressure": 0, "tiltX": 0, "tiltY": 0, "pointerType": "pen", "pointerId": 1, "buttons": 0 }
+  ]
+}

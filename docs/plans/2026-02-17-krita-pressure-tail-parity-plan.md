@@ -5,6 +5,8 @@
 **目标**：只解决压感尖尾一致性；当前 issue 不推进轨迹平滑与 speed 调参。
 krita压感方案分析文档： F:\CodeProjects\PaintBoard\docs\plans\2026-02-17-krita-trajectory-smoothing-plan.md
 
+> 2026-02-17 Phase0 执行补充：所有 gate/校准脚本、默认配置与文档示例统一固定使用 `http://localhost:1420/`，不再使用 `127.0.0.1` 作为默认地址。
+
 ## 0. 范围与固定口径
 
 ### 0.1 In Scope（本 issue 必做）

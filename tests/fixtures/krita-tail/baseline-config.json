@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "krita-tail-baseline-config-v1",
+  "appUrl": "http://localhost:1420/",
+  "canvas": {
+    "width": 2048,
+    "height": 1536,
+    "dpi": 72
+  },
+  "brushPreset": "krita-pixel-pressure-only-v1",
+  "runtimeFlags": {
+    "trajectorySmoothingEnabled": false,
+    "speedIsolationEnabled": true,
+    "pressureHeuristicsEnabled": false
+  },
+  "build": {
+    "appCommit": "unknown",
+    "kritaCommit": "krita-tail-trace-v1",
+    "platform": "windows",
+    "inputBackend": "native-stream"
+  },
+  "defaultReplaySpeed": 1,
+  "defaultWaitMs": 220,
+  "cases": [
+    {
+      "id": "slow_lift",
+      "capture": "cases/slow_lift.capture.json",
+      "kritaTrace": "krita-baseline/slow_lift/trace.krita.json",
+      "waitMs": 260
+    },
+    {
+      "id": "fast_flick",
+      "capture": "cases/fast_flick.capture.json",
+      "kritaTrace": "krita-baseline/fast_flick/trace.krita.json",
+      "waitMs": 200
+    },
+    {
+      "id": "abrupt_stop",
+      "capture": "cases/abrupt_stop.capture.json",
+      "kritaTrace": "krita-baseline/abrupt_stop/trace.krita.json",
+      "waitMs": 220
+    },
+    {
+      "id": "low_pressure_drag",
+      "capture": "cases/low_pressure_drag.capture.json",
+      "kritaTrace": "krita-baseline/low_pressure_drag/trace.krita.json",
+      "waitMs": 260
+    }
+  ]
+}

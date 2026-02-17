@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "krita-tail-trace-v1",
+  "strokeId": "krita-fast-flick-baseline",
+  "meta": {
+    "caseId": "fast_flick",
+    "canvas": { "width": 2048, "height": 1536, "dpi": 72 },
+    "brushPreset": "krita-pixel-pressure-only-v1",
+    "runtimeFlags": {
+      "trajectorySmoothingEnabled": false,
+      "speedIsolationEnabled": true,
+      "pressureHeuristicsEnabled": false
+    },
+    "build": {
+      "appCommit": "unknown",
+      "kritaCommit": "krita-tail-trace-v1",
+      "platform": "windows",
+      "inputBackend": "native-stream"
+    }
+  },
+  "stages": {
+    "input_raw": [
+      { "seq": 1, "seqSource": "native", "timestampMs": 0, "x": 740, "y": 680, "pressureRaw": 0.78, "phase": "down" },
+      { "seq": 2, "seqSource": "native", "timestampMs": 8, "x": 782, "y": 642, "pressureRaw": 0.82, "phase": "move" },
+      { "seq": 3, "seqSource": "native", "timestampMs": 16, "x": 840, "y": 598, "pressureRaw": 0.68, "phase": "move" },
+      { "seq": 4, "seqSource": "native", "timestampMs": 24, "x": 910, "y": 556, "pressureRaw": 0.42, "phase": "move" },
+      { "seq": 5, "seqSource": "native", "timestampMs": 34, "x": 972, "y": 528, "pressureRaw": 0.18, "phase": "move" },
+      { "seq": 6, "seqSource": "native", "timestampMs": 46, "x": 998, "y": 520, "pressureRaw": 0, "phase": "up" }
+    ],
+    "pressure_mapped": [
+      { "seq": 1, "pressureAfterGlobalCurve": 0.78, "pressureAfterBrushCurve": 0.78, "pressureAfterHeuristic": 0.78, "speedPxPerMs": 0, "normalizedSpeed": 0 },
+      { "seq": 2, "pressureAfterGlobalCurve": 0.82, "pressureAfterBrushCurve": 0.82, "pressureAfterHeuristic": 0.82, "speedPxPerMs": 7.08, "normalizedSpeed": 0.236 },
+      { "seq": 3, "pressureAfterGlobalCurve": 0.68, "pressureAfterBrushCurve": 0.68, "pressureAfterHeuristic": 0.68, "speedPxPerMs": 9.1, "normalizedSpeed": 0.303 },
+      { "seq": 4, "pressureAfterGlobalCurve": 0.42, "pressureAfterBrushCurve": 0.42, "pressureAfterHeuristic": 0.42, "speedPxPerMs": 10.2, "normalizedSpeed": 0.34 },
+      { "seq": 5, "pressureAfterGlobalCurve": 0.18, "pressureAfterBrushCurve": 0.18, "pressureAfterHeuristic": 0.18, "speedPxPerMs": 6.8, "normalizedSpeed": 0.227 },
+      { "seq": 6, "pressureAfterGlobalCurve": 0, "pressureAfterBrushCurve": 0, "pressureAfterHeuristic": 0, "speedPxPerMs": 2.3, "normalizedSpeed": 0.077 }
+    ],
+    "sampler_t": [
+      { "segmentId": 0, "segmentStartSeq": 1, "segmentEndSeq": 2, "sampleIndex": 0, "t": 0.41, "triggerKind": "distance", "distanceCarryBefore": 0, "distanceCarryAfter": 0.6, "timeCarryBefore": 0, "timeCarryAfter": 8 },
+      { "segmentId": 1, "segmentStartSeq": 2, "segmentEndSeq": 3, "sampleIndex": 0, "t": 0.43, "triggerKind": "distance", "distanceCarryBefore": 0.6, "distanceCarryAfter": 1.2, "timeCarryBefore": 8, "timeCarryAfter": 0 },
+      { "segmentId": 2, "segmentStartSeq": 3, "segmentEndSeq": 4, "sampleIndex": 0, "t": 0.46, "triggerKind": "distance", "distanceCarryBefore": 1.2, "distanceCarryAfter": 0.8, "timeCarryBefore": 0, "timeCarryAfter": 8 },
+      { "segmentId": 3, "segmentStartSeq": 4, "segmentEndSeq": 5, "sampleIndex": 0, "t": 0.52, "triggerKind": "distance", "distanceCarryBefore": 0.8, "distanceCarryAfter": 0.4, "timeCarryBefore": 8, "timeCarryAfter": 2 },
+      { "segmentId": 4, "segmentStartSeq": 5, "segmentEndSeq": 6, "sampleIndex": 0, "t": 0.58, "triggerKind": "time", "distanceCarryBefore": 0.4, "distanceCarryAfter": 0.9, "timeCarryBefore": 2, "timeCarryAfter": 14 }
+    ],
+    "dab_emit": [
+      { "dabIndex": 0, "segmentId": 0, "sampleIndex": 0, "x": 757, "y": 664, "pressure": 0.81, "spacingUsedPx": 3.5, "timestampMs": 3.5, "source": "normal" },
+      { "dabIndex": 1, "segmentId": 1, "sampleIndex": 0, "x": 807, "y": 624, "pressure": 0.73, "spacingUsedPx": 3.5, "timestampMs": 11.5, "source": "normal" },
+      { "dabIndex": 2, "segmentId": 2, "sampleIndex": 0, "x": 872, "y": 579, "pressure": 0.55, "spacingUsedPx": 3.4, "timestampMs": 19.7, "source": "normal" },
+      { "dabIndex": 3, "segmentId": 3, "sampleIndex": 0, "x": 942, "y": 542, "pressure": 0.31, "spacingUsedPx": 3.4, "timestampMs": 29.2, "source": "normal" },
+      { "dabIndex": 4, "segmentId": 4, "sampleIndex": 0, "x": 986, "y": 524, "pressure": 0.09, "spacingUsedPx": 3.3, "timestampMs": 40.9, "source": "pointerup_fallback" }
+    ]
+  }
+}

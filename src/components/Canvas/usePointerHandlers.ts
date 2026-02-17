@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
-import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
+import { readPointBufferSince, useTabletStore, type InputPhase } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { getEffectiveInputData, isNativeTabletStreamingState } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
+import { recordKritaTailInputRaw } from '@/test/kritaTailTrace/collector';
 
 function pointerEventToCanvasPoint(
   canvas: HTMLCanvasElement,
@@ -24,6 +25,15 @@ interface QueuedPoint {
   rotation: number;
   timestampMs: number;
   pointIndex: number;
+  inputSeq: number;
+  phase: 'down' | 'move' | 'up';
+}
+
+function normalizeTracePhase(phase: InputPhase | undefined, fallback: 'down' | 'move' | 'up') {
+  if (phase === 'down' || phase === 'move' || phase === 'up') {
+    return phase;
+  }
+  return fallback;
 }
 
 interface UsePointerHandlersParams {
@@ -166,6 +176,7 @@ export function usePointerHandlers({
   onBeforeCanvasMutation,
 }: UsePointerHandlersParams) {
   const nativeSeqCursorRef = useRef(0);
+  const fallbackSeqRef = useRef(1);
   const activePointerIdRef = useRef<number | null>(null);
   const isPanningRef = useRef(isPanning);
 
@@ -362,6 +373,11 @@ export function usePointerHandlers({
               bufferedPoints[bufferedPoints.length - 1] ??
               null)
             : null;
+        const seqSource: 'native' | 'fallback' =
+          nativePoint && Number.isInteger(nativePoint.seq) ? 'native' : 'fallback';
+        const inputSeq =
+          seqSource === 'native' ? (nativePoint!.seq as number) : fallbackSeqRef.current++;
+        const phase = normalizeTracePhase(nativePoint?.phase, 'move');
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
         const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
           evt,
@@ -371,6 +387,15 @@ export function usePointerHandlers({
           nativeEvent,
           nativePoint
         );
+        recordKritaTailInputRaw({
+          seq: inputSeq,
+          seqSource,
+          timestampMs,
+          x: canvasX,
+          y: canvasY,
+          pressureRaw: pressure,
+          phase,
+        });
 
         const idx = pointIndexRef.current++;
         latencyProfilerRef.current.markInputReceived(idx, evt);
@@ -386,6 +411,8 @@ export function usePointerHandlers({
             rotation,
             timestampMs,
             pointIndex: idx,
+            inputSeq,
+            phase,
           });
           window.__strokeDiagnostics?.onPointBuffered();
         } else if (state === 'active') {
@@ -398,6 +425,8 @@ export function usePointerHandlers({
             rotation,
             timestampMs,
             pointIndex: idx,
+            inputSeq,
+            phase,
           });
           window.__strokeDiagnostics?.onPointBuffered();
         }
@@ -473,6 +502,51 @@ export function usePointerHandlers({
         );
         endPointerSession(nativeEvent.pointerId);
         return;
+      }
+
+      if (isStrokeTool(currentTool)) {
+        const tabletState = useTabletStore.getState();
+        const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
+        const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
+        const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+          ? readPointBufferSince(nativeSeqCursorRef.current)
+          : { points: [], nextSeq: nativeSeqCursorRef.current };
+        if (shouldUseNativeBackend) {
+          nativeSeqCursorRef.current = nextSeq;
+        }
+
+        for (const point of bufferedPoints) {
+          const phase = normalizeTracePhase(point.phase, 'move');
+          const seqSource: 'native' | 'fallback' = Number.isInteger(point.seq)
+            ? 'native'
+            : 'fallback';
+          recordKritaTailInputRaw({
+            seq: seqSource === 'native' ? point.seq : fallbackSeqRef.current++,
+            seqSource,
+            timestampMs: point.timestamp_ms,
+            x: point.x,
+            y: point.y,
+            pressureRaw: point.pressure,
+            phase,
+          });
+        }
+
+        const hasNativeUpPoint = bufferedPoints.some((point) => point.phase === 'up');
+        if (!hasNativeUpPoint) {
+          withCanvasPoint((canvasX, canvasY) => {
+            recordKritaTailInputRaw({
+              seq: fallbackSeqRef.current++,
+              seqSource: 'fallback',
+              timestampMs: Number.isFinite(nativeEvent.timeStamp)
+                ? nativeEvent.timeStamp
+                : performance.now(),
+              x: canvasX,
+              y: canvasY,
+              pressureRaw: 0,
+              phase: 'up',
+            });
+          });
+        }
       }
 
       usingRawInput.current = false;
@@ -610,6 +684,9 @@ export function usePointerHandlers({
       let tiltY = 0;
       let rotation = 0;
       let timestampMs = Number.isFinite(pe.timeStamp) ? pe.timeStamp : performance.now();
+      let inputSeq = fallbackSeqRef.current++;
+      let inputSeqSource: 'native' | 'fallback' = 'fallback';
+      let inputPhase: 'down' | 'move' | 'up' = 'down';
       if (pe.pointerType === 'pen') {
         pressure = pe.pressure > 0 ? pe.pressure : 0;
       } else if (pe.pressure > 0) {
@@ -643,6 +720,14 @@ export function usePointerHandlers({
           if (lastBufferedPoint) {
             pressure = lastBufferedPoint.pressure;
             timestampMs = lastBufferedPoint.timestamp_ms;
+            if (Number.isInteger(lastBufferedPoint.seq)) {
+              inputSeq = lastBufferedPoint.seq;
+              inputSeqSource = 'native';
+            } else {
+              inputSeq = fallbackSeqRef.current++;
+              inputSeqSource = 'fallback';
+            }
+            inputPhase = normalizeTracePhase(lastBufferedPoint.phase, 'down');
           } else if (pe.pointerType === 'pen') {
             window.__strokeDiagnostics?.onStartPressureFallback();
             pressure = 0;
@@ -694,6 +779,15 @@ export function usePointerHandlers({
         lockShiftLine({ x: canvasX, y: canvasY });
         constrainedDown = constrainShiftLinePoint(canvasX, canvasY);
         lastInputPosRef.current = { x: constrainedDown.x, y: constrainedDown.y };
+        recordKritaTailInputRaw({
+          seq: inputSeq,
+          seqSource: inputSeqSource,
+          timestampMs,
+          x: constrainedDown.x,
+          y: constrainedDown.y,
+          pressureRaw: pressure,
+          phase: inputPhase,
+        });
       }
 
       beginPointerSession(e.pointerId, pe.isTrusted);
@@ -720,6 +814,8 @@ export function usePointerHandlers({
           rotation,
           timestampMs,
           pointIndex: idx,
+          inputSeq,
+          phase: inputPhase,
         },
       ];
       pendingEndRef.current = false;

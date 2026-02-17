@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "krita-tail-thresholds-v1",
+  "generatedAt": "2026-02-17T04:12:34.051Z",
+  "rounds": 10,
+  "appUrl": "http://localhost:1420/",
+  "metrics": {
+    "pressure_tail_mae": 0.42457829911928147,
+    "pressure_tail_p95": 0.9582297501564608,
+    "sampler_t_emd": 0.2583731205083028,
+    "sampler_t_missing_ratio": 1.014914335821395,
+    "dab_tail_count_delta": 113.52118339839751,
+    "dab_tail_mean_spacing_delta_px": 95.25152365285268,
+    "dab_tail_pressure_slope_delta": 0.3124486830926857,
+    "terminal_sample_drop_count": 2.049038105676658
+  },
+  "stats": {
+    "pressure_tail_mae": {
+      "samples": 40,
+      "mean": 0.16534209662597618,
+      "std": 0.08641206749776843,
+      "computed": 0.42457829911928147,
+      "floor": 0.015,
+      "final": 0.42457829911928147
+    },
+    "pressure_tail_p95": {
+      "samples": 40,
+      "mean": 0.35821979052840736,
+      "std": 0.20000331987601783,
+      "computed": 0.9582297501564608,
+      "floor": 0.035,
+      "final": 0.9582297501564608
+    },
+    "sampler_t_emd": {
+      "samples": 40,
+      "mean": 0.2176791149337872,
+      "std": 0.013564668524838534,
+      "computed": 0.2583731205083028,
+      "floor": 0.05,
+      "final": 0.2583731205083028
+    },
+    "sampler_t_missing_ratio": {
+      "samples": 40,
+      "mean": 0.9863764030986296,
+      "std": 0.009512644240921771,
+      "computed": 1.014914335821395,
+      "floor": 0.03,
+      "final": 1.014914335821395
+    },
+    "dab_tail_count_delta": {
+      "samples": 40,
+      "mean": 39.75,
+      "std": 24.5903944661325,
+      "computed": 113.52118339839751,
+      "floor": 1,
+      "final": 113.52118339839751
+    },
+    "dab_tail_mean_spacing_delta_px": {
+      "samples": 40,
+      "mean": 34.13782903593369,
+      "std": 20.371231538972996,
+      "computed": 95.25152365285268,
+      "floor": 0.5,
+      "final": 95.25152365285268
+    },
+    "dab_tail_pressure_slope_delta": {
+      "samples": 40,
+      "mean": 0.11502495043278375,
+      "std": 0.06580791088663399,
+      "computed": 0.3124486830926857,
+      "floor": 0.06,
+      "final": 0.3124486830926857
+    },
+    "terminal_sample_drop_count": {
+      "samples": 40,
+      "mean": 0.75,
+      "std": 0.4330127018922193,
+      "computed": 2.049038105676658,
+      "floor": 0,
+      "final": 2.049038105676658
+    }
+  }
+}

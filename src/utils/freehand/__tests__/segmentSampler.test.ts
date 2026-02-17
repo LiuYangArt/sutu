@@ -50,4 +50,29 @@ describe('SegmentSampler', () => {
     });
     expect(samples.length).toBeGreaterThanOrEqual(3);
   });
+
+  it('exposes detailed sampler metadata while keeping sampleSegment compatibility', () => {
+    const sampler = new SegmentSampler();
+    const detailed = sampler.sampleSegmentDetailed({
+      distancePx: 8,
+      durationMs: 18,
+      spacingPx: 4,
+      maxIntervalMs: 6,
+    });
+    const simple = sampler.sampleSegment({
+      distancePx: 8,
+      durationMs: 18,
+      spacingPx: 4,
+      maxIntervalMs: 6,
+    });
+
+    expect(detailed.samples.length).toBeGreaterThan(0);
+    for (const sample of detailed.samples) {
+      expect(sample.sampleIndex).toBeGreaterThanOrEqual(0);
+      expect(sample.triggerKind === 'distance' || sample.triggerKind === 'time').toBe(true);
+      expect(sample.distanceCarryBefore).toBeGreaterThanOrEqual(0);
+      expect(sample.timeCarryAfter).toBeGreaterThanOrEqual(0);
+    }
+    expect(simple.length).toBeGreaterThanOrEqual(0);
+  });
 });

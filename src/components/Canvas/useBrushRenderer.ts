@@ -15,6 +15,7 @@ import {
   BrushStamper,
   DabParams,
   MaskType,
+  type BrushDabPoint,
   type Rect,
   type StrokeFinalizeDebugSnapshot,
 } from '@/utils/strokeBuffer';
@@ -63,6 +64,11 @@ import { computeTextureDepth } from '@/utils/textureDynamics';
 import { useSelectionStore } from '@/stores/selection';
 import { useToastStore } from '@/stores/toast';
 import { samplePressureCurveLut } from '@/utils/pressureCurve';
+import {
+  recordKritaTailDabEmit,
+  recordKritaTailPressureMapped,
+  recordKritaTailSampler,
+} from '@/test/kritaTailTrace/collector';
 
 const MIN_ROUNDNESS = 0.01;
 const STROKE_PROGRESS_DISTANCE_PX = 1200;
@@ -289,7 +295,11 @@ export interface UseBrushRendererResult {
     config: BrushRenderConfig,
     pointIndex?: number,
     dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-    inputMeta?: { timestampMs?: number }
+    inputMeta?: {
+      timestampMs?: number;
+      inputSeq?: number;
+      phase?: 'down' | 'move' | 'up';
+    }
   ) => void;
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -388,6 +398,7 @@ export function useBrushRenderer({
   const strokeDistanceRef = useRef(0);
   const strokeStartTimestampMsRef = useRef<number | null>(null);
   const strokeCurrentTimestampMsRef = useRef<number | null>(null);
+  const lastInputSeqRef = useRef<number | null>(null);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -500,6 +511,7 @@ export function useBrushRenderer({
       strokeDistanceRef.current = 0;
       strokeStartTimestampMsRef.current = null;
       strokeCurrentTimestampMsRef.current = null;
+      lastInputSeqRef.current = null;
       strokeFinalizeRef.current = {
         finalized: false,
         trigger: null,
@@ -575,7 +587,7 @@ export function useBrushRenderer({
 
   const renderPrimaryDabs = useCallback(
     (
-      dabs: Array<{ x: number; y: number; pressure: number; timestampMs?: number }>,
+      dabs: BrushDabPoint[],
       config: BrushRenderConfig,
       dynamics: { tiltX: number; tiltY: number; rotation: number }
     ): void => {
@@ -636,6 +648,19 @@ export function useBrushRenderer({
         }
 
         const dabPressure = mapStamperPressureToBrush(config, dab.pressure);
+        const traceSegmentId =
+          typeof dab.traceSegmentId === 'number' && Number.isInteger(dab.traceSegmentId)
+            ? dab.traceSegmentId
+            : -1;
+        const traceSampleIndex =
+          typeof dab.traceSampleIndex === 'number' && Number.isInteger(dab.traceSampleIndex)
+            ? dab.traceSampleIndex
+            : -1;
+        const traceSource = dab.traceSource ?? 'normal';
+        const traceSpacingUsedPx =
+          typeof dab.traceSpacingUsedPx === 'number' && Number.isFinite(dab.traceSpacingUsedPx)
+            ? dab.traceSpacingUsedPx
+            : Math.max(0.5, lastSpacingPxRef.current);
         let dabSize = config.size;
         let dabRoundness = config.roundness / 100;
         let dabAngle = config.angle;
@@ -783,6 +808,19 @@ export function useBrushRenderer({
           };
 
           stampDabToBackend(dabParams);
+          recordKritaTailDabEmit({
+            segmentId: traceSegmentId,
+            sampleIndex: traceSampleIndex,
+            x: pos.x,
+            y: pos.y,
+            pressure: dabPressure,
+            spacingUsedPx: traceSpacingUsedPx,
+            timestampMs:
+              typeof dabTimestampMs === 'number' && Number.isFinite(dabTimestampMs)
+                ? dabTimestampMs
+                : performance.now(),
+            source: traceSource,
+          });
         }
       }
     },
@@ -801,16 +839,20 @@ export function useBrushRenderer({
 
       if (strokeCancelledRef.current) {
         stamperRef.current.finishStroke(0);
+        stamperRef.current.consumeSamplerTrace();
         secondaryStamperRef.current.finishStroke(0);
         lastConfigRef.current = null;
         strokeCancelledRef.current = false;
+        lastInputSeqRef.current = null;
         return;
       }
 
       const config = lastConfigRef.current;
       if (!config) {
         stamperRef.current.finishStroke(0);
+        stamperRef.current.consumeSamplerTrace();
         secondaryStamperRef.current.finishStroke(0);
+        lastInputSeqRef.current = null;
         return;
       }
 
@@ -818,12 +860,31 @@ export function useBrushRenderer({
         ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
         trajectorySmoothingEnabled: false,
       });
+      const finalizeSampler = stamperRef.current.consumeSamplerTrace();
+      if (finalizeSampler.length > 0 && Number.isInteger(lastInputSeqRef.current)) {
+        const anchorSeq = lastInputSeqRef.current as number;
+        for (const sample of finalizeSampler) {
+          recordKritaTailSampler({
+            segmentId: sample.segmentId,
+            segmentStartSeq: anchorSeq,
+            segmentEndSeq: anchorSeq,
+            sampleIndex: sample.sampleIndex,
+            t: sample.t,
+            triggerKind: sample.triggerKind,
+            distanceCarryBefore: sample.distanceCarryBefore,
+            distanceCarryAfter: sample.distanceCarryAfter,
+            timeCarryBefore: sample.timeCarryBefore,
+            timeCarryAfter: sample.timeCarryAfter,
+          });
+        }
+      }
       secondaryStamperRef.current.finishStroke(0);
       if (finalizeDabs.length > 0) {
         renderPrimaryDabs(finalizeDabs, config, lastPointerDynamicsRef.current);
       }
 
       lastConfigRef.current = null;
+      lastInputSeqRef.current = null;
     },
     [renderPrimaryDabs]
   );
@@ -839,7 +900,11 @@ export function useBrushRenderer({
       config: BrushRenderConfig,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number }
+      inputMeta?: {
+        timestampMs?: number;
+        inputSeq?: number;
+        phase?: 'down' | 'move' | 'up';
+      }
     ): void => {
       if (strokeCancelledRef.current) {
         return;
@@ -918,6 +983,43 @@ export function useBrushRenderer({
         buildupMode,
         stamperOptions
       );
+      const pointMetrics = stamper.getLastPointMetrics();
+      const samplerTrace = stamper.consumeSamplerTrace();
+      const inputSeq =
+        typeof inputMeta?.inputSeq === 'number' && Number.isInteger(inputMeta.inputSeq)
+          ? inputMeta.inputSeq
+          : null;
+      if (inputSeq !== null) {
+        const pressureAfterHeuristic = mapStamperPressureToBrush(
+          config,
+          pointMetrics.pressureAfterHeuristic
+        );
+        recordKritaTailPressureMapped({
+          seq: inputSeq,
+          pressureAfterGlobalCurve: globalPressure,
+          pressureAfterBrushCurve: adjustedPressure,
+          pressureAfterHeuristic,
+          speedPxPerMs: pointMetrics.speedPxPerMs,
+          normalizedSpeed: pointMetrics.normalizedSpeed,
+        });
+        const segmentStartSeq =
+          typeof lastInputSeqRef.current === 'number' ? lastInputSeqRef.current : inputSeq;
+        for (const sample of samplerTrace) {
+          recordKritaTailSampler({
+            segmentId: sample.segmentId,
+            segmentStartSeq,
+            segmentEndSeq: inputSeq,
+            sampleIndex: sample.sampleIndex,
+            t: sample.t,
+            triggerKind: sample.triggerKind,
+            distanceCarryBefore: sample.distanceCarryBefore,
+            distanceCarryAfter: sample.distanceCarryAfter,
+            timeCarryBefore: sample.timeCarryBefore,
+            timeCarryAfter: sample.timeCarryAfter,
+          });
+        }
+        lastInputSeqRef.current = inputSeq;
+      }
 
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush

@@ -3,6 +3,7 @@ export const KRITA_TAIL_TRACE_SCHEMA_VERSION = 'krita-tail-trace-v1';
 export type KritaTailTracePhase = 'down' | 'move' | 'up';
 export type KritaTailSamplerTriggerKind = 'distance' | 'time';
 export type KritaTailDabSource = 'normal' | 'finalize' | 'pointerup_fallback';
+export type KritaTailSeqSource = 'native' | 'fallback';
 
 export interface KritaTailTraceMeta {
   caseId: string;
@@ -23,6 +24,7 @@ export interface KritaTailTraceMeta {
 
 export interface KritaTailInputRawSample {
   seq: number;
+  seqSource?: KritaTailSeqSource;
   timestampMs: number;
   x: number;
   y: number;
