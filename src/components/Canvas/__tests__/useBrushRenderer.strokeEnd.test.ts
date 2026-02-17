@@ -132,7 +132,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     gpuState.instances.length = 0;
   });
 
-  it('flushes finalize segment dabs in prepareStrokeEndGpu and keeps per-stroke finalize idempotent', async () => {
+  it('does not inject trajectory-smoothing finalize dabs in prepareStrokeEndGpu and keeps finalize idempotent', async () => {
     const finishSpy = vi.spyOn(BrushStamper.prototype, 'finishStroke');
     const config = createConfig();
 
@@ -173,22 +173,13 @@ describe('useBrushRenderer stroke finalize path', () => {
     const dabCountAfterPrepare = gpu.stampDabCalls.length;
     const finishCallsAfterPrepare = finishSpy.mock.calls.length;
     expect(finishCallsAfterPrepare).toBeGreaterThanOrEqual(2);
-    expect(dabCountAfterPrepare).toBeGreaterThan(dabCountBeforePrepare);
+    expect(dabCountAfterPrepare).toBe(dabCountBeforePrepare);
     const finalizeCalls = gpu.stampDabCalls.slice(dabCountBeforePrepare) as Array<{
       x?: number;
       y?: number;
       pressure?: number;
     }>;
-    expect(finalizeCalls.length).toBeGreaterThan(0);
-    for (const call of finalizeCalls) {
-      expect(typeof call.x).toBe('number');
-      expect(typeof call.y).toBe('number');
-      if (typeof call.x !== 'number' || typeof call.y !== 'number') continue;
-      // Finalize segment must stay inside the last real input segment [48, 54].
-      expect(call.x).toBeGreaterThanOrEqual(48 - 1e-6);
-      expect(call.x).toBeLessThanOrEqual(54 + 1e-6);
-      expect(call.y).toBeCloseTo(0, 6);
-    }
+    expect(finalizeCalls).toEqual([]);
 
     await act(async () => {
       await result.current.prepareStrokeEndGpu();
@@ -205,7 +196,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     expect(finishSpy.mock.calls.length).toBe(finishCallsAfterPrepare);
   });
 
-  it('feeds non-constant fadeProgress to shape dynamics on main/finalize chain', async () => {
+  it('feeds non-constant fadeProgress on main chain and does not inject finalize smoothing calls', async () => {
     const config = createConfig();
     config.pressureSizeEnabled = false;
     config.shapeDynamicsEnabled = true;
@@ -259,7 +250,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     });
 
     const finalizeCalls = gpu.stampDabCalls.slice(beforeTailCount) as Array<{ size?: number }>;
-    expect(finalizeCalls.length).toBeGreaterThan(0);
+    expect(finalizeCalls).toEqual([]);
 
     const calls = shapeSpy.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
@@ -275,13 +266,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     const finalizeDynamics = calls
       .slice(beforeFinalizeShapeCallCount)
       .map((call) => call[4] as DynamicsInput);
-    expect(finalizeDynamics.length).toBeGreaterThan(0);
-    for (const input of finalizeDynamics) {
-      expect(input.fadeProgress).toBeGreaterThanOrEqual(0);
-      expect(input.fadeProgress).toBeLessThanOrEqual(1);
-      expect(typeof input.distanceProgress).toBe('number');
-      expect(typeof input.timeProgress).toBe('number');
-    }
+    expect(finalizeDynamics).toEqual([]);
   });
 
   it('forces size pressure override from toolbar even when Shape Dynamics size control is non-pressure', async () => {

@@ -22,6 +22,7 @@ function runStrokeWithSamples(params: {
   spacingPx?: number;
   finishSpacingPx?: number;
   maxDabIntervalMs?: number;
+  trajectorySmoothingEnabled?: boolean;
 }): {
   finalizeDabs: Array<{ x: number; y: number; pressure: number }>;
   snapshot: StrokeFinalizeDebugSnapshot;
@@ -38,6 +39,7 @@ function runStrokeWithSamples(params: {
       maxBrushSpeedPxPerMs: params.maxBrushSpeedPxPerMs,
       brushSpeedSmoothingSamples: 3,
       maxDabIntervalMs: params.maxDabIntervalMs,
+      trajectorySmoothingEnabled: params.trajectorySmoothingEnabled ?? true,
     });
   }
 
@@ -45,6 +47,7 @@ function runStrokeWithSamples(params: {
     maxBrushSpeedPxPerMs: params.maxBrushSpeedPxPerMs,
     brushSpeedSmoothingSamples: 3,
     maxDabIntervalMs: params.maxDabIntervalMs,
+    trajectorySmoothingEnabled: params.trajectorySmoothingEnabled ?? true,
   });
   const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
   if (!snapshot) {

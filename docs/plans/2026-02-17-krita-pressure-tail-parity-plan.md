@@ -1,191 +1,172 @@
-# Krita 压感收尾完全一致计划
+# Krita 压感尖尾一致性执行计划（当前 issue 范围）
 
 **日期**：2026-02-17  
-**目标**：将 Sutu 的压感收尾行为对齐到 Krita 主链路语义，达到“几何、压感、采样、视觉”四个层面的可验证一致。
+**当前分支**：`perf/146-krita-photoshop`  
+**目标**：只解决压感尖尾一致性，不在本 issue 内推进轨迹平滑功能。
 
-## 1. 直接结论
+## 0. 范围定义（防止跑偏）
 
-现有实现已经完成了两件关键基础能力：
+### 0.1 In Scope（本 issue 要做）
 
-1. 收尾不再做末端外推补尾，已限定在最后真实 segment 内。
-2. 主段与收尾段已复用同一渲染提交流程（避免“贴尾巴”独立链路）。
+1. 压感映射链路对齐（输入压感到 dab 压感）。  
+2. 采样触发语义对齐（distance/timing 触发与 carry 行为）。  
+3. 收笔末样本完整消费（避免快抬笔丢最后低压段）。  
+4. 自动化链路对比（替代高频手工回归）。
 
-但距离“和 Krita 完全一致”仍有结构性差异，主要集中在：
+### 0.2 Out of Scope（本 issue 不做）
 
-1. 轨迹收敛模型不同（当前 midpoint 链路 vs Krita Bezier/稳定器收敛）。
-2. 采样触发语义不同（当前默认始终启用 timed 采样 vs Krita 按 brush option 启用）。
-3. 压感与 spacing 仍有本地启发式补偿（EMA、low-pressure density boost、pressure-change spacing）。
-4. 动态传感器链不完整（缺少 Krita 的可配置 sensor-length/curve 语义）。
-5. 亚像素尾端 tip 的渲染语义与 Krita 不同（当前 `<1px` 走 1px 覆盖近似）。
+1. 轨迹平滑模式对齐（`NONE/BASIC/WEIGHTED/STABILIZER/PIXEL`）。  
+2. Brush Smoothing UI 与参数策略调优。  
 
-## 2. 当前实现 vs Krita 差异矩阵（代码事实）
+独立文档：`docs/plans/2026-02-17-krita-trajectory-smoothing-plan.md`
 
-| 维度 | Krita 语义 | 当前实现 | 影响 |
-|---|---|---|---|
-| 轨迹收敛 | `SIMPLE/WEIGHTED` 走切线+Bezier，`STABILIZER` 在抬笔时清队列收束 | `KritaLikeFreehandSmoother` 为 midpoint 链，`finishStrokeSegment()` 只补最后半段 | 尾端几何趋势接近但不等价，曲率与拖尾惯性仍有差异 |
-| 采样触发 | `getNextPointPosition()` 组合 distance/timing，timing 是否启用由 brush timing option 决定 | `SegmentSampler` 始终 distance+time 联合；`maxDabIntervalMs` 默认 16ms 且未接入笔刷配置 | 低速尾端容易过密采样，产生“糊/灰/不够利落” |
-| 压感插值 | `KisPaintInformation::mix()` 线性插值 | `emitSegmentDabs()` 对 pressure 用 smoothstep 插值 | 尾端压力衰减曲线与 Krita 不同，细化速度不一致 |
-| 压感平滑 | 是否平滑受 smoothing 配置控制（尤其 weighted smooth pressure） | 默认启用 EMA + low-pressure adaptive | 低压段可能被额外平滑，导致尾尖“拖泥” |
-| spacing 策略 | 由 spacing/timing 与 paintop 更新驱动 | 压力变化时强制 spacing*0.5，低压时再做 density boost | 尾端会额外增密，容易偏黑或偏钝 |
-| 动态传感器 | Fade/Distance/Time/Speed 等可配置且有 curve/length | 仅 `ControlSource` 子集；`fadeProgress` 来自固定阈值常量（1200px/1500ms/180 dabs） | 预设等价性不足，难以“同参数同结果” |
-| 抬笔终样本 | 工具层/稳定器层在 end 阶段继续收束已有事件 | PointerUp 直接结束，未单独补采“终样本”流程 | 快速抬笔时可能丢失最后一段压力下降 |
-| 亚像素尾尖 | Krita 仍在同一 dab/mask 语义下计算 | `<1px` 走 `size=1 + dabOpacity*coverage` 近似 | 极细尾尖形态与透明度分布偏差 |
+---
 
-## 3. 一致性目标定义（DoD）
+## 1. Krita 侧必须对照的源码锚点（按执行顺序）
 
-“完全一致”按以下门槛定义：
+### 1.1 输入压感与速度
 
-1. **几何一致**：尾端 dab 均在最后真实 segment 域内，且与 Krita 对照在同输入下曲率趋势一致。
-2. **压感一致**：尾端 pressure-size 曲线与 Krita 的采样曲线形态一致（不提前钝化、不末端突降）。
-3. **采样一致**：同输入序列下，尾端 dab 计数与间隔分布落在阈值内（含慢抬与快甩场景）。
-4. **视觉一致**：A/B diff 热图中尾端区域误差可控（定义见 Phase 0 基线文档）。
+1. Tablet 压感曲线配置读写：  
+   - `F:\CodeProjects\krita\libs\ui\kis_config.cc:1584`  
+   - `F:\CodeProjects\krita\libs\ui\kis_config.cc:1601`
+2. Preferences 页面对应项（压感曲线 + brush speed smoothing）：  
+   - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1645`  
+   - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1677`  
+   - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1692`  
+   - `F:\CodeProjects\krita\libs\ui\dialogs\kis_dlg_preferences.cc:1701`
+3. 构建 `KisPaintInformation` 时应用压感曲线：  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:46`  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:179`
+4. 速度平滑读取与估计：  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:103`  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:149`  
+   - `F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:157`
 
-## 4. 实施计划（按阻塞优先级）
+### 1.2 采样触发（核心）
 
-### Phase 0（P0）：建立 Krita 对照基线与观测面
+1. `paintLine()` 循环触发 `getNextPointPosition()` 并做 `mix(t, ...)`：  
+   - `F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:67`  
+   - `F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:68`
+2. `getNextPointPosition()` 取 `distanceFactor/timeFactor` 最小值：  
+   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:405`  
+   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:424`  
+   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:431`
+3. 未命中与命中时的时间累积与重置：  
+   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:436`  
+   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:443`
+4. distance 触发插值：  
+   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:460`  
+   - `F:\CodeProjects\krita\libs\image\kis_distance_information.cpp:482`
 
-目标：先把“差异”量化，避免再靠主观观感反复改参数。
+### 1.3 动态传感器（尾端参数变化来源）
 
-任务：
+1. 传感器曲线映射入口：  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensor.cpp:35`  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensor.cpp:42`
+2. Fade 归一：  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorFade.cpp:21`  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorFade.cpp:27`
+3. Distance 归一：  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorDistance.cpp:21`  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensorDistance.cpp:27`
+4. Speed 传感器：  
+   - `F:\CodeProjects\krita\plugins\paintops\libpaintop\sensors\KisDynamicSensors.h:19`
 
-1. 固化 4 类测试输入：慢抬笔、快甩笔、短促急停、极低压慢移。
-2. 输出 Krita 对照基线（同分辨率、同笔刷参数、同输入回放）。
-3. 在 Sutu 增加收尾诊断快照：`segment t`、dab 序号、pressure(before/after curve)、spacing/timing 命中来源。
-4. 形成一份 baseline 指标表（尾段长度、dab count、min size、tail alpha profile）。
+---
 
-涉及模块：
+## 2. Sutu 当前差异（仅保留本 issue 相关）
 
-- `src/components/Canvas/useBrushRenderer.ts`
-- `src/utils/strokeBuffer.ts`
-- `scripts/debug/*`（新增 Krita 对照回放/比对脚本）
+### 2.1 压感与采样启发式
 
-### Phase 1（P0）：收敛模型对齐到 Krita 工具层语义
+1. EMA 压感平滑：`src/utils/strokeBuffer.ts:1432`、`src/utils/strokeBuffer.ts:1445`。  
+2. 压感插值是 smoothstep，不是线性：`src/utils/strokeBuffer.ts:1558`、`src/utils/strokeBuffer.ts:1562`。  
+3. 压力变化触发 spacing 减半：`src/utils/strokeBuffer.ts:1694`、`src/utils/strokeBuffer.ts:1697`。  
+4. 低压 density boost：`src/utils/strokeBuffer.ts:1699`、`src/utils/strokeBuffer.ts:1705`。  
+5. 采样器当前是 distance/time 并集去重：`src/utils/freehand/segmentSampler.ts:54`、`src/utils/freehand/segmentSampler.ts:64`、`src/utils/freehand/segmentSampler.ts:81`。
 
-目标：把“midpoint 近似”升级为“Krita 等价收敛”。
+### 2.2 收笔末样本风险
 
-任务：
+1. `finalizeStroke()` 起始就清 point buffer：`src/components/Canvas/useStrokeProcessor.ts:515`、`src/components/Canvas/useStrokeProcessor.ts:517`。  
+2. `pointerup` 直接 `finishCurrentStroke()`，未补拉 native 末样本：`src/components/Canvas/usePointerHandlers.ts:430`、`src/components/Canvas/usePointerHandlers.ts:480`。
 
-1. 新增 smoothing mode（`NO/SIMPLE/WEIGHTED/STABILIZER`）运行时开关，至少先落 `SIMPLE + STABILIZER`。
-2. `SIMPLE` 模式对齐切线+Bezier 收敛，不再只用 0.5 midpoint 链。
-3. `STABILIZER` 模式补齐“抬笔清队列 + finishing event”语义。
-4. 把 smoothing 参数纳入设置与笔刷预设（后续可调 tail aggressiveness / smooth pressure）。
+### 2.3 轨迹平滑状态（仅记录，不执行）
 
-涉及模块：
+1. 本分支已将轨迹平滑从主链路隔离并默认关闭：  
+   - `src/utils/strokeBuffer.ts:1342`  
+   - `src/utils/strokeBuffer.ts:1377`  
+   - `src/components/Canvas/useBrushRenderer.ts:810`  
+   - `src/components/Canvas/useBrushRenderer.ts:856`
+2. 轨迹平滑后续工作移至独立文档，不在本计划内推进。
 
-- `src/utils/freehand/kritaLikeFreehandSmoother.ts`（重构为模式化实现）
-- `src/utils/strokeBuffer.ts`
-- `src/components/BrushPanel/index.tsx`（启用 smoothing 面板）
-- `src/stores/tool.ts`（新增 smoothing 配置模型）
+---
 
-### Phase 2（P0）：采样器语义与 Krita `getNextPointPosition` 对齐
+## 3. 实施阶段（本 issue）
 
-目标：解决“尾端过密/过稀”问题。
+### Phase 0（P0）：链路对比基建
 
-任务：
-
-1. `SegmentSampler` 改为与 Krita 等价的 step-by-step next-point 语义（按最近触发者推进）。
-2. timed spacing 从“默认总是开启”改为“由 brush timing option 决定”。
-3. spacing/timing carry 的 reset 时机与更新顺序对齐 Krita。
-4. 在 finalize 末段也走完全相同的 spacing/timing 更新链。
-
-涉及模块：
-
-- `src/utils/freehand/segmentSampler.ts`
-- `src/utils/strokeBuffer.ts`
-- `src/stores/tool.ts`（补 timing 配置）
-
-### Phase 3（P0）：移除非 Krita 启发式，改为可配置策略
-
-目标：去掉会扭曲尾端的“本地补偿”。
-
-任务：
-
-1. 将 `smoothstep` 压感插值改为线性插值（与 Krita `mix` 对齐）。
-2. 把 `pressureChange -> spacing*0.5` 和 `low-pressure density boost` 改为可配置，Krita 对齐预设默认关闭。
-3. 压感 EMA 平滑改为由 smoothing 配置驱动，不再全局默认强制启用。
-
-涉及模块：
-
-- `src/utils/strokeBuffer.ts`
-- `src/utils/__tests__/brushStamper.*.test.ts`
-
-### Phase 4（P1）：动态传感器链补齐（尾端参数一致）
-
-目标：让 size/opacity/flow 的尾端变化逻辑与 Krita 传感器模型一致。
+目标：同输入下自动导出并对比 `input_raw / pressure_mapped / sampler_t / dab_emit`。
 
 任务：
 
-1. 新增 `speed/distance/time` 控制源，并支持每项 `length + curve`。
-2. `fadeProgress` 从固定常量进度改为基于 dab 序号与传感器长度计算。
-3. `distanceProgress/timeProgress` 接入真实累计值，不再只做 UI 常量归一化。
-4. 主段/收尾段统一使用同一 sensor evaluation pipeline。
+1. Sutu 导出 `trace.sutu.json`。  
+2. Krita 本地 harness 导出 `trace.krita.json`。  
+3. 对比脚本输出 `report.json + stage_diff.csv + tail_chart.png`。  
+4. 新增本地 gate 命令。
 
-涉及模块：
+### Phase 1（P0）：压感链路去启发式
 
-- `src/utils/shapeDynamics.ts`
-- `src/utils/transferDynamics.ts`
-- `src/components/Canvas/useBrushRenderer.ts`
-- `src/stores/tool.ts`
-
-### Phase 5（P1）：终样本与亚像素尾尖对齐
-
-目标：修复“快抬笔最后一下”与“极细尾尖”差异。
+目标：先去掉会把尖尾压钝的本地补偿。
 
 任务：
 
-1. PointerUp 前补一次终样本消费（优先 native buffered point），再 finalize。
-2. `<1px` dab 从“1px 覆盖近似”升级为真实亚像素 footprint 语义。
-3. 对齐 tail tip 的 alpha 分布，避免“灰糊尖端”。
+1. 段内 pressure 改线性插值。  
+2. EMA / pressure-change-spacing / low-pressure-density 改可配置。  
+3. 新增 `kritaParityProfile`，默认关闭这三项启发式。  
+4. 用 trace 比较尾段压力曲线和 dab 密度。
 
-涉及模块：
+### Phase 2（P0）：收笔末样本完整消费
 
-- `src/components/Canvas/usePointerHandlers.ts`
-- `src/components/Canvas/useStrokeProcessor.ts`
-- `src/components/Canvas/useBrushRenderer.ts`
-- `src/utils/maskCache.ts`
-- `src/utils/strokeBuffer.ts`
-
-### Phase 6（P0/P1）：回归门禁与验收封口
-
-目标：防止“文档说对齐、实测又偏”再次发生。
+目标：快抬笔不丢尾端低压段。
 
 任务：
 
-1. 自动化：新增 Krita 对照回放门禁（输出 `A/B/diff/report.json`）。
-2. 自动化：尾端统计门禁（dab count、tail length、tail alpha slope）。
-3. 手测：固定 4 套动作模板，每次改动必须复测并留图。
+1. 调整顺序：先消费末段输入，再清 buffer。  
+2. pointerup 时补读一次 native buffer。  
+3. 无 native 点时使用 pointerup 事件兜底。  
+4. 增加快抬笔/慢抬笔/停笔抬起自动测试。
 
-## 5. 验收方式
+### Phase 3（P0）：采样器语义对齐 Krita
 
-### 5.1 自动化验收（必须全过）
+目标：把 `sampler_t` 分布收敛到 Krita 基线。
 
-1. `tail dabs` 全部在最后真实 segment 内。
-2. 尾端 dab 分布与 Krita 基线差异在阈值内（每个场景单独阈值）。
-3. `pressure-size` 尾段曲线误差不超过阈值（按采样点序列比较）。
-4. GPU/CPU 同输入回放下尾端指标一致，不出现单端偏差。
+任务：
 
-### 5.2 手动验收（按步骤执行）
+1. 改为按“最早触发者”推进，不再并集合并后排序。  
+2. timed sampling 改成显式配置控制。  
+3. carry/reset 语义按 Krita 对齐。  
+4. finalize 路径复用同一采样推进器。
 
-1. 使用同一笔刷参数，在 Sutu 和 Krita 各画 4 组（慢抬、快甩、急停、低压慢移），每组至少 5 笔。
-2. 对照观察尾端：尖端长度、灰度过渡、是否出现“糊尖/钝头/贴尾巴感”。
-3. 切换 GPU/CPU 路径重复同样动作，确认尾端形态趋势一致。
-4. 若任一场景不通过，记录对应输入与截图并回放到自动化 case。
+---
 
-## 6. 风险与应对
+## 4. 验收标准（本 issue）
 
-1. 风险：引入 smoothing mode 后影响现有手感。  
-   应对：新增 `krita-parity` 模式开关，先并行验证再替换默认。
+### 4.1 自动化（必须全过）
 
-2. 风险：动态传感器链补齐改动范围大。  
-   应对：先实现最小闭环（fade/distance/time/speed），后补其余传感器。
+1. `pressure_mapped` 尾段误差低于阈值。  
+2. `sampler_t` 分布误差低于阈值。  
+3. `dab_emit` 尾段 dab 数量、间距、pressure slope 通过阈值。  
+4. 快抬笔 case 不丢终样本。
 
-3. 风险：亚像素改造影响性能。  
-   应对：先 CPU 实现基准，再做 GPU 对等与性能 profiling。
+### 4.2 手动（仅里程碑）
 
-## 7. 推荐执行顺序
+1. 场景：慢抬、快甩、急停、低压慢移。  
+2. 仅在 gate 失败或阶段合并前做抽检。
 
-1. `Phase 0 -> Phase 2 -> Phase 3`（先解决“采样/压感语义偏差”）。
-2. `Phase 1`（收敛模型升级，替换 midpoint 近似）。
-3. `Phase 4 -> Phase 5`（传感器与尾尖精修）。
-4. `Phase 6`（对照门禁固化，作为后续改动防回归基线）。
+---
 
+## 5. 当前执行顺序
+
+1. 先做 Phase 0（把比对系统搭起来）。  
+2. 再做 Phase 1 + 2（先修压感钝化与末样本丢失）。  
+3. 最后做 Phase 3（采样器语义）。  
+4. 轨迹平滑工作严格按独立文档执行，不混入本 issue。

@@ -28,6 +28,7 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         timestampMs: sample.t,
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
+        trajectorySmoothingEnabled: true,
       });
       expect(dabs).toEqual([]);
     }
@@ -36,6 +37,7 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
       timestampMs: 16,
       maxBrushSpeedPxPerMs: 30,
       brushSpeedSmoothingSamples: 3,
+      trajectorySmoothingEnabled: true,
     });
 
     expect(startTransitionDabs.length).toBeGreaterThanOrEqual(3);
@@ -71,6 +73,7 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         maxBrushSpeedPxPerMs: 1,
         brushSpeedSmoothingSamples: 3,
         lowPressureAdaptiveSmoothingEnabled: true,
+        trajectorySmoothingEnabled: true,
       });
       adaptivePressures.push(...adaptiveDabs.map((dab) => dab.pressure));
 
@@ -79,6 +82,7 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         maxBrushSpeedPxPerMs: 1,
         brushSpeedSmoothingSamples: 3,
         lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: true,
       });
       baselinePressures.push(...baselineDabs.map((dab) => dab.pressure));
     }
@@ -98,6 +102,7 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         timestampMs: i * 4,
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
+        trajectorySmoothingEnabled: true,
       });
       mainDabs.push(...dabs);
     }
@@ -106,6 +111,7 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
       maxBrushSpeedPxPerMs: 30,
       brushSpeedSmoothingSamples: 3,
       maxDabIntervalMs: 1,
+      trajectorySmoothingEnabled: true,
     });
     const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
     expect(mainDabs.length).toBeGreaterThan(0);
@@ -133,6 +139,29 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
     }
   });
 
+  it('keeps trajectory smoothing isolated by default in this branch', () => {
+    const stamper = new BrushStamper();
+    stamper.beginStroke();
+
+    for (let i = 0; i < 9; i += 1) {
+      stamper.processPoint(i * 6, 0, 0.4, 2, false, {
+        timestampMs: i * 4,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+      });
+    }
+
+    const finalizeDabs = stamper.finishStroke(24, {
+      maxBrushSpeedPxPerMs: 30,
+      brushSpeedSmoothingSamples: 3,
+      maxDabIntervalMs: 1,
+    });
+    const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
+
+    expect(finalizeDabs).toEqual([]);
+    expect(snapshot?.reason).toBe('no_pending_segment');
+  });
+
   it('timing channel emits extra dabs when distance movement is tiny', () => {
     const emitMicroSegmentDabs = (maxDabIntervalMs: number): number => {
       const stamper = new BrushStamper();
@@ -143,12 +172,14 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
         maxDabIntervalMs,
+        trajectorySmoothingEnabled: true,
       });
       stamper.processPoint(4, 0, 0.45, 6, false, {
         timestampMs: 8,
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
         maxDabIntervalMs,
+        trajectorySmoothingEnabled: true,
       });
 
       let emitted = 0;
@@ -158,6 +189,7 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
           maxBrushSpeedPxPerMs: 30,
           brushSpeedSmoothingSamples: 3,
           maxDabIntervalMs,
+          trajectorySmoothingEnabled: true,
         });
         emitted += dabs.length;
       }

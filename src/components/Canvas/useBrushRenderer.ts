@@ -807,6 +807,7 @@ export function useBrushRenderer({
         maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
         brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
         lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
+        trajectorySmoothingEnabled: false,
       });
       secondaryStamperRef.current.finishStroke(0);
       if (finalizeDabs.length > 0) {
@@ -852,6 +853,7 @@ export function useBrushRenderer({
         maxBrushSpeedPxPerMs: config.maxBrushSpeedPxPerMs,
         brushSpeedSmoothingSamples: config.brushSpeedSmoothingSamples,
         lowPressureAdaptiveSmoothingEnabled: config.lowPressureAdaptiveSmoothingEnabled,
+        trajectorySmoothingEnabled: false,
       };
 
       const globalPressure = mapInputPressureForStamper(config, pressure);
