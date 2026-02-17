@@ -185,7 +185,57 @@ describe('PressureCurveEditor', () => {
     });
   });
 
-  it('deletes point when drag-out overshoot exceeds threshold', async () => {
+  it('deletes newly added point during the same drag once overshoot exceeds threshold', async () => {
+    render(
+      <Harness
+        initialPoints={[
+          { x: 0, y: 0 },
+          { x: 1, y: 1 },
+        ]}
+      />
+    );
+
+    const svg = screen.getByLabelText('Pressure curve editor') as unknown as SVGSVGElement;
+    mockGraphRect(svg);
+
+    act(() => {
+      fireEvent.pointerDown(svg, {
+        pointerId: 1,
+        clientX: clientXFromNormalized(0.5),
+        clientY: clientYFromNormalized(0.5),
+      });
+    });
+
+    await waitFor(() => {
+      expect(readPoints().length).toBe(3);
+    });
+
+    act(() => {
+      fireEvent.pointerMove(window, {
+        pointerId: 1,
+        clientX: 400,
+        clientY: clientYFromNormalized(0.5),
+      });
+    });
+
+    await waitFor(() => {
+      expect(readPoints().length).toBe(2);
+    });
+
+    act(() => {
+      fireEvent.pointerUp(window, {
+        pointerId: 1,
+        clientX: 400,
+        clientY: clientYFromNormalized(0.5),
+      });
+    });
+
+    await waitFor(() => {
+      expect(readPoints().length).toBe(2);
+    });
+  });
+
+  it('deletes point immediately when drag-out overshoot exceeds threshold', async () => {
     render(
       <Harness
         initialPoints={[
@@ -214,6 +264,11 @@ describe('PressureCurveEditor', () => {
         clientY: clientYFromNormalized(0.35),
       });
     });
+
+    await waitFor(() => {
+      expect(readPoints().length).toBe(3);
+    });
+
     act(() => {
       fireEvent.pointerUp(window, {
         pointerId: 1,
@@ -290,6 +345,11 @@ describe('PressureCurveEditor', () => {
         clientY: clientYFromNormalized(0.35),
       });
     });
+
+    await waitFor(() => {
+      expect(readPoints().length).toBe(4);
+    });
+
     act(() => {
       fireEvent.pointerUp(window, {
         pointerId: 1,

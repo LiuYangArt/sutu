@@ -14,7 +14,7 @@ import { useSingleChannelCurveEditor } from '@/components/CurveEditor/useSingleC
 const GRAPH_SIZE = DEFAULT_GRAPH_SIZE;
 const GRID_DIVISIONS = 4;
 const POINT_HIT_RADIUS_PX = 12;
-const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 18;
+const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 36;
 
 interface EditablePoint extends SingleChannelCurvePoint {}
 

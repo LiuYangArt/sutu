@@ -30,7 +30,7 @@ const GRAPH_SIZE = DEFAULT_GRAPH_SIZE;
 const POINT_HIT_RADIUS_PX = 8;
 const GRID_DIVISIONS = 4;
 const CURVE_RENDER_SAMPLES = 2048;
-const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 16;
+const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 36;
 
 type CurvesBridgeWindow = Window & {
   __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;

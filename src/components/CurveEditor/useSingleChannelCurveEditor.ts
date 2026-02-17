@@ -8,6 +8,7 @@ import {
 } from 'react';
 import {
   buildSingleChannelCurvePath,
+  CHANNEL_MAX,
   canDeletePointAtIndex,
   clamp,
   computeOvershootPixels,
@@ -22,7 +23,6 @@ interface DragState {
   pointId: string;
   moved: boolean;
   canDeleteByDragOut: boolean;
-  deleteOnRelease: boolean;
   commitToken: unknown;
 }
 
@@ -107,6 +107,29 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
     [curveSampleCount, graphSize, points]
   );
 
+  const deleteDraggedPoint = useCallback(
+    (drag: DragState): boolean => {
+      let deleted = false;
+      updatePoints((prev) => {
+        const removeIndex = prev.findIndex((point) => point.id === drag.pointId);
+        if (!canDeletePointAtIndex(removeIndex, prev.length)) return prev;
+        deleted = true;
+        return prev.filter((point) => point.id !== drag.pointId);
+      });
+      if (!deleted) return false;
+
+      setSelectedPointId(null);
+      onDragCommit?.({
+        moved: drag.moved,
+        deleted: true,
+        token: drag.commitToken,
+      });
+      dragRef.current = null;
+      return true;
+    },
+    [onDragCommit, setSelectedPointId, updatePoints]
+  );
+
   useEffect(() => {
     const onPointerMove = (event: PointerEvent): void => {
       const drag = dragRef.current;
@@ -121,8 +144,8 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
         const index = livePoints.findIndex((point) => point.id === drag.pointId);
         if (index >= 0) {
           const range = getPointDragRange(livePoints, index);
-          const pixelsPerXUnit = rect.width / 255;
-          const pixelsPerYUnit = rect.height / 255;
+          const pixelsPerXUnit = rect.width / CHANNEL_MAX;
+          const pixelsPerYUnit = rect.height / CHANNEL_MAX;
           const overshootX = computeOvershootPixels(
             rawPoint.x,
             range.minX,
@@ -135,9 +158,11 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
             range.maxY,
             pixelsPerYUnit
           );
-          drag.deleteOnRelease = Math.max(overshootX, overshootY) >= dragDeleteOvershootThresholdPx;
-        } else {
-          drag.deleteOnRelease = false;
+          const didReachDeleteThreshold =
+            Math.max(overshootX, overshootY) >= dragDeleteOvershootThresholdPx;
+          if (didReachDeleteThreshold && deleteDraggedPoint(drag)) {
+            return;
+          }
         }
       }
 
@@ -172,22 +197,9 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
       const drag = dragRef.current;
       if (!drag) return;
 
-      let deleted = false;
-      if (drag.deleteOnRelease && drag.canDeleteByDragOut) {
-        updatePoints((prev) => {
-          const removeIndex = prev.findIndex((point) => point.id === drag.pointId);
-          if (!canDeletePointAtIndex(removeIndex, prev.length)) return prev;
-          deleted = true;
-          return prev.filter((point) => point.id !== drag.pointId);
-        });
-        if (deleted) {
-          setSelectedPointId(null);
-        }
-      }
-
       onDragCommit?.({
         moved: drag.moved,
-        deleted,
+        deleted: false,
         token: drag.commitToken,
       });
       dragRef.current = null;
@@ -201,7 +213,7 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
     };
-  }, [dragDeleteOvershootThresholdPx, graphRef, onDragCommit, setSelectedPointId, updatePoints]);
+  }, [deleteDraggedPoint, dragDeleteOvershootThresholdPx, graphRef, onDragCommit, updatePoints]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -257,7 +269,6 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
           pointId: hitPointId,
           moved: false,
           canDeleteByDragOut: canDeletePointAtIndex(hitIndex, livePoints.length),
-          deleteOnRelease: false,
           commitToken: onDragStart?.(hitPointId),
         };
         return;
@@ -273,7 +284,6 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
           pointId: sameXPoint.id,
           moved: false,
           canDeleteByDragOut: canDeletePointAtIndex(existingIndex, livePoints.length),
-          deleteOnRelease: false,
           commitToken: onDragStart?.(sameXPoint.id),
         };
         return;
@@ -281,6 +291,8 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
 
       onBeforeAddPoint?.();
       const pointId = createPointId();
+      const insertionIndex = livePoints.findIndex((point) => point.x > clickPoint.x);
+      const newPointIndex = insertionIndex === -1 ? livePoints.length : insertionIndex;
       updatePoints((prev) => {
         const nextPoint = { id: pointId, x: clickPoint.x, y: clickPoint.y } as TPoint;
         const next = [...prev, nextPoint];
@@ -291,8 +303,7 @@ export function useSingleChannelCurveEditor<TPoint extends SingleChannelCurvePoi
       dragRef.current = {
         pointId,
         moved: false,
-        canDeleteByDragOut: false,
-        deleteOnRelease: false,
+        canDeleteByDragOut: canDeletePointAtIndex(newPointIndex, livePoints.length + 1),
         commitToken: null,
       };
       event.preventDefault();
