@@ -37,7 +37,7 @@ import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LagometerMonitor } from '@/benchmark/LagometerMonitor';
 import { FPSCounter } from '@/benchmark/FPSCounter';
 import { LayerRenderer, type LayerMovePreview } from '@/utils/layerRenderer';
-import type { Rect } from '@/utils/strokeBuffer';
+import type { Rect, StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
 import type {
   StrokeCaptureController,
   StrokeCaptureData,
@@ -82,6 +82,7 @@ import {
   reconcileLayerRevisionMap,
 } from './gpuLayerStackPolicy';
 import { runGpuMovePreviewFrame } from './movePreviewGpuSync';
+import { buildPressureCurveLut } from '@/utils/pressureCurve';
 
 import './Canvas.css';
 
@@ -210,6 +211,8 @@ declare global {
     }>;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
+    __brushTailTaperDebug?: () => StrokeFinalizeDebugSnapshot | null;
+    __brushStrokeFinalizeDebug?: () => StrokeFinalizeDebugSnapshot | null;
     __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
     __canvasCurvesPreview?: (
       sessionId: string,
@@ -239,6 +242,7 @@ type QueuedPoint = {
   tiltX: number;
   tiltY: number;
   rotation: number;
+  timestampMs: number;
   pointIndex: number;
 };
 
@@ -525,7 +529,17 @@ export function Canvas() {
   const {
     brush: { renderMode },
     general: { selectionAutoFillEnabled },
+    tablet: {
+      pressureCurvePoints,
+      maxBrushSpeedPxPerMs,
+      brushSpeedSmoothingSamples,
+      lowPressureAdaptiveSmoothingEnabled,
+    },
   } = useSettingsStore();
+  const globalPressureLut = useMemo(
+    () => buildPressureCurveLut(pressureCurvePoints),
+    [pressureCurvePoints]
+  );
 
   const {
     width,
@@ -748,6 +762,7 @@ export function Canvas() {
     getGpuRenderScale,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
+    getStrokeFinalizeDebugSnapshot,
   } = useBrushRenderer({
     width,
     height,
@@ -1972,6 +1987,7 @@ export function Canvas() {
     setGpuBrushCommitReadbackMode,
     getGpuBrushNoReadbackPilot,
     setGpuBrushNoReadbackPilot,
+    getStrokeFinalizeDebugSnapshot,
     markGpuLayerDirty: markLayerDirty,
     exportGpuLayerImageData,
     exportGpuFlattenedImageData,
@@ -2145,6 +2161,10 @@ export function Canvas() {
       pressureSizeEnabled,
       pressureFlowEnabled,
       pressureOpacityEnabled,
+      globalPressureLut,
+      maxBrushSpeedPxPerMs,
+      brushSpeedSmoothingSamples,
+      lowPressureAdaptiveSmoothingEnabled,
       pressureCurve,
       texture: brushTexture,
       shapeDynamicsEnabled,
@@ -2192,6 +2212,10 @@ export function Canvas() {
     pressureSizeEnabled,
     pressureFlowEnabled,
     pressureOpacityEnabled,
+    globalPressureLut,
+    maxBrushSpeedPxPerMs,
+    brushSpeedSmoothingSamples,
+    lowPressureAdaptiveSmoothingEnabled,
     pressureCurve,
     brushTexture,
     shapeDynamicsEnabled,

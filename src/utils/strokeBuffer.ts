@@ -24,6 +24,12 @@ import { patternManager, type PatternData } from './patternManager';
 import { calculateTextureInfluence } from './textureRendering';
 import { applyScatter } from './scatterDynamics';
 import { getNoisePattern, NOISE_PATTERN_ID } from './noiseTexture';
+import { BrushSpeedEstimator } from './brushSpeedEstimator';
+import { SegmentSampler } from './freehand/segmentSampler';
+import {
+  KritaLikeFreehandSmoother,
+  type FreehandPoint,
+} from './freehand/kritaLikeFreehandSmoother';
 
 export type MaskType = 'gaussian';
 
@@ -63,6 +69,22 @@ export interface Rect {
   top: number;
   right: number;
   bottom: number;
+}
+
+export type StrokeFinalizeReason =
+  | 'no_active_stroke'
+  | 'no_pending_segment'
+  | 'segment_below_threshold'
+  | 'emitted_segment';
+
+export interface StrokeFinalizeDebugSnapshot {
+  reason: StrokeFinalizeReason;
+  speedPxPerMs: number;
+  normalizedSpeed: number;
+  finalSegmentDistance: number;
+  emittedDabCount: number;
+  remainingDistancePx: number;
+  remainingTimeMs: number;
 }
 
 export type StrokeCompositeMode = 'paint' | 'erase';
@@ -1307,191 +1329,488 @@ export class StrokeAccumulator {
  * - Prevents "stair-step" artifacts at low pressure
  * - Adds adaptive dab density when pressure changes rapidly
  */
-export class BrushStamper {
-  private accumulatedDistance: number = 0;
-  private lastPoint: { x: number; y: number; pressure: number } | null = null;
-  private isStrokeStart: boolean = true;
-  private strokeStartPoint: { x: number; y: number } | null = null;
-  private hasMovedEnough: boolean = false;
-
-  // Smoothed pressure using EMA
-  private smoothedPressure: number = 0;
-
-  // Minimum movement in pixels before we start the stroke
-  // This prevents pressure buildup at stationary position
-  private static readonly MIN_MOVEMENT_DISTANCE = 3;
-
-  // Pressure smoothing factor (0-1): lower = more smoothing
-  // 0.35 provides good balance between responsiveness and smoothness
-  private static readonly PRESSURE_SMOOTHING = 0.35;
-
-  // Additional dabs when pressure changes rapidly (prevents stepping)
-  private static readonly PRESSURE_CHANGE_THRESHOLD = 0.1;
-
+export interface BrushStamperInputOptions {
+  timestampMs?: number;
+  maxBrushSpeedPxPerMs?: number;
+  brushSpeedSmoothingSamples?: number;
+  lowPressureAdaptiveSmoothingEnabled?: boolean;
+  maxDabIntervalMs?: number;
   /**
-   * Reset for a new stroke
+   * Isolate trajectory smoothing from the main pressure-tail path.
+   * Default is off in this branch to avoid affecting current parity work.
    */
+  trajectorySmoothingEnabled?: boolean;
+}
+
+export interface BrushDabPoint {
+  x: number;
+  y: number;
+  pressure: number;
+  timestampMs?: number;
+}
+
+interface InternalStrokePoint extends FreehandPoint {}
+
+export class BrushStamper {
+  private lastPoint: InternalStrokePoint | null = null;
+  private isStrokeStart = true;
+  private strokeStartPoint: { x: number; y: number } | null = null;
+  private strokeStartSampleSumX = 0;
+  private strokeStartSampleSumY = 0;
+  private strokeStartSampleCount = 0;
+  private hasMovedEnough = false;
+
+  private smoothedPressure = 0;
+  private readonly speedEstimator = new BrushSpeedEstimator();
+  private lastSpeedPxPerMs = 0;
+  private lastNormalizedSpeed = 0;
+  private lastFinalizeDebugSnapshot: StrokeFinalizeDebugSnapshot | null = null;
+  private readonly segmentSampler = new SegmentSampler();
+  private readonly freehandSmoother = new KritaLikeFreehandSmoother();
+
+  private static readonly MIN_MOVEMENT_DISTANCE = 3;
+  private static readonly PRESSURE_SMOOTHING = 0.35;
+  private static readonly PRESSURE_CHANGE_THRESHOLD = 0.1;
+  private static readonly LOW_PRESSURE_THRESHOLD = 0.15;
+  private static readonly DEFAULT_MAX_DAB_INTERVAL_MS = 16;
+
+  private static isTrajectorySmoothingEnabled(options: BrushStamperInputOptions): boolean {
+    return options.trajectorySmoothingEnabled === true;
+  }
+
+  private static clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+  }
+
+  private static smoothstep01(value: number): number {
+    const t = BrushStamper.clamp01(value);
+    return t * t * (3 - 2 * t);
+  }
+
+  private static clampInt(value: number, min: number, max: number): number {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, Math.round(value)));
+  }
+
+  private static resolveTimestampMs(timestampMs: number | undefined): number {
+    if (Number.isFinite(timestampMs)) {
+      return Number(timestampMs);
+    }
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      return performance.now();
+    }
+    return Date.now();
+  }
+
   beginStroke(): void {
-    this.accumulatedDistance = 0;
     this.lastPoint = null;
     this.isStrokeStart = true;
     this.strokeStartPoint = null;
+    this.strokeStartSampleSumX = 0;
+    this.strokeStartSampleSumY = 0;
+    this.strokeStartSampleCount = 0;
     this.hasMovedEnough = false;
     this.smoothedPressure = 0;
+    this.speedEstimator.reset();
+    this.lastSpeedPxPerMs = 0;
+    this.lastNormalizedSpeed = 0;
+    this.lastFinalizeDebugSnapshot = null;
+    this.segmentSampler.reset();
+    this.freehandSmoother.reset();
   }
 
-  /**
-   * Apply exponential moving average to smooth pressure
-   */
-  private smoothPressure(rawPressure: number): number {
+  private smoothPressure(rawPressure: number, options: BrushStamperInputOptions): number {
+    const normalizedSpeed = this.lastNormalizedSpeed;
+    let smoothingAlpha = BrushStamper.PRESSURE_SMOOTHING;
+
+    if (options.lowPressureAdaptiveSmoothingEnabled !== false) {
+      const lowPressureFactor = BrushStamper.clamp01(
+        (BrushStamper.LOW_PRESSURE_THRESHOLD - rawPressure) / BrushStamper.LOW_PRESSURE_THRESHOLD
+      );
+      if (lowPressureFactor > 0) {
+        const adaptiveReduction =
+          0.45 * lowPressureFactor + 0.2 * lowPressureFactor * normalizedSpeed;
+        smoothingAlpha = BrushStamper.clamp01(
+          BrushStamper.PRESSURE_SMOOTHING * (1 - adaptiveReduction)
+        );
+        smoothingAlpha = Math.max(0.12, Math.min(0.75, smoothingAlpha));
+      }
+    }
+
     if (this.smoothedPressure === 0) {
-      // First pressure reading - initialize directly
       this.smoothedPressure = rawPressure;
     } else {
-      // EMA: smoothed = alpha * raw + (1-alpha) * previous
       this.smoothedPressure =
-        BrushStamper.PRESSURE_SMOOTHING * rawPressure +
-        (1 - BrushStamper.PRESSURE_SMOOTHING) * this.smoothedPressure;
+        smoothingAlpha * rawPressure + (1 - smoothingAlpha) * this.smoothedPressure;
     }
     return this.smoothedPressure;
   }
 
-  /**
-   * Process a new input point and return dab positions
-   * Applies pressure smoothing via EMA to prevent stepping artifacts
-   * IMPORTANT: EMA is only applied AFTER the pen has moved enough to prevent "big head" issue
-   */
+  private appendStrokeStartSample(x: number, y: number): void {
+    if (this.strokeStartPoint) {
+      const jitterRadius = BrushStamper.MIN_MOVEMENT_DISTANCE * 0.35;
+      const dx = x - this.strokeStartPoint.x;
+      const dy = y - this.strokeStartPoint.y;
+      if (Math.hypot(dx, dy) > jitterRadius) {
+        return;
+      }
+    }
+    this.strokeStartSampleSumX += x;
+    this.strokeStartSampleSumY += y;
+    this.strokeStartSampleCount += 1;
+  }
+
+  private resolveStrokeStartAnchor(): { x: number; y: number } {
+    if (this.strokeStartSampleCount > 0) {
+      return {
+        x: this.strokeStartSampleSumX / this.strokeStartSampleCount,
+        y: this.strokeStartSampleSumY / this.strokeStartSampleCount,
+      };
+    }
+    return this.strokeStartPoint ? { ...this.strokeStartPoint } : { x: 0, y: 0 };
+  }
+
+  private clearStrokeStartSamples(): void {
+    this.strokeStartSampleSumX = 0;
+    this.strokeStartSampleSumY = 0;
+    this.strokeStartSampleCount = 0;
+  }
+
+  private toInternalPoint(dab: BrushDabPoint, fallbackTimestampMs: number): InternalStrokePoint {
+    return {
+      x: dab.x,
+      y: dab.y,
+      pressure: BrushStamper.clamp01(dab.pressure),
+      timestampMs: Number.isFinite(dab.timestampMs) ? Number(dab.timestampMs) : fallbackTimestampMs,
+    };
+  }
+
+  private appendStrokeStartTransitionDabs(
+    dabs: BrushDabPoint[],
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    targetPressure: number,
+    spacingPx: number,
+    fromTimestampMs: number,
+    toTimestampMs: number
+  ): void {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= 1e-6) {
+      const pressure = BrushStamper.clamp01(targetPressure);
+      dabs.push({ x: toX, y: toY, pressure, timestampMs: toTimestampMs });
+      return;
+    }
+
+    const stepSpacing = Math.max(0.5, Math.min(1.5, spacingPx * 0.55));
+    const rampLengthPx = Math.max(BrushStamper.MIN_MOVEMENT_DISTANCE * 1.35, stepSpacing * 3.2);
+    let traveled = Math.min(distance, Math.max(0.1, stepSpacing * 0.3));
+
+    while (traveled < distance) {
+      const t = BrushStamper.clamp01(traveled / distance);
+      const rampT = BrushStamper.clamp01(traveled / rampLengthPx);
+      const pressure = BrushStamper.clamp01(targetPressure * BrushStamper.smoothstep01(rampT));
+      dabs.push({
+        x: fromX + dx * t,
+        y: fromY + dy * t,
+        pressure,
+        timestampMs: fromTimestampMs + (toTimestampMs - fromTimestampMs) * t,
+      });
+      traveled += stepSpacing;
+    }
+
+    const finalPressure = BrushStamper.clamp01(targetPressure);
+    dabs.push({ x: toX, y: toY, pressure: finalPressure, timestampMs: toTimestampMs });
+  }
+
+  private emitSegmentDabs(
+    dabs: BrushDabPoint[],
+    from: InternalStrokePoint,
+    to: InternalStrokePoint,
+    spacingPx: number,
+    options: BrushStamperInputOptions
+  ): void {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const distance = Math.hypot(dx, dy);
+    const durationMs = Math.max(0, to.timestampMs - from.timestampMs);
+    if (distance <= 1e-6 && durationMs <= 1e-6) {
+      return;
+    }
+
+    const safeSpacing = Math.max(0.5, spacingPx);
+    const maxIntervalMs = Math.max(
+      1,
+      options.maxDabIntervalMs ?? BrushStamper.DEFAULT_MAX_DAB_INTERVAL_MS
+    );
+    const samples = this.segmentSampler.sampleSegment({
+      distancePx: distance,
+      durationMs,
+      spacingPx: safeSpacing,
+      maxIntervalMs,
+    });
+
+    for (const t of samples) {
+      const smoothT = t * t * (3 - 2 * t);
+      dabs.push({
+        x: from.x + dx * t,
+        y: from.y + dy * t,
+        pressure: from.pressure + (to.pressure - from.pressure) * smoothT,
+        timestampMs: from.timestampMs + (to.timestampMs - from.timestampMs) * t,
+      });
+    }
+  }
+
   processPoint(
     x: number,
     y: number,
     pressure: number,
     spacingPx: number,
-    buildupEnabled: boolean = false
-  ): Array<{ x: number; y: number; pressure: number }> {
-    const dabs: Array<{ x: number; y: number; pressure: number }> = [];
+    buildupEnabled: boolean = false,
+    options: BrushStamperInputOptions = {}
+  ): BrushDabPoint[] {
+    const dabs: BrushDabPoint[] = [];
+    const timestampMs = BrushStamper.resolveTimestampMs(options.timestampMs);
+    const smoothingSamples = BrushStamper.clampInt(options.brushSpeedSmoothingSamples ?? 3, 3, 100);
+    const speedPxPerMs = this.speedEstimator.getNextSpeedPxPerMs(x, y, timestampMs, {
+      smoothingSamples,
+    });
+    this.lastSpeedPxPerMs = speedPxPerMs;
+    const maxBrushSpeedPxPerMs = Math.max(1, options.maxBrushSpeedPxPerMs ?? 30);
+    this.lastNormalizedSpeed = BrushStamper.clamp01(speedPxPerMs / maxBrushSpeedPxPerMs);
 
-    // First point: just record position, don't emit dab yet
-    // DON'T apply EMA here - we haven't moved yet
     if (this.isStrokeStart) {
       this.isStrokeStart = false;
       this.strokeStartPoint = { x, y };
+      this.clearStrokeStartSamples();
+      this.appendStrokeStartSample(x, y);
       if (buildupEnabled) {
-        // Build-up: allow stationary accumulation from stroke start
         this.hasMovedEnough = true;
+        this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
-        this.lastPoint = { x, y, pressure };
-        dabs.push({ x, y, pressure });
+        this.lastPoint = { x, y, pressure, timestampMs };
+        dabs.push({ x, y, pressure, timestampMs });
+        if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
+          this.freehandSmoother.reset();
+          this.freehandSmoother.processPoint(this.lastPoint);
+        }
       } else {
-        this.lastPoint = { x, y, pressure: 0 }; // Start with 0 pressure
-        this.smoothedPressure = 0; // Reset EMA
+        this.lastPoint = { x, y, pressure: 0, timestampMs };
       }
       return dabs;
     }
 
     if (!this.lastPoint || !this.strokeStartPoint) {
-      this.lastPoint = { x, y, pressure: buildupEnabled ? pressure : 0 };
+      this.lastPoint = { x, y, pressure: buildupEnabled ? pressure : 0, timestampMs };
       this.strokeStartPoint = { x, y };
+      this.clearStrokeStartSamples();
+      this.appendStrokeStartSample(x, y);
       if (buildupEnabled) {
         this.hasMovedEnough = true;
+        this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
-        dabs.push({ x, y, pressure });
+        dabs.push({ x, y, pressure, timestampMs });
+        if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
+          this.freehandSmoother.reset();
+          this.freehandSmoother.processPoint(this.lastPoint);
+        }
       }
       return dabs;
     }
 
-    // Check if we've moved enough from stroke start
     if (!this.hasMovedEnough) {
       if (buildupEnabled) {
-        // Build-up: skip the minimum movement gate entirely
         this.hasMovedEnough = true;
+        this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
-        this.lastPoint = { x, y, pressure };
-        dabs.push({ x, y, pressure });
+        this.lastPoint = { x, y, pressure, timestampMs };
+        dabs.push({ x, y, pressure, timestampMs });
+        if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
+          this.freehandSmoother.reset();
+          this.freehandSmoother.processPoint(this.lastPoint);
+        }
         return dabs;
       }
 
-      const dxFromStart = x - this.strokeStartPoint.x;
-      const dyFromStart = y - this.strokeStartPoint.y;
+      this.appendStrokeStartSample(x, y);
+      const strokeStartAnchor = this.resolveStrokeStartAnchor();
+      const dxFromStart = x - strokeStartAnchor.x;
+      const dyFromStart = y - strokeStartAnchor.y;
       const distFromStart = Math.sqrt(dxFromStart * dxFromStart + dyFromStart * dyFromStart);
 
       if (distFromStart < BrushStamper.MIN_MOVEMENT_DISTANCE) {
-        // Haven't moved enough yet - DON'T update pressure at all
-        // This prevents pressure buildup at stationary position
-        // Just update position for distance tracking
         this.lastPoint.x = x;
         this.lastPoint.y = y;
-        // DON'T call smoothPressure() - that would accumulate pressure
+        this.lastPoint.timestampMs = timestampMs;
         return dabs;
       }
 
-      // We've moved enough - NOW initialize EMA with current pressure
       this.hasMovedEnough = true;
-      this.smoothedPressure = pressure; // Initialize EMA with current pressure
-      this.lastPoint = { x, y, pressure };
-      dabs.push({ x, y, pressure });
+      this.clearStrokeStartSamples();
+      this.smoothedPressure = pressure;
+      this.segmentSampler.reset();
+      if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
+        this.freehandSmoother.reset();
+      }
+      this.appendStrokeStartTransitionDabs(
+        dabs,
+        strokeStartAnchor.x,
+        strokeStartAnchor.y,
+        x,
+        y,
+        pressure,
+        spacingPx,
+        this.lastPoint.timestampMs,
+        timestampMs
+      );
+      const finalDab = dabs[dabs.length - 1];
+      this.lastPoint = finalDab
+        ? this.toInternalPoint(finalDab, timestampMs)
+        : { x, y, pressure, timestampMs };
+      if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
+        this.freehandSmoother.processPoint(this.lastPoint);
+      }
       return dabs;
     }
 
-    // Apply pressure smoothing only AFTER we've started moving
-    const smoothedPressure = this.smoothPressure(pressure);
-
-    // Calculate distance from last point
+    const smoothedPressure = this.smoothPressure(pressure, options);
+    const currentPoint: InternalStrokePoint = { x, y, pressure: smoothedPressure, timestampMs };
     const dx = x - this.lastPoint.x;
     const dy = y - this.lastPoint.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    // Stationary input: optionally emit a dab for Build-up mode
     if (distance < 1e-6) {
       if (buildupEnabled) {
-        dabs.push({ x, y, pressure: smoothedPressure });
+        dabs.push({ x, y, pressure: smoothedPressure, timestampMs });
       }
-      this.lastPoint = { x, y, pressure: smoothedPressure };
+      this.lastPoint = currentPoint;
       return dabs;
     }
 
-    // Check for rapid pressure change - reduce spacing for smoother transition
     const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
     let effectiveSpacing = spacingPx;
     if (pressureChange > BrushStamper.PRESSURE_CHANGE_THRESHOLD) {
-      // Reduce spacing when pressure is changing rapidly
-      // This adds more dabs during transitions for smoother appearance
       effectiveSpacing = spacingPx * 0.5;
     }
+    if (options.lowPressureAdaptiveSmoothingEnabled !== false) {
+      const lowPressureFactor = BrushStamper.clamp01(
+        (BrushStamper.LOW_PRESSURE_THRESHOLD - smoothedPressure) /
+          BrushStamper.LOW_PRESSURE_THRESHOLD
+      );
+      if (lowPressureFactor > 0) {
+        const densityBoost = 1 + lowPressureFactor * (0.5 + 0.5 * this.lastNormalizedSpeed);
+        effectiveSpacing /= densityBoost;
+      }
+    }
+    const safeSpacing = Math.max(effectiveSpacing, 0.5);
 
-    // Spacing threshold based on precomputed tip size
-    const threshold = Math.max(effectiveSpacing, 1);
-
-    this.accumulatedDistance += distance;
-
-    // Emit dabs at regular intervals
-    while (this.accumulatedDistance >= threshold) {
-      const t = 1 - (this.accumulatedDistance - threshold) / distance;
-      const dabX = this.lastPoint.x + dx * t;
-      const dabY = this.lastPoint.y + dy * t;
-
-      // Use smoothstep interpolation for pressure (smoother than linear)
-      const smoothT = t * t * (3 - 2 * t);
-      const dabPressure =
-        this.lastPoint.pressure + (smoothedPressure - this.lastPoint.pressure) * smoothT;
-
-      dabs.push({ x: dabX, y: dabY, pressure: dabPressure });
-      this.accumulatedDistance -= threshold;
+    const trajectorySmoothingEnabled = BrushStamper.isTrajectorySmoothingEnabled(options);
+    const smoothedSegments = trajectorySmoothingEnabled
+      ? this.freehandSmoother.processPoint(currentPoint)
+      : [];
+    if (!trajectorySmoothingEnabled || smoothedSegments.length === 0) {
+      this.emitSegmentDabs(dabs, this.lastPoint, currentPoint, safeSpacing, options);
+    } else {
+      for (const segment of smoothedSegments) {
+        this.emitSegmentDabs(
+          dabs,
+          this.toInternalPoint(segment.from, currentPoint.timestampMs),
+          this.toInternalPoint(segment.to, currentPoint.timestampMs),
+          safeSpacing,
+          options
+        );
+      }
     }
 
-    this.lastPoint = { x, y, pressure: smoothedPressure };
+    this.lastPoint = currentPoint;
     return dabs;
   }
 
-  /**
-   * Finish stroke and reset state
-   *
-   * Note: We don't artificially add fadeout dabs here. Natural pressure decay
-   * from the tablet hardware should create proper tapered ends. If the pen is
-   * lifted too quickly, we accept a blunt end rather than adding unnatural
-   * artificial taper that creates visual discontinuity.
-   */
-  finishStroke(_brushSize: number): Array<{ x: number; y: number; pressure: number }> {
+  finishStroke(spacingPx: number, options: BrushStamperInputOptions = {}): BrushDabPoint[] {
+    if (!this.lastPoint) {
+      const carry = this.segmentSampler.getCarryState();
+      const snapshot: StrokeFinalizeDebugSnapshot = {
+        reason: 'no_active_stroke',
+        speedPxPerMs: this.lastSpeedPxPerMs,
+        normalizedSpeed: BrushStamper.clamp01(this.lastNormalizedSpeed),
+        finalSegmentDistance: 0,
+        emittedDabCount: 0,
+        remainingDistancePx: carry.distanceCarryPx,
+        remainingTimeMs: carry.timeCarryMs,
+      };
+      this.beginStroke();
+      this.lastFinalizeDebugSnapshot = snapshot;
+      return [];
+    }
+
+    if (!BrushStamper.isTrajectorySmoothingEnabled(options)) {
+      const carry = this.segmentSampler.getCarryState();
+      const snapshot: StrokeFinalizeDebugSnapshot = {
+        reason: 'no_pending_segment',
+        speedPxPerMs: this.lastSpeedPxPerMs,
+        normalizedSpeed: BrushStamper.clamp01(this.lastNormalizedSpeed),
+        finalSegmentDistance: 0,
+        emittedDabCount: 0,
+        remainingDistancePx: carry.distanceCarryPx,
+        remainingTimeMs: carry.timeCarryMs,
+      };
+      this.beginStroke();
+      this.lastFinalizeDebugSnapshot = snapshot;
+      return [];
+    }
+
+    const finalSegment = this.freehandSmoother.finishStrokeSegment();
+    if (!finalSegment) {
+      const carry = this.segmentSampler.getCarryState();
+      const snapshot: StrokeFinalizeDebugSnapshot = {
+        reason: 'no_pending_segment',
+        speedPxPerMs: this.lastSpeedPxPerMs,
+        normalizedSpeed: BrushStamper.clamp01(this.lastNormalizedSpeed),
+        finalSegmentDistance: 0,
+        emittedDabCount: 0,
+        remainingDistancePx: carry.distanceCarryPx,
+        remainingTimeMs: carry.timeCarryMs,
+      };
+      this.beginStroke();
+      this.lastFinalizeDebugSnapshot = snapshot;
+      return [];
+    }
+
+    const dabs: BrushDabPoint[] = [];
+    const from = this.toInternalPoint(finalSegment.from, this.lastPoint.timestampMs);
+    const to = this.toInternalPoint(finalSegment.to, this.lastPoint.timestampMs);
+    this.emitSegmentDabs(dabs, from, to, Math.max(0.5, spacingPx), options);
+
+    const carry = this.segmentSampler.getCarryState();
+    const finalDistance = Math.hypot(to.x - from.x, to.y - from.y);
+    const snapshot: StrokeFinalizeDebugSnapshot = {
+      reason: dabs.length > 0 ? 'emitted_segment' : 'segment_below_threshold',
+      speedPxPerMs: this.lastSpeedPxPerMs,
+      normalizedSpeed: BrushStamper.clamp01(this.lastNormalizedSpeed),
+      finalSegmentDistance: finalDistance,
+      emittedDabCount: dabs.length,
+      remainingDistancePx: carry.distanceCarryPx,
+      remainingTimeMs: carry.timeCarryMs,
+    };
+
     this.beginStroke();
-    return []; // No artificial fadeout - rely on natural pressure data
+    this.lastFinalizeDebugSnapshot = snapshot;
+    return dabs;
+  }
+
+  getStrokeFinalizeDebugSnapshot(): StrokeFinalizeDebugSnapshot | null {
+    if (!this.lastFinalizeDebugSnapshot) return null;
+    return { ...this.lastFinalizeDebugSnapshot };
+  }
+
+  /**
+   * @deprecated use getStrokeFinalizeDebugSnapshot()
+   */
+  getTailTaperDebugSnapshot(): StrokeFinalizeDebugSnapshot | null {
+    return this.getStrokeFinalizeDebugSnapshot();
   }
 }

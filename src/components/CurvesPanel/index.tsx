@@ -12,16 +12,25 @@ import type {
   CurvesRuntimeError,
   CurvesSessionInfo,
 } from '@/types/curves';
-import { buildCurveEvaluator, buildCurveLut } from '@/utils/curvesRenderer';
+import { buildCurveLut } from '@/utils/curvesRenderer';
+import {
+  CHANNEL_MAX,
+  CHANNEL_MIN,
+  DEFAULT_GRAPH_SIZE,
+  buildSingleChannelCurvePath,
+  clamp,
+  getPointDragRange,
+  toGraphX,
+  toGraphY,
+} from '@/components/CurveEditor/singleChannelCore';
+import { useSingleChannelCurveEditor } from '@/components/CurveEditor/useSingleChannelCurveEditor';
 import './CurvesPanel.css';
 
-const GRAPH_SIZE = 256;
+const GRAPH_SIZE = DEFAULT_GRAPH_SIZE;
 const POINT_HIT_RADIUS_PX = 8;
 const GRID_DIVISIONS = 4;
 const CURVE_RENDER_SAMPLES = 2048;
 const DRAG_DELETE_OVERSHOOT_THRESHOLD_PX = 16;
-const CHANNEL_MIN = 0;
-const CHANNEL_MAX = 255;
 
 type CurvesBridgeWindow = Window & {
   __canvasCurvesBeginSession?: () => CurvesSessionInfo | null;
@@ -34,27 +43,11 @@ type CurvesBridgeWindow = Window & {
   __canvasCurvesCancel?: (sessionId: string) => void;
 };
 
-interface DragState {
-  channel: CurvesChannel;
-  pointId: string;
-  beforeSnapshot: CurvesPanelSnapshot | null;
-  moved: boolean;
-  canDeleteByDragOut: boolean;
-  deleteOnRelease: boolean;
-}
-
 interface CurvesPanelSnapshot {
   selectedChannel: CurvesChannel;
   previewEnabled: boolean;
   selectedPointId: string | null;
   pointsByChannel: CurvesPointsByChannel;
-}
-
-interface DragRange {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
 }
 
 type SingleChannel = Exclude<CurvesChannel, 'rgb'>;
@@ -65,13 +58,6 @@ const CHANNEL_OPTIONS: Array<{ value: CurvesChannel; label: string }> = [
   { value: 'green', label: 'Green' },
   { value: 'blue', label: 'Blue' },
 ];
-
-function clamp(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-}
 
 function isIdentityLut(lut: Uint8Array): boolean {
   for (let i = 0; i <= CHANNEL_MAX; i += 1) {
@@ -115,110 +101,9 @@ function clonePointsByChannel(pointsByChannel: CurvesPointsByChannel): CurvesPoi
   };
 }
 
-function toGraphX(input: number): number {
-  return (clamp(input, 0, 255) / 255) * GRAPH_SIZE;
-}
-
-function toGraphY(output: number): number {
-  return GRAPH_SIZE - (clamp(output, 0, 255) / 255) * GRAPH_SIZE;
-}
-
-function fromGraphPoint(clientX: number, clientY: number, rect: DOMRect): { x: number; y: number } {
-  const width = Math.max(1, rect.width);
-  const height = Math.max(1, rect.height);
-  const safeClientX = Number.isFinite(clientX) ? clientX : rect.left;
-  const safeClientY = Number.isFinite(clientY) ? clientY : rect.top;
-  const localX = clamp(safeClientX - rect.left, 0, width);
-  const localY = clamp(safeClientY - rect.top, 0, height);
-  const x = Math.round((localX / width) * 255);
-  const y = Math.round(255 - (localY / height) * 255);
-  return { x: clamp(x, 0, 255), y: clamp(y, 0, 255) };
-}
-
 function getSelectedPoint(points: CurvePoint[], selectedId: string | null): CurvePoint | null {
   if (!selectedId) return null;
   return points.find((point) => point.id === selectedId) ?? null;
-}
-
-function fromGraphPointRaw(
-  clientX: number,
-  clientY: number,
-  rect: DOMRect
-): { x: number; y: number } {
-  const width = Math.max(1, rect.width);
-  const height = Math.max(1, rect.height);
-  const safeClientX = Number.isFinite(clientX) ? clientX : rect.left;
-  const safeClientY = Number.isFinite(clientY) ? clientY : rect.top;
-  const x = ((safeClientX - rect.left) / width) * 255;
-  const y = 255 - ((safeClientY - rect.top) / height) * 255;
-  return { x, y };
-}
-
-function canDeletePointAtIndex(index: number, length: number): boolean {
-  return index > 0 && index < length - 1;
-}
-
-function getPointDragRange(points: CurvePoint[], index: number): DragRange {
-  const isFirst = index === 0;
-  const isLast = index === points.length - 1;
-
-  if (isFirst) {
-    return { minX: 0, maxX: 0, minY: 0, maxY: 255 };
-  }
-  if (isLast) {
-    return { minX: 255, maxX: 255, minY: 0, maxY: 255 };
-  }
-
-  const prevPoint = points[index - 1];
-  const nextPoint = points[index + 1];
-  return {
-    minX: (prevPoint?.x ?? 0) + 1,
-    maxX: (nextPoint?.x ?? 255) - 1,
-    minY: 0,
-    maxY: 255,
-  };
-}
-
-function computeOvershootPixels(
-  rawValue: number,
-  min: number,
-  max: number,
-  pixelsPerUnit: number
-): number {
-  const safeScale = Math.max(1e-6, pixelsPerUnit);
-  if (rawValue < min) return (min - rawValue) * safeScale;
-  if (rawValue > max) return (rawValue - max) * safeScale;
-  return 0;
-}
-
-function createDragState(args: {
-  channel: CurvesChannel;
-  pointId: string;
-  beforeSnapshot: CurvesPanelSnapshot | null;
-  canDeleteByDragOut: boolean;
-}): DragState {
-  return {
-    channel: args.channel,
-    pointId: args.pointId,
-    beforeSnapshot: args.beforeSnapshot,
-    moved: false,
-    canDeleteByDragOut: args.canDeleteByDragOut,
-    deleteOnRelease: false,
-  };
-}
-
-function buildPathFromEvaluator(evaluator: (input: number) => number): string {
-  const sampleCount = Math.max(2, CURVE_RENDER_SAMPLES);
-  let path = '';
-  for (let i = 0; i < sampleCount; i += 1) {
-    const t = i / (sampleCount - 1);
-    const input = t * 255;
-    const value = evaluator(input);
-    const x = toGraphX(input);
-    const y = toGraphY(value);
-    path += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
-  }
-  return path;
 }
 
 function formatCurvesRuntimeError(error: CurvesRuntimeError | undefined, fallback: string): string {
@@ -240,7 +125,6 @@ export function CurvesPanel(): JSX.Element {
   const closePanel = usePanelStore((s) => s.closePanel);
   const pointIdRef = useRef(0);
   const graphRef = useRef<SVGSVGElement | null>(null);
-  const dragRef = useRef<DragState | null>(null);
   const previewRafRef = useRef<number | null>(null);
   const latestPayloadRef = useRef<CurvesPreviewPayload | null>(null);
   const committedRef = useRef(false);
@@ -286,25 +170,15 @@ export function CurvesPanel(): JSX.Element {
 
   const luts = useMemo(() => {
     return {
-      rgb: buildCurveLut(pointsByChannel.rgb),
-      red: buildCurveLut(pointsByChannel.red),
-      green: buildCurveLut(pointsByChannel.green),
-      blue: buildCurveLut(pointsByChannel.blue),
+      rgb: buildCurveLut(pointsByChannel.rgb, { endpointMode: 'control_points' }),
+      red: buildCurveLut(pointsByChannel.red, { endpointMode: 'control_points' }),
+      green: buildCurveLut(pointsByChannel.green, { endpointMode: 'control_points' }),
+      blue: buildCurveLut(pointsByChannel.blue, { endpointMode: 'control_points' }),
     };
   }, [pointsByChannel]);
 
   const histogram = resolveHistogramByChannel(sessionInfo, selectedChannel);
   const histogramMax = histogram.reduce((max, value) => Math.max(max, value), 0);
-
-  const evaluators = useMemo(
-    () => ({
-      rgb: buildCurveEvaluator(pointsByChannel.rgb),
-      red: buildCurveEvaluator(pointsByChannel.red),
-      green: buildCurveEvaluator(pointsByChannel.green),
-      blue: buildCurveEvaluator(pointsByChannel.blue),
-    }),
-    [pointsByChannel]
-  );
 
   const adjustedChannels = useMemo(
     () => ({
@@ -324,6 +198,21 @@ export function CurvesPanel(): JSX.Element {
       blueLut: Array.from(luts.blue),
     }),
     [luts.blue, luts.green, luts.red, luts.rgb, previewEnabled]
+  );
+
+  const setActiveChannelPoints = useCallback(
+    (updater: (prev: CurvePoint[]) => CurvePoint[]) => {
+      setPointsByChannel((prev) => {
+        const channelPoints = prev[selectedChannel];
+        const nextPoints = updater(channelPoints);
+        if (nextPoints === channelPoints) return prev;
+        return {
+          ...prev,
+          [selectedChannel]: nextPoints,
+        };
+      });
+    },
+    [selectedChannel]
   );
 
   const captureSnapshot = useCallback((): CurvesPanelSnapshot => {
@@ -351,6 +240,33 @@ export function CurvesPanel(): JSX.Element {
     redoStackRef.current = [];
     setHistoryVersion((value) => value + 1);
   }, []);
+
+  const { curvePath: activeCurvePath, handleGraphPointerDown } = useSingleChannelCurveEditor({
+    graphRef,
+    points: activePoints,
+    setPoints: setActiveChannelPoints,
+    selectedPointId,
+    setSelectedPointId,
+    createPointId: getNextPointId,
+    pointHitRadiusPx: POINT_HIT_RADIUS_PX,
+    dragDeleteOvershootThresholdPx: DRAG_DELETE_OVERSHOOT_THRESHOLD_PX,
+    curveSampleCount: CURVE_RENDER_SAMPLES,
+    graphSize: GRAPH_SIZE,
+    isDeleteKeyEnabled: () => Boolean(sessionIdRef.current) && !isCommitting,
+    shouldIgnoreDeleteKeyTarget: isEditableTarget,
+    onBeforeAddPoint: () => {
+      pushUndoSnapshot(captureSnapshot());
+    },
+    onBeforeDeleteByKey: () => {
+      pushUndoSnapshot(captureSnapshot());
+    },
+    onDragStart: () => captureSnapshot(),
+    onDragCommit: ({ moved, deleted, token }) => {
+      if ((moved || deleted) && token) {
+        pushUndoSnapshot(token as CurvesPanelSnapshot);
+      }
+    },
+  });
 
   const handleLocalUndo = useCallback(() => {
     const previous = undoStackRef.current.pop();
@@ -456,112 +372,6 @@ export function CurvesPanel(): JSX.Element {
   }, [curvesPayload, requestPreviewFrame]);
 
   useEffect(() => {
-    const onPointerMove = (event: PointerEvent): void => {
-      const drag = dragRef.current;
-      const graph = graphRef.current;
-      if (!drag || !graph) return;
-      const rect = graph.getBoundingClientRect();
-      const rawPoint = fromGraphPointRaw(event.clientX, event.clientY, rect);
-      if (drag.canDeleteByDragOut) {
-        const livePoints = currentSnapshotRef.current.pointsByChannel[drag.channel];
-        const index = livePoints.findIndex((point) => point.id === drag.pointId);
-        if (index >= 0) {
-          const range = getPointDragRange(livePoints, index);
-          const pixelsPerXUnit = rect.width / 255;
-          const pixelsPerYUnit = rect.height / 255;
-          const overshootX = computeOvershootPixels(
-            rawPoint.x,
-            range.minX,
-            range.maxX,
-            pixelsPerXUnit
-          );
-          const overshootY = computeOvershootPixels(
-            rawPoint.y,
-            range.minY,
-            range.maxY,
-            pixelsPerYUnit
-          );
-          drag.deleteOnRelease =
-            Math.max(overshootX, overshootY) >= DRAG_DELETE_OVERSHOOT_THRESHOLD_PX;
-        } else {
-          drag.deleteOnRelease = false;
-        }
-      }
-
-      const point = fromGraphPoint(event.clientX, event.clientY, rect);
-      let didMove = false;
-      setPointsByChannel((prev) => {
-        const channelPoints = prev[drag.channel];
-        const index = channelPoints.findIndex((item) => item.id === drag.pointId);
-        if (index < 0) return prev;
-        const nextPoints = [...channelPoints];
-        const current = nextPoints[index];
-        if (!current) return prev;
-        const range = getPointDragRange(channelPoints, index);
-        const nextX = clamp(point.x, range.minX, range.maxX);
-        const nextY = clamp(point.y, range.minY, range.maxY);
-
-        if (current.x === nextX && current.y === nextY) {
-          return prev;
-        }
-        didMove = true;
-        nextPoints[index] = {
-          ...current,
-          x: clamp(nextX, 0, 255),
-          y: clamp(nextY, 0, 255),
-        };
-        return {
-          ...prev,
-          [drag.channel]: nextPoints,
-        };
-      });
-      if (didMove && dragRef.current) {
-        dragRef.current.moved = true;
-      }
-    };
-
-    const onPointerUp = (): void => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      if (drag.deleteOnRelease && drag.canDeleteByDragOut) {
-        let removed = false;
-        setPointsByChannel((prev) => {
-          const channelPoints = prev[drag.channel];
-          const removeIndex = channelPoints.findIndex((point) => point.id === drag.pointId);
-          if (removeIndex <= 0 || removeIndex >= channelPoints.length - 1) return prev;
-          removed = true;
-          return {
-            ...prev,
-            [drag.channel]: channelPoints.filter((point) => point.id !== drag.pointId),
-          };
-        });
-        if (removed) {
-          setSelectedPointId(null);
-          if (drag.beforeSnapshot) {
-            pushUndoSnapshot(drag.beforeSnapshot);
-          }
-        }
-        dragRef.current = null;
-        return;
-      }
-
-      if (drag.moved && drag.beforeSnapshot) {
-        pushUndoSnapshot(drag.beforeSnapshot);
-      }
-      dragRef.current = null;
-    };
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerUp);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerUp);
-    };
-  }, [pushUndoSnapshot]);
-
-  useEffect(() => {
     const handlePanelKeyDown = (event: KeyboardEvent): void => {
       if (!sessionIdRef.current) return;
       if (isCommitting) return;
@@ -584,106 +394,13 @@ export function CurvesPanel(): JSX.Element {
           return;
         }
       }
-
-      if (event.key !== 'Delete') return;
-      if (isEditableTarget(event.target)) return;
-      const points = pointsByChannel[selectedChannel];
-      const index = points.findIndex((point) => point.id === selectedPointId);
-      if (index <= 0 || index >= points.length - 1) return;
-      event.preventDefault();
-      event.stopPropagation();
-      pushUndoSnapshot(captureSnapshot());
-      setPointsByChannel((prev) => {
-        const channelPoints = prev[selectedChannel];
-        const removeIndex = channelPoints.findIndex((point) => point.id === selectedPointId);
-        if (removeIndex <= 0 || removeIndex >= channelPoints.length - 1) return prev;
-        const nextPoints = channelPoints.filter((point) => point.id !== selectedPointId);
-        return {
-          ...prev,
-          [selectedChannel]: nextPoints,
-        };
-      });
-      setSelectedPointId(null);
     };
 
     window.addEventListener('keydown', handlePanelKeyDown, true);
     return () => {
       window.removeEventListener('keydown', handlePanelKeyDown, true);
     };
-  }, [
-    captureSnapshot,
-    handleLocalRedo,
-    handleLocalUndo,
-    pointsByChannel,
-    pushUndoSnapshot,
-    selectedChannel,
-    selectedPointId,
-    isCommitting,
-  ]);
-
-  const handleGraphPointerDown = useCallback(
-    (event: React.PointerEvent<SVGSVGElement>) => {
-      const graph = graphRef.current;
-      if (!graph) return;
-      const rect = graph.getBoundingClientRect();
-      const point = fromGraphPoint(event.clientX, event.clientY, rect);
-      const channelPoints = pointsByChannel[selectedChannel];
-
-      let hitPointId: string | null = null;
-      for (const curvePoint of channelPoints) {
-        const dx = toGraphX(curvePoint.x) - (event.clientX - rect.left);
-        const dy = toGraphY(curvePoint.y) - (event.clientY - rect.top);
-        if (Math.hypot(dx, dy) <= POINT_HIT_RADIUS_PX) {
-          hitPointId = curvePoint.id;
-          break;
-        }
-      }
-
-      if (hitPointId) {
-        const hitIndex = channelPoints.findIndex((item) => item.id === hitPointId);
-        setSelectedPointId(hitPointId);
-        dragRef.current = createDragState({
-          channel: selectedChannel,
-          pointId: hitPointId,
-          beforeSnapshot: captureSnapshot(),
-          canDeleteByDragOut: canDeletePointAtIndex(hitIndex, channelPoints.length),
-        });
-        return;
-      }
-
-      const existing = channelPoints.find((item) => item.x === point.x);
-      if (existing) {
-        const existingIndex = channelPoints.findIndex((item) => item.id === existing.id);
-        setSelectedPointId(existing.id);
-        dragRef.current = createDragState({
-          channel: selectedChannel,
-          pointId: existing.id,
-          beforeSnapshot: captureSnapshot(),
-          canDeleteByDragOut: canDeletePointAtIndex(existingIndex, channelPoints.length),
-        });
-        return;
-      }
-
-      pushUndoSnapshot(captureSnapshot());
-      const pointId = getNextPointId();
-      setPointsByChannel((prev) => {
-        const nextPoints = [...prev[selectedChannel], { id: pointId, x: point.x, y: point.y }];
-        nextPoints.sort((a, b) => a.x - b.x);
-        return {
-          ...prev,
-          [selectedChannel]: nextPoints,
-        };
-      });
-      setSelectedPointId(pointId);
-      dragRef.current = createDragState({
-        channel: selectedChannel,
-        pointId,
-        beforeSnapshot: null,
-        canDeleteByDragOut: false,
-      });
-    },
-    [captureSnapshot, getNextPointId, pointsByChannel, pushUndoSnapshot, selectedChannel]
-  );
+  }, [handleLocalRedo, handleLocalUndo, isCommitting]);
 
   const applySelectedPointInput = useCallback(
     (axis: 'x' | 'y', rawValue: string) => {
@@ -827,11 +544,6 @@ export function CurvesPanel(): JSX.Element {
     isCommitting,
   ]);
 
-  const activeCurvePath = useMemo(
-    () => buildPathFromEvaluator(evaluators[selectedChannel]),
-    [evaluators, selectedChannel]
-  );
-
   const rgbOverlayCurves = useMemo(() => {
     if (selectedChannel !== 'rgb') return [];
     const singleChannels: SingleChannel[] = ['red', 'green', 'blue'];
@@ -839,12 +551,15 @@ export function CurvesPanel(): JSX.Element {
 
     for (const channel of singleChannels) {
       if (!adjustedChannels[channel]) continue;
-      const path = buildPathFromEvaluator(evaluators[channel]);
+      const path = buildSingleChannelCurvePath(pointsByChannel[channel], {
+        sampleCount: CURVE_RENDER_SAMPLES,
+        graphSize: GRAPH_SIZE,
+      });
       activeOverlays.push({ channel, path });
     }
 
     return activeOverlays;
-  }, [adjustedChannels, evaluators, selectedChannel]);
+  }, [adjustedChannels, pointsByChannel, selectedChannel]);
 
   return (
     <div className="curves-panel">

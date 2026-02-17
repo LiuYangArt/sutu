@@ -41,6 +41,7 @@ function createPointerEvent(
     webkitForce: init.webkitForce,
     WEBKIT_FORCE_AT_MOUSE_DOWN: init.WEBKIT_FORCE_AT_MOUSE_DOWN,
     WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN: init.WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN,
+    timeStamp: init.timeStamp ?? 42,
   } as unknown as PointerEvent;
 }
 
@@ -48,7 +49,13 @@ describe('inputUtils.getEffectiveInputData', () => {
   it('非原生后端模式使用 PointerEvent，并归一化 tilt 与读取 twist', () => {
     const evt = createPointerEvent({ pressure: 0.62, tiltX: 45, tiltY: -30, twist: 270 });
     const result = getEffectiveInputData(evt, false, [], null);
-    expect(result).toEqual({ pressure: 0.62, tiltX: 0.5, tiltY: -1 / 3, rotation: 270 });
+    expect(result).toEqual({
+      pressure: 0.62,
+      tiltX: 0.5,
+      tiltY: -1 / 3,
+      rotation: 270,
+      timestampMs: 42,
+    });
   });
 
   it('tiltX/tiltY 不可用时回退 altitude/azimuth', () => {
@@ -64,6 +71,7 @@ describe('inputUtils.getEffectiveInputData', () => {
     expect(result.tiltX).toBeCloseTo(0.5, 6);
     expect(result.tiltY).toBeCloseTo(0, 6);
     expect(result.rotation).toBe(0);
+    expect(result.timestampMs).toBe(42);
   });
 
   it('coalesced 样本缺少 tilt/twist 时回退主 PointerEvent 姿态', () => {
@@ -75,6 +83,7 @@ describe('inputUtils.getEffectiveInputData', () => {
       tiltX: 36 / 90,
       tiltY: -18 / 90,
       rotation: 123,
+      timestampMs: 42,
     });
   });
 
@@ -88,6 +97,7 @@ describe('inputUtils.getEffectiveInputData', () => {
     });
     const result = getEffectiveInputData(evt, false, [], null);
     expect(result.pressure).toBeCloseTo(0.5, 6);
+    expect(result.timestampMs).toBe(42);
   });
 
   it('非原生后端下样本 pressure 为 synthetic 0.5 时回退 fallbackEvent webkitForce', () => {
@@ -99,28 +109,79 @@ describe('inputUtils.getEffectiveInputData', () => {
     });
     const result = getEffectiveInputData(sampled, false, [], null, fallback);
     expect(result.pressure).toBeCloseTo(0.8, 6);
+    expect(result.timestampMs).toBe(42);
   });
 
   it('原生后端优先使用 buffered 点', () => {
     const evt = createPointerEvent({ pressure: 0.8, tiltX: 5, tiltY: 5, twist: 30 });
-    const buffered = [createRawPoint({ pressure: 0.33, tilt_x: 21, tilt_y: -12, rotation: 210 })];
+    const buffered = [
+      createRawPoint({ pressure: 0.33, tilt_x: 21, tilt_y: -12, rotation: 210, timestamp_ms: 88 }),
+    ];
     const current = createRawPoint({ pressure: 0.9, tilt_x: 30, tilt_y: 30, rotation: 320 });
     const result = getEffectiveInputData(evt, true, buffered, current);
-    expect(result).toEqual({ pressure: 0.33, tiltX: 21 / 90, tiltY: -12 / 90, rotation: 210 });
+    expect(result).toEqual({
+      pressure: 0.33,
+      tiltX: 21 / 90,
+      tiltY: -12 / 90,
+      rotation: 210,
+      timestampMs: 88,
+    });
+  });
+
+  it('原生后端在提供 preferredNativePoint 时优先使用该样本', () => {
+    const evt = createPointerEvent({ pressure: 0.9, tiltX: 0, tiltY: 0, twist: 12 });
+    const buffered = [
+      createRawPoint({ pressure: 0.2, tilt_x: 1, tilt_y: 2, rotation: 10, timestamp_ms: 10 }),
+      createRawPoint({ pressure: 0.3, tilt_x: 3, tilt_y: 4, rotation: 20, timestamp_ms: 20 }),
+    ];
+    const preferred = createRawPoint({
+      pressure: 0.77,
+      tilt_x: 11,
+      tilt_y: -7,
+      rotation: 222,
+      timestamp_ms: 88,
+    });
+
+    const result = getEffectiveInputData(evt, true, buffered, null, evt, preferred);
+    expect(result).toEqual({
+      pressure: 0.77,
+      tiltX: 11 / 90,
+      tiltY: -7 / 90,
+      rotation: 222,
+      timestampMs: 88,
+    });
   });
 
   it('原生后端无 buffered 时回退 currentPoint', () => {
     const evt = createPointerEvent({ pressure: 0.7, tiltX: 0, tiltY: 0, twist: 75 });
-    const current = createRawPoint({ pressure: 0.41, tilt_x: 8, tilt_y: 3, rotation: 288 });
+    const current = createRawPoint({
+      pressure: 0.41,
+      tilt_x: 8,
+      tilt_y: 3,
+      rotation: 288,
+      timestamp_ms: 64,
+    });
     const result = getEffectiveInputData(evt, true, [], current);
-    expect(result).toEqual({ pressure: 0.41, tiltX: 8 / 90, tiltY: 3 / 90, rotation: 288 });
+    expect(result).toEqual({
+      pressure: 0.41,
+      tiltX: 8 / 90,
+      tiltY: 3 / 90,
+      rotation: 288,
+      timestampMs: 64,
+    });
   });
 
   it('原生后端点缺少 rotation 时回退 PointerEvent twist', () => {
     const evt = createPointerEvent({ pressure: 0.4, tiltX: 2, tiltY: -1, twist: 123 });
-    const buffered = [createRawPoint({ pressure: 0.39, tilt_x: 4, tilt_y: -2 })];
+    const buffered = [createRawPoint({ pressure: 0.39, tilt_x: 4, tilt_y: -2, timestamp_ms: 71 })];
     const result = getEffectiveInputData(evt, true, buffered, null);
-    expect(result).toEqual({ pressure: 0.39, tiltX: 4 / 90, tiltY: -2 / 90, rotation: 123 });
+    expect(result).toEqual({
+      pressure: 0.39,
+      tiltX: 4 / 90,
+      tiltY: -2 / 90,
+      rotation: 123,
+      timestampMs: 71,
+    });
   });
 
   it('原生后端 pen 无可用数据时返回 0 压力', () => {
@@ -132,13 +193,25 @@ describe('inputUtils.getEffectiveInputData', () => {
       twist: 9,
     });
     const result = getEffectiveInputData(evt, true, [], null);
-    expect(result).toEqual({ pressure: 0, tiltX: 1 / 90, tiltY: 2 / 90, rotation: 9 });
+    expect(result).toEqual({
+      pressure: 0,
+      tiltX: 1 / 90,
+      tiltY: 2 / 90,
+      rotation: 9,
+      timestampMs: 42,
+    });
   });
 
   it('原生后端 mouse 无可用数据时返回 0.5 压力兜底', () => {
     const evt = createPointerEvent({ pointerType: 'mouse', pressure: 0, tiltX: 1, tiltY: 2 });
     const result = getEffectiveInputData(evt, true, [], null);
-    expect(result).toEqual({ pressure: 0.5, tiltX: 1 / 90, tiltY: 2 / 90, rotation: 0 });
+    expect(result).toEqual({
+      pressure: 0.5,
+      tiltX: 1 / 90,
+      tiltY: 2 / 90,
+      rotation: 0,
+      timestampMs: 42,
+    });
   });
 
   it('识别原生流后端类型', () => {

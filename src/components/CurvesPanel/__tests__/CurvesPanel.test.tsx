@@ -150,6 +150,43 @@ describe('CurvesPanel', () => {
     expect(container.querySelectorAll('circle').length).toBe(2);
   });
 
+  it('拖拽时会将内部控制点的 X 限制在端点之间', () => {
+    render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    fireEvent.pointerDown(graph, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerDown(graph, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(window, { clientX: -140, clientY: 0 });
+    fireEvent.pointerUp(window, { clientX: -140, clientY: 0 });
+
+    const inputField = screen.getByRole('spinbutton', { name: 'Input value' });
+    expect(inputField).toHaveValue(1);
+  });
+
+  it('支持首尾控制点沿 X 轴拖动', () => {
+    render(<CurvesPanel />);
+    const graph = screen.getByLabelText('Curves graph');
+
+    fireEvent.pointerDown(graph, {
+      button: 0,
+      clientX: clientXFromCurveInput(255),
+      clientY: clientYFromCurveOutput(255),
+    });
+    fireEvent.pointerMove(window, {
+      clientX: clientXFromCurveInput(212),
+      clientY: clientYFromCurveOutput(196),
+    });
+    fireEvent.pointerUp(window, {
+      clientX: clientXFromCurveInput(212),
+      clientY: clientYFromCurveOutput(196),
+    });
+
+    const inputField = screen.getByRole('spinbutton', { name: 'Input value' });
+    const outputField = screen.getByRole('spinbutton', { name: 'Output value' });
+    expect(inputField).toHaveValue(212);
+    expect(outputField).toHaveValue(196);
+  });
+
   it('点击 OK 调用 Commit bridge', async () => {
     render(<CurvesPanel />);
 

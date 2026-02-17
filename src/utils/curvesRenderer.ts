@@ -13,9 +13,11 @@ const LUT_SIZE = 256;
 const DELTA_EPSILON = 1e-6;
 
 type CurveNode = Pick<CurvePoint, 'x' | 'y'>;
+export type CurveEndpointMode = 'implicit_corners' | 'control_points';
 
 interface BuildCurveOptions {
   kernel?: CurveKernel;
+  endpointMode?: CurveEndpointMode;
 }
 
 interface NaturalSpline {
@@ -71,7 +73,11 @@ export function createIdentityLut(): Uint8Array {
   return lut;
 }
 
-export function normalizeCurvePoints(points: readonly CurveNode[]): CurveNode[] {
+export function normalizeCurvePoints(
+  points: readonly CurveNode[],
+  options?: { endpointMode?: CurveEndpointMode }
+): CurveNode[] {
+  const endpointMode = options?.endpointMode ?? 'implicit_corners';
   const pointMap = new Map<number, number>();
 
   for (const point of points) {
@@ -80,16 +86,35 @@ export function normalizeCurvePoints(points: readonly CurveNode[]): CurveNode[] 
     pointMap.set(x, y);
   }
 
-  if (!pointMap.has(CHANNEL_MIN)) {
-    pointMap.set(CHANNEL_MIN, CHANNEL_MIN);
-  }
-  if (!pointMap.has(CHANNEL_MAX)) {
-    pointMap.set(CHANNEL_MAX, CHANNEL_MAX);
+  if (endpointMode === 'implicit_corners') {
+    if (!pointMap.has(CHANNEL_MIN)) {
+      pointMap.set(CHANNEL_MIN, CHANNEL_MIN);
+    }
+    if (!pointMap.has(CHANNEL_MAX)) {
+      pointMap.set(CHANNEL_MAX, CHANNEL_MAX);
+    }
   }
 
   const normalized = Array.from(pointMap.entries())
     .sort((a, b) => a[0] - b[0])
     .map(([x, y]) => ({ x, y }));
+
+  if (normalized.length === 0) {
+    return [
+      { x: CHANNEL_MIN, y: CHANNEL_MIN },
+      { x: CHANNEL_MAX, y: CHANNEL_MAX },
+    ];
+  }
+
+  if (endpointMode === 'control_points') {
+    if (normalized.length >= 2) {
+      return normalized;
+    }
+    return [
+      { x: CHANNEL_MIN, y: CHANNEL_MIN },
+      { x: CHANNEL_MAX, y: CHANNEL_MAX },
+    ];
+  }
 
   if (normalized.length === 1) {
     const only = normalized[0];
@@ -280,6 +305,10 @@ function resolveKernel(options?: BuildCurveOptions): CurveKernel {
   return options?.kernel ?? 'natural';
 }
 
+function resolveEndpointMode(options?: BuildCurveOptions): CurveEndpointMode {
+  return options?.endpointMode ?? 'implicit_corners';
+}
+
 function buildEvaluatorFromNodes(
   nodes: readonly CurveNode[],
   kernel: CurveKernel
@@ -300,7 +329,9 @@ export function buildCurveEvaluator(
   points: readonly CurveNode[],
   options?: BuildCurveOptions
 ): (input: number) => number {
-  const nodes = normalizeCurvePoints(points);
+  const nodes = normalizeCurvePoints(points, {
+    endpointMode: resolveEndpointMode(options),
+  });
   if (nodes.length < 2) {
     return (input: number) => clamp(input, CHANNEL_MIN, CHANNEL_MAX);
   }
@@ -319,7 +350,9 @@ export function buildCurveLut(
   points: readonly CurveNode[],
   options?: BuildCurveOptions
 ): Uint8Array {
-  const nodes = normalizeCurvePoints(points);
+  const nodes = normalizeCurvePoints(points, {
+    endpointMode: resolveEndpointMode(options),
+  });
   if (nodes.length < 2) {
     return createIdentityLut();
   }

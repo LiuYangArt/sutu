@@ -7,6 +7,13 @@ import {
   type QuickExportSettings,
 } from '@/utils/quickExport';
 import { detectPlatformKind, type PlatformKind } from '@/utils/platform';
+import {
+  compressPressureCurvePoints,
+  type PressureCurveControlPoint,
+  type PressureCurvePreset,
+  getPressureCurvePresetPoints,
+  normalizePressureCurvePoints,
+} from '@/utils/pressureCurve';
 
 // Settings file path (relative to app config directory)
 const SETTINGS_FILE = 'settings.json';
@@ -69,6 +76,10 @@ export interface TabletSettings {
   backendMigratedToMacNativeAt: string | null;
   pollingRate: number;
   pressureCurve: 'linear' | 'soft' | 'hard' | 'scurve';
+  pressureCurvePoints: PressureCurveControlPoint[];
+  maxBrushSpeedPxPerMs: number;
+  brushSpeedSmoothingSamples: number;
+  lowPressureAdaptiveSmoothingEnabled: boolean;
   backpressureMode: 'lossless' | 'latency_capped';
   autoStart: boolean;
 }
@@ -164,6 +175,10 @@ interface SettingsState extends PersistedSettings {
   setTabletBackend: (backend: TabletSettings['backend']) => void;
   setPollingRate: (rate: number) => void;
   setPressureCurve: (curve: TabletSettings['pressureCurve']) => void;
+  setPressureCurvePoints: (points: PressureCurveControlPoint[]) => void;
+  setMaxBrushSpeedPxPerMs: (value: number) => void;
+  setBrushSpeedSmoothingSamples: (value: number) => void;
+  setLowPressureAdaptiveSmoothingEnabled: (enabled: boolean) => void;
   setBackpressureMode: (mode: TabletSettings['backpressureMode']) => void;
   setAutoStart: (enabled: boolean) => void;
 
@@ -253,6 +268,73 @@ function normalizeTabletBackend(value: unknown): TabletSettings['backend'] {
 
 function normalizeBackendMigrationMarker(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function normalizeTabletPressureCurve(value: unknown): TabletSettings['pressureCurve'] {
+  if (value === 'soft' || value === 'hard' || value === 'scurve') return value;
+  return 'linear';
+}
+
+function parsePressureCurvePoints(value: unknown): PressureCurveControlPoint[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const points: PressureCurveControlPoint[] = [];
+  for (const rawPoint of value) {
+    if (!rawPoint || typeof rawPoint !== 'object') continue;
+    const x = (rawPoint as { x?: unknown }).x;
+    const y = (rawPoint as { y?: unknown }).y;
+    if (typeof x !== 'number' || typeof y !== 'number') continue;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    points.push({ x, y });
+  }
+
+  if (points.length < 2) return null;
+  return points;
+}
+
+const MIN_MAX_BRUSH_SPEED_PX_PER_MS = 1;
+const MAX_MAX_BRUSH_SPEED_PX_PER_MS = 100;
+const DEFAULT_MAX_BRUSH_SPEED_PX_PER_MS = 30;
+
+const MIN_BRUSH_SPEED_SMOOTHING_SAMPLES = 3;
+const MAX_BRUSH_SPEED_SMOOTHING_SAMPLES = 100;
+const DEFAULT_BRUSH_SPEED_SMOOTHING_SAMPLES = 3;
+
+export const TABLET_MAX_BRUSH_SPEED_RANGE = {
+  min: MIN_MAX_BRUSH_SPEED_PX_PER_MS,
+  max: MAX_MAX_BRUSH_SPEED_PX_PER_MS,
+} as const;
+
+export const TABLET_BRUSH_SPEED_SMOOTHING_RANGE = {
+  min: MIN_BRUSH_SPEED_SMOOTHING_SAMPLES,
+  max: MAX_BRUSH_SPEED_SMOOTHING_SAMPLES,
+} as const;
+
+function clampTabletMaxBrushSpeedPxPerMs(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MAX_BRUSH_SPEED_PX_PER_MS;
+  return Math.max(
+    MIN_MAX_BRUSH_SPEED_PX_PER_MS,
+    Math.min(MAX_MAX_BRUSH_SPEED_PX_PER_MS, Math.round(value))
+  );
+}
+
+function clampTabletBrushSpeedSmoothingSamples(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_BRUSH_SPEED_SMOOTHING_SAMPLES;
+  return Math.max(
+    MIN_BRUSH_SPEED_SMOOTHING_SAMPLES,
+    Math.min(MAX_BRUSH_SPEED_SMOOTHING_SAMPLES, Math.round(value))
+  );
+}
+
+function normalizeTabletPressureCurvePoints(
+  points: unknown,
+  fallbackPreset: PressureCurvePreset
+): PressureCurveControlPoint[] {
+  const parsed = parsePressureCurvePoints(points);
+  if (!parsed) {
+    return getPressureCurvePresetPoints(fallbackPreset);
+  }
+  return compressPressureCurvePoints(normalizePressureCurvePoints(parsed));
 }
 
 function shouldAutoMigrateMacBackend(loadedTablet: unknown): boolean {
@@ -438,6 +520,10 @@ const defaultSettings: PersistedSettings = {
     backendMigratedToMacNativeAt: null,
     pollingRate: 200,
     pressureCurve: 'linear',
+    pressureCurvePoints: getPressureCurvePresetPoints('linear'),
+    maxBrushSpeedPxPerMs: DEFAULT_MAX_BRUSH_SPEED_PX_PER_MS,
+    brushSpeedSmoothingSamples: DEFAULT_BRUSH_SPEED_SMOOTHING_SAMPLES,
+    lowPressureAdaptiveSmoothingEnabled: true,
     backpressureMode: 'lossless',
     autoStart: true,
   },
@@ -598,7 +684,35 @@ export const useSettingsStore = create<SettingsState>()(
 
     setPressureCurve: (curve) => {
       set((state) => {
-        state.tablet.pressureCurve = curve;
+        state.tablet.pressureCurve = normalizeTabletPressureCurve(curve);
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setPressureCurvePoints: (points) => {
+      set((state) => {
+        state.tablet.pressureCurvePoints = normalizePressureCurvePoints(points);
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setMaxBrushSpeedPxPerMs: (value) => {
+      set((state) => {
+        state.tablet.maxBrushSpeedPxPerMs = clampTabletMaxBrushSpeedPxPerMs(value);
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setBrushSpeedSmoothingSamples: (value) => {
+      set((state) => {
+        state.tablet.brushSpeedSmoothingSamples = clampTabletBrushSpeedSmoothingSamples(value);
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    setLowPressureAdaptiveSmoothingEnabled: (enabled) => {
+      set((state) => {
+        state.tablet.lowPressureAdaptiveSmoothingEnabled = enabled;
       });
       debouncedSave(() => get()._saveSettings());
     },
@@ -768,10 +882,29 @@ export const useSettingsStore = create<SettingsState>()(
               const normalizedBackend = shouldMigrateToMacNative
                 ? 'macnative'
                 : normalizeTabletBackend(mergedTablet.backend);
+              const normalizedPressureCurve = normalizeTabletPressureCurve(
+                mergedTablet.pressureCurve
+              );
+              const pressureCurvePoints = normalizeTabletPressureCurvePoints(
+                mergedTablet.pressureCurvePoints,
+                normalizedPressureCurve
+              );
               state.tablet = {
                 ...mergedTablet,
                 backend: normalizedBackend,
                 backendMigratedToMacNativeAt,
+                pressureCurve: normalizedPressureCurve,
+                pressureCurvePoints,
+                maxBrushSpeedPxPerMs: clampTabletMaxBrushSpeedPxPerMs(
+                  mergedTablet.maxBrushSpeedPxPerMs
+                ),
+                brushSpeedSmoothingSamples: clampTabletBrushSpeedSmoothingSamples(
+                  mergedTablet.brushSpeedSmoothingSamples
+                ),
+                lowPressureAdaptiveSmoothingEnabled: normalizeBoolean(
+                  mergedTablet.lowPressureAdaptiveSmoothingEnabled,
+                  defaultSettings.tablet.lowPressureAdaptiveSmoothingEnabled
+                ),
               };
             }
             if (loaded.brush) {

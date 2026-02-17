@@ -1,563 +1,213 @@
-# Krita 压感处理机制分析
+# Krita 压感处理机制分析（修订版）
 
-本文档整理 Krita 的 WinTab 压感处理完整机制，作为 PaintBoard 压感优化的参考。
+本文档基于当前本地 Krita 源码快照（`F:\CodeProjects\krita`）整理压感相关链路，作为 PaintBoard 对齐参考。
 
-> **Krita 源码位置**: `F:\CodeProjects\krita`
+- 修订日期：2026-02-17
+- 重点：修正旧版文档中的过时链路和语义误读
+- 范围：压感/速度/采样链路；不展开 Tool Options 的轨迹平滑实现
 
 ---
 
 ## 目录
 
-1. [架构概览](#架构概览)
-2. [压感曲线系统 (KisCubicCurve)](#1-压感曲线系统-kiscubiccurve)
-3. [速度平滑器 (KisSpeedSmoother)](#2-速度平滑器-kisspeedsmoother)
-4. [压感信息构建器 (KisPaintingInformationBuilder)](#3-压感信息构建器-kispaintinginformationbuilder)
-5. [增量平均 (KisIncrementalAverage)](#4-增量平均-kisincrementalaverage)
-6. [过滤滚动平均 (KisFilteredRollingMean)](#5-过滤滚动平均-kisfilteredrollingmean)
-7. [关键设计模式](#关键设计模式)
-8. [PaintBoard 应用建议](#paintboard-应用建议)
+1. [结论速览](#1-结论速览)
+2. [当前真实链路（运行时）](#2-当前真实链路运行时)
+3. [压感曲线系统（KisCubicCurve）](#3-压感曲线系统kiscubiccurve)
+4. [速度平滑器（KisSpeedSmoother）](#4-速度平滑器kisspeedsmoother)
+5. [压感信息构建器（KisPaintingInformationBuilder）](#5-压感信息构建器kispaintinginformationbuilder)
+6. [增量平均（KisIncrementalAverage）现状](#6-增量平均kisincrementalaverage现状)
+7. [过滤滚动平均（KisFilteredRollingMean）](#7-过滤滚动平均kisfilteredrollingmean)
+8. [本次修正点清单](#8-本次修正点清单)
+9. [对 PaintBoard 的应用建议](#9-对-paintboard-的应用建议)
 
 ---
 
-## 架构概览
+## 1. 结论速览
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Krita 压感处理流水线                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  WinTab API                                                     │
-│      │                                                          │
-│      ▼                                                          │
-│  ┌──────────────────────┐                                       │
-│  │ KisIncrementalAverage │  ← 原始压感平滑（滑动窗口）           │
-│  └──────────────────────┘                                       │
-│      │                                                          │
-│      ▼                                                          │
-│  ┌──────────────────────────────────┐                           │
-│  │ KisPaintingInformationBuilder    │                           │
-│  │  ├─ pressureToCurve()            │  ← 压感曲线映射            │
-│  │  ├─ KisSpeedSmoother             │  ← 速度计算与平滑          │
-│  │  └─ KisFilteredRollingMean       │  ← 时间差过滤平均          │
-│  └──────────────────────────────────┘                           │
-│      │                                                          │
-│      ▼                                                          │
-│  ┌──────────────────────┐                                       │
-│  │ KisPaintInformation  │  ← 最终绘图信息                        │
-│  └──────────────────────┘                                       │
-│      │                                                          │
-│      ▼                                                          │
-│  Brush Engine → Canvas                                          │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+1. 当前 Krita 压感主链路是：`KoPointerEvent -> KisPaintingInformationBuilder -> KisPaintInformation -> paintLine 采样插值 -> 传感器消费`。
+2. `KisIncrementalAverage` 目前不是运行时主链路组件（当前快照中仅见定义与单测引用）。
+3. 全局压感曲线由 `KisCubicCurve` 预采样 LUT + `interpolateLinear()` 查询实现。
+4. 速度估计由 `KisSpeedSmoother` + `KisFilteredRollingMean` 完成，第一个点速度固定为 `0`。
+5. `KisPaintingInformationBuilder::reset()` 只清理速度平滑器状态，不是“清空所有历史状态”。
+6. `DisablePressure` 命名与分支语义存在反直觉点，对齐时应以实际 `KisPaintInformation` 输出为准。
 
 ---
 
-## 1. 压感曲线系统 (KisCubicCurve)
+## 2. 当前真实链路（运行时）
+
+```text
+Tablet/Mouse/Touch (Qt)
+    -> KoPointerEvent
+    -> KisToolFreehandHelper::startStroke/continueStroke
+    -> KisPaintingInformationBuilder::createPaintingInformation
+         - pressureToCurve (global curve)
+         - KisSpeedSmoother::getNextSpeed
+    -> KisPaintInformation
+    -> KisPaintOpUtils::paintLine (采样插值 + paintAt)
+    -> Dynamic Sensors (Pressure/Speed/...) 消费
+```
+
+关键锚点（当前快照）：
+
+- Builder 入口：`libs/ui/tool/kis_tool_freehand_helper.cpp:259`、`libs/ui/tool/kis_tool_freehand_helper.cpp:464`
+- 构建 `KisPaintInformation`：`libs/ui/tool/kis_painting_information_builder.cpp:121`
+- 压感曲线查询：`libs/ui/tool/kis_painting_information_builder.cpp:179`
+- 采样插值/发射：`libs/image/brushengine/kis_paintop_utils.h:67`
+
+---
+
+## 3. 压感曲线系统（KisCubicCurve）
 
 ### 源码位置
 
-- **头文件**: `libs/image/kis_cubic_curve.h`
-- **实现**: `libs/image/kis_cubic_curve.cpp`
-- **样条算法**: `libs/image/kis_cubic_curve_spline.h`
+- `libs/image/kis_cubic_curve.h`
+- `libs/image/kis_cubic_curve.cpp`
+- `libs/image/kis_cubic_curve_spline.h`
 
-### 核心功能
+### 核心机制
 
-用户可自定义压感映射曲线，通过控制点定义输入压感到输出压感的非线性映射。
+1. 默认曲线是 `(0,0) -> (1,1)`。
+2. 配置字符串可解析点列表（含 `is_corner` 标记）。
+3. 运行时通常先生成 transfer LUT，再线性插值查询。
 
-### 关键代码引用
+### 关键锚点
 
-| 功能 | 文件:行号 | 说明 |
-|------|-----------|------|
-| 默认曲线 | `kis_cubic_curve.cpp:158-164` | 默认 (0,0) 到 (1,1) 线性曲线 |
-| 曲线字符串解析 | `kis_cubic_curve.cpp:190-246` | 格式: `"0.0,0.0;1.0,1.0;"` |
-| 预计算查找表 | `kis_cubic_curve.cpp:136-152` | `updateTransfer()` 生成采样表 |
-| 值计算 | `kis_cubic_curve.cpp:125-134` | `value()` 使用样条插值 |
-| 线性插值查找 | `kis_cubic_curve.h:108` | `interpolateLinear()` 静态方法 |
+- 默认曲线初始化：`libs/image/kis_cubic_curve.cpp:158`
+- 曲线字符串解析：`libs/image/kis_cubic_curve.cpp:190`
+- `value()`（边界裁剪 + spline）：`libs/image/kis_cubic_curve.cpp:125`
+- transfer 预计算：`libs/image/kis_cubic_curve.cpp:137`
+- 线性查询：`libs/image/kis_cubic_curve.cpp:400`
+- `floatTransfer()`：`libs/image/kis_cubic_curve.cpp:468`
 
-### 默认曲线初始化
+### 备注
 
-```cpp
-// kis_cubic_curve.cpp:158-164
-KisCubicCurve::KisCubicCurve()
-    : d(new Private)
-{
-    d->data = new Data;
-    d->data->points.append({ 0.0, 0.0, false });  // 起点
-    d->data->points.append({ 1.0, 1.0, false });  // 终点
-}
-```
-
-### 曲线值计算
-
-```cpp
-// kis_cubic_curve.cpp:125-134
-qreal KisCubicCurve::Data::value(qreal x)
-{
-    updateSpline();
-    // 自动扩展曲线边界外的部分，并限制 y 值范围
-    x = qBound(points.first().x(), x, points.last().x());
-    qreal y = spline.getValue(x);
-    return qBound(qreal(0.0), y, qreal(1.0));
-}
-```
-
-### 预计算查找表生成
-
-```cpp
-// kis_cubic_curve.cpp:136-152
-template<typename _T_, typename _T2_>
-void KisCubicCurve::Data::updateTransfer(QVector<_T_>* transfer,
-                                          bool& valid,
-                                          _T2_ min, _T2_ max, int size)
-{
-    if (!valid || transfer->size() != size) {
-        if (transfer->size() != size) {
-            transfer->resize(size);
-        }
-        qreal end = 1.0 / (size - 1);
-        for (int i = 0; i < size; ++i) {
-            _T2_ val = value(i * end) * max;
-            val = qBound(min, val, max);
-            (*transfer)[i] = val;
-        }
-        valid = true;
-    }
-}
-```
-
-### 快速线性插值查找
-
-```cpp
-// kis_cubic_curve.h:108
-static qreal interpolateLinear(qreal normalizedValue, const QVector<qreal> &transfer);
-```
-
-**用法**:
-```cpp
-// kis_painting_information_builder.cpp:179-182
-qreal KisPaintingInformationBuilder::pressureToCurve(qreal pressure)
-{
-    return KisCubicCurve::interpolateLinear(pressure, m_pressureSamples);
-}
-```
+`interpolateLinear()` 最后使用 `copysign` 返回带符号值（`libs/image/kis_cubic_curve.cpp:425`），因此对齐时应直接复刻该函数行为，不要只写“无符号线性插值”。
 
 ---
 
-## 2. 速度平滑器 (KisSpeedSmoother)
+## 4. 速度平滑器（KisSpeedSmoother）
 
 ### 源码位置
 
-- **头文件**: `libs/ui/tool/kis_speed_smoother.h`
-- **实现**: `libs/ui/tool/kis_speed_smoother.cpp`
+- `libs/ui/tool/kis_speed_smoother.h`
+- `libs/ui/tool/kis_speed_smoother.cpp`
 
-### 核心功能
+### 关键常量与参数
 
-计算笔触移动速度，并通过历史数据平滑速度值，用于速度感知笔刷效果。
+- `MAX_SMOOTH_HISTORY = 512`：`libs/ui/tool/kis_speed_smoother.cpp:17`
+- `NUM_SMOOTHING_SAMPLES = 3`：`libs/ui/tool/kis_speed_smoother.cpp:19`
+- `MIN_TRACKING_DISTANCE = 5`：`libs/ui/tool/kis_speed_smoother.cpp:20`
 
-### 关键代码引用
+### 核心逻辑
 
-| 功能 | 文件:行号 | 说明 |
-|------|-----------|------|
-| **第一点处理** | `kis_speed_smoother.cpp:111-116` | 第一个点返回速度 0（关键！） |
-| 距离计算 | `kis_speed_smoother.cpp:109` | `kisDistance(pt, m_d->lastPoint)` |
-| 时间差平滑 | `kis_speed_smoother.cpp:120-121` | 使用 KisFilteredRollingMean |
-| 最小距离阈值 | `kis_speed_smoother.cpp:20,150,156` | MIN_TRACKING_DISTANCE = 5 像素 |
-| 清空历史 | `kis_speed_smoother.cpp:90-97` | `clear()` 方法 |
+1. 第一个点：返回速度 `0`（`libs/ui/tool/kis_speed_smoother.cpp:111`）。
+2. 时间差：写入 `KisFilteredRollingMean` 并取 `filteredMean()`（`libs/ui/tool/kis_speed_smoother.cpp:120`）。
+3. 距离累计：在历史 buffer 反向遍历，达到样本数和最小距离阈值后计算速度。
+4. 输出：`lastSpeed = totalDistance / totalTime`（满足阈值条件时）。
 
-### 常量定义
+### clear() 的真实语义
 
-```cpp
-// kis_speed_smoother.cpp:17-20
-#define MAX_SMOOTH_HISTORY 512
-#define NUM_SMOOTHING_SAMPLES 3
-#define MIN_TRACKING_DISTANCE 5
-```
-
-### 第一点特殊处理（关键！）
-
-```cpp
-// kis_speed_smoother.cpp:107-116
-qreal KisSpeedSmoother::getNextSpeedImpl(const QPointF &pt, qreal time)
-{
-    const qreal dist = kisDistance(pt, m_d->lastPoint);
-
-    if (m_d->lastPoint.isNull()) {
-        m_d->lastPoint = pt;
-        m_d->lastTime = time;
-        m_d->lastSpeed = 0.0;  // 关键：第一个点速度为 0
-        return 0.0;
-    }
-    // ...
-}
-```
-
-### 速度计算逻辑
-
-```cpp
-// kis_speed_smoother.cpp:128-160
-m_d->distances.push_back(Private::DistancePoint(dist, time));
-
-Private::DistanceBuffer::const_reverse_iterator it = m_d->distances.rbegin();
-Private::DistanceBuffer::const_reverse_iterator end = m_d->distances.rend();
-
-qreal totalDistance = 0;
-qreal totalTime = 0.0;
-int itemsSearched = 0;
-
-for (; it != end; ++it) {
-    itemsSearched++;
-    totalDistance += it->distance;
-
-    // 使用过滤后的平均时间差，而非原始时间戳
-    // 因为数位板时间戳不可靠
-    totalTime += avgTimeDiff;
-
-    if (itemsSearched > m_d->numSmoothingSamples &&
-        totalDistance > MIN_TRACKING_DISTANCE) {
-        break;
-    }
-}
-
-if (totalTime > 0 && totalDistance > MIN_TRACKING_DISTANCE) {
-    m_d->lastSpeed = totalDistance / totalTime;
-}
-```
-
-### 重置方法
-
-```cpp
-// kis_speed_smoother.cpp:90-97
-void KisSpeedSmoother::clear()
-{
-    m_d->timer.restart();
-    m_d->distances.clear();
-    m_d->distances.push_back(Private::DistancePoint(0.0, 0.0));
-    m_d->lastPoint = QPointF();
-    m_d->lastSpeed = 0.0;
-}
-```
+`clear()` 会重置 timer、distance buffer、lastPoint、lastSpeed（`libs/ui/tool/kis_speed_smoother.cpp:90`），但不会显式清空 `timeDiffsMean`。
 
 ---
 
-## 3. 压感信息构建器 (KisPaintingInformationBuilder)
+## 5. 压感信息构建器（KisPaintingInformationBuilder）
 
 ### 源码位置
 
-- **头文件**: `libs/ui/tool/kis_painting_information_builder.h`
-- **实现**: `libs/ui/tool/kis_painting_information_builder.cpp`
+- `libs/ui/tool/kis_painting_information_builder.h`
+- `libs/ui/tool/kis_painting_information_builder.cpp`
 
-### 核心功能
+### 关键点
 
-将原始输入事件转换为 `KisPaintInformation` 对象，包含压感曲线映射和速度计算。
+1. 压感分辨率常量：`LEVEL_OF_PRESSURE_RESOLUTION = 1024`（`libs/ui/tool/kis_painting_information_builder.cpp:26`）。
+2. 配置刷新时会生成 `1025` 个压感采样点：`curve.floatTransfer(LEVEL_OF_PRESSURE_RESOLUTION + 1)`（`libs/ui/tool/kis_painting_information_builder.cpp:48`）。
+3. `startStroke()` 记录起点并进入 `createPaintingInformation()`（`libs/ui/tool/kis_painting_information_builder.cpp:61`）。
+4. `pressureToCurve()` 通过 `KisCubicCurve::interpolateLinear()` 执行映射（`libs/ui/tool/kis_painting_information_builder.cpp:179`）。
+5. `reset()` 仅调用 `m_speedSmoother->clear()`（`libs/ui/tool/kis_painting_information_builder.cpp:184`）。
 
-### 关键代码引用
+### `DisablePressure` 语义提醒
 
-| 功能 | 文件:行号 | 说明 |
-|------|-----------|------|
-| 压感分辨率 | `kis_painting_information_builder.cpp:26` | LEVEL_OF_PRESSURE_RESOLUTION = 1024 |
-| 压感曲线加载 | `kis_painting_information_builder.cpp:47-48` | 从配置读取曲线，生成 1025 个采样点 |
-| **笔触开始** | `kis_painting_information_builder.cpp:61-72` | `startStroke()` 记录起点 |
-| 压感映射 | `kis_painting_information_builder.cpp:179-182` | `pressureToCurve()` 使用线性插值 |
-| **重置速度平滑器** | `kis_painting_information_builder.cpp:184-187` | `reset()` 调用 `m_speedSmoother->clear()` |
+`createPaintingInformation()` 中 pressure 分支在当前代码为：
 
-### 压感分辨率
+- `!m_pressureDisabled ? 1.0 : pressureToCurve(event->pressure())`
+- 位置：`libs/ui/tool/kis_painting_information_builder.cpp:131`
 
-```cpp
-// kis_painting_information_builder.cpp:26
-const int KisPaintingInformationBuilder::LEVEL_OF_PRESSURE_RESOLUTION = 1024;
-```
-
-### 压感曲线加载
-
-```cpp
-// kis_painting_information_builder.cpp:44-49
-void KisPaintingInformationBuilder::updateSettings()
-{
-    KisConfig cfg(true);
-    const KisCubicCurve curve(cfg.pressureTabletCurve());
-    m_pressureSamples = curve.floatTransfer(LEVEL_OF_PRESSURE_RESOLUTION + 1);
-    // ...
-}
-```
-
-### 笔触开始
-
-```cpp
-// kis_painting_information_builder.cpp:61-72
-KisPaintInformation KisPaintingInformationBuilder::startStroke(
-    KoPointerEvent *event,
-    int timeElapsed,
-    const KoCanvasResourceProvider *manager)
-{
-    if (manager) {
-        m_pressureDisabled = manager->resource(KoCanvasResource::DisablePressure).toBool();
-    }
-
-    m_startPoint = event->point;
-    return createPaintingInformation(event, timeElapsed);
-}
-```
-
-### 压感曲线映射
-
-```cpp
-// kis_painting_information_builder.cpp:179-182
-qreal KisPaintingInformationBuilder::pressureToCurve(qreal pressure)
-{
-    return KisCubicCurve::interpolateLinear(pressure, m_pressureSamples);
-}
-```
-
-### 重置方法
-
-```cpp
-// kis_painting_information_builder.cpp:184-187
-void KisPaintingInformationBuilder::reset()
-{
-    m_speedSmoother->clear();
-}
-```
+该命名与行为组合有反直觉风险；做对齐和验证时，建议以最终 `KisPaintInformation` 的实际 pressure 值为准，而不是只依据变量名推断。
 
 ---
 
-## 4. 增量平均 (KisIncrementalAverage)
+## 6. 增量平均（KisIncrementalAverage）现状
 
 ### 源码位置
 
-- **头文件**: `libs/ui/input/wintab/kis_incremental_average.h`
+- `libs/ui/input/wintab/kis_incremental_average.h`
 
-### 核心功能
+### 当前状态（重要）
 
-对 WinTab 原始输入进行滑动窗口平均，**关键特性是第一个值用于初始化整个缓冲区**。
+在当前本地快照中，`KisIncrementalAverage` 未检索到运行时调用点，主要存在于：
 
-### 关键代码引用
+- 类定义：`libs/ui/input/wintab/kis_incremental_average.h:14`
+- 单测：`libs/ui/tests/kis_input_manager_test.cpp:370`
 
-| 功能 | 文件:行号 | 说明 |
-|------|-----------|------|
-| **第一值初始化** | `kis_incremental_average.h:26-33` | 用第一个值填充整个缓冲区（关键！） |
-| 滑动窗口平均 | `kis_incremental_average.h:35-44` | O(1) 复杂度的增量计算 |
+因此不应再把它描述为“当前 WinTab 压感主链路首站”。
 
-### 完整实现
+### 代码事实
 
-```cpp
-// kis_incremental_average.h:14-52
-class KisIncrementalAverage
-{
-public:
-    KisIncrementalAverage(int size)
-        : m_size(size),
-          m_index(-1),      // -1 表示未初始化
-          m_sum(0),
-          m_values(size)
-    {
-    }
-
-    inline int pushThrough(int value) {
-        if (m_index < 0) {
-            // 关键：第一个值用于初始化整个缓冲区
-            for (int i = 0; i < m_size; i++) {
-                m_values[i] = value;
-            }
-            m_index = 0;
-            m_sum = m_size * value;  // 默认 m_size = 3
-            return value;
-        }
-
-        // 滑动窗口：替换最老的值
-        int oldValue = m_values[m_index];
-        m_values[m_index] = value;
-
-        m_sum += value - oldValue;
-
-        if (++m_index >= m_size) {
-            m_index = 0;
-        }
-
-        return m_sum / m_size;
-    }
-
-private:
-    int m_size;
-    int m_index;
-    int m_sum;
-    QVector<int> m_values;
-};
-```
-
-### 设计要点
-
-1. **第一值初始化**: 避免第一笔压感突变
-2. **O(1) 复杂度**: 增量计算，无需遍历缓冲区
-3. **环形缓冲区**: 使用 `m_index` 循环索引
+1. 首次 `pushThrough()` 会用首值填满窗口（避免首帧突变）。
+2. 增量更新复杂度 O(1)。
+3. 当前实现把初始和写成 `m_sum = 3 * value`（`libs/ui/input/wintab/kis_incremental_average.h:31`），不是 `m_size * value`。
 
 ---
 
-## 5. 过滤滚动平均 (KisFilteredRollingMean)
+## 7. 过滤滚动平均（KisFilteredRollingMean）
 
 ### 源码位置
 
-- **头文件**: `libs/global/KisFilteredRollingMean.h`
-- **实现**: `libs/global/KisFilteredRollingMean.cpp`
+- `libs/global/KisFilteredRollingMean.h`
+- `libs/global/KisFilteredRollingMean.cpp`
 
-### 核心功能
+### 核心机制
 
-计算滚动平均值，但**过滤掉极端偏差值**。用于估计数位板采样率。
-
-### 关键代码引用
-
-| 功能 | 文件:行号 | 说明 |
-|------|-----------|------|
-| 构造 | `KisFilteredRollingMean.cpp:16-22` | 窗口大小 + 有效比例 |
-| 添加值 | `KisFilteredRollingMean.cpp:24-32` | O(1) 复杂度 |
-| 过滤平均 | `KisFilteredRollingMean.cpp:34-85` | 排序后去掉极端值再计算平均 |
-
-### 构造函数
-
-```cpp
-// KisFilteredRollingMean.cpp:16-22
-KisFilteredRollingMean::KisFilteredRollingMean(int windowSize, qreal effectivePortion)
-    : m_values(windowSize),
-      m_rollingSum(0.0),
-      m_effectivePortion(effectivePortion),
-      m_cutOffBuffer(qCeil(0.5 * (qCeil(windowSize * (1.0 - effectivePortion)))))
-{
-}
-```
-
-**默认使用**: 窗口大小 200，有效比例 0.8（即去掉 20% 的极端值）
-
-### 添加值（O(1)）
-
-```cpp
-// KisFilteredRollingMean.cpp:24-32
-void KisFilteredRollingMean::addValue(qreal value)
-{
-    if (m_values.full()) {
-        m_rollingSum -= m_values.front();
-    }
-
-    m_values.push_back(value);
-    m_rollingSum += value;
-}
-```
-
-### 过滤平均计算
-
-```cpp
-// KisFilteredRollingMean.cpp:34-85
-qreal KisFilteredRollingMean::filteredMean() const
-{
-    KIS_SAFE_ASSERT_RECOVER_RETURN_VALUE(!m_values.empty(), 0.0);
-
-    const int usefulElements = qMax(1, qRound(m_effectivePortion * m_values.size()));
-    const int cutOffTotal = m_values.size() - usefulElements;
-
-    if (cutOffTotal > 0) {
-        const std::vector<double>::size_type cutMin = qRound(0.5 * cutOffTotal);
-        const std::vector<double>::size_type cutMax = cutOffTotal - cutMin;
-
-        sum = m_rollingSum;
-        num = usefulElements;
-
-        // 部分排序找到最小的 cutMin 个值
-        std::partial_sort_copy(m_values.begin(), m_values.end(),
-                               m_cutOffBuffer.begin(),
-                               m_cutOffBuffer.begin() + cutMin);
-
-        // 减去最小值
-        sum -= std::accumulate(m_cutOffBuffer.begin(),
-                               m_cutOffBuffer.begin() + cutMin, 0.0);
-
-        // 部分排序找到最大的 cutMax 个值
-        std::partial_sort_copy(m_values.begin(), m_values.end(),
-                               m_cutOffBuffer.begin(),
-                               m_cutOffBuffer.begin() + cutMax,
-                               std::greater<qreal>());
-
-        // 减去最大值
-        sum -= std::accumulate(m_cutOffBuffer.begin(),
-                               m_cutOffBuffer.begin() + cutMax, 0.0);
-    }
-
-    return sum / num;
-}
-```
+1. `addValue()` 维护滚动和，复杂度 O(1)（`libs/global/KisFilteredRollingMean.cpp:24`）。
+2. `filteredMean()` 会按 `effectivePortion` 去掉两端极值后求均值（`libs/global/KisFilteredRollingMean.cpp:34`）。
+3. `KisSpeedSmoother` 默认构造为 `window=200, effectivePortion=0.8`（`libs/ui/tool/kis_speed_smoother.cpp:29`）。
 
 ---
 
-## 关键设计模式
+## 8. 本次修正点清单
 
-### 1. 第一笔问题的解决
-
-Krita 通过两个机制避免第一笔压感异常：
-
-1. **KisIncrementalAverage**: 用第一个压感值填充整个缓冲区
-2. **KisSpeedSmoother**: 第一个点速度返回 0
-
-### 2. 预计算查找表
-
-压感曲线使用预计算的 1025 个采样点查找表，运行时只需线性插值，复杂度 O(1)。
-
-### 3. 过滤极端值
-
-KisFilteredRollingMean 在计算平均值时排除极端偏差，提高鲁棒性。
-
-### 4. 笔触生命周期管理
-
-- `startStroke()`: 记录起点，可选禁用压感
-- `continueStroke()`: 后续点的处理
-- `reset()`: 清空所有历史状态
+1. 修正主链路图：移除“`KisIncrementalAverage` 是运行时首站”的说法。
+2. 修正 `KisIncrementalAverage` 初始和描述：`3 * value`（与当前源码一致）。
+3. 修正 `reset()` 描述：从“清空所有历史状态”改为“仅清理速度平滑器状态”。
+4. 补充 `DisablePressure` 的命名/分支反直觉风险，避免误读。
+5. 保留并核实 `KisCubicCurve`、`KisSpeedSmoother`、`KisFilteredRollingMean` 的有效结论与锚点。
 
 ---
 
-## PaintBoard 应用建议
+## 9. 对 PaintBoard 的应用建议
 
-### 短期（解决第一笔问题）
+### P0（立即执行）
 
-1. **实现 PressureSmoother**
-   - 模仿 `KisIncrementalAverage` 的第一值初始化逻辑
-   - 滑动窗口大小默认 3
+1. 复刻 `KisCubicCurve` 的 LUT + `interpolateLinear()` 语义（含边界裁剪与线性查询细节）。
+2. 速度链路按 `KisSpeedSmoother` 对齐：首点为 0、最小跟踪距离阈值、过滤时间均值。
+3. 对齐验证脚本中，把 pressure/speed 的“实际输出值”作为判定基准，不依赖变量命名。
 
-2. **集成到 InputProcessor**
-   - 在 `process()` 中应用压感平滑
-   - 在 `reset()` 中清空平滑器状态
+### P1（后续增强）
 
-### 中期（增强功能）
-
-1. **添加配置选项**
-   - 平滑窗口大小可配置
-   - 平滑功能可开关
-
-2. **实现速度计算**
-   - 参考 `KisSpeedSmoother`
-   - 用于速度感知笔刷
-
-### 长期（完整实现）
-
-1. **自定义压感曲线**
-   - 参考 `KisCubicCurve`
-   - UI 曲线编辑器
-
-2. **过滤滚动平均**
-   - 参考 `KisFilteredRollingMean`
-   - 提高时间计算鲁棒性
+1. 采样阶段对齐 `paintLine + mix` 语义，重点关注 pressure/time/speed 的插值一致性。
+2. 若后续要覆盖旧 WinTab 兼容路径，再单独评估是否需要引入 `KisIncrementalAverage` 式首值填充策略。
 
 ---
 
-## 参考文件清单
+## 参考文件
 
-| 文件路径 | 说明 |
-|----------|------|
-| `libs/image/kis_cubic_curve.h` | 压感曲线头文件 |
-| `libs/image/kis_cubic_curve.cpp` | 压感曲线实现 |
-| `libs/image/kis_cubic_curve_spline.h` | 样条算法 |
-| `libs/ui/tool/kis_speed_smoother.h` | 速度平滑器头文件 |
-| `libs/ui/tool/kis_speed_smoother.cpp` | 速度平滑器实现 |
-| `libs/ui/tool/kis_painting_information_builder.h` | 压感信息构建器头文件 |
-| `libs/ui/tool/kis_painting_information_builder.cpp` | 压感信息构建器实现 |
-| `libs/ui/input/wintab/kis_incremental_average.h` | 增量平均（仅头文件） |
-| `libs/global/KisFilteredRollingMean.h` | 过滤滚动平均头文件 |
-| `libs/global/KisFilteredRollingMean.cpp` | 过滤滚动平均实现 |
-| `libs/image/brushengine/kis_paint_information.h` | 绘图信息结构 |
+- `libs/image/kis_cubic_curve.h`
+- `libs/image/kis_cubic_curve.cpp`
+- `libs/ui/tool/kis_speed_smoother.h`
+- `libs/ui/tool/kis_speed_smoother.cpp`
+- `libs/ui/tool/kis_painting_information_builder.h`
+- `libs/ui/tool/kis_painting_information_builder.cpp`
+- `libs/ui/input/wintab/kis_incremental_average.h`
+- `libs/global/KisFilteredRollingMean.h`
+- `libs/global/KisFilteredRollingMean.cpp`

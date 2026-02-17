@@ -20,6 +20,7 @@ import {
   DEFAULT_QUICK_EXPORT_SETTINGS,
   useSettingsStore,
 } from '../settings';
+import { buildPressureCurveLut } from '@/utils/pressureCurve';
 
 describe('settings store newFile persistence', () => {
   beforeEach(() => {
@@ -42,6 +43,13 @@ describe('settings store newFile persistence', () => {
         backendMigratedToMacNativeAt: null,
         pollingRate: 200,
         pressureCurve: 'linear',
+        pressureCurvePoints: [
+          { x: 0, y: 0 },
+          { x: 1, y: 1 },
+        ],
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        lowPressureAdaptiveSmoothingEnabled: true,
         backpressureMode: 'lossless',
         autoStart: true,
       },
@@ -116,6 +124,82 @@ describe('settings store newFile persistence', () => {
       brush: null,
       eraser: null,
     });
+    expect(state.tablet.pressureCurvePoints.length).toBeGreaterThanOrEqual(2);
+    expect(state.tablet.maxBrushSpeedPxPerMs).toBe(30);
+    expect(state.tablet.brushSpeedSmoothingSamples).toBe(3);
+    expect(state.tablet.lowPressureAdaptiveSmoothingEnabled).toBe(true);
+  });
+
+  it('clamps tablet speed config and normalizes pressure curve points when loading', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        tablet: {
+          backend: 'pointerevent',
+          pollingRate: 120,
+          pressureCurve: 'hard',
+          pressureCurvePoints: [
+            { x: 0.5, y: 0.2 },
+            { x: 0.5, y: 0.7 },
+          ],
+          maxBrushSpeedPxPerMs: 999,
+          brushSpeedSmoothingSamples: 1,
+          lowPressureAdaptiveSmoothingEnabled: false,
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    const state = useSettingsStore.getState();
+
+    expect(state.tablet.maxBrushSpeedPxPerMs).toBe(100);
+    expect(state.tablet.brushSpeedSmoothingSamples).toBe(3);
+    expect(state.tablet.lowPressureAdaptiveSmoothingEnabled).toBe(false);
+    expect(state.tablet.pressureCurvePoints[0]?.x).toBe(0);
+    expect(state.tablet.pressureCurvePoints[state.tablet.pressureCurvePoints.length - 1]?.x).toBe(
+      1
+    );
+  });
+
+  it('compresses historical dense pressure curve points while preserving LUT error bounds', async () => {
+    const densePoints = Array.from({ length: 64 }, (_, index) => {
+      const x = index / 63;
+      const y = Math.min(1, Math.max(0, x * x * 0.82 + x * 0.18));
+      return { x, y };
+    });
+
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        tablet: {
+          backend: 'pointerevent',
+          pressureCurve: 'linear',
+          pressureCurvePoints: densePoints,
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    const state = useSettingsStore.getState();
+    const compressed = state.tablet.pressureCurvePoints;
+
+    expect(compressed.length).toBeLessThan(densePoints.length);
+    expect(compressed.length).toBeLessThanOrEqual(24);
+    expect(compressed[0]?.x).toBe(0);
+    expect(compressed[compressed.length - 1]?.x).toBe(1);
+
+    const baselineLut = buildPressureCurveLut(densePoints, 256);
+    const compressedLut = buildPressureCurveLut(compressed, 256);
+    let maxAbsError = 0;
+    let sumAbsError = 0;
+    for (let i = 0; i < baselineLut.length; i += 1) {
+      const delta = Math.abs((baselineLut[i] ?? 0) - (compressedLut[i] ?? 0));
+      maxAbsError = Math.max(maxAbsError, delta);
+      sumAbsError += delta;
+    }
+    const meanAbsError = sumAbsError / baselineLut.length;
+    expect(maxAbsError).toBeLessThanOrEqual(0.015);
+    expect(meanAbsError).toBeLessThanOrEqual(0.004);
   });
 
   it('normalizes loaded recent files and keeps max 10', async () => {
@@ -266,6 +350,32 @@ describe('settings store newFile persistence', () => {
     const parsed = JSON.parse(content) as { general?: { language?: string } };
 
     expect(parsed.general?.language).toBe('zh-CN');
+  });
+
+  it('clamps and persists tablet speed settings via actions', async () => {
+    fsMocks.exists.mockResolvedValue(false);
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    useSettingsStore.getState().setMaxBrushSpeedPxPerMs(0);
+    useSettingsStore.getState().setBrushSpeedSmoothingSamples(999);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const state = useSettingsStore.getState();
+    expect(state.tablet.maxBrushSpeedPxPerMs).toBe(1);
+    expect(state.tablet.brushSpeedSmoothingSamples).toBe(100);
+
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as {
+      tablet?: {
+        maxBrushSpeedPxPerMs?: number;
+        brushSpeedSmoothingSamples?: number;
+      };
+    };
+    expect(parsed.tablet?.maxBrushSpeedPxPerMs).toBe(1);
+    expect(parsed.tablet?.brushSpeedSmoothingSamples).toBe(100);
   });
 
   it('migrates legacy quickExport width/height into maxSize', async () => {

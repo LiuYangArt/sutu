@@ -22,6 +22,7 @@ interface QueuedPoint {
   tiltX: number;
   tiltY: number;
   rotation: number;
+  timestampMs: number;
   pointIndex: number;
 }
 
@@ -351,15 +352,24 @@ export function usePointerHandlers({
       if (shouldUseNativeBackend) {
         nativeSeqCursorRef.current = nextSeq;
       }
+      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
 
-      for (const evt of coalescedEvents) {
+      for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
+        const evt = coalescedEvents[eventIndex]!;
+        const nativePoint =
+          shouldUseNativeBackend && bufferedPoints.length > 0
+            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
+              bufferedPoints[bufferedPoints.length - 1] ??
+              null)
+            : null;
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
-        const { pressure, tiltX, tiltY, rotation } = getEffectiveInputData(
+        const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
           evt,
           shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
-          nativeEvent
+          nativeEvent,
+          nativePoint
         );
 
         const idx = pointIndexRef.current++;
@@ -374,6 +384,7 @@ export function usePointerHandlers({
             tiltX,
             tiltY,
             rotation,
+            timestampMs,
             pointIndex: idx,
           });
           window.__strokeDiagnostics?.onPointBuffered();
@@ -385,6 +396,7 @@ export function usePointerHandlers({
             tiltX,
             tiltY,
             rotation,
+            timestampMs,
             pointIndex: idx,
           });
           window.__strokeDiagnostics?.onPointBuffered();
@@ -597,6 +609,7 @@ export function usePointerHandlers({
       let tiltX = 0;
       let tiltY = 0;
       let rotation = 0;
+      let timestampMs = Number.isFinite(pe.timeStamp) ? pe.timeStamp : performance.now();
       if (pe.pointerType === 'pen') {
         pressure = pe.pressure > 0 ? pe.pressure : 0;
       } else if (pe.pressure > 0) {
@@ -612,21 +625,24 @@ export function usePointerHandlers({
         if (shouldUseNativeBackend) {
           nativeSeqCursorRef.current = nextSeq;
         }
+        const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
         const effectiveInput = getEffectiveInputData(
           pe,
           shouldUseNativeBackend,
           bufferedPoints,
           tabletState.currentPoint,
-          pe
+          pe,
+          lastBufferedPoint
         );
         pressure = effectiveInput.pressure;
         tiltX = effectiveInput.tiltX;
         tiltY = effectiveInput.tiltY;
         rotation = effectiveInput.rotation;
+        timestampMs = effectiveInput.timestampMs;
         if (shouldUseNativeBackend) {
-          const lastBufferedPoint = bufferedPoints[bufferedPoints.length - 1];
           if (lastBufferedPoint) {
             pressure = lastBufferedPoint.pressure;
+            timestampMs = lastBufferedPoint.timestamp_ms;
           } else if (pe.pointerType === 'pen') {
             window.__strokeDiagnostics?.onStartPressureFallback();
             pressure = 0;
@@ -702,6 +718,7 @@ export function usePointerHandlers({
           tiltX,
           tiltY,
           rotation,
+          timestampMs,
           pointIndex: idx,
         },
       ];

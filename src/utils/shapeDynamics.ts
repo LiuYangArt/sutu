@@ -30,6 +30,12 @@ export interface DynamicsInput {
   initialDirection: number;
   /** Fade progress (0-1, where 0=start, 1=fully faded) */
   fadeProgress: number;
+  /** Distance progress (0-1) */
+  distanceProgress?: number;
+  /** Time progress (0-1) */
+  timeProgress?: number;
+  /** Unified stroke progress (0-1) */
+  strokeProgress?: number;
 }
 
 /**
@@ -47,6 +53,8 @@ export interface ComputedDabShape {
   /** Whether to flip vertically */
   flipY: boolean;
 }
+
+const MIN_DYNAMIC_DAB_SIZE = 0.05;
 
 /**
  * Random number generator interface for testability
@@ -171,7 +179,7 @@ export function computeControlledSize(
 ): number {
   const sizeControl = getControlValue(settings.sizeControl, input);
   const size = applyControlWithMinimum(baseSize, sizeControl, settings.minimumDiameter);
-  return Math.max(1, size);
+  return Math.max(MIN_DYNAMIC_DAB_SIZE, size);
 }
 
 /**
@@ -200,7 +208,7 @@ export function computeDabShape(
   const sizeControl = getControlValue(settings.sizeControl, input);
   let size = applyControlWithMinimum(baseSize, sizeControl, settings.minimumDiameter);
   size = applyJitter(size, settings.sizeJitter, random);
-  size = Math.max(1, size); // Minimum 1px
+  size = Math.max(MIN_DYNAMIC_DAB_SIZE, size);
 
   // --- Angle ---
   let angle = baseAngle;
