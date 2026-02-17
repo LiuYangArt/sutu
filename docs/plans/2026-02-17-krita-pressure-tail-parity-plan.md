@@ -3,6 +3,7 @@
 **日期**：2026-02-17  
 **当前分支**：`perf/146-krita-photoshop`  
 **目标**：只解决压感尖尾一致性；当前 issue 不推进轨迹平滑与 speed 调参。
+krita压感方案分析文档： F:\CodeProjects\PaintBoard\docs\plans\2026-02-17-krita-trajectory-smoothing-plan.md
 
 ## 0. 范围与固定口径
 
