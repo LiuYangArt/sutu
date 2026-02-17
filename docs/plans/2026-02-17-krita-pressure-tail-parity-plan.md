@@ -310,3 +310,34 @@ krita压感方案分析文档： F:\CodeProjects\PaintBoard\docs\plans\2026-02-1
 3. 再做 Phase 2（末样本消费顺序与补读协议）。
 4. 最后做 Phase 3（采样器语义）。
 5. 轨迹平滑与 speed 调参严格留在独立计划，不混入本 issue。
+
+---
+
+## 8. 2026-02-17 验证结论（基于已提交实现与本地验证）
+
+### 8.1 验证命令与结果
+
+1. 基础校验（通过）：
+   - `pnpm -s typecheck`
+   - `pnpm -s vitest run src/test/kritaTailTrace/kritaTailTrace.test.ts src/utils/freehand/__tests__/segmentSampler.test.ts src/utils/__tests__/brushStamper.speedTail.test.ts`
+2. Gate 冒烟（通过）：
+   - `pnpm -s run gate:krita-tail -- --url http://localhost:1420/`
+   - 结果：`passed=true`（使用 `tests/fixtures/krita-tail/thresholds.json`）
+3. 10 轮校准（完成）：
+   - `pnpm -s run gate:krita-tail:calibrate -- --url http://localhost:1420/ --rounds 10`
+   - 结果：成功产出并更新 `tests/fixtures/krita-tail/thresholds.json`
+4. PASS/FAIL 复现（通过）：
+   - 校准阈值下重复运行 gate 3 次，均 PASS。
+   - 严格阈值（5.2 默认下限）下运行 gate，稳定 FAIL。
+
+### 8.2 对“设计目的”的判定
+
+1. **Phase0 设计目的已达成（工具链层）**：
+   - `krita-tail-trace-v1` 契约、导出、对比、图表、报告、校准、gate 全流程可运行。
+   - 能稳定复现 PASS/FAIL，满足 Phase0“可 gate、可重复”的目标。
+2. **整体 issue 终态尚未达成（算法对齐层）**：
+   - 当前仅证明 Phase0 基建可用；
+   - 压感尖尾的实质对齐仍需继续执行 Phase1~Phase3（去启发式、末样本消费、采样器语义对齐）。
+3. **结论**：
+   - 当前提交可作为 Phase0 验收基线进入后续 Phase1 开发；
+   - 不应将当前状态解读为“已完成 Krita 尖尾手感对齐”。
