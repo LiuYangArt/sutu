@@ -3,6 +3,8 @@ import {
   type KritaTailTrace,
   type KritaTailTracePhase,
   type KritaTailDabSource,
+  type KritaTailFallbackPressurePolicy,
+  type KritaTailInputBackend,
   type KritaTailSamplerTriggerKind,
   type KritaTailSeqSource,
 } from './types';
@@ -31,6 +33,19 @@ function isDabSource(value: unknown): value is KritaTailDabSource {
   return value === 'normal' || value === 'finalize' || value === 'pointerup_fallback';
 }
 
+function isFallbackPressurePolicy(value: unknown): value is KritaTailFallbackPressurePolicy {
+  return value === 'none' || value === 'last_nonzero' || value === 'event_raw' || value === 'zero';
+}
+
+function isInputBackend(value: unknown): value is KritaTailInputBackend {
+  return (
+    value === 'windows_wintab' ||
+    value === 'windows_winink_pointer' ||
+    value === 'mac_native' ||
+    value === 'unknown'
+  );
+}
+
 export function validateKritaTailTrace(value: unknown): string[] {
   const errors: string[] = [];
   if (!isRecord(value)) {
@@ -46,6 +61,8 @@ export function validateKritaTailTrace(value: unknown): string[] {
 
   if (!isRecord(value.meta)) {
     errors.push('meta must be object');
+  } else if (!isInputBackend(value.meta.inputBackend)) {
+    errors.push('meta.inputBackend invalid');
   }
 
   if (!isRecord(value.stages)) {
@@ -145,6 +162,8 @@ export function validateKritaTailTrace(value: unknown): string[] {
       if (!isFiniteNumber(sample.timestampMs))
         errors.push(`dab_emit[${index}].timestampMs must be number`);
       if (!isDabSource(sample.source)) errors.push(`dab_emit[${index}].source invalid`);
+      if (!isFallbackPressurePolicy(sample.fallbackPressurePolicy))
+        errors.push(`dab_emit[${index}].fallbackPressurePolicy invalid`);
     });
   }
 

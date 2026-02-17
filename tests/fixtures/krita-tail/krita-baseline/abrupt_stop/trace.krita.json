@@ -3,7 +3,11 @@
   "strokeId": "krita-abrupt-stop-baseline",
   "meta": {
     "caseId": "abrupt_stop",
-    "canvas": { "width": 2048, "height": 1536, "dpi": 72 },
+    "canvas": {
+      "width": 2048,
+      "height": 1536,
+      "dpi": 72
+    },
     "brushPreset": "krita-pixel-pressure-only-v1",
     "runtimeFlags": {
       "trajectorySmoothingEnabled": false,
@@ -15,38 +19,239 @@
       "kritaCommit": "krita-tail-trace-v1",
       "platform": "windows",
       "inputBackend": "native-stream"
-    }
+    },
+    "inputBackend": "windows_wintab"
   },
   "stages": {
     "input_raw": [
-      { "seq": 1, "seqSource": "native", "timestampMs": 0, "x": 860, "y": 620, "pressureRaw": 0.74, "phase": "down" },
-      { "seq": 2, "seqSource": "native", "timestampMs": 18, "x": 890, "y": 620, "pressureRaw": 0.72, "phase": "move" },
-      { "seq": 3, "seqSource": "native", "timestampMs": 36, "x": 920, "y": 620, "pressureRaw": 0.7, "phase": "move" },
-      { "seq": 4, "seqSource": "native", "timestampMs": 54, "x": 948, "y": 620, "pressureRaw": 0.52, "phase": "move" },
-      { "seq": 5, "seqSource": "native", "timestampMs": 72, "x": 956, "y": 620, "pressureRaw": 0.16, "phase": "move" },
-      { "seq": 6, "seqSource": "native", "timestampMs": 86, "x": 958, "y": 620, "pressureRaw": 0, "phase": "up" }
+      {
+        "seq": 1,
+        "seqSource": "native",
+        "timestampMs": 0,
+        "x": 860,
+        "y": 620,
+        "pressureRaw": 0.74,
+        "phase": "down"
+      },
+      {
+        "seq": 2,
+        "seqSource": "native",
+        "timestampMs": 18,
+        "x": 890,
+        "y": 620,
+        "pressureRaw": 0.72,
+        "phase": "move"
+      },
+      {
+        "seq": 3,
+        "seqSource": "native",
+        "timestampMs": 36,
+        "x": 920,
+        "y": 620,
+        "pressureRaw": 0.7,
+        "phase": "move"
+      },
+      {
+        "seq": 4,
+        "seqSource": "native",
+        "timestampMs": 54,
+        "x": 948,
+        "y": 620,
+        "pressureRaw": 0.52,
+        "phase": "move"
+      },
+      {
+        "seq": 5,
+        "seqSource": "native",
+        "timestampMs": 72,
+        "x": 956,
+        "y": 620,
+        "pressureRaw": 0.16,
+        "phase": "move"
+      },
+      {
+        "seq": 6,
+        "seqSource": "native",
+        "timestampMs": 86,
+        "x": 958,
+        "y": 620,
+        "pressureRaw": 0,
+        "phase": "up"
+      }
     ],
     "pressure_mapped": [
-      { "seq": 1, "pressureAfterGlobalCurve": 0.74, "pressureAfterBrushCurve": 0.74, "pressureAfterHeuristic": 0.74, "speedPxPerMs": 0, "normalizedSpeed": 0 },
-      { "seq": 2, "pressureAfterGlobalCurve": 0.72, "pressureAfterBrushCurve": 0.72, "pressureAfterHeuristic": 0.72, "speedPxPerMs": 1.67, "normalizedSpeed": 0.056 },
-      { "seq": 3, "pressureAfterGlobalCurve": 0.7, "pressureAfterBrushCurve": 0.7, "pressureAfterHeuristic": 0.7, "speedPxPerMs": 1.67, "normalizedSpeed": 0.056 },
-      { "seq": 4, "pressureAfterGlobalCurve": 0.52, "pressureAfterBrushCurve": 0.52, "pressureAfterHeuristic": 0.52, "speedPxPerMs": 1.56, "normalizedSpeed": 0.052 },
-      { "seq": 5, "pressureAfterGlobalCurve": 0.16, "pressureAfterBrushCurve": 0.16, "pressureAfterHeuristic": 0.16, "speedPxPerMs": 0.44, "normalizedSpeed": 0.015 },
-      { "seq": 6, "pressureAfterGlobalCurve": 0, "pressureAfterBrushCurve": 0, "pressureAfterHeuristic": 0, "speedPxPerMs": 0.14, "normalizedSpeed": 0.005 }
+      {
+        "seq": 1,
+        "pressureAfterGlobalCurve": 0.74,
+        "pressureAfterBrushCurve": 0.74,
+        "pressureAfterHeuristic": 0.74,
+        "speedPxPerMs": 0,
+        "normalizedSpeed": 0
+      },
+      {
+        "seq": 2,
+        "pressureAfterGlobalCurve": 0.72,
+        "pressureAfterBrushCurve": 0.72,
+        "pressureAfterHeuristic": 0.72,
+        "speedPxPerMs": 1.67,
+        "normalizedSpeed": 0.056
+      },
+      {
+        "seq": 3,
+        "pressureAfterGlobalCurve": 0.7,
+        "pressureAfterBrushCurve": 0.7,
+        "pressureAfterHeuristic": 0.7,
+        "speedPxPerMs": 1.67,
+        "normalizedSpeed": 0.056
+      },
+      {
+        "seq": 4,
+        "pressureAfterGlobalCurve": 0.52,
+        "pressureAfterBrushCurve": 0.52,
+        "pressureAfterHeuristic": 0.52,
+        "speedPxPerMs": 1.56,
+        "normalizedSpeed": 0.052
+      },
+      {
+        "seq": 5,
+        "pressureAfterGlobalCurve": 0.16,
+        "pressureAfterBrushCurve": 0.16,
+        "pressureAfterHeuristic": 0.16,
+        "speedPxPerMs": 0.44,
+        "normalizedSpeed": 0.015
+      },
+      {
+        "seq": 6,
+        "pressureAfterGlobalCurve": 0,
+        "pressureAfterBrushCurve": 0,
+        "pressureAfterHeuristic": 0,
+        "speedPxPerMs": 0.14,
+        "normalizedSpeed": 0.005
+      }
     ],
     "sampler_t": [
-      { "segmentId": 0, "segmentStartSeq": 1, "segmentEndSeq": 2, "sampleIndex": 0, "t": 0.5, "triggerKind": "distance", "distanceCarryBefore": 0, "distanceCarryAfter": 1.1, "timeCarryBefore": 0, "timeCarryAfter": 2 },
-      { "segmentId": 1, "segmentStartSeq": 2, "segmentEndSeq": 3, "sampleIndex": 0, "t": 0.49, "triggerKind": "distance", "distanceCarryBefore": 1.1, "distanceCarryAfter": 0.8, "timeCarryBefore": 2, "timeCarryAfter": 4 },
-      { "segmentId": 2, "segmentStartSeq": 3, "segmentEndSeq": 4, "sampleIndex": 0, "t": 0.51, "triggerKind": "distance", "distanceCarryBefore": 0.8, "distanceCarryAfter": 0.6, "timeCarryBefore": 4, "timeCarryAfter": 6 },
-      { "segmentId": 3, "segmentStartSeq": 4, "segmentEndSeq": 5, "sampleIndex": 0, "t": 0.57, "triggerKind": "time", "distanceCarryBefore": 0.6, "distanceCarryAfter": 1.5, "timeCarryBefore": 6, "timeCarryAfter": 8 },
-      { "segmentId": 4, "segmentStartSeq": 5, "segmentEndSeq": 6, "sampleIndex": 0, "t": 0.64, "triggerKind": "time", "distanceCarryBefore": 1.5, "distanceCarryAfter": 1.7, "timeCarryBefore": 8, "timeCarryAfter": 6 }
+      {
+        "segmentId": 0,
+        "segmentStartSeq": 1,
+        "segmentEndSeq": 2,
+        "sampleIndex": 0,
+        "t": 0.5,
+        "triggerKind": "distance",
+        "distanceCarryBefore": 0,
+        "distanceCarryAfter": 1.1,
+        "timeCarryBefore": 0,
+        "timeCarryAfter": 2
+      },
+      {
+        "segmentId": 1,
+        "segmentStartSeq": 2,
+        "segmentEndSeq": 3,
+        "sampleIndex": 0,
+        "t": 0.49,
+        "triggerKind": "distance",
+        "distanceCarryBefore": 1.1,
+        "distanceCarryAfter": 0.8,
+        "timeCarryBefore": 2,
+        "timeCarryAfter": 4
+      },
+      {
+        "segmentId": 2,
+        "segmentStartSeq": 3,
+        "segmentEndSeq": 4,
+        "sampleIndex": 0,
+        "t": 0.51,
+        "triggerKind": "distance",
+        "distanceCarryBefore": 0.8,
+        "distanceCarryAfter": 0.6,
+        "timeCarryBefore": 4,
+        "timeCarryAfter": 6
+      },
+      {
+        "segmentId": 3,
+        "segmentStartSeq": 4,
+        "segmentEndSeq": 5,
+        "sampleIndex": 0,
+        "t": 0.57,
+        "triggerKind": "time",
+        "distanceCarryBefore": 0.6,
+        "distanceCarryAfter": 1.5,
+        "timeCarryBefore": 6,
+        "timeCarryAfter": 8
+      },
+      {
+        "segmentId": 4,
+        "segmentStartSeq": 5,
+        "segmentEndSeq": 6,
+        "sampleIndex": 0,
+        "t": 0.64,
+        "triggerKind": "time",
+        "distanceCarryBefore": 1.5,
+        "distanceCarryAfter": 1.7,
+        "timeCarryBefore": 8,
+        "timeCarryAfter": 6
+      }
     ],
     "dab_emit": [
-      { "dabIndex": 0, "segmentId": 0, "sampleIndex": 0, "x": 875, "y": 620, "pressure": 0.73, "spacingUsedPx": 3.6, "timestampMs": 9, "source": "normal" },
-      { "dabIndex": 1, "segmentId": 1, "sampleIndex": 0, "x": 905, "y": 620, "pressure": 0.71, "spacingUsedPx": 3.6, "timestampMs": 27, "source": "normal" },
-      { "dabIndex": 2, "segmentId": 2, "sampleIndex": 0, "x": 934, "y": 620, "pressure": 0.62, "spacingUsedPx": 3.6, "timestampMs": 45, "source": "normal" },
-      { "dabIndex": 3, "segmentId": 3, "sampleIndex": 0, "x": 953, "y": 620, "pressure": 0.28, "spacingUsedPx": 3.5, "timestampMs": 64, "source": "normal" },
-      { "dabIndex": 4, "segmentId": 4, "sampleIndex": 0, "x": 957, "y": 620, "pressure": 0.08, "spacingUsedPx": 3.5, "timestampMs": 81, "source": "pointerup_fallback" }
+      {
+        "dabIndex": 0,
+        "segmentId": 0,
+        "sampleIndex": 0,
+        "x": 875,
+        "y": 620,
+        "pressure": 0.73,
+        "spacingUsedPx": 3.6,
+        "timestampMs": 9,
+        "source": "normal",
+        "fallbackPressurePolicy": "none"
+      },
+      {
+        "dabIndex": 1,
+        "segmentId": 1,
+        "sampleIndex": 0,
+        "x": 905,
+        "y": 620,
+        "pressure": 0.71,
+        "spacingUsedPx": 3.6,
+        "timestampMs": 27,
+        "source": "normal",
+        "fallbackPressurePolicy": "none"
+      },
+      {
+        "dabIndex": 2,
+        "segmentId": 2,
+        "sampleIndex": 0,
+        "x": 934,
+        "y": 620,
+        "pressure": 0.62,
+        "spacingUsedPx": 3.6,
+        "timestampMs": 45,
+        "source": "normal",
+        "fallbackPressurePolicy": "none"
+      },
+      {
+        "dabIndex": 3,
+        "segmentId": 3,
+        "sampleIndex": 0,
+        "x": 953,
+        "y": 620,
+        "pressure": 0.28,
+        "spacingUsedPx": 3.5,
+        "timestampMs": 64,
+        "source": "normal",
+        "fallbackPressurePolicy": "none"
+      },
+      {
+        "dabIndex": 4,
+        "segmentId": 4,
+        "sampleIndex": 0,
+        "x": 957,
+        "y": 620,
+        "pressure": 0.08,
+        "spacingUsedPx": 3.5,
+        "timestampMs": 81,
+        "source": "pointerup_fallback",
+        "fallbackPressurePolicy": "last_nonzero"
+      }
     ]
   }
 }

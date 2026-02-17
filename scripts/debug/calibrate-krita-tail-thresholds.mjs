@@ -7,6 +7,7 @@ import { chromium } from '@playwright/test';
 const DEFAULT_URL = 'http://localhost:1420/';
 const DEFAULT_FIXTURES_DIR = 'tests/fixtures/krita-tail';
 const DEFAULT_ROUNDS = 10;
+const KNOWN_BACKENDS = ['windows_wintab', 'windows_winink_pointer', 'mac_native'];
 const METRIC_KEYS = [
   'pressure_tail_mae',
   'pressure_tail_p95',
@@ -90,6 +91,59 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function normalizeBackendId(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return 'unknown';
+  if (raw === 'windows_wintab' || raw === 'wintab' || raw === 'native-stream') {
+    return 'windows_wintab';
+  }
+  if (
+    raw === 'windows_winink_pointer' ||
+    raw === 'winink_pointer' ||
+    raw === 'pointer' ||
+    raw === 'pointerevent'
+  ) {
+    return 'windows_winink_pointer';
+  }
+  if (raw === 'mac_native' || raw === 'macnative') {
+    return 'mac_native';
+  }
+  return raw;
+}
+
+function deriveLegacyBackend(config) {
+  const explicit = normalizeBackendId(config?.inputBackend ?? '');
+  if (KNOWN_BACKENDS.includes(explicit)) return explicit;
+  const buildBackend = normalizeBackendId(config?.build?.inputBackend ?? '');
+  if (KNOWN_BACKENDS.includes(buildBackend)) return buildBackend;
+  return 'windows_wintab';
+}
+
+function resolveBaselineBackends(baselineConfig, requestedBackend) {
+  const normalizedRequested = requestedBackend ? normalizeBackendId(requestedBackend) : null;
+  if (
+    baselineConfig?.schemaVersion === 'krita-tail-baseline-config-v2' &&
+    baselineConfig?.backends &&
+    typeof baselineConfig.backends === 'object'
+  ) {
+    const backendEntries = Object.entries(baselineConfig.backends).map(([backend, config]) => ({
+      backend: normalizeBackendId(backend),
+      config,
+    }));
+    if (normalizedRequested) {
+      const selected = backendEntries.filter((entry) => entry.backend === normalizedRequested);
+      if (selected.length === 0) {
+        throw new Error(`Backend "${normalizedRequested}" not found in baseline config v2`);
+      }
+      return selected;
+    }
+    return backendEntries;
+  }
+
+  const legacyBackend = normalizedRequested ?? deriveLegacyBackend(baselineConfig);
+  return [{ backend: legacyBackend, config: baselineConfig }];
+}
+
 function mean(values) {
   if (values.length === 0) return 0;
   return values.reduce((acc, value) => acc + value, 0) / values.length;
@@ -101,7 +155,7 @@ function std(values, avg) {
   return Math.sqrt(variance);
 }
 
-function buildTraceMeta(baseConfig, caseConfig) {
+function buildTraceMeta(baseConfig, caseConfig, backend) {
   return {
     caseId: caseConfig.id,
     canvas: {
@@ -109,6 +163,7 @@ function buildTraceMeta(baseConfig, caseConfig) {
       ...(caseConfig.canvas ?? {}),
     },
     brushPreset: caseConfig.brushPreset ?? baseConfig.brushPreset ?? 'krita-tail-pressure-only',
+    inputBackend: backend,
     runtimeFlags: {
       ...(baseConfig.runtimeFlags ?? {}),
       ...(caseConfig.runtimeFlags ?? {}),
@@ -116,8 +171,43 @@ function buildTraceMeta(baseConfig, caseConfig) {
     build: {
       ...(baseConfig.build ?? {}),
       ...(caseConfig.build ?? {}),
+      inputBackend: backend,
     },
   };
+}
+
+function runSelfCheck() {
+  const v1Baseline = {
+    schemaVersion: 'krita-tail-baseline-config-v1',
+    build: { inputBackend: 'native-stream' },
+    cases: [{ id: 'case-a' }],
+  };
+  const v2Baseline = {
+    schemaVersion: 'krita-tail-baseline-config-v2',
+    backends: {
+      windows_wintab: { cases: [{ id: 'case-a' }] },
+      windows_winink_pointer: { cases: [{ id: 'case-b' }] },
+    },
+  };
+  const resolvedV1 = resolveBaselineBackends(v1Baseline);
+  if (resolvedV1.length !== 1 || resolvedV1[0].backend !== 'windows_wintab') {
+    throw new Error('self-check failed: resolveBaselineBackends v1');
+  }
+  const resolvedV2 = resolveBaselineBackends(v2Baseline, 'windows_winink_pointer');
+  if (resolvedV2.length !== 1 || resolvedV2[0].backend !== 'windows_winink_pointer') {
+    throw new Error('self-check failed: resolveBaselineBackends v2');
+  }
+  const meta = buildTraceMeta(
+    {
+      canvas: { width: 10, height: 10, dpi: 72 },
+      build: { inputBackend: 'legacy' },
+    },
+    { id: 'case-a' },
+    'mac_native'
+  );
+  if (meta.inputBackend !== 'mac_native' || meta.build.inputBackend !== 'mac_native') {
+    throw new Error('self-check failed: buildTraceMeta backend injection');
+  }
 }
 
 async function waitForTraceApis(page) {
@@ -197,6 +287,11 @@ async function compareTrace(page, sutuTrace, kritaTrace, thresholds) {
 }
 
 const cli = parseArgs(process.argv.slice(2));
+if (cli['self-check'] === 'true' || cli['self-check'] === true) {
+  runSelfCheck();
+  console.log(JSON.stringify({ ok: true, script: 'calibrate-krita-tail-thresholds' }, null, 2));
+  process.exit(0);
+}
 const repoRoot = process.cwd();
 const fixturesDir = path.resolve(repoRoot, cli.fixtures ?? DEFAULT_FIXTURES_DIR);
 const baselineConfigPath = path.resolve(fixturesDir, cli.config ?? 'baseline-config.json');
@@ -214,7 +309,7 @@ if (!fs.existsSync(baselineConfigPath)) {
 }
 
 const baselineConfig = readJson(baselineConfigPath);
-const allCases = Array.isArray(baselineConfig.cases) ? baselineConfig.cases : [];
+const backendRuns = resolveBaselineBackends(baselineConfig, cli.backend);
 const caseFilter = cli.case
   ? new Set(
       String(cli.case)
@@ -223,16 +318,12 @@ const caseFilter = cli.case
         .filter(Boolean)
     )
   : null;
-const selectedCases = caseFilter ? allCases.filter((item) => caseFilter.has(item.id)) : allCases;
-
-if (selectedCases.length === 0) {
-  throw new Error('No cases selected for calibration');
+if (backendRuns.length === 0) {
+  throw new Error('No backend selected for calibration');
 }
 
-const metricBuckets = Object.fromEntries(METRIC_KEYS.map((key) => [key, []]));
-const perRoundResults = [];
-
 ensureDir(outputDir);
+const backendCalibrations = {};
 
 const browser = await chromium.launch({
   headless,
@@ -244,104 +335,138 @@ try {
   await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await waitForTraceApis(page);
 
-  for (let round = 1; round <= rounds; round += 1) {
-    for (const caseConfig of selectedCases) {
-      const capturePath = path.resolve(fixturesDir, caseConfig.capture);
-      const kritaTracePath = path.resolve(fixturesDir, caseConfig.kritaTrace);
-      if (!fs.existsSync(capturePath)) {
-        throw new Error(`Missing capture for case "${caseConfig.id}": ${capturePath}`);
-      }
-      if (!fs.existsSync(kritaTracePath)) {
-        throw new Error(`Missing krita trace for case "${caseConfig.id}": ${kritaTracePath}`);
-      }
-
-      const capture = readJson(capturePath);
-      const kritaTrace = readJson(kritaTracePath);
-      const traceMeta = buildTraceMeta(baselineConfig, caseConfig);
-      const replaySpeed = toNumber(caseConfig.replaySpeed, toNumber(baselineConfig.defaultReplaySpeed, 1));
-      const waitMs = Math.max(0, Math.floor(toNumber(caseConfig.waitMs, toNumber(baselineConfig.defaultWaitMs, 200))));
-      const strokeId = `${caseConfig.id}-round-${round}-${Date.now()}`;
-
-      const traceRun = await runTraceCase(page, {
-        capture,
-        traceMeta,
-        replaySpeed,
-        waitMs,
-        strokeId,
-      });
-      const sutuTrace = traceRun.trace;
-      if (!sutuTrace) {
-        throw new Error(`Trace export failed for case "${caseConfig.id}" round ${round}`);
-      }
-
-      const sutuSchemaErrors = await validateTraceSchema(page, sutuTrace);
-      const kritaSchemaErrors = await validateTraceSchema(page, kritaTrace);
-      if (sutuSchemaErrors.length > 0) {
-        throw new Error(
-          `Sutu trace schema invalid for "${caseConfig.id}" round ${round}: ${sutuSchemaErrors.join('; ')}`
-        );
-      }
-      if (kritaSchemaErrors.length > 0) {
-        throw new Error(
-          `Krita trace schema invalid for "${caseConfig.id}" round ${round}: ${kritaSchemaErrors.join('; ')}`
-        );
-      }
-
-      const gateResult = await compareTrace(page, sutuTrace, kritaTrace, RELAXED_THRESHOLDS);
-      const metrics = gateResult.metrics;
-      for (const key of METRIC_KEYS) {
-        metricBuckets[key].push(metrics[key]);
-      }
-      perRoundResults.push({
-        round,
-        caseId: caseConfig.id,
-        metrics,
-      });
+  for (const backendRun of backendRuns) {
+    const backend = backendRun.backend;
+    const backendConfig = backendRun.config ?? {};
+    const allCases = Array.isArray(backendConfig.cases) ? backendConfig.cases : [];
+    const selectedCases = caseFilter ? allCases.filter((item) => caseFilter.has(item.id)) : allCases;
+    if (selectedCases.length === 0) {
+      throw new Error(`No cases selected for backend "${backend}"`);
     }
+
+    const metricBuckets = Object.fromEntries(METRIC_KEYS.map((key) => [key, []]));
+    const perRoundResults = [];
+    for (let round = 1; round <= rounds; round += 1) {
+      for (const caseConfig of selectedCases) {
+        const capturePath = path.resolve(fixturesDir, caseConfig.capture);
+        const kritaTracePath = path.resolve(fixturesDir, caseConfig.kritaTrace);
+        if (!fs.existsSync(capturePath)) {
+          throw new Error(`Missing capture for case "${caseConfig.id}": ${capturePath}`);
+        }
+        if (!fs.existsSync(kritaTracePath)) {
+          throw new Error(`Missing krita trace for case "${caseConfig.id}": ${kritaTracePath}`);
+        }
+
+        const capture = readJson(capturePath);
+        const kritaTrace = readJson(kritaTracePath);
+        const traceMeta = buildTraceMeta(backendConfig, caseConfig, backend);
+        const replaySpeed = toNumber(
+          caseConfig.replaySpeed,
+          toNumber(backendConfig.defaultReplaySpeed, 1)
+        );
+        const waitMs = Math.max(
+          0,
+          Math.floor(toNumber(caseConfig.waitMs, toNumber(backendConfig.defaultWaitMs, 200)))
+        );
+        const strokeId = `${backend}-${caseConfig.id}-round-${round}-${Date.now()}`;
+
+        const traceRun = await runTraceCase(page, {
+          capture,
+          traceMeta,
+          replaySpeed,
+          waitMs,
+          strokeId,
+        });
+        const sutuTrace = traceRun.trace;
+        if (!sutuTrace) {
+          throw new Error(
+            `Trace export failed for case "${caseConfig.id}" round ${round} backend "${backend}"`
+          );
+        }
+
+        const sutuSchemaErrors = await validateTraceSchema(page, sutuTrace);
+        const kritaSchemaErrors = await validateTraceSchema(page, kritaTrace);
+        if (sutuSchemaErrors.length > 0) {
+          throw new Error(
+            `Sutu trace schema invalid for "${caseConfig.id}" round ${round} backend "${backend}": ${sutuSchemaErrors.join('; ')}`
+          );
+        }
+        if (kritaSchemaErrors.length > 0) {
+          throw new Error(
+            `Krita trace schema invalid for "${caseConfig.id}" round ${round} backend "${backend}": ${kritaSchemaErrors.join('; ')}`
+          );
+        }
+
+        const gateResult = await compareTrace(page, sutuTrace, kritaTrace, RELAXED_THRESHOLDS);
+        const metrics = gateResult.metrics;
+        for (const key of METRIC_KEYS) {
+          metricBuckets[key].push(metrics[key]);
+        }
+        perRoundResults.push({
+          backend,
+          round,
+          caseId: caseConfig.id,
+          metrics,
+        });
+      }
+    }
+    const calibratedMetrics = {};
+    const stats = {};
+    for (const key of METRIC_KEYS) {
+      const values = metricBuckets[key];
+      const avg = mean(values);
+      const sigma = std(values, avg);
+      const computed = avg + 3 * sigma;
+      calibratedMetrics[key] = Math.max(DEFAULT_THRESHOLD_FLOOR[key], computed);
+      stats[key] = {
+        samples: values.length,
+        mean: avg,
+        std: sigma,
+        computed,
+        floor: DEFAULT_THRESHOLD_FLOOR[key],
+        final: calibratedMetrics[key],
+      };
+    }
+
+    backendCalibrations[backend] = {
+      metrics: calibratedMetrics,
+      stats,
+      cases: selectedCases.map((item) => item.id),
+      results: perRoundResults,
+    };
   }
 } finally {
   await browser.close();
 }
 
-const calibratedMetrics = {};
-const stats = {};
-for (const key of METRIC_KEYS) {
-  const values = metricBuckets[key];
-  const avg = mean(values);
-  const sigma = std(values, avg);
-  const computed = avg + 3 * sigma;
-  calibratedMetrics[key] = Math.max(DEFAULT_THRESHOLD_FLOOR[key], computed);
-  stats[key] = {
-    samples: values.length,
-    mean: avg,
-    std: sigma,
-    computed,
-    floor: DEFAULT_THRESHOLD_FLOOR[key],
-    final: calibratedMetrics[key],
-  };
-}
-
 const thresholdPayload = {
-  schemaVersion: 'krita-tail-thresholds-v1',
+  schemaVersion: 'krita-tail-thresholds-v2',
   generatedAt: new Date().toISOString(),
   rounds,
   appUrl,
-  metrics: calibratedMetrics,
-  stats,
+  backends: backendCalibrations,
 };
 
 const report = {
-  schemaVersion: 'krita-tail-calibration-report-v1',
+  schemaVersion: 'krita-tail-calibration-report-v2',
   generatedAt: new Date().toISOString(),
   rounds,
   appUrl,
-  cases: selectedCases.map((item) => item.id),
-  stats,
-  results: perRoundResults,
+  backends: backendCalibrations,
   thresholdOutput: path.relative(repoRoot, thresholdOutputPath).replace(/\\/g, '/'),
 };
 
 writeJson(thresholdOutputPath, thresholdPayload);
 writeJson(path.join(outputDir, 'calibration-report.json'), report);
 
-console.log(JSON.stringify({ thresholdOutputPath, rounds, cases: selectedCases.length, stats }, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      thresholdOutputPath,
+      rounds,
+      backends: Object.keys(backendCalibrations),
+    },
+    null,
+    2
+  )
+);

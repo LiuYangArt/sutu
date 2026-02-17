@@ -28,6 +28,8 @@ interface QueuedPoint {
   pointIndex: number;
   inputSeq: number;
   phase: 'down' | 'move' | 'up';
+  traceSource?: 'normal' | 'pointerup_fallback';
+  fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
 }
 
 interface DebugRect {
@@ -89,6 +91,8 @@ interface UseStrokeProcessorParams {
       timestampMs?: number;
       inputSeq?: number;
       phase?: 'down' | 'move' | 'up';
+      traceSource?: 'normal' | 'pointerup_fallback';
+      fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
     }
   ) => void;
   endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
@@ -312,7 +316,13 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number; inputSeq?: number; phase?: 'down' | 'move' | 'up' }
+      inputMeta?: {
+        timestampMs?: number;
+        inputSeq?: number;
+        phase?: 'down' | 'move' | 'up';
+        traceSource?: 'normal' | 'pointerup_fallback';
+        fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
+      }
     ) => {
       const constrained = constrainShiftLinePoint(x, y);
       const config = getBrushConfig();
@@ -357,7 +367,13 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number; inputSeq?: number; phase?: 'down' | 'move' | 'up' }
+      inputMeta?: {
+        timestampMs?: number;
+        inputSeq?: number;
+        phase?: 'down' | 'move' | 'up';
+        traceSource?: 'normal' | 'pointerup_fallback';
+        fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
+      }
     ) => {
       processSinglePoint(x, y, pressure, pointIndex, dynamics, inputMeta);
       // Mark that we need to render after processing
@@ -421,6 +437,8 @@ export function useStrokeProcessor({
                 timestampMs: p.timestampMs,
                 inputSeq: p.inputSeq,
                 phase: p.phase,
+                traceSource: p.traceSource,
+                fallbackPressurePolicy: p.fallbackPressurePolicy,
               }
             );
           }
@@ -523,9 +541,6 @@ export function useStrokeProcessor({
   // Internal stroke finishing logic (called after state machine validation)
   // Renamed to finalizeStroke for clarity
   const finalizeStroke = useCallback(async () => {
-    // Clear buffered native tablet samples between strokes.
-    clearPointBuffer();
-
     const isBrushStroke = isBrushStrokeState(strokeStateRef.current) || isStrokeActive();
 
     if (isBrushStroke) {
@@ -594,6 +609,9 @@ export function useStrokeProcessor({
     pendingEndRef.current = false;
     lastRenderedPosRef.current = null;
     lastDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
+
+    // Clear buffered native tablet samples between strokes after finalize has consumed tail points.
+    clearPointBuffer();
     window.__strokeDiagnostics?.onStrokeEnd();
   }, [
     inputQueueRef,
@@ -713,6 +731,8 @@ export function useStrokeProcessor({
             timestampMs: p.timestampMs,
             inputSeq: p.inputSeq,
             phase: p.phase,
+            traceSource: p.traceSource,
+            fallbackPressurePolicy: p.fallbackPressurePolicy,
           }
         );
         window.__strokeDiagnostics?.onPointBuffered();

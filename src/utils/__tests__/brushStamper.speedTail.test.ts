@@ -11,6 +11,142 @@ function meanAdjacentDelta(values: number[]): number {
 }
 
 describe('BrushStamper speed-based smoothing and finalize sampling', () => {
+  it('uses linear pressure interpolation for in-segment dabs', () => {
+    const stamper = new BrushStamper();
+    stamper.beginStroke();
+
+    stamper.processPoint(0, 0, 0, 6, true, {
+      timestampMs: 0,
+      maxBrushSpeedPxPerMs: 30,
+      brushSpeedSmoothingSamples: 3,
+      pressureEmaEnabled: false,
+      pressureChangeSpacingBoostEnabled: false,
+      lowPressureDensityBoostEnabled: false,
+      trajectorySmoothingEnabled: false,
+      maxDabIntervalMs: 1000,
+    });
+
+    const segmentDabs = stamper.processPoint(10, 0, 1, 6, true, {
+      timestampMs: 10,
+      maxBrushSpeedPxPerMs: 30,
+      brushSpeedSmoothingSamples: 3,
+      pressureEmaEnabled: false,
+      pressureChangeSpacingBoostEnabled: false,
+      lowPressureDensityBoostEnabled: false,
+      trajectorySmoothingEnabled: false,
+      maxDabIntervalMs: 1000,
+    });
+
+    expect(segmentDabs.length).toBeGreaterThan(0);
+    const first = segmentDabs[0];
+    expect(first).toBeTruthy();
+    if (!first) return;
+
+    // spacing=6 on a 10px segment => first sample t=0.6, pressure should be linear 0.6
+    expect(first.pressure).toBeCloseTo(0.6, 3);
+  });
+
+  it('supports independent pressure heuristic toggles', () => {
+    const runPressureChangeSpacing = (enabled: boolean): number => {
+      const stamper = new BrushStamper();
+      stamper.beginStroke();
+      stamper.processPoint(0, 0, 0.2, 6, true, {
+        timestampMs: 0,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        pressureEmaEnabled: false,
+        pressureChangeSpacingBoostEnabled: enabled,
+        lowPressureDensityBoostEnabled: false,
+        lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: false,
+        maxDabIntervalMs: 1000,
+      });
+      const dabs = stamper.processPoint(12, 0, 0.8, 6, true, {
+        timestampMs: 12,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        pressureEmaEnabled: false,
+        pressureChangeSpacingBoostEnabled: enabled,
+        lowPressureDensityBoostEnabled: false,
+        lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: false,
+        maxDabIntervalMs: 1000,
+      });
+      return dabs.length;
+    };
+
+    const runLowPressureDensity = (enabled: boolean): number => {
+      const stamper = new BrushStamper();
+      stamper.beginStroke();
+      stamper.processPoint(0, 0, 0.08, 6, true, {
+        timestampMs: 0,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        pressureEmaEnabled: false,
+        pressureChangeSpacingBoostEnabled: false,
+        lowPressureDensityBoostEnabled: enabled,
+        lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: false,
+        maxDabIntervalMs: 1000,
+      });
+      const dabs = stamper.processPoint(50, 0, 0.07, 10, true, {
+        timestampMs: 50,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        pressureEmaEnabled: false,
+        pressureChangeSpacingBoostEnabled: false,
+        lowPressureDensityBoostEnabled: enabled,
+        lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: false,
+        maxDabIntervalMs: 1000,
+      });
+      return dabs.length;
+    };
+
+    const runPressureEma = (enabled: boolean): number => {
+      const stamper = new BrushStamper();
+      stamper.beginStroke();
+      stamper.processPoint(0, 0, 0, 6, true, {
+        timestampMs: 0,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        pressureEmaEnabled: enabled,
+        pressureChangeSpacingBoostEnabled: false,
+        lowPressureDensityBoostEnabled: false,
+        lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: false,
+        maxDabIntervalMs: 1000,
+      });
+      stamper.processPoint(12, 0, 1, 6, true, {
+        timestampMs: 12,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        pressureEmaEnabled: enabled,
+        pressureChangeSpacingBoostEnabled: false,
+        lowPressureDensityBoostEnabled: false,
+        lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: false,
+        maxDabIntervalMs: 1000,
+      });
+      const dabs = stamper.processPoint(24, 0, 0, 6, true, {
+        timestampMs: 24,
+        maxBrushSpeedPxPerMs: 30,
+        brushSpeedSmoothingSamples: 3,
+        pressureEmaEnabled: enabled,
+        pressureChangeSpacingBoostEnabled: false,
+        lowPressureDensityBoostEnabled: false,
+        lowPressureAdaptiveSmoothingEnabled: false,
+        trajectorySmoothingEnabled: false,
+        maxDabIntervalMs: 1000,
+      });
+      return dabs[0]?.pressure ?? 0;
+    };
+
+    expect(runPressureChangeSpacing(true)).toBeGreaterThan(runPressureChangeSpacing(false));
+    expect(runLowPressureDensity(true)).toBeGreaterThan(runLowPressureDensity(false));
+    expect(runPressureEma(true)).toBeGreaterThan(runPressureEma(false));
+  });
+
   it('uses averaged stroke-start anchor to suppress start jitter spikes', () => {
     const stamper = new BrushStamper();
     stamper.beginStroke();

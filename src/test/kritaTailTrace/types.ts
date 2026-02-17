@@ -4,6 +4,12 @@ export type KritaTailTracePhase = 'down' | 'move' | 'up';
 export type KritaTailSamplerTriggerKind = 'distance' | 'time';
 export type KritaTailDabSource = 'normal' | 'finalize' | 'pointerup_fallback';
 export type KritaTailSeqSource = 'native' | 'fallback';
+export type KritaTailInputBackend =
+  | 'windows_wintab'
+  | 'windows_winink_pointer'
+  | 'mac_native'
+  | 'unknown';
+export type KritaTailFallbackPressurePolicy = 'none' | 'last_nonzero' | 'event_raw' | 'zero';
 
 export interface KritaTailTraceMeta {
   caseId: string;
@@ -13,6 +19,7 @@ export interface KritaTailTraceMeta {
     dpi: number;
   };
   brushPreset: string;
+  inputBackend: KritaTailInputBackend;
   runtimeFlags: Record<string, boolean>;
   build: {
     appCommit: string;
@@ -64,6 +71,7 @@ export interface KritaTailDabEmitSample {
   spacingUsedPx: number;
   timestampMs: number;
   source: KritaTailDabSource;
+  fallbackPressurePolicy: KritaTailFallbackPressurePolicy;
 }
 
 export interface KritaTailTrace {

@@ -36,7 +36,11 @@ import {
   startKritaTailTraceSession,
   stopKritaTailTraceSession,
 } from '@/test/kritaTailTrace/collector';
-import type { KritaTailTrace, KritaTailTraceMeta } from '@/test/kritaTailTrace/types';
+import type {
+  KritaTailInputBackend,
+  KritaTailTrace,
+  KritaTailTraceMeta,
+} from '@/test/kritaTailTrace/types';
 import { appDotStorageKey, appHyphenStorageKey } from '@/constants/appMeta';
 import type { StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
 import {
@@ -323,10 +327,42 @@ export function useGlobalExports({
       return source === 'appconfig' ? appConfigPath : localStoragePath;
     };
 
+    const resolveKritaTailInputBackend = (): KritaTailInputBackend => {
+      const backendState = useTabletStore.getState();
+      const rawBackendName = backendState.activeBackend || backendState.backend || '';
+      const backendName = typeof rawBackendName === 'string' ? rawBackendName.toLowerCase() : '';
+      const platform =
+        typeof navigator !== 'undefined' && typeof navigator.platform === 'string'
+          ? navigator.platform.toLowerCase()
+          : '';
+      const isWindows = platform.includes('win');
+      const isMac = platform.includes('mac');
+
+      if (backendName === 'wintab' || backendName === 'win_tab') {
+        return 'windows_wintab';
+      }
+      if (backendName === 'macnative' || backendName === 'mac_native') {
+        return 'mac_native';
+      }
+      if (backendName === 'pointerevent' || backendName === 'pointer_event') {
+        if (isWindows) return 'windows_winink_pointer';
+        if (isMac) return 'mac_native';
+        return 'unknown';
+      }
+
+      if (isNativeTabletStreamingState(backendState)) {
+        if (isMac) return 'mac_native';
+        if (isWindows) return 'windows_wintab';
+      }
+      if (isWindows) return 'windows_winink_pointer';
+      if (isMac) return 'mac_native';
+      return 'unknown';
+    };
+
     const buildDefaultKritaTailMeta = (): KritaTailTraceMeta => {
       const docState = useDocumentStore.getState();
       const toolState = useToolStore.getState();
-      const backendState = useTabletStore.getState();
+      const inputBackend = resolveKritaTailInputBackend();
       return {
         caseId: 'manual',
         canvas: {
@@ -335,6 +371,7 @@ export function useGlobalExports({
           dpi: docState.dpi,
         },
         brushPreset: `${toolState.currentTool}-size-${Math.round(toolState.brushSize)}`,
+        inputBackend,
         runtimeFlags: {
           trajectorySmoothingEnabled: false,
           speedIsolationEnabled: true,
@@ -348,7 +385,7 @@ export function useGlobalExports({
             typeof navigator !== 'undefined' && typeof navigator.platform === 'string'
               ? navigator.platform
               : 'unknown',
-          inputBackend: isNativeTabletStreamingState(backendState) ? 'native-stream' : 'pointer',
+          inputBackend,
         },
       };
     };

@@ -15,6 +15,7 @@ import {
   BrushStamper,
   DabParams,
   MaskType,
+  type BrushDabFallbackPressurePolicy,
   type BrushDabPoint,
   type Rect,
   type StrokeFinalizeDebugSnapshot,
@@ -218,9 +219,12 @@ function resolveRenderableDabSizeAndOpacity(
  * We keep these runtime options fixed so tablet speed UI settings cannot
  * influence dab emission while debugging pressure-only tail behavior.
  */
-const PRESSURE_TAIL_PARITY_STAMPER_OPTIONS = Object.freeze({
+const KRITA_PARITY_PROFILE = Object.freeze({
   maxBrushSpeedPxPerMs: 30,
   brushSpeedSmoothingSamples: 3,
+  pressureEmaEnabled: false as const,
+  pressureChangeSpacingBoostEnabled: false as const,
+  lowPressureDensityBoostEnabled: false as const,
   lowPressureAdaptiveSmoothingEnabled: false as const,
 });
 
@@ -299,6 +303,8 @@ export interface UseBrushRendererResult {
       timestampMs?: number;
       inputSeq?: number;
       phase?: 'down' | 'move' | 'up';
+      traceSource?: 'normal' | 'pointerup_fallback';
+      fallbackPressurePolicy?: BrushDabFallbackPressurePolicy;
     }
   ) => void;
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
@@ -657,6 +663,7 @@ export function useBrushRenderer({
             ? dab.traceSampleIndex
             : -1;
         const traceSource = dab.traceSource ?? 'normal';
+        const traceFallbackPressurePolicy = dab.traceFallbackPressurePolicy ?? 'none';
         const traceSpacingUsedPx =
           typeof dab.traceSpacingUsedPx === 'number' && Number.isFinite(dab.traceSpacingUsedPx)
             ? dab.traceSpacingUsedPx
@@ -820,6 +827,7 @@ export function useBrushRenderer({
                 ? dabTimestampMs
                 : performance.now(),
             source: traceSource,
+            fallbackPressurePolicy: traceFallbackPressurePolicy,
           });
         }
       }
@@ -857,7 +865,7 @@ export function useBrushRenderer({
       }
 
       const finalizeDabs = stamperRef.current.finishStroke(lastSpacingPxRef.current, {
-        ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
+        ...KRITA_PARITY_PROFILE,
         trajectorySmoothingEnabled: false,
       });
       const finalizeSampler = stamperRef.current.consumeSamplerTrace();
@@ -904,6 +912,8 @@ export function useBrushRenderer({
         timestampMs?: number;
         inputSeq?: number;
         phase?: 'down' | 'move' | 'up';
+        traceSource?: 'normal' | 'pointerup_fallback';
+        fallbackPressurePolicy?: BrushDabFallbackPressurePolicy;
       }
     ): void => {
       if (strokeCancelledRef.current) {
@@ -924,7 +934,9 @@ export function useBrushRenderer({
       const stamper = stamperRef.current;
       const stamperOptions = {
         timestampMs: inputMeta?.timestampMs,
-        ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
+        traceSource: inputMeta?.traceSource,
+        fallbackPressurePolicy: inputMeta?.fallbackPressurePolicy,
+        ...KRITA_PARITY_PROFILE,
         trajectorySmoothingEnabled: false,
       };
 

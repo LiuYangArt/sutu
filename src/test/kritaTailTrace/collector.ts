@@ -39,7 +39,10 @@ class KritaTailTraceCollector {
     const strokeId = options.strokeId?.trim() || nowStrokeId();
     this.active = {
       strokeId,
-      meta: options.meta,
+      meta: {
+        ...options.meta,
+        inputBackend: options.meta.inputBackend ?? 'unknown',
+      },
       inputRaw: [],
       pressureBySeq: new Map<number, KritaTailPressureMappedSample>(),
       sampler: [],
@@ -137,6 +140,7 @@ class KritaTailTraceCollector {
       spacingUsedPx: Math.max(0, toFiniteNumber(sample.spacingUsedPx)),
       timestampMs: toFiniteNumber(sample.timestampMs),
       source: sample.source,
+      fallbackPressurePolicy: sample.fallbackPressurePolicy ?? 'none',
     });
   }
 
@@ -151,6 +155,7 @@ class KritaTailTraceCollector {
             caseId: 'unknown',
             canvas: { width: 0, height: 0, dpi: 0 },
             brushPreset: 'unknown',
+            inputBackend: 'unknown',
             runtimeFlags: {},
             build: {
               appCommit: 'unknown',

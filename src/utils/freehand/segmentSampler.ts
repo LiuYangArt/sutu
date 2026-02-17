@@ -81,75 +81,74 @@ export class SegmentSampler {
       };
     }
 
-    const rawSamples: Array<{ t: number; triggerKind: SegmentSamplerTriggerKind }> = [];
+    let distanceCarry = this.distanceCarryPx;
+    let timeCarry = this.timeCarryMs;
+    let currentT = 0;
+    const samples: SegmentSamplerDetailSample[] = [];
 
-    if (distancePx > EPSILON) {
-      const firstT = (spacingPx - this.distanceCarryPx) / distancePx;
-      const stepT = spacingPx / distancePx;
-      for (let t = firstT; t <= 1 + EPSILON; t += stepT) {
-        if (t > EPSILON) {
-          rawSamples.push({
-            t: Math.min(1, Math.max(0, t)),
-            triggerKind: 'distance',
-          });
-        }
+    while (currentT < 1 - EPSILON) {
+      const canUseDistance = distancePx > EPSILON;
+      const canUseTime = durationMs > EPSILON;
+      if (!canUseDistance && !canUseTime) {
+        break;
       }
+
+      const remainingDistanceToNext = Math.max(0, spacingPx - distanceCarry);
+      const remainingTimeToNext = Math.max(0, maxIntervalMs - timeCarry);
+      const deltaTDistance = canUseDistance ? remainingDistanceToNext / distancePx : Number.POSITIVE_INFINITY;
+      const deltaTTime = canUseTime ? remainingTimeToNext / durationMs : Number.POSITIVE_INFINITY;
+      const deltaT = Math.min(deltaTDistance, deltaTTime);
+      if (!Number.isFinite(deltaT)) {
+        break;
+      }
+
+      const remainingT = 1 - currentT;
+      if (deltaT > remainingT + EPSILON) {
+        break;
+      }
+
+      const stepT = Math.max(0, Math.min(remainingT, deltaT));
+      const sampleDistanceCarryBefore = distanceCarry;
+      const sampleTimeCarryBefore = timeCarry;
+      distanceCarry += distancePx * stepT;
+      timeCarry += durationMs * stepT;
+
+      const hitDistance = canUseDistance && distanceCarry + EPSILON >= spacingPx;
+      const hitTime = canUseTime && timeCarry + EPSILON >= maxIntervalMs;
+      if (!hitDistance && !hitTime) {
+        break;
+      }
+
+      if (hitDistance) {
+        distanceCarry = normalizeCarry(distanceCarry, spacingPx);
+      }
+      if (hitTime) {
+        timeCarry = normalizeCarry(timeCarry, maxIntervalMs);
+      }
+
+      currentT += stepT;
+      samples.push({
+        sampleIndex: samples.length,
+        t: Math.min(1, Math.max(0, currentT)),
+        // When both channels hit together, distance wins to avoid duplicate emit at same t.
+        triggerKind: hitDistance ? 'distance' : 'time',
+        distanceCarryBefore: sampleDistanceCarryBefore,
+        distanceCarryAfter: distanceCarry,
+        timeCarryBefore: sampleTimeCarryBefore,
+        timeCarryAfter: timeCarry,
+      });
     }
 
-    if (durationMs > EPSILON) {
-      const firstT = (maxIntervalMs - this.timeCarryMs) / durationMs;
-      const stepT = maxIntervalMs / durationMs;
-      for (let t = firstT; t <= 1 + EPSILON; t += stepT) {
-        if (t > EPSILON) {
-          rawSamples.push({
-            t: Math.min(1, Math.max(0, t)),
-            triggerKind: 'time',
-          });
-        }
-      }
+    const restT = Math.max(0, 1 - currentT);
+    if (restT > EPSILON) {
+      distanceCarry += distancePx * restT;
+      timeCarry += durationMs * restT;
     }
 
-    this.distanceCarryPx = normalizeCarry(this.distanceCarryPx + distancePx, spacingPx);
-    this.timeCarryMs = normalizeCarry(this.timeCarryMs + durationMs, maxIntervalMs);
-
-    if (rawSamples.length === 0) {
-      return {
-        samples: [],
-        distanceCarryBefore,
-        distanceCarryAfter: this.distanceCarryPx,
-        timeCarryBefore,
-        timeCarryAfter: this.timeCarryMs,
-      };
-    }
-
-    rawSamples.sort((a, b) => a.t - b.t);
-    const deduped: Array<{ t: number; triggerKind: SegmentSamplerTriggerKind }> = [];
-    for (const sample of rawSamples) {
-      const last = deduped[deduped.length - 1];
-      if (!last) {
-        deduped.push({ ...sample });
-        continue;
-      }
-      if (Math.abs(sample.t - last.t) <= 1e-4) {
-        if (last.triggerKind !== 'distance' && sample.triggerKind === 'distance') {
-          last.triggerKind = 'distance';
-        }
-        continue;
-      }
-      deduped.push({ ...sample });
-    }
-
+    this.distanceCarryPx = normalizeCarry(distanceCarry, spacingPx);
+    this.timeCarryMs = normalizeCarry(timeCarry, maxIntervalMs);
     const distanceCarryAfter = this.distanceCarryPx;
     const timeCarryAfter = this.timeCarryMs;
-    const samples = deduped.map((sample, index) => ({
-      sampleIndex: index,
-      t: sample.t,
-      triggerKind: sample.triggerKind,
-      distanceCarryBefore,
-      distanceCarryAfter,
-      timeCarryBefore,
-      timeCarryAfter,
-    }));
 
     return {
       samples,

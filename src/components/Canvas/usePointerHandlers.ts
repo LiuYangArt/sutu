@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
-import { readPointBufferSince, useTabletStore, type InputPhase } from '@/stores/tablet';
+import {
+  readPointBufferSince,
+  useTabletStore,
+  type InputPhase,
+  type TabletInputPoint,
+} from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
@@ -27,6 +32,8 @@ interface QueuedPoint {
   pointIndex: number;
   inputSeq: number;
   phase: 'down' | 'move' | 'up';
+  traceSource?: 'normal' | 'pointerup_fallback';
+  fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
 }
 
 function normalizeTracePhase(phase: InputPhase | undefined, fallback: 'down' | 'move' | 'up') {
@@ -34,6 +41,11 @@ function normalizeTracePhase(phase: InputPhase | undefined, fallback: 'down' | '
     return phase;
   }
   return fallback;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
 
 interface UsePointerHandlersParams {
@@ -179,6 +191,9 @@ export function usePointerHandlers({
   const fallbackSeqRef = useRef(1);
   const activePointerIdRef = useRef<number | null>(null);
   const isPanningRef = useRef(isPanning);
+  const pointerUpFinalizeTokenRef = useRef(0);
+  const pointerupFinalizeInFlightRef = useRef(false);
+  const lastNonZeroPressureRef = useRef<number | null>(null);
 
   useEffect(() => {
     isPanningRef.current = isPanning;
@@ -223,12 +238,19 @@ export function usePointerHandlers({
     [containerRef]
   );
 
+  const bumpPointerFinalizeToken = useCallback(() => {
+    pointerUpFinalizeTokenRef.current += 1;
+    return pointerUpFinalizeTokenRef.current;
+  }, []);
+
   const beginPointerSession = useCallback(
     (pointerId: number, isTrusted: boolean) => {
+      bumpPointerFinalizeToken();
+      pointerupFinalizeInFlightRef.current = false;
       setActivePointerId(pointerId);
       trySetPointerCapture(pointerId, isTrusted);
     },
-    [setActivePointerId, trySetPointerCapture]
+    [bumpPointerFinalizeToken, setActivePointerId, trySetPointerCapture]
   );
 
   const endPointerSession = useCallback(
@@ -239,6 +261,115 @@ export function usePointerHandlers({
       clearActivePointerId(pointerId);
     },
     [clearActivePointerId, tryReleasePointerCapture]
+  );
+
+  const rememberNonZeroPressure = useCallback((pressure: number) => {
+    if (pressure > 0) {
+      lastNonZeroPressureRef.current = clamp01(pressure);
+    }
+  }, []);
+
+  const queueStrokePoint = useCallback(
+    (point: QueuedPoint) => {
+      rememberNonZeroPressure(point.pressure);
+      const state = strokeStateRef.current;
+      if (state === 'starting') {
+        pendingPointsRef.current.push(point);
+        window.__strokeDiagnostics?.onPointBuffered();
+        return;
+      }
+      if (state === 'active') {
+        inputQueueRef.current.push(point);
+        window.__strokeDiagnostics?.onPointBuffered();
+      }
+    },
+    [inputQueueRef, pendingPointsRef, rememberNonZeroPressure, strokeStateRef]
+  );
+
+  const queueNativeSampleForStroke = useCallback(
+    (
+      point: TabletInputPoint,
+      fallbackEvent: PointerEvent,
+      shouldUseNativeBackend: boolean,
+      fallbackPhase: 'down' | 'move' | 'up' = 'move',
+      phaseOverride?: 'down' | 'move' | 'up',
+      canvasPositionOverride?: { x: number; y: number } | null
+    ) => {
+      const seqSource: 'native' | 'fallback' = Number.isInteger(point.seq) ? 'native' : 'fallback';
+      const inputSeq = seqSource === 'native' ? point.seq : fallbackSeqRef.current++;
+      const phase = phaseOverride ?? normalizeTracePhase(point.phase, fallbackPhase);
+      const resolvedCanvasX = Number.isFinite(canvasPositionOverride?.x)
+        ? Number(canvasPositionOverride!.x)
+        : point.x;
+      const resolvedCanvasY = Number.isFinite(canvasPositionOverride?.y)
+        ? Number(canvasPositionOverride!.y)
+        : point.y;
+      const effective = getEffectiveInputData(
+        fallbackEvent,
+        shouldUseNativeBackend,
+        [point],
+        useTabletStore.getState().currentPoint,
+        fallbackEvent,
+        point
+      );
+
+      recordKritaTailInputRaw({
+        seq: inputSeq,
+        seqSource,
+        timestampMs: effective.timestampMs,
+        x: resolvedCanvasX,
+        y: resolvedCanvasY,
+        pressureRaw: effective.pressure,
+        phase,
+      });
+
+      queueStrokePoint({
+        x: resolvedCanvasX,
+        y: resolvedCanvasY,
+        pressure: effective.pressure,
+        tiltX: effective.tiltX,
+        tiltY: effective.tiltY,
+        rotation: effective.rotation,
+        timestampMs: effective.timestampMs,
+        pointIndex: pointIndexRef.current++,
+        inputSeq,
+        phase,
+      });
+      latencyProfilerRef.current.markInputReceived(pointIndexRef.current - 1, fallbackEvent);
+
+      return {
+        seq: inputSeq,
+        pressure: effective.pressure,
+        phase,
+      };
+    },
+    [latencyProfilerRef, pointIndexRef, queueStrokePoint]
+  );
+
+  const resolvePointerupFallbackPressure = useCallback(
+    (nativeEvent: PointerEvent): { pressure: number; policy: 'last_nonzero' | 'event_raw' | 'zero' } => {
+      const lastNonZero = lastNonZeroPressureRef.current;
+      if (typeof lastNonZero === 'number' && lastNonZero > 0) {
+        return {
+          pressure: clamp01(lastNonZero),
+          policy: 'last_nonzero',
+        };
+      }
+
+      const eventRaw = clamp01(nativeEvent.pressure);
+      if (eventRaw > 0) {
+        return {
+          pressure: eventRaw,
+          policy: 'event_raw',
+        };
+      }
+
+      return {
+        pressure: 0,
+        policy: 'zero',
+      };
+    },
+    []
   );
 
   const pickColorAt = useCallback(
@@ -353,6 +484,14 @@ export function usePointerHandlers({
       if (!isDrawingRef.current) return;
       if (!isStrokeTool(currentTool)) return;
       if (usingRawInput.current) return;
+      if (pointerupFinalizeInFlightRef.current) return;
+
+      const hasContactEvent = coalescedEvents.some(
+        (evt) => (evt.buttons & 1) === 1 || evt.pressure > 0
+      );
+      if (!hasContactEvent) {
+        return;
+      }
 
       const tabletState = useTabletStore.getState();
       const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
@@ -400,36 +539,18 @@ export function usePointerHandlers({
         const idx = pointIndexRef.current++;
         latencyProfilerRef.current.markInputReceived(idx, evt);
 
-        const state = strokeStateRef.current;
-        if (state === 'starting') {
-          pendingPointsRef.current.push({
-            x: canvasX,
-            y: canvasY,
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            pointIndex: idx,
-            inputSeq,
-            phase,
-          });
-          window.__strokeDiagnostics?.onPointBuffered();
-        } else if (state === 'active') {
-          inputQueueRef.current.push({
-            x: canvasX,
-            y: canvasY,
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            pointIndex: idx,
-            inputSeq,
-            phase,
-          });
-          window.__strokeDiagnostics?.onPointBuffered();
-        }
+        queueStrokePoint({
+          x: canvasX,
+          y: canvasY,
+          pressure,
+          tiltX,
+          tiltY,
+          rotation,
+          timestampMs,
+          pointIndex: idx,
+          inputSeq,
+          phase,
+        });
       }
     },
     [
@@ -450,9 +571,7 @@ export function usePointerHandlers({
       usingRawInput,
       pointIndexRef,
       latencyProfilerRef,
-      strokeStateRef,
-      pendingPointsRef,
-      inputQueueRef,
+      queueStrokePoint,
     ]
   );
 
@@ -468,6 +587,24 @@ export function usePointerHandlers({
         if (!canvas) return;
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, nativeEvent);
         handler(canvasX, canvasY);
+      };
+
+      const resolveFallbackUpCanvasPoint = (): { x: number; y: number } | null => {
+        const queueTail = inputQueueRef.current[inputQueueRef.current.length - 1] ?? null;
+        if (queueTail && Number.isFinite(queueTail.x) && Number.isFinite(queueTail.y)) {
+          return { x: queueTail.x, y: queueTail.y };
+        }
+        const pendingTail = pendingPointsRef.current[pendingPointsRef.current.length - 1] ?? null;
+        if (pendingTail && Number.isFinite(pendingTail.x) && Number.isFinite(pendingTail.y)) {
+          return { x: pendingTail.x, y: pendingTail.y };
+        }
+        const lastInput = lastInputPosRef.current;
+        if (lastInput && Number.isFinite(lastInput.x) && Number.isFinite(lastInput.y)) {
+          return { x: lastInput.x, y: lastInput.y };
+        }
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        return pointerEventToCanvasPoint(canvas, nativeEvent);
       };
 
       if (isPanningRef.current) {
@@ -505,53 +642,150 @@ export function usePointerHandlers({
       }
 
       if (isStrokeTool(currentTool)) {
-        const tabletState = useTabletStore.getState();
-        const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
-        const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
-        const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
-          ? readPointBufferSince(nativeSeqCursorRef.current)
-          : { points: [], nextSeq: nativeSeqCursorRef.current };
-        if (shouldUseNativeBackend) {
-          nativeSeqCursorRef.current = nextSeq;
-        }
+        const finalizeToken = bumpPointerFinalizeToken();
+        const pointerId = nativeEvent.pointerId;
+        pointerupFinalizeInFlightRef.current = true;
 
-        for (const point of bufferedPoints) {
-          const phase = normalizeTracePhase(point.phase, 'move');
-          const seqSource: 'native' | 'fallback' = Number.isInteger(point.seq)
-            ? 'native'
-            : 'fallback';
-          recordKritaTailInputRaw({
-            seq: seqSource === 'native' ? point.seq : fallbackSeqRef.current++,
-            seqSource,
-            timestampMs: point.timestamp_ms,
-            x: point.x,
-            y: point.y,
-            pressureRaw: point.pressure,
-            phase,
-          });
-        }
+        const runPointerupFinalize = async (): Promise<void> => {
+          const tabletState = useTabletStore.getState();
+          const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
+          const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
+          const upSeqSnapshot = nativeSeqCursorRef.current;
+          let currentCursor = upSeqSnapshot;
+          let hasNativeTerminalPoint = false;
+          let reachedTerminalBoundary = false;
 
-        const hasNativeUpPoint = bufferedPoints.some((point) => point.phase === 'up');
-        if (!hasNativeUpPoint) {
-          withCanvasPoint((canvasX, canvasY) => {
-            recordKritaTailInputRaw({
-              seq: fallbackSeqRef.current++,
-              seqSource: 'fallback',
-              timestampMs: Number.isFinite(nativeEvent.timeStamp)
-                ? nativeEvent.timeStamp
-                : performance.now(),
-              x: canvasX,
-              y: canvasY,
-              pressureRaw: 0,
-              phase: 'up',
-            });
-          });
-        }
+          const consumeNativeTailPoints = (): void => {
+            if (reachedTerminalBoundary) {
+              return;
+            }
+            const { points, nextSeq } = readPointBufferSince(currentCursor);
+            const newPoints = points.filter(
+              (point) => Number.isInteger(point.seq) && point.seq > currentCursor
+            );
+            if (newPoints.length === 0) {
+              currentCursor = Math.max(currentCursor, nextSeq);
+              return;
+            }
+
+            let consumedTailSeq = currentCursor;
+            let consumedTerminalSeq: number | null = null;
+            for (const point of newPoints) {
+              const tailAnchorPoint = resolveFallbackUpCanvasPoint();
+              const isTerminalLikePoint =
+                point.phase === 'up' || point.phase === 'hover' || point.pressure <= 0;
+              const consumed = queueNativeSampleForStroke(
+                point,
+                nativeEvent,
+                shouldUseNativeBackend,
+                'move',
+                isTerminalLikePoint ? 'up' : undefined,
+                tailAnchorPoint
+              );
+              consumedTailSeq = point.seq;
+              if (consumed.phase === 'up') {
+                hasNativeTerminalPoint = true;
+                reachedTerminalBoundary = true;
+                consumedTerminalSeq = point.seq;
+                break;
+              }
+            }
+
+            if (consumedTerminalSeq !== null) {
+              currentCursor = Math.max(currentCursor, consumedTerminalSeq);
+            } else {
+              currentCursor = Math.max(currentCursor, consumedTailSeq, nextSeq);
+            }
+          };
+
+          if (shouldUseNativeBackend) {
+            consumeNativeTailPoints();
+
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              await new Promise<void>((resolve) => setTimeout(resolve, 4));
+              if (pointerUpFinalizeTokenRef.current !== finalizeToken) {
+                return;
+              }
+              consumeNativeTailPoints();
+            }
+            nativeSeqCursorRef.current = currentCursor;
+          }
+
+          if (pointerUpFinalizeTokenRef.current !== finalizeToken) {
+            return;
+          }
+
+          if (shouldUseNativeBackend && !hasNativeTerminalPoint) {
+            const fallback = resolvePointerupFallbackPressure(nativeEvent);
+            const fallbackPoint = resolveFallbackUpCanvasPoint();
+            if (fallbackPoint) {
+              const canvasX = fallbackPoint.x;
+              const canvasY = fallbackPoint.y;
+              const seq = fallbackSeqRef.current++;
+              const eventDerived = getEffectiveInputData(
+                nativeEvent,
+                false,
+                [],
+                useTabletStore.getState().currentPoint,
+                nativeEvent
+              );
+              const timestampMs =
+                Number.isFinite(nativeEvent.timeStamp) && nativeEvent.timeStamp >= 0
+                  ? nativeEvent.timeStamp
+                  : eventDerived.timestampMs;
+              recordKritaTailInputRaw({
+                seq,
+                seqSource: 'fallback',
+                timestampMs,
+                x: canvasX,
+                y: canvasY,
+                pressureRaw: fallback.pressure,
+                phase: 'up',
+              });
+
+              const pointIndex = pointIndexRef.current++;
+              latencyProfilerRef.current.markInputReceived(pointIndex, nativeEvent);
+              queueStrokePoint({
+                x: canvasX,
+                y: canvasY,
+                pressure: fallback.pressure,
+                tiltX: eventDerived.tiltX,
+                tiltY: eventDerived.tiltY,
+                rotation: eventDerived.rotation,
+                timestampMs,
+                pointIndex,
+                inputSeq: seq,
+                phase: 'up',
+                traceSource: 'pointerup_fallback',
+                fallbackPressurePolicy: fallback.policy,
+              });
+            }
+          }
+
+          if (pointerUpFinalizeTokenRef.current !== finalizeToken) {
+            return;
+          }
+          await finishCurrentStroke();
+        };
+
+        void (async () => {
+          try {
+            await runPointerupFinalize();
+          } finally {
+            if (pointerUpFinalizeTokenRef.current !== finalizeToken) {
+              return;
+            }
+            usingRawInput.current = false;
+            pointerupFinalizeInFlightRef.current = false;
+            endPointerSession(pointerId);
+          }
+        })();
+        return;
       }
 
       usingRawInput.current = false;
+      pointerupFinalizeInFlightRef.current = false;
       endPointerSession(nativeEvent.pointerId);
-      void finishCurrentStroke();
     },
     [
       setIsPanning,
@@ -560,10 +794,19 @@ export function usePointerHandlers({
       zoomStartRef,
       isSelectionToolActive,
       canvasRef,
+      inputQueueRef,
+      pendingPointsRef,
+      lastInputPosRef,
       handleSelectionPointerUp,
       currentTool,
       handleMovePointerUp,
       handleGradientPointerUp,
+      bumpPointerFinalizeToken,
+      queueNativeSampleForStroke,
+      resolvePointerupFallbackPressure,
+      pointIndexRef,
+      latencyProfilerRef,
+      queueStrokePoint,
       usingRawInput,
       finishCurrentStroke,
       endPointerSession,
@@ -580,15 +823,18 @@ export function usePointerHandlers({
       panStartRef.current = null;
     }
 
-    if (isZoomingRef.current) {
-      isZoomingRef.current = false;
-      zoomStartRef.current = null;
-    }
+      if (isZoomingRef.current) {
+        isZoomingRef.current = false;
+        zoomStartRef.current = null;
+      }
 
-    usingRawInput.current = false;
-    endPointerSession();
-    void finishCurrentStroke();
-  }, [
+      bumpPointerFinalizeToken();
+      usingRawInput.current = false;
+      pointerupFinalizeInFlightRef.current = false;
+      endPointerSession();
+      void finishCurrentStroke();
+    }, [
+    bumpPointerFinalizeToken,
     setIsPanning,
     panStartRef,
     isZoomingRef,
@@ -797,6 +1043,8 @@ export function usePointerHandlers({
         return;
       }
 
+      lastNonZeroPressureRef.current = null;
+      rememberNonZeroPressure(pressure);
       onBeforeCanvasMutation?.();
 
       isDrawingRef.current = true;
@@ -850,6 +1098,7 @@ export function usePointerHandlers({
       constrainShiftLinePoint,
       lastInputPosRef,
       beginPointerSession,
+      rememberNonZeroPressure,
       usingRawInput,
       onBeforeCanvasMutation,
       pointIndexRef,

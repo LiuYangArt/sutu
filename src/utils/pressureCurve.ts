@@ -7,7 +7,7 @@ export interface PressureCurveControlPoint {
 
 export type PressureCurvePreset = 'linear' | 'soft' | 'hard' | 'scurve';
 
-export const PRESSURE_CURVE_LUT_SIZE = 2048;
+export const PRESSURE_CURVE_LUT_SIZE = 1025;
 
 const MIN_POINTS = 2;
 const MIN_X_GAP = 1e-4;

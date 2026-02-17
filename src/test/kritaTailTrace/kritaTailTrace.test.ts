@@ -16,6 +16,7 @@ const baseMeta: KritaTailTraceMeta = {
     dpi: 72,
   },
   brushPreset: 'unit-brush',
+  inputBackend: 'windows_winink_pointer',
   runtimeFlags: {
     trajectorySmoothingEnabled: false,
     speedIsolationEnabled: true,
@@ -25,7 +26,7 @@ const baseMeta: KritaTailTraceMeta = {
     appCommit: 'test',
     kritaCommit: 'test',
     platform: 'unit',
-    inputBackend: 'pointer',
+    inputBackend: 'windows_winink_pointer',
   },
 };
 
@@ -127,6 +128,7 @@ function createTrace(strokeId: string): KritaTailTrace {
           spacingUsedPx: 3.6,
           timestampMs: 8,
           source: 'normal',
+          fallbackPressurePolicy: 'none',
         },
         {
           dabIndex: 1,
@@ -138,6 +140,7 @@ function createTrace(strokeId: string): KritaTailTrace {
           spacingUsedPx: 3.5,
           timestampMs: 24,
           source: 'pointerup_fallback',
+          fallbackPressurePolicy: 'last_nonzero',
         },
       ],
     },
