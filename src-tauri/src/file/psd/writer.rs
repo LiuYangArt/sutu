@@ -136,7 +136,7 @@ fn build_prepared_layer(
     let bottom = doc_height as i32;
     let right = doc_width as i32;
 
-    let channels = prepare_channels(img, doc_width, doc_height)?;
+    let channels = prepare_channels(&img, doc_width, doc_height)?;
 
     let flags = LayerFlags {
         visible,

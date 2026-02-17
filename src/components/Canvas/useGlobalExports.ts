@@ -12,7 +12,6 @@ import {
 import { useDocumentStore, type BlendMode, type ResizeCanvasOptions } from '@/stores/document';
 import { useViewportStore } from '@/stores/viewport';
 import { useSettingsStore } from '@/stores/settings';
-import { useTabletStore } from '@/stores/tablet';
 import { useToolStore, type ToolType, type PressureCurve, type BrushMaskType } from '@/stores/tool';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import { decompressLz4PrependSize } from '@/utils/lz4';
@@ -23,7 +22,6 @@ import {
   parseScatterSettings,
   parseTextureSettings,
 } from './replayContextParsers';
-import { isNativeTabletStreamingState } from './inputUtils';
 import type { M4ParityGateOptions, M4ParityGateResult } from '@/test/m4FeatureParityGate';
 import type {
   FixedCaptureSource,
@@ -31,16 +29,6 @@ import type {
   FixedStrokeCaptureSaveResult,
 } from '@/test/strokeCaptureFixedFile';
 import type { StrokeCaptureData, StrokeReplayOptions } from '@/test/StrokeCapture';
-import {
-  getLastKritaTailTrace,
-  startKritaTailTraceSession,
-  stopKritaTailTraceSession,
-} from '@/test/kritaTailTrace/collector';
-import type {
-  KritaTailInputBackend,
-  KritaTailTrace,
-  KritaTailTraceMeta,
-} from '@/test/kritaTailTrace/types';
 import { appDotStorageKey, appHyphenStorageKey } from '@/constants/appMeta';
 import type { StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
 import {
@@ -302,12 +290,6 @@ export function useGlobalExports({
         capture?: StrokeCaptureData | string,
         options?: StrokeReplayOptions
       ) => Promise<{ events: number; durationMs: number } | null>;
-      __kritaTailTraceStart?: (options?: {
-        strokeId?: string;
-        meta?: Partial<KritaTailTraceMeta>;
-      }) => KritaTailTrace;
-      __kritaTailTraceStop?: () => KritaTailTrace | null;
-      __kritaTailTraceLast?: () => KritaTailTrace | null;
       __strokeCaptureDownload?: (
         fileName?: string,
         capture?: StrokeCaptureData | string
@@ -325,92 +307,6 @@ export function useGlobalExports({
 
     const getFallbackPath = (source: FixedCaptureSource): string => {
       return source === 'appconfig' ? appConfigPath : localStoragePath;
-    };
-
-    const resolveKritaTailInputBackend = (): KritaTailInputBackend => {
-      const backendState = useTabletStore.getState();
-      const rawBackendName = backendState.activeBackend || backendState.backend || '';
-      const backendName = typeof rawBackendName === 'string' ? rawBackendName.toLowerCase() : '';
-      const platform =
-        typeof navigator !== 'undefined' && typeof navigator.platform === 'string'
-          ? navigator.platform.toLowerCase()
-          : '';
-      const isWindows = platform.includes('win');
-      const isMac = platform.includes('mac');
-
-      if (backendName === 'wintab' || backendName === 'win_tab') {
-        return 'windows_wintab';
-      }
-      if (backendName === 'macnative' || backendName === 'mac_native') {
-        return 'mac_native';
-      }
-      if (backendName === 'pointerevent' || backendName === 'pointer_event') {
-        if (isWindows) return 'windows_winink_pointer';
-        if (isMac) return 'mac_native';
-        return 'unknown';
-      }
-
-      if (isNativeTabletStreamingState(backendState)) {
-        if (isMac) return 'mac_native';
-        if (isWindows) return 'windows_wintab';
-      }
-      if (isWindows) return 'windows_winink_pointer';
-      if (isMac) return 'mac_native';
-      return 'unknown';
-    };
-
-    const buildDefaultKritaTailMeta = (): KritaTailTraceMeta => {
-      const docState = useDocumentStore.getState();
-      const toolState = useToolStore.getState();
-      const inputBackend = resolveKritaTailInputBackend();
-      return {
-        caseId: 'manual',
-        canvas: {
-          width: docState.width,
-          height: docState.height,
-          dpi: docState.dpi,
-        },
-        brushPreset: `${toolState.currentTool}-size-${Math.round(toolState.brushSize)}`,
-        inputBackend,
-        runtimeFlags: {
-          trajectorySmoothingEnabled: false,
-          speedIsolationEnabled: true,
-          pressureHeuristicsEnabled: false,
-          gpuNoReadbackPilotEnabled: false,
-        },
-        build: {
-          appCommit: 'unknown',
-          kritaCommit: 'baseline',
-          platform:
-            typeof navigator !== 'undefined' && typeof navigator.platform === 'string'
-              ? navigator.platform
-              : 'unknown',
-          inputBackend,
-        },
-      };
-    };
-
-    const mergeKritaTailMeta = (
-      baseMeta: KritaTailTraceMeta,
-      patch?: Partial<KritaTailTraceMeta>
-    ): KritaTailTraceMeta => {
-      if (!patch) return baseMeta;
-      return {
-        ...baseMeta,
-        ...patch,
-        canvas: {
-          ...baseMeta.canvas,
-          ...(patch.canvas ?? {}),
-        },
-        runtimeFlags: {
-          ...baseMeta.runtimeFlags,
-          ...(patch.runtimeFlags ?? {}),
-        },
-        build: {
-          ...baseMeta.build,
-          ...(patch.build ?? {}),
-        },
-      };
     };
 
     win.__canvasFillLayer = fillActiveLayer;
@@ -773,19 +669,6 @@ export function useGlobalExports({
     };
     win.__strokeCaptureLast = () => {
       return getLastStrokeCapture?.() ?? null;
-    };
-    win.__kritaTailTraceStart = (options) => {
-      const meta = mergeKritaTailMeta(buildDefaultKritaTailMeta(), options?.meta);
-      return startKritaTailTraceSession({
-        strokeId: options?.strokeId,
-        meta,
-      });
-    };
-    win.__kritaTailTraceStop = () => {
-      return stopKritaTailTraceSession();
-    };
-    win.__kritaTailTraceLast = () => {
-      return getLastKritaTailTrace();
     };
     win.__strokeCaptureReplay = async (capture, options) => {
       const resolvedCapture = parseStrokeCaptureInput(capture, getLastStrokeCapture?.() ?? null);
@@ -1302,9 +1185,6 @@ export function useGlobalExports({
       delete win.__strokeCaptureStart;
       delete win.__strokeCaptureStop;
       delete win.__strokeCaptureLast;
-      delete win.__kritaTailTraceStart;
-      delete win.__kritaTailTraceStop;
-      delete win.__kritaTailTraceLast;
       delete win.__strokeCaptureReplay;
       delete win.__strokeCaptureDownload;
       delete win.__strokeCaptureSaveFixed;

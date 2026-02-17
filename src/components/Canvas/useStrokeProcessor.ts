@@ -26,10 +26,6 @@ interface QueuedPoint {
   rotation: number;
   timestampMs: number;
   pointIndex: number;
-  inputSeq: number;
-  phase: 'down' | 'move' | 'up';
-  traceSource?: 'normal' | 'pointerup_fallback';
-  fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
 }
 
 interface DebugRect {
@@ -87,13 +83,7 @@ interface UseStrokeProcessorParams {
     config: BrushRenderConfig,
     pointIndex?: number,
     dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-    inputMeta?: {
-      timestampMs?: number;
-      inputSeq?: number;
-      phase?: 'down' | 'move' | 'up';
-      traceSource?: 'normal' | 'pointerup_fallback';
-      fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
-    }
+    inputMeta?: { timestampMs?: number }
   ) => void;
   endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -316,13 +306,7 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: {
-        timestampMs?: number;
-        inputSeq?: number;
-        phase?: 'down' | 'move' | 'up';
-        traceSource?: 'normal' | 'pointerup_fallback';
-        fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
-      }
+      inputMeta?: { timestampMs?: number }
     ) => {
       const constrained = constrainShiftLinePoint(x, y);
       const config = getBrushConfig();
@@ -367,13 +351,7 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: {
-        timestampMs?: number;
-        inputSeq?: number;
-        phase?: 'down' | 'move' | 'up';
-        traceSource?: 'normal' | 'pointerup_fallback';
-        fallbackPressurePolicy?: 'none' | 'last_nonzero' | 'event_raw' | 'zero';
-      }
+      inputMeta?: { timestampMs?: number }
     ) => {
       processSinglePoint(x, y, pressure, pointIndex, dynamics, inputMeta);
       // Mark that we need to render after processing
@@ -433,13 +411,7 @@ export function useStrokeProcessor({
                 tiltY: p.tiltY,
                 rotation: p.rotation,
               },
-              {
-                timestampMs: p.timestampMs,
-                inputSeq: p.inputSeq,
-                phase: p.phase,
-                traceSource: p.traceSource,
-                fallbackPressurePolicy: p.fallbackPressurePolicy,
-              }
+              { timestampMs: p.timestampMs }
             );
           }
 
@@ -541,6 +513,9 @@ export function useStrokeProcessor({
   // Internal stroke finishing logic (called after state machine validation)
   // Renamed to finalizeStroke for clarity
   const finalizeStroke = useCallback(async () => {
+    // Clear buffered native tablet samples between strokes.
+    clearPointBuffer();
+
     const isBrushStroke = isBrushStrokeState(strokeStateRef.current) || isStrokeActive();
 
     if (isBrushStroke) {
@@ -559,11 +534,7 @@ export function useStrokeProcessor({
               tiltY: p.tiltY,
               rotation: p.rotation,
             },
-            {
-              timestampMs: p.timestampMs,
-              inputSeq: p.inputSeq,
-              phase: p.phase,
-            }
+            { timestampMs: p.timestampMs }
           );
         }
         inputQueueRef.current = [];
@@ -609,9 +580,6 @@ export function useStrokeProcessor({
     pendingEndRef.current = false;
     lastRenderedPosRef.current = null;
     lastDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
-
-    // Clear buffered native tablet samples between strokes after finalize has consumed tail points.
-    clearPointBuffer();
     window.__strokeDiagnostics?.onStrokeEnd();
   }, [
     inputQueueRef,
@@ -727,13 +695,7 @@ export function useStrokeProcessor({
             tiltY: p.tiltY,
             rotation: p.rotation,
           },
-          {
-            timestampMs: p.timestampMs,
-            inputSeq: p.inputSeq,
-            phase: p.phase,
-            traceSource: p.traceSource,
-            fallbackPressurePolicy: p.fallbackPressurePolicy,
-          }
+          { timestampMs: p.timestampMs }
         );
         window.__strokeDiagnostics?.onPointBuffered();
       }

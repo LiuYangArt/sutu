@@ -1,8 +1,7 @@
 import { useEffect, useRef, MutableRefObject } from 'react';
-import { readPointBufferSince, useTabletStore, type InputPhase } from '@/stores/tablet';
+import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
 import { getEffectiveInputData, isNativeTabletStreamingState } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
-import { recordKritaTailInputRaw } from '@/test/kritaTailTrace/collector';
 
 /**
  * Q1 Optimization: Use pointerrawupdate event for lower-latency input.
@@ -26,16 +25,7 @@ type QueuedPoint = {
   rotation: number;
   timestampMs: number;
   pointIndex: number;
-  inputSeq: number;
-  phase: 'down' | 'move' | 'up';
 };
-
-function normalizeTracePhase(phase: InputPhase | undefined, fallback: 'down' | 'move' | 'up') {
-  if (phase === 'down' || phase === 'move' || phase === 'up') {
-    return phase;
-  }
-  return fallback;
-}
 
 interface RawPointerInputConfig {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -69,7 +59,6 @@ export function useRawPointerInput({
   // Track if we're using raw input (for diagnostics)
   const usingRawInputRef = useRef(false);
   const nativeSeqCursorRef = useRef(0);
-  const fallbackSeqRef = useRef(1);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -121,11 +110,6 @@ export function useRawPointerInput({
               bufferedPoints[bufferedPoints.length - 1] ??
               null)
             : null;
-        const inputSeq =
-          nativePoint && Number.isInteger(nativePoint.seq)
-            ? nativePoint.seq
-            : fallbackSeqRef.current++;
-        const phase = normalizeTracePhase(nativePoint?.phase, 'move');
         const { x: canvasX, y: canvasY } = clientToCanvasPoint(
           canvas,
           evt.clientX,
@@ -142,15 +126,6 @@ export function useRawPointerInput({
           pe,
           nativePoint
         );
-        recordKritaTailInputRaw({
-          seq: inputSeq,
-          seqSource: nativePoint && Number.isInteger(nativePoint.seq) ? 'native' : 'fallback',
-          timestampMs,
-          x: canvasX,
-          y: canvasY,
-          pressureRaw: pressure,
-          phase,
-        });
 
         const idx = pointIndexRef.current++;
         latencyProfiler.markInputReceived(idx, evt);
@@ -164,8 +139,6 @@ export function useRawPointerInput({
           rotation,
           timestampMs,
           pointIndex: idx,
-          inputSeq,
-          phase,
         };
 
         if (state === 'starting') {

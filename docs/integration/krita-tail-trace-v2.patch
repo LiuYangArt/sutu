@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sutu Team <dev@sutu.local>
+Date: Tue, 17 Feb 2026 00:00:00 +0800
+Subject: [PATCH] krita-tail-trace-v2 instrumentation hooks
+
+---
+ libs/ui/tool/kis_painting_information_builder.cpp | 24 ++++++++++++++++++++++++
+ libs/image/brushengine/kis_paintop_utils.h        | 21 +++++++++++++++++++++
+ libs/image/kis_distance_information.cpp            | 16 ++++++++++++++++
+ 3 files changed, 61 insertions(+)
+
+diff --git a/libs/ui/tool/kis_painting_information_builder.cpp b/libs/ui/tool/kis_painting_information_builder.cpp
+index 0000000..1111111 100644
+--- a/libs/ui/tool/kis_painting_information_builder.cpp
++++ b/libs/ui/tool/kis_painting_information_builder.cpp
+@@ -125,6 +125,30 @@ KisPaintInformation KisPaintingInformationBuilder::createPaintingInformation(...)
+     const qreal pressureAfterGlobalCurve = pressureCurve.apply(rawPressure);
+     const qreal pressureAfterBrushCurve = brushCurve.apply(pressureAfterGlobalCurve);
+     const qreal pressureAfterHeuristic = pressureAfterBrushCurve;
++
++    // krita-tail-trace-v2: pressure_mapped stage
++    KritaTailTrace::instance()->recordPressureMapped({
++        .seq = m_seq,
++        .pressureAfterGlobalCurve = pressureAfterGlobalCurve,
++        .pressureAfterBrushCurve = pressureAfterBrushCurve,
++        .pressureAfterHeuristic = pressureAfterHeuristic,
++        .speedPxPerMs = drawingSpeed,
++        .normalizedSpeed = normalizedDrawingSpeed,
++    });
++
++    // krita-tail-trace-v2: runtime flags required by strict semantic checks
++    KritaTailTrace::instance()->patchRuntimeFlags({
++        .legacyStartDistanceGateEnabled = false,
++        .legacyStartTransitionRampEnabled = false,
++        .legacyForceZeroInitialPressureEnabled = false,
++        .dynamicSpacingTimingUpdateEnabled = false,
++    });
++
++    // input_raw stage should already be exported at tablet event ingestion.
++    // if not available, record fallback source here:
++    // KritaTailTrace::instance()->recordInputRaw(..., "fallback");
++
+     return KisPaintInformation(...);
+ }
+
+diff --git a/libs/image/brushengine/kis_paintop_utils.h b/libs/image/brushengine/kis_paintop_utils.h
+index 0000000..1111111 100644
+--- a/libs/image/brushengine/kis_paintop_utils.h
++++ b/libs/image/brushengine/kis_paintop_utils.h
+@@ -65,6 +65,27 @@ inline void paintLine(...)
+     while (distanceInfo.getNextPointPosition(...)) {
+         const qreal t = distanceInfo.t();
++        // krita-tail-trace-v2: sampler_t stage
++        KritaTailTrace::instance()->recordSampler({
++            .segmentId = segmentId,
++            .segmentStartSeq = segmentStartSeq,
++            .segmentEndSeq = segmentEndSeq,
++            .sampleIndex = sampleIndex,
++            .t = t,
++            .triggerKind = distanceInfo.lastTriggerKind(),
++            .distanceCarryBefore = distanceInfo.distanceCarryBefore(),
++            .distanceCarryAfter = distanceInfo.distanceCarryAfter(),
++            .timeCarryBefore = distanceInfo.timeCarryBefore(),
++            .timeCarryAfter = distanceInfo.timeCarryAfter(),
++        });
++
+         KisPaintInformation pi = mix(from, to, t);
++
++        // krita-tail-trace-v2: dab_emit stage (sizePx is required by width profile metric)
++        KritaTailTrace::instance()->recordDabEmitBeforePaintAt(pi, segmentId, sampleIndex, {
++            .sizePx = currentDabSize(),
++        });
+         paintAt(pi);
++        KritaTailTrace::instance()->recordDabEmitAfterPaintAt(pi, segmentId, sampleIndex);
++        sampleIndex += 1;
+     }
+ }
+
+diff --git a/libs/image/kis_distance_information.cpp b/libs/image/kis_distance_information.cpp
+index 0000000..1111111 100644
+--- a/libs/image/kis_distance_information.cpp
++++ b/libs/image/kis_distance_information.cpp
+@@ -402,6 +402,22 @@ bool KisDistanceInformation::getNextPointPosition(...)
+     // existing trigger selection logic
++    // krita-tail-trace-v2 helper state for trigger/carry export
++    if (distanceTriggered && timeTriggered) {
++        m_lastTriggerKind = distanceT <= timeT ? "distance" : "time";
++    } else if (distanceTriggered) {
++        m_lastTriggerKind = "distance";
++    } else if (timeTriggered) {
++        m_lastTriggerKind = "time";
++    } else {
++        m_lastTriggerKind = "distance";
++    }
++
++    m_distanceCarryBefore = distanceCarryBefore;
++    m_distanceCarryAfter = distanceCarryAfter;
++    m_timeCarryBefore = timeCarryBefore;
++    m_timeCarryAfter = timeCarryAfter;
++
+     return triggered;
+ }
+--
+2.47.0

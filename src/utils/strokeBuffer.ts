@@ -25,11 +25,7 @@ import { calculateTextureInfluence } from './textureRendering';
 import { applyScatter } from './scatterDynamics';
 import { getNoisePattern, NOISE_PATTERN_ID } from './noiseTexture';
 import { BrushSpeedEstimator } from './brushSpeedEstimator';
-import {
-  SegmentSampler,
-  type SegmentSamplerDetailSample,
-  type SegmentSamplerTriggerKind,
-} from './freehand/segmentSampler';
+import { SegmentSampler } from './freehand/segmentSampler';
 import {
   KritaLikeFreehandSmoother,
   type FreehandPoint,
@@ -1337,13 +1333,8 @@ export interface BrushStamperInputOptions {
   timestampMs?: number;
   maxBrushSpeedPxPerMs?: number;
   brushSpeedSmoothingSamples?: number;
-  pressureEmaEnabled?: boolean;
-  pressureChangeSpacingBoostEnabled?: boolean;
-  lowPressureDensityBoostEnabled?: boolean;
   lowPressureAdaptiveSmoothingEnabled?: boolean;
   maxDabIntervalMs?: number;
-  traceSource?: BrushDabTraceSource;
-  fallbackPressurePolicy?: BrushDabFallbackPressurePolicy;
   /**
    * Isolate trajectory smoothing from the main pressure-tail path.
    * Default is off in this branch to avoid affecting current parity work.
@@ -1356,34 +1347,9 @@ export interface BrushDabPoint {
   y: number;
   pressure: number;
   timestampMs?: number;
-  traceSegmentId?: number;
-  traceSampleIndex?: number;
-  traceSource?: BrushDabTraceSource;
-  traceFallbackPressurePolicy?: BrushDabFallbackPressurePolicy;
-  traceSpacingUsedPx?: number;
 }
 
 interface InternalStrokePoint extends FreehandPoint {}
-
-export type BrushDabTraceSource = 'normal' | 'finalize' | 'pointerup_fallback';
-export type BrushDabFallbackPressurePolicy = 'none' | 'last_nonzero' | 'event_raw' | 'zero';
-
-export interface BrushSamplerTraceSample {
-  segmentId: number;
-  sampleIndex: number;
-  t: number;
-  triggerKind: SegmentSamplerTriggerKind;
-  distanceCarryBefore: number;
-  distanceCarryAfter: number;
-  timeCarryBefore: number;
-  timeCarryAfter: number;
-}
-
-export interface BrushStamperPointMetrics {
-  speedPxPerMs: number;
-  normalizedSpeed: number;
-  pressureAfterHeuristic: number;
-}
 
 export class BrushStamper {
   private lastPoint: InternalStrokePoint | null = null;
@@ -1401,13 +1367,6 @@ export class BrushStamper {
   private lastFinalizeDebugSnapshot: StrokeFinalizeDebugSnapshot | null = null;
   private readonly segmentSampler = new SegmentSampler();
   private readonly freehandSmoother = new KritaLikeFreehandSmoother();
-  private segmentIdCounter = 0;
-  private lastSamplerTrace: BrushSamplerTraceSample[] = [];
-  private lastPointMetrics: BrushStamperPointMetrics = {
-    speedPxPerMs: 0,
-    normalizedSpeed: 0,
-    pressureAfterHeuristic: 0,
-  };
 
   private static readonly MIN_MOVEMENT_DISTANCE = 3;
   private static readonly PRESSURE_SMOOTHING = 0.35;
@@ -1419,33 +1378,14 @@ export class BrushStamper {
     return options.trajectorySmoothingEnabled === true;
   }
 
-  private static isPressureEmaEnabled(options: BrushStamperInputOptions): boolean {
-    return options.pressureEmaEnabled !== false;
-  }
-
-  private static isPressureChangeSpacingBoostEnabled(options: BrushStamperInputOptions): boolean {
-    return options.pressureChangeSpacingBoostEnabled !== false;
-  }
-
-  private static isLowPressureDensityBoostEnabled(options: BrushStamperInputOptions): boolean {
-    return options.lowPressureDensityBoostEnabled !== false;
-  }
-
-  private static resolveTraceSource(options: BrushStamperInputOptions): BrushDabTraceSource {
-    return options.traceSource ?? 'normal';
-  }
-
-  private static resolveFallbackPressurePolicy(
-    source: BrushDabTraceSource,
-    options: BrushStamperInputOptions
-  ): BrushDabFallbackPressurePolicy {
-    if (source !== 'pointerup_fallback') return 'none';
-    return options.fallbackPressurePolicy ?? 'zero';
-  }
-
   private static clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, value));
+  }
+
+  private static smoothstep01(value: number): number {
+    const t = BrushStamper.clamp01(value);
+    return t * t * (3 - 2 * t);
   }
 
   private static clampInt(value: number, min: number, max: number): number {
@@ -1478,71 +1418,9 @@ export class BrushStamper {
     this.lastFinalizeDebugSnapshot = null;
     this.segmentSampler.reset();
     this.freehandSmoother.reset();
-    this.segmentIdCounter = 0;
-    this.lastSamplerTrace = [];
-    this.lastPointMetrics = {
-      speedPxPerMs: 0,
-      normalizedSpeed: 0,
-      pressureAfterHeuristic: 0,
-    };
-  }
-
-  private capturePointMetrics(pressureAfterHeuristic: number): void {
-    this.lastPointMetrics = {
-      speedPxPerMs: this.lastSpeedPxPerMs,
-      normalizedSpeed: BrushStamper.clamp01(this.lastNormalizedSpeed),
-      pressureAfterHeuristic: BrushStamper.clamp01(pressureAfterHeuristic),
-    };
-  }
-
-  private nextSegmentId(): number {
-    const id = this.segmentIdCounter;
-    this.segmentIdCounter += 1;
-    return id;
-  }
-
-  private createTraceMeta(
-    segmentId: number,
-    sampleIndex: number,
-    spacingUsedPx: number,
-    source: BrushDabTraceSource,
-    fallbackPressurePolicy: BrushDabFallbackPressurePolicy
-  ): Pick<
-    BrushDabPoint,
-    | 'traceSegmentId'
-    | 'traceSampleIndex'
-    | 'traceSource'
-    | 'traceFallbackPressurePolicy'
-    | 'traceSpacingUsedPx'
-  > {
-    return {
-      traceSegmentId: segmentId,
-      traceSampleIndex: sampleIndex,
-      traceSource: source,
-      traceFallbackPressurePolicy: fallbackPressurePolicy,
-      traceSpacingUsedPx: Math.max(0.5, spacingUsedPx),
-    };
-  }
-
-  private pushSamplerTrace(segmentId: number, sample: SegmentSamplerDetailSample): void {
-    this.lastSamplerTrace.push({
-      segmentId,
-      sampleIndex: sample.sampleIndex,
-      t: sample.t,
-      triggerKind: sample.triggerKind,
-      distanceCarryBefore: sample.distanceCarryBefore,
-      distanceCarryAfter: sample.distanceCarryAfter,
-      timeCarryBefore: sample.timeCarryBefore,
-      timeCarryAfter: sample.timeCarryAfter,
-    });
   }
 
   private smoothPressure(rawPressure: number, options: BrushStamperInputOptions): number {
-    if (!BrushStamper.isPressureEmaEnabled(options)) {
-      this.smoothedPressure = rawPressure;
-      return rawPressure;
-    }
-
     const normalizedSpeed = this.lastNormalizedSpeed;
     let smoothingAlpha = BrushStamper.PRESSURE_SMOOTHING;
 
@@ -1617,61 +1495,36 @@ export class BrushStamper {
     targetPressure: number,
     spacingPx: number,
     fromTimestampMs: number,
-    toTimestampMs: number,
-    source: BrushDabTraceSource = 'normal',
-    fallbackPressurePolicy: BrushDabFallbackPressurePolicy = 'none'
+    toTimestampMs: number
   ): void {
     const dx = toX - fromX;
     const dy = toY - fromY;
     const distance = Math.hypot(dx, dy);
-    const segmentId = this.nextSegmentId();
-    const spacingForTrace = Math.max(0.5, spacingPx);
     if (distance <= 1e-6) {
       const pressure = BrushStamper.clamp01(targetPressure);
-      dabs.push({
-        x: toX,
-        y: toY,
-        pressure,
-        timestampMs: toTimestampMs,
-        ...this.createTraceMeta(segmentId, 0, spacingForTrace, source, fallbackPressurePolicy),
-      });
+      dabs.push({ x: toX, y: toY, pressure, timestampMs: toTimestampMs });
       return;
     }
 
     const stepSpacing = Math.max(0.5, Math.min(1.5, spacingPx * 0.55));
     const rampLengthPx = Math.max(BrushStamper.MIN_MOVEMENT_DISTANCE * 1.35, stepSpacing * 3.2);
     let traveled = Math.min(distance, Math.max(0.1, stepSpacing * 0.3));
-    let sampleIndex = 0;
 
     while (traveled < distance) {
       const t = BrushStamper.clamp01(traveled / distance);
       const rampT = BrushStamper.clamp01(traveled / rampLengthPx);
-      const pressure = BrushStamper.clamp01(targetPressure * rampT);
+      const pressure = BrushStamper.clamp01(targetPressure * BrushStamper.smoothstep01(rampT));
       dabs.push({
         x: fromX + dx * t,
         y: fromY + dy * t,
         pressure,
         timestampMs: fromTimestampMs + (toTimestampMs - fromTimestampMs) * t,
-        ...this.createTraceMeta(
-          segmentId,
-          sampleIndex,
-          stepSpacing,
-          source,
-          fallbackPressurePolicy
-        ),
       });
       traveled += stepSpacing;
-      sampleIndex += 1;
     }
 
     const finalPressure = BrushStamper.clamp01(targetPressure);
-    dabs.push({
-      x: toX,
-      y: toY,
-      pressure: finalPressure,
-      timestampMs: toTimestampMs,
-      ...this.createTraceMeta(segmentId, sampleIndex, stepSpacing, source, fallbackPressurePolicy),
-    });
+    dabs.push({ x: toX, y: toY, pressure: finalPressure, timestampMs: toTimestampMs });
   }
 
   private emitSegmentDabs(
@@ -1679,9 +1532,7 @@ export class BrushStamper {
     from: InternalStrokePoint,
     to: InternalStrokePoint,
     spacingPx: number,
-    options: BrushStamperInputOptions,
-    source: BrushDabTraceSource = 'normal',
-    fallbackPressurePolicy: BrushDabFallbackPressurePolicy = 'none'
+    options: BrushStamperInputOptions
   ): void {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
@@ -1696,29 +1547,20 @@ export class BrushStamper {
       1,
       options.maxDabIntervalMs ?? BrushStamper.DEFAULT_MAX_DAB_INTERVAL_MS
     );
-    const segmentId = this.nextSegmentId();
-    const result = this.segmentSampler.sampleSegmentDetailed({
+    const samples = this.segmentSampler.sampleSegment({
       distancePx: distance,
       durationMs,
       spacingPx: safeSpacing,
       maxIntervalMs,
     });
 
-    for (const sample of result.samples) {
-      this.pushSamplerTrace(segmentId, sample);
-      const t = sample.t;
+    for (const t of samples) {
+      const smoothT = t * t * (3 - 2 * t);
       dabs.push({
         x: from.x + dx * t,
         y: from.y + dy * t,
-        pressure: from.pressure + (to.pressure - from.pressure) * t,
+        pressure: from.pressure + (to.pressure - from.pressure) * smoothT,
         timestampMs: from.timestampMs + (to.timestampMs - from.timestampMs) * t,
-        ...this.createTraceMeta(
-          segmentId,
-          sample.sampleIndex,
-          safeSpacing,
-          source,
-          fallbackPressurePolicy
-        ),
       });
     }
   }
@@ -1732,9 +1574,6 @@ export class BrushStamper {
     options: BrushStamperInputOptions = {}
   ): BrushDabPoint[] {
     const dabs: BrushDabPoint[] = [];
-    this.lastSamplerTrace = [];
-    const traceSource = BrushStamper.resolveTraceSource(options);
-    const fallbackPressurePolicy = BrushStamper.resolveFallbackPressurePolicy(traceSource, options);
     const timestampMs = BrushStamper.resolveTimestampMs(options.timestampMs);
     const smoothingSamples = BrushStamper.clampInt(options.brushSpeedSmoothingSamples ?? 3, 3, 100);
     const speedPxPerMs = this.speedEstimator.getNextSpeedPxPerMs(x, y, timestampMs, {
@@ -1754,20 +1593,7 @@ export class BrushStamper {
         this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
         this.lastPoint = { x, y, pressure, timestampMs };
-        const segmentId = this.nextSegmentId();
-        dabs.push({
-          x,
-          y,
-          pressure,
-          timestampMs,
-          ...this.createTraceMeta(
-            segmentId,
-            0,
-            Math.max(0.5, spacingPx),
-            traceSource,
-            fallbackPressurePolicy
-          ),
-        });
+        dabs.push({ x, y, pressure, timestampMs });
         if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
           this.freehandSmoother.reset();
           this.freehandSmoother.processPoint(this.lastPoint);
@@ -1775,7 +1601,6 @@ export class BrushStamper {
       } else {
         this.lastPoint = { x, y, pressure: 0, timestampMs };
       }
-      this.capturePointMetrics(this.lastPoint.pressure);
       return dabs;
     }
 
@@ -1788,26 +1613,12 @@ export class BrushStamper {
         this.hasMovedEnough = true;
         this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
-        const segmentId = this.nextSegmentId();
-        dabs.push({
-          x,
-          y,
-          pressure,
-          timestampMs,
-          ...this.createTraceMeta(
-            segmentId,
-            0,
-            Math.max(0.5, spacingPx),
-            traceSource,
-            fallbackPressurePolicy
-          ),
-        });
+        dabs.push({ x, y, pressure, timestampMs });
         if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
           this.freehandSmoother.reset();
           this.freehandSmoother.processPoint(this.lastPoint);
         }
       }
-      this.capturePointMetrics(this.lastPoint.pressure);
       return dabs;
     }
 
@@ -1817,25 +1628,11 @@ export class BrushStamper {
         this.clearStrokeStartSamples();
         this.smoothedPressure = pressure;
         this.lastPoint = { x, y, pressure, timestampMs };
-        const segmentId = this.nextSegmentId();
-        dabs.push({
-          x,
-          y,
-          pressure,
-          timestampMs,
-          ...this.createTraceMeta(
-            segmentId,
-            0,
-            Math.max(0.5, spacingPx),
-            traceSource,
-            fallbackPressurePolicy
-          ),
-        });
+        dabs.push({ x, y, pressure, timestampMs });
         if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
           this.freehandSmoother.reset();
           this.freehandSmoother.processPoint(this.lastPoint);
         }
-        this.capturePointMetrics(pressure);
         return dabs;
       }
 
@@ -1849,7 +1646,6 @@ export class BrushStamper {
         this.lastPoint.x = x;
         this.lastPoint.y = y;
         this.lastPoint.timestampMs = timestampMs;
-        this.capturePointMetrics(this.lastPoint.pressure);
         return dabs;
       }
 
@@ -1869,9 +1665,7 @@ export class BrushStamper {
         pressure,
         spacingPx,
         this.lastPoint.timestampMs,
-        timestampMs,
-        traceSource,
-        fallbackPressurePolicy
+        timestampMs
       );
       const finalDab = dabs[dabs.length - 1];
       this.lastPoint = finalDab
@@ -1880,7 +1674,6 @@ export class BrushStamper {
       if (BrushStamper.isTrajectorySmoothingEnabled(options)) {
         this.freehandSmoother.processPoint(this.lastPoint);
       }
-      this.capturePointMetrics(pressure);
       return dabs;
     }
 
@@ -1892,35 +1685,18 @@ export class BrushStamper {
 
     if (distance < 1e-6) {
       if (buildupEnabled) {
-        const segmentId = this.nextSegmentId();
-        dabs.push({
-          x,
-          y,
-          pressure: smoothedPressure,
-          timestampMs,
-          ...this.createTraceMeta(
-            segmentId,
-            0,
-            Math.max(0.5, spacingPx),
-            traceSource,
-            fallbackPressurePolicy
-          ),
-        });
+        dabs.push({ x, y, pressure: smoothedPressure, timestampMs });
       }
       this.lastPoint = currentPoint;
-      this.capturePointMetrics(smoothedPressure);
       return dabs;
     }
 
     const pressureChange = Math.abs(smoothedPressure - this.lastPoint.pressure);
     let effectiveSpacing = spacingPx;
-    if (
-      BrushStamper.isPressureChangeSpacingBoostEnabled(options) &&
-      pressureChange > BrushStamper.PRESSURE_CHANGE_THRESHOLD
-    ) {
+    if (pressureChange > BrushStamper.PRESSURE_CHANGE_THRESHOLD) {
       effectiveSpacing = spacingPx * 0.5;
     }
-    if (BrushStamper.isLowPressureDensityBoostEnabled(options)) {
+    if (options.lowPressureAdaptiveSmoothingEnabled !== false) {
       const lowPressureFactor = BrushStamper.clamp01(
         (BrushStamper.LOW_PRESSURE_THRESHOLD - smoothedPressure) /
           BrushStamper.LOW_PRESSURE_THRESHOLD
@@ -1937,15 +1713,7 @@ export class BrushStamper {
       ? this.freehandSmoother.processPoint(currentPoint)
       : [];
     if (!trajectorySmoothingEnabled || smoothedSegments.length === 0) {
-      this.emitSegmentDabs(
-        dabs,
-        this.lastPoint,
-        currentPoint,
-        safeSpacing,
-        options,
-        traceSource,
-        fallbackPressurePolicy
-      );
+      this.emitSegmentDabs(dabs, this.lastPoint, currentPoint, safeSpacing, options);
     } else {
       for (const segment of smoothedSegments) {
         this.emitSegmentDabs(
@@ -1953,20 +1721,16 @@ export class BrushStamper {
           this.toInternalPoint(segment.from, currentPoint.timestampMs),
           this.toInternalPoint(segment.to, currentPoint.timestampMs),
           safeSpacing,
-          options,
-          traceSource,
-          fallbackPressurePolicy
+          options
         );
       }
     }
 
     this.lastPoint = currentPoint;
-    this.capturePointMetrics(smoothedPressure);
     return dabs;
   }
 
   finishStroke(spacingPx: number, options: BrushStamperInputOptions = {}): BrushDabPoint[] {
-    this.lastSamplerTrace = [];
     if (!this.lastPoint) {
       const carry = this.segmentSampler.getCarryState();
       const snapshot: StrokeFinalizeDebugSnapshot = {
@@ -2019,7 +1783,7 @@ export class BrushStamper {
     const dabs: BrushDabPoint[] = [];
     const from = this.toInternalPoint(finalSegment.from, this.lastPoint.timestampMs);
     const to = this.toInternalPoint(finalSegment.to, this.lastPoint.timestampMs);
-    this.emitSegmentDabs(dabs, from, to, Math.max(0.5, spacingPx), options, 'finalize', 'none');
+    this.emitSegmentDabs(dabs, from, to, Math.max(0.5, spacingPx), options);
 
     const carry = this.segmentSampler.getCarryState();
     const finalDistance = Math.hypot(to.x - from.x, to.y - from.y);
@@ -2036,20 +1800,6 @@ export class BrushStamper {
     this.beginStroke();
     this.lastFinalizeDebugSnapshot = snapshot;
     return dabs;
-  }
-
-  getLastPointMetrics(): BrushStamperPointMetrics {
-    return {
-      speedPxPerMs: this.lastPointMetrics.speedPxPerMs,
-      normalizedSpeed: this.lastPointMetrics.normalizedSpeed,
-      pressureAfterHeuristic: this.lastPointMetrics.pressureAfterHeuristic,
-    };
-  }
-
-  consumeSamplerTrace(): BrushSamplerTraceSample[] {
-    const snapshot = this.lastSamplerTrace.map((item) => ({ ...item }));
-    this.lastSamplerTrace = [];
-    return snapshot;
   }
 
   getStrokeFinalizeDebugSnapshot(): StrokeFinalizeDebugSnapshot | null {

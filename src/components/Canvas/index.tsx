@@ -43,7 +43,6 @@ import type {
   StrokeCaptureData,
   StrokeReplayOptions,
 } from '@/test/StrokeCapture';
-import type { KritaTailTrace, KritaTailTraceMeta } from '@/test/kritaTailTrace/types';
 import type {
   FixedStrokeCaptureLoadResult,
   FixedStrokeCaptureSaveResult,
@@ -192,12 +191,6 @@ declare global {
       capture?: StrokeCaptureData | string,
       options?: StrokeReplayOptions
     ) => Promise<{ events: number; durationMs: number } | null>;
-    __kritaTailTraceStart?: (options?: {
-      strokeId?: string;
-      meta?: Partial<KritaTailTraceMeta>;
-    }) => KritaTailTrace;
-    __kritaTailTraceStop?: () => KritaTailTrace | null;
-    __kritaTailTraceLast?: () => KritaTailTrace | null;
     __strokeCaptureDownload?: (fileName?: string, capture?: StrokeCaptureData | string) => boolean;
     __strokeCaptureSaveFixed?: (
       capture?: StrokeCaptureData | string
@@ -251,8 +244,6 @@ type QueuedPoint = {
   rotation: number;
   timestampMs: number;
   pointIndex: number;
-  inputSeq: number;
-  phase: 'down' | 'move' | 'up';
 };
 
 const GPU_TILE_SIZE = 512;

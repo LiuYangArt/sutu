@@ -141,7 +141,7 @@ const server = http.createServer((req, res) => {
 
 await new Promise((resolve, reject) => {
   server.once('error', reject);
-  server.listen(0, 'localhost', resolve);
+  server.listen(0, '127.0.0.1', resolve);
 });
 
 const address = server.address();
@@ -149,7 +149,7 @@ if (!address || typeof address === 'string') {
   throw new Error('Failed to get local server address');
 }
 const port = address.port;
-const textureUrl = `http://localhost:${port}/${toPosix(textureRel)}`;
+const textureUrl = `http://127.0.0.1:${port}/${toPosix(textureRel)}`;
 
 const browser = await chromium.launch({ headless: true });
 try {
@@ -159,7 +159,7 @@ try {
       height: Math.min(canvasHeight + 32, 8192),
     },
   });
-  await page.goto(`http://localhost:${port}/__blank`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`http://127.0.0.1:${port}/__blank`, { waitUntil: 'domcontentloaded' });
 
   await page.evaluate(
     async ({

@@ -24,8 +24,6 @@
     "test:coverage": "vitest run --coverage",
     "issue:triage": "node scripts/issue-triage.mjs",
     "task:today": "node scripts/local-daily-priority.mjs",
-    "gate:krita-tail": "node scripts/debug/gate-krita-tail.mjs --url http://localhost:1420/",
-    "gate:krita-tail:calibrate": "node scripts/debug/calibrate-krita-tail-thresholds.mjs --url http://localhost:1420/ --rounds 10",
     "prepare": "husky",
     "version": "node scripts/sync-version.mjs && node scripts/sync-app-meta.mjs && git add app.meta.json package.json index.html src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/capabilities/default.json src/constants/appMeta.ts src-tauri/src/app_meta.rs"
   },

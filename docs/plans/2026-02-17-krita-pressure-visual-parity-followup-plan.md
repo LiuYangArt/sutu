@@ -1,11 +1,12 @@
 # Krita 压感视觉一致性后续计划（Pressure-Only 严格一致专项）
 
 **日期**：2026-02-17  
-**状态**：执行中（5A/5B 已落地，strict 数值收口未完成）  
+**状态**：已终止并回退（回退基线：`667152f`，仅保留文档）  
 **关联文档**：
 - `docs/plans/2026-02-17-krita-pressure-tail-parity-plan.md`
 - `docs/research/2026-02-17-krita-pressure-chain-analysis-no-trajectory-smoothing.md`
 - `docs/testing/krita-tail-gate.md`
+- `docs/postmortem/2026-02-17-krita-pressure-visual-parity-rollback.md`
 
 ---
 
