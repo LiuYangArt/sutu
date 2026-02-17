@@ -16,6 +16,8 @@ import { useI18nStore } from '@/stores/i18n';
 import { useTabletStore, BackendType, InputBackpressureMode, TabletStatus } from '@/stores/tablet';
 import { detectPlatformKind } from '@/utils/platform';
 import { formatTabletFallbackReason } from '@/utils/tabletFallback';
+import { PressureCurveEditor } from './PressureCurveEditor';
+import { getPressureCurvePresetPoints } from '@/utils/pressureCurve';
 import './SettingsPanel.css';
 
 // Tab configuration
@@ -437,6 +439,8 @@ function TabletSettings() {
     setPollingRate,
     setAutoStart,
     setPressureCurve,
+    setPressureCurvePoints,
+    setLowPressureAdaptiveSmoothingEnabled,
     setBackpressureMode,
   } = useSettingsStore();
 
@@ -495,6 +499,11 @@ function TabletSettings() {
     pollingRate: tablet.pollingRate,
     pressureCurve: tablet.pressureCurve,
     backpressureMode: tablet.backpressureMode,
+  };
+
+  const applyPressureCurvePreset = (preset: 'linear' | 'soft' | 'hard' | 'scurve') => {
+    setPressureCurve(preset);
+    setPressureCurvePoints(getPressureCurvePresetPoints(preset));
   };
 
   const handleInit = async () => {
@@ -653,21 +662,51 @@ function TabletSettings() {
 
       <div className="settings-section">
         <label className="settings-label">{t('settings.tablet.pressureCurve.title')}</label>
+        <div className="pressure-curve-section">
+          <PressureCurveEditor
+            points={tablet.pressureCurvePoints}
+            onChange={setPressureCurvePoints}
+          />
+          <div className="pressure-curve-labels">
+            <span>{t('settings.tablet.pressureCurve.lowPressure')}</span>
+            <span>{t('settings.tablet.pressureCurve.highPressure')}</span>
+          </div>
+          <div className="pressure-curve-preset-row">
+            <span>{t('settings.tablet.pressureCurve.preset')}</span>
+            <div className="settings-actions">
+              {PRESSURE_CURVE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  className="settings-btn"
+                  onClick={() => applyPressureCurvePreset(option.value)}
+                >
+                  {t(option.labelKey)}
+                </button>
+              ))}
+              <button className="settings-btn" onClick={() => applyPressureCurvePreset('linear')}>
+                {t('settings.tablet.pressureCurve.reset')}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Speed controls are hidden while pressure-tail parity mode is active. */}
+
+      <div className="settings-section">
+        <label className="settings-label">{t('settings.tablet.dynamics.title')}</label>
         <div className="settings-row">
-          <span>{t('settings.tablet.pressureCurve.curve')}</span>
-          <select
-            className="settings-select"
-            value={tablet.pressureCurve}
-            onChange={(e) =>
-              setPressureCurve(e.target.value as 'linear' | 'soft' | 'hard' | 'scurve')
-            }
-          >
-            {PRESSURE_CURVE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {t(option.labelKey)}
-              </option>
-            ))}
-          </select>
+          <span className="settings-description">
+            {t('settings.tablet.dynamics.lowPressureAdaptiveSmoothing')}
+          </span>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={tablet.lowPressureAdaptiveSmoothingEnabled}
+              onChange={(e) => setLowPressureAdaptiveSmoothingEnabled(e.target.checked)}
+            />
+            <span className="toggle-slider" />
+          </label>
         </div>
       </div>
 

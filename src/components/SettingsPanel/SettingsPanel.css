@@ -410,3 +410,142 @@
   background: var(--danger-hover);
   border-color: var(--danger-hover);
 }
+
+.pressure-curve-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pressure-curve-editor {
+  width: 256px;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  max-width: 100%;
+  align-self: flex-start;
+  display: block;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: #2f3032;
+}
+
+.pressure-curve-editor__bg {
+  fill: #3b3c3f;
+}
+
+.pressure-curve-editor__grid {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+}
+
+.pressure-curve-editor__baseline {
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1;
+}
+
+.pressure-curve-editor__curve {
+  fill: none;
+  stroke: #f2f2f2;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pressure-curve-editor__point {
+  fill: #161616;
+  stroke: #f1f1f1;
+  stroke-width: 1.2;
+}
+
+.pressure-curve-editor__point--selected {
+  fill: #ffffff;
+  stroke: #111111;
+}
+
+.pressure-curve-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pressure-curve-preset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pressure-curve-preset-row .settings-actions {
+  flex-wrap: wrap;
+}
+
+.settings-slider-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.settings-slider-control {
+  width: 100%;
+  height: 4px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--divider);
+  border-radius: var(--radius-full);
+  accent-color: var(--accent);
+}
+
+.settings-slider-control::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--divider);
+  border-radius: var(--radius-full);
+}
+
+.settings-slider-control::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.settings-slider-control::-moz-range-track {
+  height: 4px;
+  background: var(--divider);
+  border-radius: var(--radius-full);
+}
+
+.settings-slider-control::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.settings-slider-control:hover::-webkit-slider-thumb {
+  filter: brightness(1.05);
+}
+
+.settings-slider-control:hover::-moz-range-thumb {
+  filter: brightness(1.05);
+}

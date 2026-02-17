@@ -17,6 +17,26 @@ function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+function resolvePointerTimestampMs(evt: PointerEvent): number {
+  if (Number.isFinite(evt.timeStamp) && evt.timeStamp >= 0) {
+    return evt.timeStamp;
+  }
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function resolveNativeTimestampMs(
+  point: RawInputPoint | null | undefined,
+  fallbackTimestampMs: number
+): number {
+  if (point && Number.isFinite(point.timestamp_ms) && point.timestamp_ms >= 0) {
+    return point.timestamp_ms;
+  }
+  return fallbackTimestampMs;
+}
+
 function getWebKitPressure(evt: PointerEvent): number | null {
   const webkitEvt = evt as WebKitPointerEvent;
   const force = webkitEvt.webkitForce;
@@ -185,10 +205,12 @@ export function getEffectiveInputData(
   isNativeBackendActive: boolean,
   bufferedPoints: RawInputPoint[],
   currentPoint: RawInputPoint | null,
-  fallbackEvent?: PointerEvent
-): { pressure: number; tiltX: number; tiltY: number; rotation: number } {
+  fallbackEvent?: PointerEvent,
+  preferredNativePoint?: RawInputPoint | null
+): { pressure: number; tiltX: number; tiltY: number; rotation: number; timestampMs: number } {
   const pointerOrientation = resolvePointerOrientation(evt, fallbackEvent);
   const pointerPressure = resolvePointerPressure(evt, fallbackEvent);
+  const pointerTimestampMs = resolvePointerTimestampMs(evt);
 
   if (!isNativeBackendActive) {
     return {
@@ -196,12 +218,23 @@ export function getEffectiveInputData(
       tiltX: pointerOrientation.tiltX,
       tiltY: pointerOrientation.tiltY,
       rotation: pointerOrientation.rotation,
+      timestampMs: pointerTimestampMs,
     };
   }
 
   // Note: Native backend timestamps are not guaranteed to share a time origin with
   // PointerEvent.timeStamp, so we avoid time-based matching here.
-  // Use the most recent native sample we have for this event batch.
+  // Prefer the caller-provided sample for this event, then fallback to batch tail.
+  if (preferredNativePoint) {
+    return {
+      pressure: preferredNativePoint.pressure,
+      tiltX: normalizeTiltComponent(preferredNativePoint.tilt_x),
+      tiltY: normalizeTiltComponent(preferredNativePoint.tilt_y),
+      rotation: resolveTabletRotation(preferredNativePoint, pointerOrientation.rotation),
+      timestampMs: resolveNativeTimestampMs(preferredNativePoint, pointerTimestampMs),
+    };
+  }
+
   if (bufferedPoints.length > 0) {
     const pt = bufferedPoints[bufferedPoints.length - 1]!;
     return {
@@ -209,6 +242,7 @@ export function getEffectiveInputData(
       tiltX: normalizeTiltComponent(pt.tilt_x),
       tiltY: normalizeTiltComponent(pt.tilt_y),
       rotation: resolveTabletRotation(pt, pointerOrientation.rotation),
+      timestampMs: resolveNativeTimestampMs(pt, pointerTimestampMs),
     };
   }
 
@@ -219,6 +253,7 @@ export function getEffectiveInputData(
       tiltX: normalizeTiltComponent(currentPoint.tilt_x),
       tiltY: normalizeTiltComponent(currentPoint.tilt_y),
       rotation: resolveTabletRotation(currentPoint, pointerOrientation.rotation),
+      timestampMs: resolveNativeTimestampMs(currentPoint, pointerTimestampMs),
     };
   }
 
@@ -230,5 +265,6 @@ export function getEffectiveInputData(
     tiltX: pointerOrientation.tiltX,
     tiltY: pointerOrientation.tiltY,
     rotation: pointerOrientation.rotation,
+    timestampMs: pointerTimestampMs,
   };
 }

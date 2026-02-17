@@ -187,3 +187,223 @@ private smoothPressure(rawPressure: number): number {
 | `src/utils/strokeBuffer.ts` | StrokeAccumulator (dab 渲染)、BrushStamper (点位生成) |
 | `src/components/Canvas/useBrushRenderer.ts` | 笔刷渲染管线 |
 | `src/components/Canvas/index.tsx` | 画布事件处理 |
+
+---
+
+## 2026-02-16 补充复盘：#146 计划执行偏差与阻塞优先级
+
+### 背景
+
+本轮 #146 明确要求两件关键事同时成立：
+
+1. Tail taper 在实际绘制链路中稳定生效（含 WinTab）
+2. Tablet 压感曲线编辑器复用 CurvesPanel 的成熟交互内核，而不是再写一套
+
+用户实测反馈显示两点都未达到预期，说明“实现了功能片段”但“没有完成计划定义的收敛目标”。
+
+### 偏差点（事实）
+
+1. **曲线编辑器复用目标未达成**
+   - 计划要求：从 `CurvesPanel` 抽离纯交互编辑层并复用。
+   - 实际：`SettingsPanel` 使用独立的 `PressureCurveEditor` 实现，行为与 `CurvesPanel` 有细节漂移。
+   - 影响：加点/删点/拖拽手感不一致，维护成本翻倍，后续修复需要双处改动。
+
+2. **Tail taper 在 GPU 主路径存在生效缺口**
+   - tail 注入逻辑位于 `useBrushRenderer.endStroke()`。
+   - 但 GPU 收笔主路径通过 `commitStrokeGpu()` 提交，未统一经过上述 tail 注入流程。
+   - 影响：CPU/GPU 行为不一致，用户在主路径下容易感知“尾端还是钝的”。
+
+3. **tail 压感映射链路与主笔划不完全一致**
+   - 主笔划点使用全局 pressure LUT + 笔刷 pressure curve。
+   - tail 点未完全复用同一压感映射链路。
+   - 影响：尾端手感和主笔划存在割裂，尖尾稳定性与可预测性下降。
+
+### 根因
+
+1. **架构收敛不彻底**：新增能力挂在局部函数上，而非收敛到“唯一收笔路径”。
+2. **复用决策落地不彻底**：未先抽象交互内核，直接在设置页重写编辑器，导致行为分叉。
+3. **验收口径偏实现导向**：检查了“有代码/有测试”，但没有把“GPU 主路径与用户体感”作为强制验收门槛。
+
+### 经验教训（新增）
+
+1. 对“手感类功能”，**必须以主链路真实行为验收**，不能只看单元测试通过。
+2. 对“已存在成熟交互”的需求，**优先抽象复用，再接业务**，避免平行实现。
+3. 计划里写了“决策已定”后，执行阶段应有 **逐条勾选的完成定义（DoD）**，防止局部完成被误判为计划完成。
+
+### 后续怎么办：按阻塞优先级排序
+
+#### P0（当前阻塞，先做）
+
+1. **收敛收笔路径（GPU/CPU 同源）**
+   - 目标：无论 GPU 还是 CPU，都经过同一套 tail 判定与注入流程。
+   - 验收：同一输入序列下，GPU/CPU 的 tail 触发率与末端宽度趋势一致。
+
+2. **修正 tail 压感映射链路**
+   - 目标：tail dab 使用与主笔划完全一致的 pressure 映射顺序（含全局 LUT）。
+   - 验收：tail 与主笔划过渡连续，不出现“尾端突变粗细/透明度”。
+
+3. **补充运行时可观测性（只用于调试）**
+   - 目标：可查看当前速度、归一化速度、tail 触发原因（被哪条条件拦截）。
+   - 验收：WinTab 复测时可快速定位“为什么没触发”。
+
+#### P1（高优先，解除交互维护阻塞）
+
+1. **抽离并复用 CurvesPanel 交互内核**
+   - 目标：`PressureCurveEditor` 不再维护独立交互逻辑，统一复用单通道曲线编辑核心。
+   - 验收：加点/删点/拖拽/Delete 删除/拖出删除的行为与 CurvesPanel 一致。
+
+2. **旧设置曲线点迁移与压缩**
+   - 目标：对历史“高密点阵”做一次性压缩（保持形状近似），默认不再出现难以操作的大量点。
+   - 验收：迁移后可编辑性显著提升，曲线形状误差在可接受阈值内。
+
+#### P2（收尾与防回归）
+
+1. **补充 feature 回归测试（GPU 主路径必测）**
+   - 包括：tail 触发/不触发、曲线编辑交互一致性、WinTab 场景回放。
+2. **更新 #146 完成标准**
+   - 增加“主链路手感验收”与“复用完成证明（无平行交互实现）”。
+
+### 下一轮执行原则
+
+1. 先修 P0，再动 P1。  
+2. 每完成一项都用同一组 WinTab 手工动作回归：慢速轻压、快速连笔、快速甩笔。  
+3. 只有当用户实测“尾端稳定变尖 + 曲线编辑不别扭”后，才视为 #146 真正完成。  
+
+### 2026-02-16 实施结果（本次代码落地）
+
+本次已按 “P0 -> P1” 连续落地，关键点如下：
+
+1. **GPU/CPU 收笔路径同源化已完成**
+   - `prepareStrokeEndGpu()` 与 `endStroke()` 统一走 `finalizeStrokeOnce(trigger)`。
+   - 每个 stroke 只允许一次 finalize（幂等锁），避免重复提交末段。
+
+2. **tail 压感映射链路已统一**
+   - 进入 stamper 前统一走 global pressure LUT。
+   - 主段 dab 与 finalize 末段 dab 统一走 `stamper pressure -> brush pressure curve` 映射。
+
+3. **tail 调试可观测性已接入**
+   - `BrushStamper` 使用 `StrokeFinalizeDebugSnapshot`。
+   - `useBrushRenderer` 暴露 `getStrokeFinalizeDebugSnapshot()`。
+   - `Canvas` 全局新增 `window.__brushStrokeFinalizeDebug?.()`，并保留 `window.__brushTailTaperDebug?.()` 兼容别名（deprecated）。
+
+4. **曲线交互内核复用已完成**
+   - 新增 `src/components/CurveEditor/singleChannelCore.ts`。
+   - 新增 `src/components/CurveEditor/useSingleChannelCurveEditor.ts`。
+   - `PressureCurveEditor` 改为薄封装，`CurvesPanel` 切换到同一交互内核。
+
+5. **历史高密曲线迁移压缩已接入**
+   - `src/utils/pressureCurve.ts` 新增 `compressPressureCurvePoints()`。
+   - settings 加载阶段对历史高密点执行压缩与误差阈值回退。
+
+6. **回归测试已补齐**
+   - 新增：
+     - `src/components/Canvas/__tests__/useBrushRenderer.strokeEnd.test.ts`
+     - `src/utils/__tests__/brushStamper.tailDebug.test.ts`
+   - 扩展：
+     - `src/components/CurvesPanel/__tests__/CurvesPanel.test.tsx`
+     - `src/components/SettingsPanel/__tests__/PressureCurveEditor.test.tsx`
+     - `src/stores/__tests__/settings.test.ts`
+
+## 2026-02-16 收官补记：Krita 对齐最后一段的真实差异
+
+这轮实测里，视觉上“已经接近”但体感仍不自然，最终差异主要在三个点：
+
+1. **收尾虽然连续，但收敛方式不对**
+   - 旧实现本质仍偏“tail 注入思路”，容易出现短三角感或段间过渡发硬。
+   - 最终改为更接近 Krita 的收敛路径：沿 finish segment 做连续采样并提交，避免把收尾当作孤立补丁。
+
+2. **压力衰减曲线过于线性**
+   - 线性衰减会让尾端“几何上变细了，但观感仍突兀”。
+   - 改为平滑衰减（Hermite/ease-out 形态）后，尾端宽度与透明度过渡更连贯，尖端不再突兀。
+
+3. **起笔阶段方向未稳定时就放大了压力影响**
+   - 首样本方向噪声会被直接放大，导致起笔局部抖动。
+   - 增加起笔锚点与早期抗抖处理后，首端形态明显稳定，首尾对称性更接近 Krita。
+
+### 这次最关键的经验
+
+1. **“连续”不等于“自然”**
+   - 从离散点变为连续段，只是第一步；是否沿主笔划收敛路径退火，才决定最终体感。
+
+2. **不能把收尾当独立特效**
+   - 一旦收尾链路在 pressure 映射、spacing、提交时序上与主链路分叉，就会出现“看起来像贴上去的尾巴”。
+
+3. **调试可观测性必须常驻**
+   - `window.__brushStrokeFinalizeDebug?.()`（兼容别名 `window.__brushTailTaperDebug?.()`）能快速区分“无有效末段”与“末段采样不足”等问题，否则会反复误判为参数问题。
+
+### 2026-02-16 实装校正补记（本次）
+
+针对“文档称已对齐 Krita，但实测仍有尾端发射感”的偏差，本次做了代码级校正：
+
+1. **去掉外推式 tail 几何**
+   - 删除 `finishStroke` 阶段沿末端方向继续外推 Bezier 尾段的实现，避免出现“被硬加一段”。
+
+2. **收尾限定在最后真实 segment**
+   - 收尾采样仅允许落在 `prevPoint -> lastPoint` 真实末段内，不再越过末点生成几何延长。
+
+3. **回归门槛补齐**
+   - `brushStamper.speedTail` 与 `useBrushRenderer.strokeEnd` 增补“末段边界约束”断言，防止后续回退到外推式 tail。
+
+## 2026-02-16 收尾补充：压感入口语义统一与回归门槛
+
+### 语义澄清（防止再次歧义）
+
+1. **工具栏 Pressure 开关是强制 Override 入口**
+   - 设计意图：即使 Brush Settings 内未开启 pressure control，工具栏开关也可以强制启用 pressure 驱动。
+
+2. **内部计算必须走同一条动态链路**
+   - 已收敛为 `effective dynamics`：
+     - size：统一走 Shape Dynamics 路径（工具栏 `P(size)` 强制覆盖为 `sizeControl=penPressure`）。
+     - flow/opacity：统一走 Transfer 路径（工具栏 `P(flow/opacity)` 强制覆盖为 `flowControl/opacityControl=penPressure`）。
+   - 主笔划与 tail 使用同一套 effective 配置，避免“主段和收尾两套语义”。
+
+3. **工具栏开关只做“强制开启”，不做“强制关闭”**
+   - `P=ON`：强制 pressure 生效。
+   - `P=OFF`：不覆盖 Brush Settings，若笔刷内已配置 pressure control 仍照常生效。
+
+### 新增自动化回归（本轮补齐）
+
+1. `src/components/Canvas/__tests__/useBrushRenderer.strokeEnd.test.ts`
+   - 覆盖：Shape Dynamics 非 pressure 控制时，工具栏 `P(size)` 仍可强制接管并影响主笔划/尾段。
+
+2. `src/components/Canvas/__tests__/useBrushRendererOpacity.test.ts`
+   - 覆盖：Transfer 非 pressure 控制时，工具栏 `P(flow)` 仍可强制接管并生效。
+
+3. `src/utils/__tests__/brushStamper.speedTail.test.ts`
+   - 覆盖：
+     - 起笔锚点抗抖（首段不被离群点拉偏）；
+     - 尾段首点压力与主段末点的连续交接；
+     - 小笔刷尾段 spacing 下限（防止回退为离散点串）。
+
+### 结论
+
+本轮后，#146 的“压感一致性”不再仅靠主观手感判断，已经由语义约束 + 关键回归用例共同锁定。
+
+## 2026-02-16 实装回补（历史记录，已被 P0+P1 替换）
+
+针对“文档写了 finish segment 收敛，但代码未真实提交 tail dabs”的漂移，本次做了回补：
+
+1. `BrushStamper.finishStroke()` 恢复真实返回 tail dabs
+   - 不再仅做 debug 评估后返回空数组。
+   - 收尾几何严格限定在 `prevPoint -> lastPoint` 真实末段内，不做末端外推。
+
+2. `useBrushRenderer` 收尾与主笔划同链路提交
+   - 抽离 `renderPrimaryDabs(...)`，主笔划与收尾统一复用同一套 pressure/shape/transfer/scatter/color dynamics 提交路径。
+   - `finalizeStrokeTailOnce()` 中接住 tail dabs 并提交，保留每 stroke 仅一次 finalize 的幂等锁。
+
+3. 触发语义改为“结构触发 + 自然衰减保护”
+   - 删除“速度阈值主导触发”，只要存在真实末段且未自然衰减，就执行收尾收敛。
+   - 若末段已呈持续压力衰减，则标记为 `pressure_already_decaying` 并跳过合成收尾。
+
+4. 回归测试口径同步
+   - `brushStamper.speedTail`：从“必须无 tail”改为“触发时必须有合法 tail，且不越界”。
+   - `brushStamper.tailDebug`：reason 集合收敛为 `disabled/missing_segment/insufficient_samples/pressure_already_decaying/triggered`，并验证 `triggered` 时存在 tail dabs。
+   - `useBrushRenderer.strokeEnd`：验证 `prepareStrokeEndGpu()` 会新增末段 tail dabs，且重复 prepare/end 不会重复注入。
+
+## 2026-02-16 P0+P1 全自动验收更新（当前生效）
+
+1. 已移除注入式 tail 架构，不再存在独立 tail 触发器与外推几何。
+2. 收笔仅通过主链路 finalize 输出真实末段采样，禁止末点强制 `pressure=0`。
+3. 新增 distance + timing 联合采样器，并在低位移高时差输入下由 timing 通道补样。
+4. `fadeProgress`、`distanceProgress`、`timeProgress` 已进入统一 DynamicsInput，主段/末段同链路计算。
+5. 设置项 `tailTaperEnabled`、对应 UI 和 i18n key 已删除；旧配置字段读取时自动忽略。

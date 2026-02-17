@@ -16,6 +16,7 @@ import {
   DabParams,
   MaskType,
   type Rect,
+  type StrokeFinalizeDebugSnapshot,
 } from '@/utils/strokeBuffer';
 import {
   applyPressureCurve,
@@ -26,6 +27,8 @@ import {
   ColorDynamicsSettings,
   TransferSettings,
   DualBrushSettings,
+  DEFAULT_SHAPE_DYNAMICS,
+  DEFAULT_TRANSFER_SETTINGS,
   useToolStore,
 } from '@/stores/tool';
 import type { TextureSettings } from '@/components/BrushPanel/types';
@@ -59,8 +62,42 @@ import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { computeTextureDepth } from '@/utils/textureDynamics';
 import { useSelectionStore } from '@/stores/selection';
 import { useToastStore } from '@/stores/toast';
+import { samplePressureCurveLut } from '@/utils/pressureCurve';
 
 const MIN_ROUNDNESS = 0.01;
+const STROKE_PROGRESS_DISTANCE_PX = 1200;
+const STROKE_PROGRESS_TIME_MS = 1500;
+const STROKE_PROGRESS_DAB_COUNT = 180;
+
+function resolveStrokeProgress(metrics: {
+  distancePx: number;
+  dabCount: number;
+  startTimestampMs: number | null;
+  currentTimestampMs: number | null;
+}): {
+  fadeProgress: number;
+  distanceProgress: number;
+  timeProgress: number;
+  strokeProgress: number;
+} {
+  const distanceProgress = Math.max(
+    0,
+    Math.min(1, metrics.distancePx / STROKE_PROGRESS_DISTANCE_PX)
+  );
+  const timeElapsedMs =
+    metrics.startTimestampMs !== null && metrics.currentTimestampMs !== null
+      ? Math.max(0, metrics.currentTimestampMs - metrics.startTimestampMs)
+      : 0;
+  const timeProgress = Math.max(0, Math.min(1, timeElapsedMs / STROKE_PROGRESS_TIME_MS));
+  const dabProgress = Math.max(0, Math.min(1, metrics.dabCount / STROKE_PROGRESS_DAB_COUNT));
+  const strokeProgress = Math.max(distanceProgress, timeProgress, dabProgress);
+  return {
+    fadeProgress: strokeProgress,
+    distanceProgress,
+    timeProgress,
+    strokeProgress,
+  };
+}
 
 function clampRoundness(roundness: number): number {
   return Math.max(MIN_ROUNDNESS, Math.min(1, roundness));
@@ -108,6 +145,79 @@ function computeSpacingBasePx(
   return Math.min(width, height);
 }
 
+interface EffectiveDynamicsConfig {
+  shapeDynamics: ShapeDynamicsSettings | null;
+  transfer: TransferSettings | null;
+}
+
+function resolveEffectiveDynamicsConfig(config: BrushRenderConfig): EffectiveDynamicsConfig {
+  let shapeDynamics: ShapeDynamicsSettings | null = null;
+  const baseShape = config.shapeDynamics ?? DEFAULT_SHAPE_DYNAMICS;
+  if (config.shapeDynamicsEnabled) {
+    shapeDynamics = config.pressureSizeEnabled
+      ? { ...baseShape, sizeControl: 'penPressure' }
+      : baseShape;
+  } else if (config.pressureSizeEnabled) {
+    shapeDynamics = {
+      ...DEFAULT_SHAPE_DYNAMICS,
+      sizeControl: 'penPressure',
+      minimumDiameter: 0,
+    };
+  }
+
+  const baseTransfer = config.transfer ?? DEFAULT_TRANSFER_SETTINGS;
+  let transfer: TransferSettings | null = null;
+  if (config.transferEnabled) {
+    transfer = baseTransfer;
+  } else if (config.pressureFlowEnabled || config.pressureOpacityEnabled) {
+    transfer = DEFAULT_TRANSFER_SETTINGS;
+  }
+
+  if (transfer) {
+    const forcedTransfer: TransferSettings = {
+      ...transfer,
+      flowControl: config.pressureFlowEnabled ? 'penPressure' : transfer.flowControl,
+      opacityControl: config.pressureOpacityEnabled ? 'penPressure' : transfer.opacityControl,
+    };
+    transfer = isTransferActive(forcedTransfer) ? forcedTransfer : null;
+  }
+
+  return {
+    shapeDynamics,
+    transfer,
+  };
+}
+
+function resolveRenderableDabSizeAndOpacity(
+  rawSize: number,
+  baseDabOpacity: number
+): { size: number; dabOpacity: number } {
+  const safeOpacity = Number.isFinite(baseDabOpacity) ? Math.max(0, baseDabOpacity) : 0;
+  const safeSize = Number.isFinite(rawSize) ? rawSize : 0;
+  if (safeSize >= 1) {
+    return { size: safeSize, dabOpacity: safeOpacity };
+  }
+
+  // Keep sub-pixel width information via alpha coverage while rendering a 1px footprint.
+  const clampedSubPixelSize = Math.max(0.01, safeSize);
+  const coverage = Math.min(1, clampedSubPixelSize * clampedSubPixelSize);
+  return {
+    size: 1,
+    dabOpacity: safeOpacity * coverage,
+  };
+}
+
+/**
+ * Isolate speed-driven heuristics from the current pressure-tail parity work.
+ * We keep these runtime options fixed so tablet speed UI settings cannot
+ * influence dab emission while debugging pressure-only tail behavior.
+ */
+const PRESSURE_TAIL_PARITY_STAMPER_OPTIONS = Object.freeze({
+  maxBrushSpeedPxPerMs: 30,
+  brushSpeedSmoothingSamples: 3,
+  lowPressureAdaptiveSmoothingEnabled: false as const,
+});
+
 export interface BrushRenderConfig {
   size: number;
   flow: number;
@@ -122,6 +232,10 @@ export interface BrushRenderConfig {
   pressureSizeEnabled: boolean;
   pressureFlowEnabled: boolean;
   pressureOpacityEnabled: boolean;
+  globalPressureLut?: Float32Array;
+  maxBrushSpeedPxPerMs?: number;
+  brushSpeedSmoothingSamples?: number;
+  lowPressureAdaptiveSmoothingEnabled?: boolean;
   pressureCurve: PressureCurve;
   texture?: BrushTexture | null; // Texture for sampled brushes (from ABR import)
   // Shape Dynamics settings (Photoshop-compatible)
@@ -174,7 +288,8 @@ export interface UseBrushRendererResult {
     pressure: number,
     config: BrushRenderConfig,
     pointIndex?: number,
-    dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
+    dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
+    inputMeta?: { timestampMs?: number }
   ) => void;
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -205,7 +320,10 @@ export interface UseBrushRendererResult {
   getGpuRenderScale: () => number;
   getGpuDiagnosticsSnapshot: () => unknown;
   resetGpuDiagnostics: () => boolean;
+  getStrokeFinalizeDebugSnapshot: () => StrokeFinalizeDebugSnapshot | null;
 }
+
+type StrokeFinalizeTrigger = 'end-stroke' | 'prepare-gpu';
 
 export function useBrushRenderer({
   width,
@@ -236,6 +354,13 @@ export function useBrushRenderer({
   const finishingPromiseRef = useRef<Promise<void> | null>(null);
   const gpuCommitLockActiveRef = useRef(false);
   const gpuCommitLockResolveRef = useRef<(() => void) | null>(null);
+  const strokeFinalizeRef = useRef<{
+    finalized: boolean;
+    trigger: StrokeFinalizeTrigger | null;
+  }>({
+    finalized: false,
+    trigger: null,
+  });
   const strokeCancelledRef = useRef(false);
   const dualBrushTextureIdRef = useRef<string | null>(null);
 
@@ -252,6 +377,17 @@ export function useBrushRenderer({
   const strokeCompositeModeRef = useRef<StrokeCompositeMode>('paint');
   const strokeCompositeModeLockedRef = useRef(false);
   const strokeColorJitterSampleRef = useRef<ColorJitterSample | null>(null);
+  const lastConfigRef = useRef<BrushRenderConfig | null>(null);
+  const lastPointerDynamicsRef = useRef<{ tiltX: number; tiltY: number; rotation: number }>({
+    tiltX: 0,
+    tiltY: 0,
+    rotation: 0,
+  });
+  const lastSpacingPxRef = useRef(1);
+  const strokeDabCountRef = useRef(0);
+  const strokeDistanceRef = useRef(0);
+  const strokeStartTimestampMsRef = useRef<number | null>(null);
+  const strokeCurrentTimestampMsRef = useRef<number | null>(null);
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -357,6 +493,17 @@ export function useBrushRenderer({
       strokeCompositeModeRef.current = 'paint';
       strokeCompositeModeLockedRef.current = false;
       strokeColorJitterSampleRef.current = null;
+      lastConfigRef.current = null;
+      lastPointerDynamicsRef.current = { tiltX: 0, tiltY: 0, rotation: 0 };
+      lastSpacingPxRef.current = 1;
+      strokeDabCountRef.current = 0;
+      strokeDistanceRef.current = 0;
+      strokeStartTimestampMsRef.current = null;
+      strokeCurrentTimestampMsRef.current = null;
+      strokeFinalizeRef.current = {
+        finalized: false,
+        trigger: null,
+      };
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         gpuBufferRef.current.beginStroke();
@@ -366,6 +513,319 @@ export function useBrushRenderer({
       }
     },
     [backend, ensureCPUBuffer]
+  );
+
+  const mapInputPressureForStamper = useCallback(
+    (config: BrushRenderConfig, rawPressure: number): number => {
+      return samplePressureCurveLut(config.globalPressureLut, rawPressure);
+    },
+    []
+  );
+
+  const mapStamperPressureToBrush = useCallback(
+    (config: BrushRenderConfig, stamperPressure: number): number => {
+      return applyPressureCurve(stamperPressure, config.pressureCurve);
+    },
+    []
+  );
+
+  const resolveDabFlowAndOpacity = useCallback(
+    (
+      config: BrushRenderConfig,
+      dynamicsInput: DynamicsInput,
+      effectiveTransfer: TransferSettings | null
+    ) => {
+      const strokeOpacity = strokeOpacityRef.current;
+      const hasStrokeOpacity = strokeOpacity > 1e-6;
+      if (effectiveTransfer) {
+        const transferResult = computeDabTransfer(
+          strokeOpacity,
+          config.flow,
+          effectiveTransfer,
+          dynamicsInput
+        );
+        return {
+          flow: transferResult.flow,
+          dabOpacity: hasStrokeOpacity ? transferResult.opacity / strokeOpacity : 0,
+        };
+      }
+      return {
+        flow: config.flow,
+        dabOpacity: hasStrokeOpacity ? 1 : 0,
+      };
+    },
+    []
+  );
+
+  const stampDabToBackend = useCallback(
+    (dabParams: DabParams): void => {
+      if (backend === 'gpu' && gpuBufferRef.current) {
+        gpuBufferRef.current.stampDab(dabParams);
+      } else if (cpuBufferRef.current) {
+        const cpuBuffer = cpuBufferRef.current;
+        if (cpuBuffer.isUsingRustPath()) {
+          void cpuBuffer.stampDabRust(dabParams);
+        } else {
+          cpuBuffer.stampDab(dabParams);
+        }
+      }
+    },
+    [backend]
+  );
+
+  const renderPrimaryDabs = useCallback(
+    (
+      dabs: Array<{ x: number; y: number; pressure: number; timestampMs?: number }>,
+      config: BrushRenderConfig,
+      dynamics: { tiltX: number; tiltY: number; rotation: number }
+    ): void => {
+      if (dabs.length === 0) {
+        return;
+      }
+
+      const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
+      const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
+      const effectiveTransfer = effectiveDynamics.transfer;
+      const tiltX = dynamics.tiltX;
+      const tiltY = dynamics.tiltY;
+      const rotation = dynamics.rotation;
+
+      const useShapeDynamics =
+        effectiveShapeDynamics !== null && isShapeDynamicsActive(effectiveShapeDynamics);
+      const delayFirstDabForInitialDirection =
+        useShapeDynamics && effectiveShapeDynamics?.angleControl === 'initial';
+      const useScatter = config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
+      const useColorDynamics =
+        config.colorDynamicsEnabled &&
+        config.colorDynamics &&
+        isColorDynamicsActive(config.colorDynamics);
+      const colorDynamicsApplyPerTip = config.colorDynamics?.applyPerTip !== false;
+      let strokeColorJitterSample: ColorJitterSample | undefined;
+      if (useColorDynamics && !colorDynamicsApplyPerTip) {
+        if (!strokeColorJitterSampleRef.current) {
+          strokeColorJitterSampleRef.current = createColorJitterSample();
+        }
+        strokeColorJitterSample = strokeColorJitterSampleRef.current;
+      }
+
+      const selectionState = useSelectionStore.getState();
+      const hasSelection = selectionState.hasSelection;
+      const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
+
+      for (const dab of dabs) {
+        if (
+          !skipCpuSelectionCheck &&
+          hasSelection &&
+          !selectionState.isPointInSelection(dab.x, dab.y)
+        ) {
+          continue;
+        }
+
+        lastDabPosRef.current = { x: dab.x, y: dab.y };
+        strokeDabCountRef.current += 1;
+
+        const dabTimestampMs =
+          typeof dab.timestampMs === 'number' && Number.isFinite(dab.timestampMs)
+            ? dab.timestampMs
+            : null;
+        if (dabTimestampMs !== null) {
+          if (strokeStartTimestampMsRef.current === null) {
+            strokeStartTimestampMsRef.current = dabTimestampMs;
+          }
+          strokeCurrentTimestampMsRef.current = dabTimestampMs;
+        }
+
+        const dabPressure = mapStamperPressureToBrush(config, dab.pressure);
+        let dabSize = config.size;
+        let dabRoundness = config.roundness / 100;
+        let dabAngle = config.angle;
+        let dabFlipX = false;
+        let dabFlipY = false;
+
+        let direction = 0;
+        if (prevDabPosRef.current) {
+          strokeDistanceRef.current += Math.hypot(
+            dab.x - prevDabPosRef.current.x,
+            dab.y - prevDabPosRef.current.y
+          );
+          direction = calculateDirection(
+            prevDabPosRef.current.x,
+            prevDabPosRef.current.y,
+            dab.x,
+            dab.y
+          );
+          if (initialDirectionRef.current === null) {
+            initialDirectionRef.current = direction;
+          }
+        }
+
+        if (
+          delayFirstDabForInitialDirection &&
+          initialDirectionRef.current === null &&
+          prevDabPosRef.current === null
+        ) {
+          prevDabPosRef.current = { x: dab.x, y: dab.y };
+          continue;
+        }
+
+        const dynamicsInput: DynamicsInput = {
+          pressure: dabPressure,
+          tiltX,
+          tiltY,
+          rotation,
+          direction,
+          initialDirection: initialDirectionRef.current ?? direction,
+          ...resolveStrokeProgress({
+            distancePx: strokeDistanceRef.current,
+            dabCount: strokeDabCountRef.current,
+            startTimestampMs: strokeStartTimestampMsRef.current,
+            currentTimestampMs: strokeCurrentTimestampMsRef.current,
+          }),
+        };
+
+        const { flow: dabFlow, dabOpacity } = resolveDabFlowAndOpacity(
+          config,
+          dynamicsInput,
+          effectiveTransfer
+        );
+
+        if (useShapeDynamics && effectiveShapeDynamics) {
+          const shape = computeDabShape(
+            dabSize,
+            config.angle,
+            config.roundness,
+            effectiveShapeDynamics,
+            dynamicsInput
+          );
+
+          dabSize = shape.size;
+          dabAngle = shape.angle;
+          dabRoundness = shape.roundness;
+          dabFlipX = shape.flipX;
+          dabFlipY = shape.flipY;
+        }
+
+        prevDabPosRef.current = { x: dab.x, y: dab.y };
+
+        let dabColor = config.color;
+        if (useColorDynamics && config.colorDynamics) {
+          const colorResult = computeDabColor(
+            config.color,
+            config.backgroundColor,
+            config.colorDynamics,
+            dynamicsInput,
+            Math.random,
+            strokeColorJitterSample
+          );
+          dabColor = colorResult.color;
+        }
+
+        const scatteredPositions = useScatter
+          ? applyScatter(
+              {
+                x: dab.x,
+                y: dab.y,
+                strokeAngle: (direction * Math.PI) / 180,
+                diameter: dabSize,
+                dynamics: dynamicsInput,
+              },
+              config.scatter!
+            )
+          : [{ x: dab.x, y: dab.y }];
+
+        for (const pos of scatteredPositions) {
+          const effectiveTextureSettings =
+            config.textureEnabled && config.textureSettings
+              ? (() => {
+                  const settings = config.textureSettings!;
+                  const dynamicDepth = computeTextureDepth(settings.depth, settings, dynamicsInput);
+                  if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
+                    return settings;
+                  }
+                  return {
+                    ...settings,
+                    depth: dynamicDepth,
+                  };
+                })()
+              : undefined;
+
+          const renderDab = resolveRenderableDabSizeAndOpacity(dabSize, dabOpacity);
+          const dabParams: DabParams = {
+            x: pos.x,
+            y: pos.y,
+            size: renderDab.size,
+            flow: dabFlow,
+            hardness: config.hardness / 100,
+            maskType: config.maskType,
+            color: dabColor,
+            dabOpacity: renderDab.dabOpacity,
+            roundness: dabRoundness,
+            angle: dabAngle,
+            texture: config.texture ?? undefined,
+            flipX: dabFlipX,
+            flipY: dabFlipY,
+            wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
+            textureSettings: effectiveTextureSettings,
+            noiseEnabled: config.noiseEnabled,
+            noiseSize: config.noiseSize ?? 100,
+            noiseSizeJitter: config.noiseSizeJitter ?? 0,
+            noiseDensityJitter: config.noiseDensityJitter ?? 0,
+            dualBrush:
+              config.dualBrushEnabled && config.dualBrush
+                ? {
+                    ...config.dualBrush,
+                    enabled: config.dualBrushEnabled,
+                    brushTexture: config.dualBrush.texture,
+                  }
+                : undefined,
+            baseSize: config.size,
+            spacing: config.spacing,
+          };
+
+          stampDabToBackend(dabParams);
+        }
+      }
+    },
+    [backend, mapStamperPressureToBrush, resolveDabFlowAndOpacity, stampDabToBackend]
+  );
+
+  const finalizeStrokeOnce = useCallback(
+    (trigger: StrokeFinalizeTrigger): void => {
+      if (strokeFinalizeRef.current.finalized) {
+        return;
+      }
+      strokeFinalizeRef.current = {
+        finalized: true,
+        trigger,
+      };
+
+      if (strokeCancelledRef.current) {
+        stamperRef.current.finishStroke(0);
+        secondaryStamperRef.current.finishStroke(0);
+        lastConfigRef.current = null;
+        strokeCancelledRef.current = false;
+        return;
+      }
+
+      const config = lastConfigRef.current;
+      if (!config) {
+        stamperRef.current.finishStroke(0);
+        secondaryStamperRef.current.finishStroke(0);
+        return;
+      }
+
+      const finalizeDabs = stamperRef.current.finishStroke(lastSpacingPxRef.current, {
+        ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
+        trajectorySmoothingEnabled: false,
+      });
+      secondaryStamperRef.current.finishStroke(0);
+      if (finalizeDabs.length > 0) {
+        renderPrimaryDabs(finalizeDabs, config, lastPointerDynamicsRef.current);
+      }
+
+      lastConfigRef.current = null;
+    },
+    [renderPrimaryDabs]
   );
 
   /**
@@ -378,11 +838,13 @@ export function useBrushRenderer({
       pressure: number,
       config: BrushRenderConfig,
       pointIndex?: number,
-      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
+      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
+      inputMeta?: { timestampMs?: number }
     ): void => {
       if (strokeCancelledRef.current) {
         return;
       }
+      lastConfigRef.current = config;
 
       // Start CPU encode timing
       if (pointIndex !== undefined) {
@@ -395,30 +857,42 @@ export function useBrushRenderer({
       }
 
       const stamper = stamperRef.current;
+      const stamperOptions = {
+        timestampMs: inputMeta?.timestampMs,
+        ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
+        trajectorySmoothingEnabled: false,
+      };
 
-      // Apply pressure curve
-      const adjustedPressure = applyPressureCurve(pressure, config.pressureCurve);
+      const globalPressure = mapInputPressureForStamper(config, pressure);
+      const adjustedPressure = mapStamperPressureToBrush(config, globalPressure);
+      const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
+      const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
       const tiltX = dynamics?.tiltX ?? 0;
       const tiltY = dynamics?.tiltY ?? 0;
       const rotation = dynamics?.rotation ?? 0;
       const hasShapeSizeControl =
-        config.shapeDynamicsEnabled && config.shapeDynamics?.sizeControl !== 'off';
+        effectiveShapeDynamics !== null && effectiveShapeDynamics.sizeControl !== 'off';
 
       // Store stroke-level opacity (applied at endStroke/compositeToLayer)
       const strokeOpacity = Math.max(0, Math.min(1, config.opacity));
       strokeOpacityRef.current = strokeOpacity;
-      const hasStrokeOpacity = strokeOpacity > 1e-6;
 
-      // Legacy pressure-size toggle only applies when Shape Dynamics size control is not active.
-      // This avoids control source being multiplied twice (e.g. penPressure^2).
-      const size =
-        !hasShapeSizeControl && config.pressureSizeEnabled
-          ? config.size * adjustedPressure
-          : config.size;
+      // Toolbar pressure-size acts as a force override for size control.
+      // Effective shape dynamics converts sizeControl to penPressure when forced.
+      const size = config.size;
 
       // Shape Dynamics size control should affect spacing (jitter does not)
       let spacingSize = size;
       if (hasShapeSizeControl) {
+        const spacingProgress = resolveStrokeProgress({
+          distancePx: strokeDistanceRef.current,
+          dabCount: strokeDabCountRef.current,
+          startTimestampMs: strokeStartTimestampMsRef.current,
+          currentTimestampMs:
+            typeof inputMeta?.timestampMs === 'number' && Number.isFinite(inputMeta.timestampMs)
+              ? inputMeta.timestampMs
+              : strokeCurrentTimestampMsRef.current,
+        });
         const spacingInput: DynamicsInput = {
           pressure: adjustedPressure,
           tiltX,
@@ -426,16 +900,24 @@ export function useBrushRenderer({
           rotation,
           direction: 0,
           initialDirection: 0,
-          fadeProgress: 0,
+          ...spacingProgress,
         };
-        spacingSize = computeControlledSize(size, config.shapeDynamics!, spacingInput);
+        spacingSize = computeControlledSize(size, effectiveShapeDynamics!, spacingInput);
       }
 
       // Get dab positions from stamper
       const spacingBase = computeSpacingBasePx(spacingSize, config.roundness / 100, config.texture);
       const spacingPx = spacingBase * config.spacing;
+      lastSpacingPxRef.current = Math.max(0.5, spacingPx);
       const buildupMode = config.buildupEnabled;
-      const dabs = stamper.processPoint(x, y, pressure, spacingPx, buildupMode);
+      const dabs = stamper.processPoint(
+        x,
+        y,
+        globalPressure,
+        spacingPx,
+        buildupMode,
+        stamperOptions
+      );
 
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush
@@ -470,9 +952,10 @@ export function useBrushRenderer({
         const secondaryDabs = secondaryStamper.processPoint(
           x,
           y,
-          pressure,
+          globalPressure,
           secondarySpacingPx,
-          buildupMode
+          buildupMode,
+          stamperOptions
         );
 
         // Stamp each secondary dab to the stroke-level accumulator
@@ -512,234 +995,8 @@ export function useBrushRenderer({
         }
       }
 
-      // Shape Dynamics: Check if we need to apply dynamics
-      const useShapeDynamics =
-        config.shapeDynamicsEnabled &&
-        config.shapeDynamics &&
-        isShapeDynamicsActive(config.shapeDynamics);
-      const delayFirstDabForInitialDirection =
-        useShapeDynamics && config.shapeDynamics?.angleControl === 'initial';
-
-      // Scatter: Check if we need to apply scatter
-      const useScatter = config.scatterEnabled && config.scatter && isScatterActive(config.scatter);
-
-      // Color Dynamics: Check if we need to apply dynamics
-      const useColorDynamics =
-        config.colorDynamicsEnabled &&
-        config.colorDynamics &&
-        isColorDynamicsActive(config.colorDynamics);
-      const colorDynamicsApplyPerTip = config.colorDynamics?.applyPerTip !== false;
-      let strokeColorJitterSample: ColorJitterSample | undefined;
-      if (useColorDynamics && !colorDynamicsApplyPerTip) {
-        if (!strokeColorJitterSampleRef.current) {
-          strokeColorJitterSampleRef.current = createColorJitterSample();
-        }
-        strokeColorJitterSample = strokeColorJitterSampleRef.current;
-      }
-
-      // Transfer: Check if we need to apply transfer dynamics
-      const useTransfer =
-        config.transferEnabled && config.transfer && isTransferActive(config.transfer);
-
-      // Selection constraint: get state once before loop for performance
-      const selectionState = useSelectionStore.getState();
-      const hasSelection = selectionState.hasSelection;
-      const skipCpuSelectionCheck = backend === 'gpu' && config.selectionHandledByGpu === true;
-
-      for (const dab of dabs) {
-        // Selection constraint: skip dabs outside selection
-        if (
-          !skipCpuSelectionCheck &&
-          hasSelection &&
-          !selectionState.isPointInSelection(dab.x, dab.y)
-        ) {
-          continue;
-        }
-
-        lastDabPosRef.current = { x: dab.x, y: dab.y };
-
-        const dabPressure = applyPressureCurve(dab.pressure, config.pressureCurve);
-        let dabSize =
-          !hasShapeSizeControl && config.pressureSizeEnabled
-            ? config.size * dabPressure
-            : config.size;
-
-        // Shape Dynamics: Calculate direction and apply dynamics
-        let dabRoundness = config.roundness / 100;
-        let dabAngle = config.angle;
-        let dabFlipX = false;
-        let dabFlipY = false;
-
-        // Calculate direction from previous dab (needed for Shape Dynamics, Scatter, Color Dynamics, and Transfer)
-        let direction = 0;
-        if (prevDabPosRef.current) {
-          direction = calculateDirection(
-            prevDabPosRef.current.x,
-            prevDabPosRef.current.y,
-            dab.x,
-            dab.y
-          );
-          // Capture initial direction from the first directional sample.
-          if (initialDirectionRef.current === null) {
-            initialDirectionRef.current = direction;
-          }
-        }
-
-        // Initial Direction needs at least one movement vector.
-        // Delay the very first dab until we can derive that vector from the next dab.
-        if (
-          delayFirstDabForInitialDirection &&
-          initialDirectionRef.current === null &&
-          prevDabPosRef.current === null
-        ) {
-          prevDabPosRef.current = { x: dab.x, y: dab.y };
-          continue;
-        }
-
-        // Prepare dynamics input (shared by Shape Dynamics, Scatter, Color Dynamics, and Transfer)
-        const dynamicsInput: DynamicsInput = {
-          pressure: dabPressure,
-          tiltX,
-          tiltY,
-          rotation,
-          direction,
-          initialDirection: initialDirectionRef.current ?? direction,
-          fadeProgress: 0, // TODO: Implement fade tracking based on stroke distance
-        };
-
-        // Calculate Flow and Opacity using Transfer system or legacy pressure toggles
-        let dabFlow: number;
-        let dabOpacity: number;
-
-        if (useTransfer && config.transfer) {
-          // Use Transfer dynamics system (Photoshop-compatible)
-          const transferResult = computeDabTransfer(
-            strokeOpacity,
-            config.flow,
-            config.transfer,
-            dynamicsInput
-          );
-          dabFlow = transferResult.flow;
-          dabOpacity = hasStrokeOpacity ? transferResult.opacity / strokeOpacity : 0.0;
-        } else {
-          // Legacy pressure toggles (backward compatibility)
-          dabFlow = config.pressureFlowEnabled ? config.flow * dabPressure : config.flow;
-          dabOpacity = hasStrokeOpacity ? (config.pressureOpacityEnabled ? dabPressure : 1.0) : 0.0;
-        }
-
-        if (useShapeDynamics && config.shapeDynamics) {
-          // Compute dynamic shape
-          const shape = computeDabShape(
-            dabSize,
-            config.angle,
-            config.roundness, // 0-100
-            config.shapeDynamics,
-            dynamicsInput
-          );
-
-          dabSize = shape.size;
-          dabAngle = shape.angle;
-          dabRoundness = shape.roundness; // Already 0-1
-          dabFlipX = shape.flipX;
-          dabFlipY = shape.flipY;
-        }
-
-        // Update previous dab position for next direction calculation
-        prevDabPosRef.current = { x: dab.x, y: dab.y };
-
-        // Color Dynamics: Calculate dynamic color
-        let dabColor = config.color;
-        if (useColorDynamics && config.colorDynamics) {
-          const colorResult = computeDabColor(
-            config.color,
-            config.backgroundColor,
-            config.colorDynamics,
-            dynamicsInput,
-            Math.random,
-            strokeColorJitterSample
-          );
-          dabColor = colorResult.color;
-        }
-
-        // Apply Scatter: generate one or more scattered positions
-        const scatteredPositions = useScatter
-          ? applyScatter(
-              {
-                x: dab.x,
-                y: dab.y,
-                strokeAngle: (direction * Math.PI) / 180, // Convert degrees to radians
-                diameter: dabSize,
-                dynamics: dynamicsInput,
-              },
-              config.scatter!
-            )
-          : [{ x: dab.x, y: dab.y }];
-
-        if (config.dualBrushEnabled && config.dualBrush?.texture?.imageData) {
-          // console.log('[useBrushRenderer] DualBrush has imageData prepared');
-        }
-
-        // Stamp dab at each scattered position
-        for (const pos of scatteredPositions) {
-          const effectiveTextureSettings =
-            config.textureEnabled && config.textureSettings
-              ? (() => {
-                  const settings = config.textureSettings!;
-                  const dynamicDepth = computeTextureDepth(settings.depth, settings, dynamicsInput);
-                  if (Math.abs(dynamicDepth - settings.depth) <= 1e-6) {
-                    return settings;
-                  }
-                  return {
-                    ...settings,
-                    depth: dynamicDepth,
-                  };
-                })()
-              : undefined;
-
-          const dabParams: DabParams = {
-            x: pos.x,
-            y: pos.y,
-            size: Math.max(1, dabSize),
-            flow: dabFlow,
-            hardness: config.hardness / 100,
-            maskType: config.maskType,
-            color: dabColor,
-            dabOpacity,
-            roundness: dabRoundness,
-            angle: dabAngle,
-            texture: config.texture ?? undefined,
-            flipX: dabFlipX,
-            flipY: dabFlipY,
-            wetEdge: config.wetEdgeEnabled ? config.wetEdge : 0,
-            textureSettings: effectiveTextureSettings,
-            noiseEnabled: config.noiseEnabled,
-            noiseSize: config.noiseSize ?? 100,
-            noiseSizeJitter: config.noiseSizeJitter ?? 0,
-            noiseDensityJitter: config.noiseDensityJitter ?? 0,
-            dualBrush:
-              config.dualBrushEnabled && config.dualBrush
-                ? {
-                    ...config.dualBrush,
-                    enabled: config.dualBrushEnabled, // Sync enabled state
-                    brushTexture: config.dualBrush.texture,
-                  }
-                : undefined,
-            baseSize: config.size,
-            spacing: config.spacing,
-          };
-
-          if (backend === 'gpu' && gpuBufferRef.current) {
-            gpuBufferRef.current.stampDab(dabParams);
-          } else if (cpuBufferRef.current) {
-            const cpuBuffer = cpuBufferRef.current;
-            if (cpuBuffer.isUsingRustPath()) {
-              void cpuBuffer.stampDabRust(dabParams);
-            } else {
-              cpuBuffer.stampDab(dabParams);
-            }
-          }
-        }
-      }
+      lastPointerDynamicsRef.current = { tiltX, tiltY, rotation };
+      renderPrimaryDabs(dabs, config, lastPointerDynamicsRef.current);
 
       // End CPU encode timing and trigger GPU sample if needed
       // NOTE: Disabled during active painting to avoid breaking batch processing
@@ -758,7 +1015,14 @@ export function useBrushRenderer({
         void benchmarkProfiler.markRenderSubmit(pointIndex);
       }
     },
-    [backend, benchmarkProfiler, ensureCPUBuffer]
+    [
+      backend,
+      benchmarkProfiler,
+      ensureCPUBuffer,
+      mapInputPressureForStamper,
+      mapStamperPressureToBrush,
+      renderPrimaryDabs,
+    ]
   );
 
   /**
@@ -773,12 +1037,12 @@ export function useBrushRenderer({
    */
   const endStroke = useCallback(
     async (layerCtx: CanvasRenderingContext2D): Promise<void> => {
-      stamperRef.current.finishStroke(0);
-
       if (strokeCancelledRef.current) {
-        strokeCancelledRef.current = false;
+        finalizeStrokeOnce('end-stroke');
         return;
       }
+
+      finalizeStrokeOnce('end-stroke');
 
       if (backend === 'gpu' && gpuBufferRef.current) {
         const gpuBuffer = gpuBufferRef.current;
@@ -812,7 +1076,7 @@ export function useBrushRenderer({
         );
       }
     },
-    [backend]
+    [backend, finalizeStrokeOnce]
   );
 
   /**
@@ -877,6 +1141,8 @@ export function useBrushRenderer({
 
   const prepareStrokeEndGpu = useCallback(async (): Promise<GpuStrokePrepareResult> => {
     if (backend === 'gpu' && gpuBufferRef.current) {
+      finalizeStrokeOnce('prepare-gpu');
+
       // Align GPU commit path with legacy endStroke lock to prevent tailgating.
       if (!gpuCommitLockActiveRef.current && !finishingPromiseRef.current) {
         gpuCommitLockActiveRef.current = true;
@@ -910,7 +1176,7 @@ export function useBrushRenderer({
       compositeMode: strokeCompositeModeRef.current,
       scratch: null,
     };
-  }, [backend, releaseGpuCommitLock]);
+  }, [backend, finalizeStrokeOnce, releaseGpuCommitLock]);
 
   const clearScratchGpu = useCallback(() => {
     try {
@@ -962,6 +1228,10 @@ export function useBrushRenderer({
     return true;
   }, []);
 
+  const getStrokeFinalizeDebugSnapshot = useCallback((): StrokeFinalizeDebugSnapshot | null => {
+    return stamperRef.current.getStrokeFinalizeDebugSnapshot();
+  }, []);
+
   /**
    * Flush pending dabs to GPU (called once per frame by RAF loop)
    * This ensures all dabs accumulated during the frame are rendered together
@@ -1008,5 +1278,6 @@ export function useBrushRenderer({
     getGpuRenderScale,
     getGpuDiagnosticsSnapshot,
     resetGpuDiagnostics,
+    getStrokeFinalizeDebugSnapshot,
   };
 }

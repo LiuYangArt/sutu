@@ -24,6 +24,7 @@ interface QueuedPoint {
   tiltX: number;
   tiltY: number;
   rotation: number;
+  timestampMs: number;
   pointIndex: number;
 }
 
@@ -81,7 +82,8 @@ interface UseStrokeProcessorParams {
     pressure: number,
     config: BrushRenderConfig,
     pointIndex?: number,
-    dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
+    dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
+    inputMeta?: { timestampMs?: number }
   ) => void;
   endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -303,7 +305,8 @@ export function useStrokeProcessor({
       y: number,
       pressure: number,
       pointIndex?: number,
-      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
+      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
+      inputMeta?: { timestampMs?: number }
     ) => {
       const constrained = constrainShiftLinePoint(x, y);
       const config = getBrushConfig();
@@ -314,7 +317,15 @@ export function useStrokeProcessor({
         tiltY: dynamics?.tiltY ?? 0,
         rotation: dynamics?.rotation ?? 0,
       };
-      processBrushPoint(constrained.x, constrained.y, pressure, config, pointIndex, pointDynamics);
+      processBrushPoint(
+        constrained.x,
+        constrained.y,
+        pressure,
+        config,
+        pointIndex,
+        pointDynamics,
+        inputMeta
+      );
 
       // Track last rendered position for Visual Lag measurement
       lastRenderedPosRef.current = { x: constrained.x, y: constrained.y };
@@ -339,9 +350,10 @@ export function useStrokeProcessor({
       y: number,
       pressure: number,
       pointIndex?: number,
-      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number }
+      dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
+      inputMeta?: { timestampMs?: number }
     ) => {
-      processSinglePoint(x, y, pressure, pointIndex, dynamics);
+      processSinglePoint(x, y, pressure, pointIndex, dynamics, inputMeta);
       // Mark that we need to render after processing
       needsRenderRef.current = true;
     },
@@ -389,11 +401,18 @@ export function useStrokeProcessor({
           // Drain and process points
           for (let i = 0; i < count; i++) {
             const p = queue[i]!;
-            processSinglePoint(p.x, p.y, p.pressure, p.pointIndex, {
-              tiltX: p.tiltX,
-              tiltY: p.tiltY,
-              rotation: p.rotation,
-            });
+            processSinglePoint(
+              p.x,
+              p.y,
+              p.pressure,
+              p.pointIndex,
+              {
+                tiltX: p.tiltX,
+                tiltY: p.tiltY,
+                rotation: p.rotation,
+              },
+              { timestampMs: p.timestampMs }
+            );
           }
 
           // Clear processed points from queue
@@ -434,7 +453,14 @@ export function useStrokeProcessor({
               }
             }
 
-            processBrushPointWithConfig(pos.x, pos.y, pressure, undefined, lastDynamicsRef.current);
+            processBrushPointWithConfig(
+              pos.x,
+              pos.y,
+              pressure,
+              undefined,
+              lastDynamicsRef.current,
+              { timestampMs: time }
+            );
             steps++;
           }
 
@@ -498,11 +524,18 @@ export function useStrokeProcessor({
       let processedTailQueue = false;
       if (remainingQueue.length > 0) {
         for (const p of remainingQueue) {
-          processSinglePoint(p.x, p.y, p.pressure, p.pointIndex, {
-            tiltX: p.tiltX,
-            tiltY: p.tiltY,
-            rotation: p.rotation,
-          });
+          processSinglePoint(
+            p.x,
+            p.y,
+            p.pressure,
+            p.pointIndex,
+            {
+              tiltX: p.tiltX,
+              tiltY: p.tiltY,
+              rotation: p.rotation,
+            },
+            { timestampMs: p.timestampMs }
+          );
         }
         inputQueueRef.current = [];
         processedTailQueue = true;
@@ -652,11 +685,18 @@ export function useStrokeProcessor({
       }
 
       for (const p of replayPoints) {
-        processBrushPointWithConfig(p.x, p.y, p.pressure, p.pointIndex, {
-          tiltX: p.tiltX,
-          tiltY: p.tiltY,
-          rotation: p.rotation,
-        });
+        processBrushPointWithConfig(
+          p.x,
+          p.y,
+          p.pressure,
+          p.pointIndex,
+          {
+            tiltX: p.tiltX,
+            tiltY: p.tiltY,
+            rotation: p.rotation,
+          },
+          { timestampMs: p.timestampMs }
+        );
         window.__strokeDiagnostics?.onPointBuffered();
       }
       pendingPointsRef.current = [];
