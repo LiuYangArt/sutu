@@ -10,8 +10,6 @@ import {
   CanvasBgColorId,
   RenderMode,
   GPURenderScaleMode,
-  TABLET_MAX_BRUSH_SPEED_RANGE,
-  TABLET_BRUSH_SPEED_SMOOTHING_RANGE,
 } from '@/stores/settings';
 import { useI18n } from '@/i18n';
 import { useI18nStore } from '@/stores/i18n';
@@ -442,8 +440,6 @@ function TabletSettings() {
     setAutoStart,
     setPressureCurve,
     setPressureCurvePoints,
-    setMaxBrushSpeedPxPerMs,
-    setBrushSpeedSmoothingSamples,
     setLowPressureAdaptiveSmoothingEnabled,
     setBackpressureMode,
   } = useSettingsStore();
@@ -695,43 +691,7 @@ function TabletSettings() {
         </div>
       </div>
 
-      <div className="settings-section">
-        <label className="settings-label">{t('settings.tablet.brushSpeed.title')}</label>
-        <div className="settings-slider-block">
-          <div className="settings-slider-row">
-            <span>
-              {t('settings.tablet.brushSpeed.max', {
-                value: tablet.maxBrushSpeedPxPerMs,
-              })}
-            </span>
-            <input
-              type="range"
-              min={TABLET_MAX_BRUSH_SPEED_RANGE.min}
-              max={TABLET_MAX_BRUSH_SPEED_RANGE.max}
-              step={1}
-              value={tablet.maxBrushSpeedPxPerMs}
-              onChange={(e) => setMaxBrushSpeedPxPerMs(Number(e.target.value))}
-              className="settings-slider-control"
-            />
-          </div>
-          <div className="settings-slider-row">
-            <span>
-              {t('settings.tablet.brushSpeed.smoothing', {
-                value: tablet.brushSpeedSmoothingSamples,
-              })}
-            </span>
-            <input
-              type="range"
-              min={TABLET_BRUSH_SPEED_SMOOTHING_RANGE.min}
-              max={TABLET_BRUSH_SPEED_SMOOTHING_RANGE.max}
-              step={1}
-              value={tablet.brushSpeedSmoothingSamples}
-              onChange={(e) => setBrushSpeedSmoothingSamples(Number(e.target.value))}
-              className="settings-slider-control"
-            />
-          </div>
-        </div>
-      </div>
+      {/* Speed controls are hidden while pressure-tail parity mode is active. */}
 
       <div className="settings-section">
         <label className="settings-label">{t('settings.tablet.dynamics.title')}</label>
