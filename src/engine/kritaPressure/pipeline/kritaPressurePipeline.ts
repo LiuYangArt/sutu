@@ -1,7 +1,7 @@
 import { mixPaintInfo } from '../core/paintInfoMix';
 import { PaintInfoBuilder, type PaintInfoBuilderConfig } from '../core/paintInfoBuilder';
 import { KritaSegmentSampler } from '../core/segmentSampler';
-import type { PaintInfo, RawInputSample } from '../core/types';
+import type { NormalizedInputPhase, PaintInfo, RawInputSample } from '../core/types';
 
 const EPSILON = 1e-6;
 
@@ -19,6 +19,9 @@ export class KritaPressurePipeline {
   private readonly builder: PaintInfoBuilder;
   private readonly sampler = new KritaSegmentSampler();
   private lastInfo: PaintInfo | null = null;
+  private lastPhase: NormalizedInputPhase | null = null;
+  private seenPointerUp = false;
+  private emittedDabCount = 0;
   private spacingPx: number;
   private maxIntervalUs: number;
 
@@ -32,6 +35,9 @@ export class KritaPressurePipeline {
     this.builder.reset();
     this.sampler.reset();
     this.lastInfo = null;
+    this.lastPhase = null;
+    this.seenPointerUp = false;
+    this.emittedDabCount = 0;
   }
 
   updateConfig(config: Partial<KritaPressurePipelineConfig>): void {
@@ -46,11 +52,21 @@ export class KritaPressurePipeline {
 
   processSample(sample: RawInputSample): PipelineStepResult {
     const { info } = this.builder.build(sample);
+    const phase = sample.phase;
 
     if (!this.lastInfo) {
       this.lastInfo = info;
+      this.lastPhase = phase;
+      this.seenPointerUp = phase === 'up';
+      if (phase === 'up') {
+        this.emittedDabCount += 1;
+        return {
+          paint_infos: [info],
+          current_info: info,
+        };
+      }
       return {
-        paint_infos: [info],
+        paint_infos: [],
         current_info: info,
       };
     }
@@ -74,11 +90,26 @@ export class KritaPressurePipeline {
       for (const t of ts) {
         mixed.push(mixPaintInfo(from, to, t));
       }
-    } else if (distancePx <= EPSILON && durationUs <= EPSILON) {
+    } else if (distancePx <= EPSILON && durationUs <= EPSILON && phase === 'up') {
       mixed.push(to);
     }
 
+    if (phase === 'up') {
+      const tail = mixed[mixed.length - 1];
+      const needsAppendTerminal =
+        !tail ||
+        Math.abs(tail.x_px - to.x_px) > EPSILON ||
+        Math.abs(tail.y_px - to.y_px) > EPSILON ||
+        Math.abs(tail.time_us - to.time_us) > 1;
+      if (needsAppendTerminal) {
+        mixed.push(to);
+      }
+    }
+
     this.lastInfo = to;
+    this.lastPhase = phase;
+    this.seenPointerUp = this.seenPointerUp || phase === 'up';
+    this.emittedDabCount += mixed.length;
     return {
       paint_infos: mixed,
       current_info: to,
@@ -88,7 +119,9 @@ export class KritaPressurePipeline {
   finalize(): PaintInfo[] {
     if (!this.lastInfo) return [];
     const finalPoint = this.lastInfo;
+    const shouldEmitFinalPoint =
+      this.emittedDabCount === 0 || (!this.seenPointerUp && this.lastPhase !== 'up');
     this.reset();
-    return [finalPoint];
+    return shouldEmitFinalPoint ? [finalPoint] : [];
   }
 }

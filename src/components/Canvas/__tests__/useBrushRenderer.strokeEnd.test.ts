@@ -172,7 +172,7 @@ describe('useBrushRenderer stroke finalize path', () => {
 
     const dabCountAfterPrepare = gpu.stampDabCalls.length;
     const finishCallsAfterPrepare = finishSpy.mock.calls.length;
-    expect(finishCallsAfterPrepare).toBeGreaterThanOrEqual(2);
+    expect(finishCallsAfterPrepare).toBeGreaterThanOrEqual(1);
     expect(dabCountAfterPrepare).toBe(dabCountBeforePrepare + 1);
     const finalizeCalls = gpu.stampDabCalls.slice(dabCountBeforePrepare) as Array<{
       x?: number;

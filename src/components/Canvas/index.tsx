@@ -221,6 +221,25 @@ declare global {
       blocking_failures: string[];
       run_meta: { run_id: string };
     }>;
+    __kritaPressurePipelineModeGet?: () => {
+      pressurePipelineV2Primary: boolean;
+      pressurePipelineV2Shadow: boolean;
+      stageDiffLogEnabled: boolean;
+      maxRecentEntries: number;
+    };
+    __kritaPressurePipelineModeSet?: (patch?: {
+      pressurePipelineV2Primary?: boolean;
+      pressurePipelineV2Shadow?: boolean;
+      stageDiffLogEnabled?: boolean;
+      maxRecentEntries?: number;
+    }) => {
+      pressurePipelineV2Primary: boolean;
+      pressurePipelineV2Shadow: boolean;
+      stageDiffLogEnabled: boolean;
+      maxRecentEntries: number;
+    };
+    __kritaPressureShadowDiffGet?: (options?: { recentLimit?: number }) => unknown;
+    __kritaPressureShadowDiffReset?: () => void;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
     __brushTailTaperDebug?: () => StrokeFinalizeDebugSnapshot | null;
@@ -256,6 +275,7 @@ type QueuedPoint = {
   rotation: number;
   timestampMs: number;
   source: 'wintab' | 'macnative' | 'pointerevent';
+  phase: 'down' | 'move' | 'up' | 'hover';
   hostTimeUs: number;
   deviceTimeUs: number;
   pointIndex: number;

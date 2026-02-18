@@ -196,6 +196,25 @@ interface CreateM4ParityGateParams {
   getGpuDiagnosticsSnapshot?: () => unknown;
 }
 
+export interface ResolveGateCaptureInputParams {
+  capture: StrokeCaptureData | string | undefined;
+  fallbackCapture: StrokeCaptureData | null;
+  parseStrokeCaptureInput: (
+    capture: StrokeCaptureData | string | undefined,
+    fallback: StrokeCaptureData | null
+  ) => StrokeCaptureData | null;
+  loadFixedCapture: () => Promise<FixedStrokeCaptureLoadResult | null>;
+  invalidCaptureError: string;
+  missingCaptureError: string;
+}
+
+export interface ResolvedGateCaptureInput {
+  capture: StrokeCaptureData;
+  captureName: string;
+  captureSource: string;
+  capturePath: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
@@ -274,6 +293,35 @@ function getDiagnosticsStatus(snapshot: unknown): {
   };
 }
 
+export async function resolveGateCaptureInput(
+  params: ResolveGateCaptureInputParams
+): Promise<ResolvedGateCaptureInput> {
+  const resolvedCapture = params.parseStrokeCaptureInput(params.capture, params.fallbackCapture);
+  if (typeof params.capture !== 'undefined' && !resolvedCapture) {
+    throw new Error(params.invalidCaptureError);
+  }
+  if (resolvedCapture) {
+    const isInlineCapture = typeof params.capture !== 'undefined';
+    return {
+      capture: resolvedCapture,
+      captureName: DEBUG_CAPTURE_FILE_NAME,
+      captureSource: isInlineCapture ? 'options.capture' : 'runtime.capture',
+      capturePath: isInlineCapture ? 'inline' : 'runtime.capture',
+    };
+  }
+
+  const fixedCapture = await params.loadFixedCapture();
+  if (!fixedCapture) {
+    throw new Error(params.missingCaptureError);
+  }
+  return {
+    capture: fixedCapture.capture,
+    captureName: fixedCapture.name,
+    captureSource: fixedCapture.source,
+    capturePath: fixedCapture.path,
+  };
+}
+
 export function createM4ParityGate(
   params: CreateM4ParityGateParams
 ): (options?: M4ParityGateOptions) => Promise<M4ParityGateResult> {
@@ -318,30 +366,18 @@ export function createM4ParityGate(
     };
 
     try {
-      let baseCapture: StrokeCaptureData | null = null;
-
-      if (typeof options.capture !== 'undefined') {
-        baseCapture = params.parseStrokeCaptureInput(options.capture, null);
-        if (!baseCapture) {
-          throw new Error('Invalid capture input for M4 parity gate');
-        }
-      }
-
-      if (!baseCapture) {
-        const fixedCapture = await params.loadFixedCapture();
-        if (!fixedCapture) {
-          throw new Error(
-            `Fixed capture missing: ${DEBUG_CAPTURE_FILE_NAME}. Please record and save first.`
-          );
-        }
-        baseCapture = fixedCapture.capture;
-        captureName = fixedCapture.name;
-        captureSource = fixedCapture.source;
-        capturePath = fixedCapture.path;
-      } else {
-        captureSource = 'options.capture';
-        capturePath = 'inline';
-      }
+      const resolvedCapture = await resolveGateCaptureInput({
+        capture: options.capture,
+        fallbackCapture: null,
+        parseStrokeCaptureInput: params.parseStrokeCaptureInput,
+        loadFixedCapture: params.loadFixedCapture,
+        invalidCaptureError: 'Invalid capture input for M4 parity gate',
+        missingCaptureError: `Fixed capture missing: ${DEBUG_CAPTURE_FILE_NAME}. Please record and save first.`,
+      });
+      const baseCapture = resolvedCapture.capture;
+      captureName = resolvedCapture.captureName;
+      captureSource = resolvedCapture.captureSource;
+      capturePath = resolvedCapture.capturePath;
 
       patternManager.registerPattern(createCheckerPattern(M4_TEXTURE_PATTERN_ID));
       params.resetGpuDiagnostics?.();

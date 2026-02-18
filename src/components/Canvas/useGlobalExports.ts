@@ -22,8 +22,22 @@ import {
   parseScatterSettings,
   parseTextureSettings,
 } from './replayContextParsers';
-import type { M4ParityGateOptions, M4ParityGateResult } from '@/test/m4FeatureParityGate';
+import {
+  resolveGateCaptureInput,
+  type M4ParityGateOptions,
+  type M4ParityGateResult,
+} from '@/test/m4FeatureParityGate';
 import type { KritaPressureGateResult } from '@/engine/kritaPressure/testing/gateRunner';
+import type {
+  KritaPressurePipelineMode,
+  KritaPressureShadowDiffSnapshot,
+} from '@/engine/kritaPressure/runtime/pipelineRuntime';
+import {
+  getKritaPressurePipelineMode,
+  updateKritaPressurePipelineMode,
+  getKritaPressureShadowDiffSnapshot,
+  resetKritaPressureShadowDiff,
+} from '@/engine/kritaPressure/runtime/pipelineRuntime';
 import type {
   FixedCaptureSource,
   FixedStrokeCaptureLoadResult,
@@ -305,6 +319,14 @@ export function useGlobalExports({
         baselineVersion?: string;
         thresholdVersion?: string;
       }) => Promise<KritaPressureGateResult>;
+      __kritaPressurePipelineModeGet?: () => KritaPressurePipelineMode;
+      __kritaPressurePipelineModeSet?: (
+        patch?: Partial<KritaPressurePipelineMode>
+      ) => KritaPressurePipelineMode;
+      __kritaPressureShadowDiffGet?: (options?: {
+        recentLimit?: number;
+      }) => KritaPressureShadowDiffSnapshot;
+      __kritaPressureShadowDiffReset?: () => void;
     };
 
     const isTauriRuntime = '__TAURI_INTERNALS__' in window;
@@ -850,20 +872,31 @@ export function useGlobalExports({
     win.__kritaPressureFullGate = async (options): Promise<KritaPressureGateResult> => {
       const resolvedOptions = options ?? {};
       const fallbackCapture = getLastStrokeCapture?.() ?? null;
-      let resolvedCapture = parseStrokeCaptureInput(resolvedOptions.capture, fallbackCapture);
-      if (!resolvedCapture) {
-        const fixed = await win.__strokeCaptureLoadFixed?.();
-        resolvedCapture = fixed?.capture ?? null;
-      }
-      if (!resolvedCapture) {
-        throw new Error('Missing capture input for krita pressure full gate');
-      }
+      const resolvedCapture = await resolveGateCaptureInput({
+        capture: resolvedOptions.capture,
+        fallbackCapture,
+        parseStrokeCaptureInput,
+        loadFixedCapture: async () => {
+          const fixed = await win.__strokeCaptureLoadFixed?.();
+          return fixed ?? null;
+        },
+        invalidCaptureError: 'Invalid capture input for krita pressure full gate',
+        missingCaptureError: 'Missing capture input for krita pressure full gate',
+      });
 
       const { runKritaPressureGate } = await import('@/engine/kritaPressure/testing/gateRunner');
-      return runKritaPressureGate(resolvedCapture, {
+      return runKritaPressureGate(resolvedCapture.capture, {
         baseline_version: resolvedOptions.baselineVersion ?? 'krita-5.2-default-wintab',
         threshold_version: resolvedOptions.thresholdVersion ?? 'krita-pressure-thresholds.v1',
       });
+    };
+
+    win.__kritaPressurePipelineModeGet = () => getKritaPressurePipelineMode();
+    win.__kritaPressurePipelineModeSet = (patch) => updateKritaPressurePipelineMode(patch ?? {});
+    win.__kritaPressureShadowDiffGet = (options) =>
+      getKritaPressureShadowDiffSnapshot({ recentLimit: options?.recentLimit });
+    win.__kritaPressureShadowDiffReset = () => {
+      resetKritaPressureShadowDiff();
     };
 
     async function tryGpuLayerExportDataUrl(layerId: string): Promise<string | undefined> {
@@ -1216,6 +1249,10 @@ export function useGlobalExports({
       delete win.__strokeCaptureLoadFixed;
       delete win.__gpuM4ParityGate;
       delete win.__kritaPressureFullGate;
+      delete win.__kritaPressurePipelineModeGet;
+      delete win.__kritaPressurePipelineModeSet;
+      delete win.__kritaPressureShadowDiffGet;
+      delete win.__kritaPressureShadowDiffReset;
     };
   }, [
     layerRendererRef,

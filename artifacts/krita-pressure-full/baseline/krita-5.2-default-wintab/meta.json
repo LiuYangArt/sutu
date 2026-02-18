@@ -4,6 +4,6 @@
   "tablet": "Wacom",
   "os": "Windows 11",
   "input_file": "debug-stroke-capture.json",
-  "input_sha256": "to-be-generated-by-gate",
+  "input_sha256": "87dff0c26ba1a98051ab32fa4dbdac2c888e7671ec443d524b3c7aaa85e478d5",
   "notes": "User confirmed all Krita tablet settings are defaults."
 }

@@ -78,6 +78,13 @@ async function main() {
     });
 
     const result = await page.evaluate(async ({ capture, baseline, threshold }) => {
+      const modeSet = window.__kritaPressurePipelineModeSet;
+      if (typeof modeSet === 'function') {
+        modeSet({
+          pressurePipelineV2Primary: true,
+          pressurePipelineV2Shadow: false,
+        });
+      }
       const fn = window.__kritaPressureFullGate;
       if (typeof fn !== 'function') {
         throw new Error('window.__kritaPressureFullGate is not available');
@@ -111,6 +118,16 @@ async function main() {
       fs.writeFile(
         path.join(outputDir, 'fast_windows_metrics.json'),
         JSON.stringify(result.fast_windows_metrics ?? {}, null, 2),
+        'utf-8'
+      ),
+      fs.writeFile(
+        path.join(outputDir, 'case_results.json'),
+        JSON.stringify(result.case_results ?? [], null, 2),
+        'utf-8'
+      ),
+      fs.writeFile(
+        path.join(outputDir, 'preset_results.json'),
+        JSON.stringify(result.preset_results ?? [], null, 2),
         'utf-8'
       ),
       fs.writeFile(path.join(outputDir, 'summary.json'), JSON.stringify(result, null, 2), 'utf-8'),

@@ -8,4 +8,5 @@ export * from './core/segmentSampler';
 export * from './core/speedSmoother';
 export * from './core/types';
 export * from './pipeline/kritaPressurePipeline';
+export * from './runtime/pipelineRuntime';
 export * from './testing/gateRunner';

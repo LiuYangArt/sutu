@@ -40,6 +40,78 @@ export interface PressureAnomalyFlags {
   source_alias_unresolved: boolean;
 }
 
+export type GateStatus = 'pass' | 'fail';
+
+export interface GateRunMeta {
+  run_id: string;
+  created_at: string;
+  source_of_truth_version: string[];
+  env: {
+    krita_version: string;
+    tablet: string;
+    os: string;
+  };
+}
+
+export interface GateCaseResult {
+  case_id: string;
+  case_name: string;
+  sample_count: number;
+  dab_count: number;
+  stage_metrics: Record<string, number | boolean>;
+  final_metrics: Record<string, number | boolean>;
+  fast_windows_metrics: Record<string, number | boolean>;
+  stage_gate: GateStatus;
+  final_gate: GateStatus;
+  fast_gate: GateStatus;
+  overall: GateStatus;
+  blocking_failures: string[];
+}
+
+export interface GatePresetResult {
+  preset_id: string;
+  preset_name: string;
+  case_results: Record<string, GateStatus>;
+  sensor_map_mae: number;
+  sensor_map_p95: number;
+  combiner_output_mae: number;
+  combiner_output_p95: number;
+  stage_gate: GateStatus;
+  final_gate: GateStatus;
+  fast_gate: GateStatus;
+  overall: GateStatus;
+  blocking_failures: string[];
+}
+
+export interface GateArtifact {
+  run_meta: GateRunMeta;
+  input_hash: string;
+  baseline_version: string;
+  threshold_version: string;
+  stage_metrics: Record<string, number | boolean>;
+  final_metrics: Record<string, number | boolean>;
+  fast_windows_metrics: Record<string, number | boolean>;
+  semantic_checks: Record<string, GateStatus>;
+  stage_gate: GateStatus;
+  final_gate: GateStatus;
+  fast_gate: GateStatus;
+  overall: GateStatus;
+  blocking_failures: string[];
+  case_results: GateCaseResult[];
+  preset_results: GatePresetResult[];
+  summary: {
+    overall: GateStatus;
+    stage_gate: GateStatus;
+    final_gate: GateStatus;
+    fast_gate: GateStatus;
+    blocking_failures_count: number;
+    case_passed: number;
+    case_total: number;
+    preset_passed: number;
+    preset_total: number;
+  };
+}
+
 const SOURCE_ALIASES: Record<string, NormalizedInputSource> = {
   wintab: 'wintab',
   win_tab: 'wintab',

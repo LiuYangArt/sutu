@@ -1,5 +1,5 @@
 import { useEffect, useRef, MutableRefObject } from 'react';
-import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
+import { readPointBufferSince, useTabletStore, type TabletInputPoint } from '@/stores/tablet';
 import { getEffectiveInputData, isNativeTabletStreamingState } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 
@@ -25,10 +25,51 @@ type QueuedPoint = {
   rotation: number;
   timestampMs: number;
   source: 'wintab' | 'macnative' | 'pointerevent';
+  phase: 'down' | 'move' | 'up' | 'hover';
   hostTimeUs: number;
   deviceTimeUs: number;
   pointIndex: number;
 };
+
+function normalizeQueuedPhase(phase: unknown): QueuedPoint['phase'] {
+  if (phase === 'down' || phase === 'move' || phase === 'up' || phase === 'hover') {
+    return phase;
+  }
+  return 'move';
+}
+
+function resolveNativePointOffset(
+  anchorEvent: Pick<PointerEvent, 'clientX' | 'clientY'>,
+  anchorNativePoint: { x: number; y: number } | null
+): { x: number; y: number } {
+  if (
+    !anchorNativePoint ||
+    !Number.isFinite(anchorNativePoint.x) ||
+    !Number.isFinite(anchorNativePoint.y)
+  ) {
+    return { x: 0, y: 0 };
+  }
+  return {
+    x: anchorEvent.clientX - anchorNativePoint.x,
+    y: anchorEvent.clientY - anchorNativePoint.y,
+  };
+}
+
+function nativePointToCanvasPoint(
+  canvas: HTMLCanvasElement,
+  point: TabletInputPoint,
+  rect: DOMRect,
+  offset: { x: number; y: number }
+): { x: number; y: number } {
+  return clientToCanvasPoint(canvas, point.x + offset.x, point.y + offset.y, rect);
+}
+
+function toNonReleasePointerEvent(event: PointerEvent): PointerEvent {
+  return {
+    ...event,
+    type: 'pointermove',
+  } as PointerEvent;
+}
 
 interface RawPointerInputConfig {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -103,38 +144,82 @@ export function useRawPointerInput({
       if (shouldUseNativeBackend) {
         nativeSeqCursorRef.current = nextSeq;
       }
-      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
+      if (shouldUseNativeBackend && bufferedPoints.length > 0) {
+        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? pe;
+        const anchorNativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
+        const nativeOffset = resolveNativePointOffset(lastEvent, anchorNativePoint);
+        const moveEvent = toNonReleasePointerEvent(pe);
 
-      for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
-        const evt = coalescedEvents[eventIndex]!;
-        const nativePoint =
-          shouldUseNativeBackend && bufferedPoints.length > 0
-            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
-              bufferedPoints[bufferedPoints.length - 1] ??
-              null)
-            : null;
-        const { x: canvasX, y: canvasY } = clientToCanvasPoint(
-          canvas,
-          evt.clientX,
-          evt.clientY,
-          rect
-        );
+        for (const nativePoint of bufferedPoints) {
+          const nativePhase = normalizeQueuedPhase((nativePoint as { phase?: unknown }).phase);
+          if (nativePhase === 'hover' || nativePhase === 'up') {
+            continue;
+          }
+          const { x: canvasX, y: canvasY } = nativePointToCanvasPoint(
+            canvas,
+            nativePoint,
+            rect,
+            nativeOffset
+          );
 
-        // Resolve pressure/tilt from native backend or PointerEvent
-        const { pressure, tiltX, tiltY, rotation, timestampMs, source, hostTimeUs, deviceTimeUs } =
-          getEffectiveInputData(
-            evt,
-            shouldUseNativeBackend,
+          const {
+            pressure,
+            tiltX,
+            tiltY,
+            rotation,
+            timestampMs,
+            source,
+            hostTimeUs,
+            deviceTimeUs,
+          } = getEffectiveInputData(
+            moveEvent,
+            true,
             bufferedPoints,
             tabletState.currentPoint,
             pe,
             nativePoint
           );
 
+          const idx = pointIndexRef.current++;
+          latencyProfiler.markInputReceived(idx, pe);
+          const point: QueuedPoint = {
+            x: canvasX,
+            y: canvasY,
+            pressure,
+            tiltX,
+            tiltY,
+            rotation,
+            timestampMs,
+            source,
+            phase: nativePhase === 'down' ? 'down' : 'move',
+            hostTimeUs,
+            deviceTimeUs,
+            pointIndex: idx,
+          };
+          if (state === 'starting') {
+            pendingPointsRef.current.push(point);
+          } else if (state === 'active') {
+            inputQueueRef.current.push(point);
+          }
+          onPointBuffered?.();
+        }
+        return;
+      }
+
+      for (const evt of coalescedEvents) {
+        const { x: canvasX, y: canvasY } = clientToCanvasPoint(
+          canvas,
+          evt.clientX,
+          evt.clientY,
+          rect
+        );
+        const { pressure, tiltX, tiltY, rotation, timestampMs, source, hostTimeUs, deviceTimeUs } =
+          getEffectiveInputData(evt, false, bufferedPoints, tabletState.currentPoint, pe, null);
+
         const idx = pointIndexRef.current++;
         latencyProfiler.markInputReceived(idx, evt);
 
-        const point = {
+        const point: QueuedPoint = {
           x: canvasX,
           y: canvasY,
           pressure,
@@ -143,6 +228,7 @@ export function useRawPointerInput({
           rotation,
           timestampMs,
           source,
+          phase: 'move' as const,
           hostTimeUs,
           deviceTimeUs,
           pointIndex: idx,

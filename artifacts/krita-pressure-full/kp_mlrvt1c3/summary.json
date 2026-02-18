@@ -1,0 +1,556 @@
+{
+  "run_meta": {
+    "run_id": "kp_mlrvt1c3",
+    "created_at": "2026-02-18T10:20:48.863Z",
+    "source_of_truth_version": [
+      "docs/research/2026-02-18-krita-wacom-pressure-full-chain.md",
+      "docs/testing/krita-pressure-full-gate-spec.md",
+      "docs/testing/krita-pressure-full-test-cases.md"
+    ],
+    "env": {
+      "krita_version": "5.2",
+      "tablet": "Wacom",
+      "os": "Windows 11"
+    }
+  },
+  "input_hash": "9d17bed1",
+  "baseline_version": "krita-5.2-default-wintab",
+  "threshold_version": "krita-pressure-thresholds.v1",
+  "stage_metrics": {
+    "pressure_clamp_violation_count": 0,
+    "source_alias_unresolved_count": 0,
+    "timestamp_non_monotonic_count": 0,
+    "speed_first_point_is_zero": true,
+    "pressure_curve_mae": 0,
+    "pressure_curve_p95": 0,
+    "speed_mae": 0,
+    "speed_p95": 0,
+    "dab_count_delta": 7,
+    "carry_distance_error_px": 0.8739898880630976,
+    "carry_time_error_ms": 0.2,
+    "pressure_mix_mae": 0.002227912658929192,
+    "speed_mix_mae": 0.0020883687231258562,
+    "time_mix_mae_us": 3592.2537989007437,
+    "sensor_value_mae": 0,
+    "sensor_value_p95": 0,
+    "combiner_output_mae": 0,
+    "combiner_output_p95": 0,
+    "timestamp_jump_count": 2
+  },
+  "final_metrics": {
+    "width_profile_delta": 0.06605850290207103,
+    "tail_decay_delta": 0.00016186081170813452,
+    "pixel_roi_delta": 0
+  },
+  "fast_windows_metrics": {
+    "fast_window_count": 2,
+    "fast_window_min_required": 1,
+    "fast_speed_p95": 0.7912155749524649,
+    "fast_speed_mae": 0
+  },
+  "semantic_checks": {
+    "no_start_distance_gate": "pass",
+    "no_start_transition_ramp": "pass",
+    "no_forced_zero_initial_pressure_non_buildup": "fail",
+    "linear_mix_pressure_speed_time": "fail",
+    "pointerup_finalize_consumes_pending_segment": "pass",
+    "disable_pressure_bridge_matches_contract": "pass"
+  },
+  "stage_gate": "fail",
+  "final_gate": "fail",
+  "fast_gate": "pass",
+  "overall": "fail",
+  "blocking_failures": [
+    "stage_gate_failed",
+    "final_gate_failed",
+    "semantic_check_failed:no_forced_zero_initial_pressure_non_buildup",
+    "semantic_check_failed:linear_mix_pressure_speed_time",
+    "case_failed:A",
+    "case_failed:D",
+    "case_failed:E",
+    "case_failed:H"
+  ],
+  "case_results": [
+    {
+      "case_id": "A",
+      "case_name": "slow_lift",
+      "sample_count": 32,
+      "dab_count": 4689,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 3,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0.0009911705355140313,
+        "speed_mix_mae": 0.0011553433573199235,
+        "time_mix_mae_us": 1929.6904051172708,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0.024777459308824044,
+        "tail_decay_delta": 0.0000035498272433812615,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 0.7632346106587161,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "fail",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "fail",
+      "blocking_failures": [
+        "stage_gate_failed"
+      ]
+    },
+    {
+      "case_id": "B",
+      "case_name": "fast_flick",
+      "sample_count": 5,
+      "dab_count": 1365,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 1,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 0.9175368741566418,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "C",
+      "case_name": "abrupt_stop",
+      "sample_count": 16,
+      "dab_count": 2793,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 2,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0.0007990736529345636,
+        "speed_mix_mae": 0.0010976828133432907,
+        "time_mix_mae_us": 1390.1932712956334,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0.014785599633240618,
+        "tail_decay_delta": 0.000009308640338732098,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 0.7763896664085264,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "D",
+      "case_name": "low_pressure_drag",
+      "sample_count": 40,
+      "dab_count": 9256,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 5,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0.0006580927849883462,
+        "speed_mix_mae": 0.0007646909562170713,
+        "time_mix_mae_us": 2288.657232364697,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0.01738694093440167,
+        "tail_decay_delta": 0.000001173970978165205,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 1,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "fail",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "fail",
+      "blocking_failures": [
+        "stage_gate_failed"
+      ]
+    },
+    {
+      "case_id": "E",
+      "case_name": "first_point_boundary",
+      "sample_count": 8,
+      "dab_count": 710,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 0,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 0,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "fail",
+      "overall": "fail",
+      "blocking_failures": [
+        "fast_gate_failed"
+      ]
+    },
+    {
+      "case_id": "F",
+      "case_name": "final_point_boundary",
+      "sample_count": 8,
+      "dab_count": 1828,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 1,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0.0005467468562055768,
+        "speed_mix_mae": 0.0005467468562055768,
+        "time_mix_mae_us": 27.33734281027884,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0.001694915254237288,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 1,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 1,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "G",
+      "case_name": "near_zero_pressure_jitter",
+      "sample_count": 22,
+      "dab_count": 9254,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 1,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "H",
+      "case_name": "timestamp_jump",
+      "sample_count": 71,
+      "dab_count": 9364,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 7,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0.0022032389559233077,
+        "speed_mix_mae": 0.0020906029773804847,
+        "time_mix_mae_us": 3857.3970101441537,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0.06532122984397941,
+        "tail_decay_delta": 0.00015417158081653184,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 0.7934949252670478,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "fail",
+      "final_gate": "fail",
+      "fast_gate": "pass",
+      "overall": "fail",
+      "blocking_failures": [
+        "stage_gate_failed",
+        "final_gate_failed"
+      ]
+    }
+  ],
+  "preset_results": [
+    {
+      "preset_id": "P0_pressure_size_multiply",
+      "preset_name": "pressure -> size (multiply)",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P1_pressure_flow_opacity",
+      "preset_name": "pressure -> flow+opacity",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P2_speed_sensor",
+      "preset_name": "speed sensor",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P3_combiner_modes",
+      "preset_name": "combiner difference",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P4_low_pressure_micro",
+      "preset_name": "low pressure near zero",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    }
+  ],
+  "summary": {
+    "overall": "fail",
+    "stage_gate": "fail",
+    "final_gate": "fail",
+    "fast_gate": "pass",
+    "blocking_failures_count": 8,
+    "case_passed": 4,
+    "case_total": 8,
+    "preset_passed": 5,
+    "preset_total": 5
+  }
+}

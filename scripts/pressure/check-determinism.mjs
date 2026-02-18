@@ -91,6 +91,9 @@ function summarize(result) {
     fast_windows_metrics: result.fast_windows_metrics,
     semantic_checks: result.semantic_checks,
     blocking_failures: result.blocking_failures,
+    case_results: result.case_results,
+    preset_results: result.preset_results,
+    summary: result.summary,
   };
 }
 
@@ -113,6 +116,13 @@ async function main() {
     const hashes = [];
     for (let i = 0; i < args.runs; i += 1) {
       const result = await page.evaluate(async ({ capture, baseline, threshold }) => {
+        const modeSet = window.__kritaPressurePipelineModeSet;
+        if (typeof modeSet === 'function') {
+          modeSet({
+            pressurePipelineV2Primary: true,
+            pressurePipelineV2Shadow: false,
+          });
+        }
         const fn = window.__kritaPressureFullGate;
         if (typeof fn !== 'function') {
           throw new Error('window.__kritaPressureFullGate is not available');

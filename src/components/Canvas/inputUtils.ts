@@ -27,7 +27,14 @@ function resolveNativeTimestampMs(
   return fallbackTimestampMs;
 }
 
+function isPointerReleaseEvent(evt: PointerEvent): boolean {
+  return evt.type === 'pointerup' || evt.type === 'pointercancel';
+}
+
 function resolvePointerPressure(evt: PointerEvent): number {
+  if (isPointerReleaseEvent(evt)) {
+    return 0;
+  }
   return clampUnit(evt.pressure);
 }
 
@@ -162,6 +169,7 @@ export function getEffectiveInputData(
   hostTimeUs: number;
   deviceTimeUs: number;
 } {
+  const isReleaseEvent = isPointerReleaseEvent(evt);
   const pointerOrientation = resolvePointerOrientation(evt);
   const pointerPressure = resolvePointerPressure(evt);
   const pointerTimestampMs = resolvePointerTimestampMs(evt);
@@ -193,7 +201,7 @@ export function getEffectiveInputData(
       : hostTimeUs;
 
     return {
-      pressure: clampUnit(preferredNativePoint.pressure),
+      pressure: isReleaseEvent ? 0 : clampUnit(preferredNativePoint.pressure),
       tiltX: normalizeTiltComponent(preferredNativePoint.tilt_x),
       tiltY: normalizeTiltComponent(preferredNativePoint.tilt_y),
       rotation: resolveTabletRotation(preferredNativePoint, pointerOrientation.rotation),
@@ -217,7 +225,7 @@ export function getEffectiveInputData(
       : hostTimeUs;
 
     return {
-      pressure: clampUnit(pt.pressure),
+      pressure: isReleaseEvent ? 0 : clampUnit(pt.pressure),
       tiltX: normalizeTiltComponent(pt.tilt_x),
       tiltY: normalizeTiltComponent(pt.tilt_y),
       rotation: resolveTabletRotation(pt, pointerOrientation.rotation),
@@ -241,7 +249,7 @@ export function getEffectiveInputData(
       : hostTimeUs;
 
     return {
-      pressure: clampUnit(currentPoint.pressure),
+      pressure: isReleaseEvent ? 0 : clampUnit(currentPoint.pressure),
       tiltX: normalizeTiltComponent(currentPoint.tilt_x),
       tiltY: normalizeTiltComponent(currentPoint.tilt_y),
       rotation: resolveTabletRotation(currentPoint, pointerOrientation.rotation),

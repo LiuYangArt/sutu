@@ -1,0 +1,117 @@
+[
+  {
+    "preset_id": "P0_pressure_size_multiply",
+    "preset_name": "pressure -> size (multiply)",
+    "case_results": {
+      "A": "pass",
+      "B": "pass",
+      "C": "pass",
+      "D": "pass",
+      "E": "pass",
+      "F": "pass",
+      "G": "pass",
+      "H": "pass"
+    },
+    "sensor_map_mae": 0,
+    "sensor_map_p95": 0,
+    "combiner_output_mae": 0,
+    "combiner_output_p95": 0,
+    "stage_gate": "pass",
+    "final_gate": "pass",
+    "fast_gate": "pass",
+    "overall": "pass",
+    "blocking_failures": []
+  },
+  {
+    "preset_id": "P1_pressure_flow_opacity",
+    "preset_name": "pressure -> flow+opacity",
+    "case_results": {
+      "A": "pass",
+      "B": "pass",
+      "C": "pass",
+      "D": "pass",
+      "E": "pass",
+      "F": "pass",
+      "G": "pass",
+      "H": "pass"
+    },
+    "sensor_map_mae": 0,
+    "sensor_map_p95": 0,
+    "combiner_output_mae": 0,
+    "combiner_output_p95": 0,
+    "stage_gate": "pass",
+    "final_gate": "pass",
+    "fast_gate": "pass",
+    "overall": "pass",
+    "blocking_failures": []
+  },
+  {
+    "preset_id": "P2_speed_sensor",
+    "preset_name": "speed sensor",
+    "case_results": {
+      "A": "pass",
+      "B": "pass",
+      "C": "pass",
+      "D": "pass",
+      "E": "pass",
+      "F": "pass",
+      "G": "pass",
+      "H": "pass"
+    },
+    "sensor_map_mae": 0,
+    "sensor_map_p95": 0,
+    "combiner_output_mae": 0,
+    "combiner_output_p95": 0,
+    "stage_gate": "pass",
+    "final_gate": "pass",
+    "fast_gate": "pass",
+    "overall": "pass",
+    "blocking_failures": []
+  },
+  {
+    "preset_id": "P3_combiner_modes",
+    "preset_name": "combiner difference",
+    "case_results": {
+      "A": "pass",
+      "B": "pass",
+      "C": "pass",
+      "D": "pass",
+      "E": "pass",
+      "F": "pass",
+      "G": "pass",
+      "H": "pass"
+    },
+    "sensor_map_mae": 0,
+    "sensor_map_p95": 0,
+    "combiner_output_mae": 0,
+    "combiner_output_p95": 0,
+    "stage_gate": "pass",
+    "final_gate": "pass",
+    "fast_gate": "pass",
+    "overall": "pass",
+    "blocking_failures": []
+  },
+  {
+    "preset_id": "P4_low_pressure_micro",
+    "preset_name": "low pressure near zero",
+    "case_results": {
+      "A": "pass",
+      "B": "pass",
+      "C": "pass",
+      "D": "pass",
+      "E": "pass",
+      "F": "pass",
+      "G": "pass",
+      "H": "pass"
+    },
+    "sensor_map_mae": 0,
+    "sensor_map_p95": 0,
+    "combiner_output_mae": 0,
+    "combiner_output_p95": 0,
+    "stage_gate": "pass",
+    "final_gate": "pass",
+    "fast_gate": "pass",
+    "overall": "pass",
+    "blocking_failures": []
+  }
+]

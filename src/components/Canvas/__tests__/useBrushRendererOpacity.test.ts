@@ -74,8 +74,10 @@ describe('useBrushRenderer opacity pipeline', () => {
 
     act(() => {
       result.current.processPoint(64, 64, 1.0, config);
-      // Second point: move enough to emit at least one dab (BrushStamper MIN_MOVEMENT_DISTANCE gate)
-      result.current.processPoint(68, 64, 1.0, config);
+      // KritaPressurePipeline emits by spacing; feed enough travel to cross at least one interval.
+      for (let i = 1; i <= 8; i += 1) {
+        result.current.processPoint(64 + i * 4, 64, 1.0, config);
+      }
     });
 
     // Preview should be composited with stroke-level opacity.

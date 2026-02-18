@@ -26,6 +26,7 @@ interface QueuedPoint {
   rotation: number;
   timestampMs: number;
   source: 'wintab' | 'macnative' | 'pointerevent';
+  phase: 'down' | 'move' | 'up' | 'hover';
   hostTimeUs: number;
   deviceTimeUs: number;
   pointIndex: number;
@@ -89,6 +90,7 @@ interface UseStrokeProcessorParams {
     inputMeta?: {
       timestampMs?: number;
       source?: 'wintab' | 'macnative' | 'pointerevent';
+      phase?: 'down' | 'move' | 'up' | 'hover';
       hostTimeUs?: number;
       deviceTimeUs?: number;
     }
@@ -317,6 +319,7 @@ export function useStrokeProcessor({
       inputMeta?: {
         timestampMs?: number;
         source?: 'wintab' | 'macnative' | 'pointerevent';
+        phase?: 'down' | 'move' | 'up' | 'hover';
         hostTimeUs?: number;
         deviceTimeUs?: number;
       }
@@ -367,6 +370,7 @@ export function useStrokeProcessor({
       inputMeta?: {
         timestampMs?: number;
         source?: 'wintab' | 'macnative' | 'pointerevent';
+        phase?: 'down' | 'move' | 'up' | 'hover';
         hostTimeUs?: number;
         deviceTimeUs?: number;
       }
@@ -400,7 +404,8 @@ export function useStrokeProcessor({
       // Batch process all queued points (with soft limit)
       const queue = inputQueueRef.current;
       if (queue.length > 0) {
-        const canConsumeQueue = strokeStateRef.current === 'active';
+        const canConsumeQueue =
+          strokeStateRef.current === 'active' || strokeStateRef.current === 'finishing';
         if (!canConsumeQueue) {
           // Drop stale points captured around stroke end to prevent late tail dabs.
           inputQueueRef.current = [];
@@ -432,6 +437,7 @@ export function useStrokeProcessor({
               {
                 timestampMs: p.timestampMs,
                 source: p.source,
+                phase: p.phase,
                 hostTimeUs: p.hostTimeUs,
                 deviceTimeUs: p.deviceTimeUs,
               }
@@ -485,6 +491,7 @@ export function useStrokeProcessor({
               {
                 timestampMs: time,
                 source: 'pointerevent',
+                phase: 'move',
                 hostTimeUs: Math.round(time * 1000),
                 deviceTimeUs: 0,
               }
@@ -565,6 +572,7 @@ export function useStrokeProcessor({
             {
               timestampMs: p.timestampMs,
               source: p.source,
+              phase: p.phase,
               hostTimeUs: p.hostTimeUs,
               deviceTimeUs: p.deviceTimeUs,
             }
@@ -731,6 +739,7 @@ export function useStrokeProcessor({
           {
             timestampMs: p.timestampMs,
             source: p.source,
+            phase: p.phase,
             hostTimeUs: p.hostTimeUs,
             deviceTimeUs: p.deviceTimeUs,
           }

@@ -20,6 +20,7 @@ function createRawPoint(partial: Partial<RawInputPoint> = {}): RawInputPoint {
 
 function createPointerEvent(
   init: Partial<PointerEvent> & {
+    type?: string;
     pointerType?: string;
     pressure?: number;
     twist?: number;
@@ -31,6 +32,7 @@ function createPointerEvent(
   } = {}
 ): PointerEvent {
   return {
+    type: init.type ?? 'pointermove',
     pointerType: init.pointerType ?? 'pen',
     pressure: init.pressure ?? 0,
     tiltX: init.tiltX ?? 0,
@@ -160,6 +162,25 @@ describe('inputUtils.getEffectiveInputData', () => {
       hostTimeUs: 42_000,
       deviceTimeUs: 42_000,
     });
+  });
+
+  it('pointerup 事件强制使用 0 压力（避免复用上一帧原生高压）', () => {
+    const evt = createPointerEvent({ type: 'pointerup', pressure: 0.6, tiltX: 0, tiltY: 0 });
+    const preferred = createRawPoint({
+      pressure: 0.9,
+      tilt_x: 10,
+      tilt_y: 5,
+      rotation: 10,
+      timestamp_ms: 90,
+    });
+    const result = getEffectiveInputData(evt, true, [preferred], null, evt, preferred);
+    expect(result.pressure).toBe(0);
+  });
+
+  it('pointercancel 事件同样强制 0 压力', () => {
+    const evt = createPointerEvent({ type: 'pointercancel', pressure: 0.7 });
+    const result = getEffectiveInputData(evt, false, [], null);
+    expect(result.pressure).toBe(0);
   });
 
   it('原生后端无 buffered 时回退 currentPoint', () => {

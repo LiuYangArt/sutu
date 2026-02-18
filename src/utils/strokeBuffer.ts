@@ -1510,6 +1510,14 @@ export class BrushStamper {
     return dabs;
   }
 
+  getLastSpeedPxPerMs(): number {
+    return this.lastSpeedPxPerMs;
+  }
+
+  getLastNormalizedSpeed(): number {
+    return BrushStamper.clamp01(this.lastNormalizedSpeed);
+  }
+
   getStrokeFinalizeDebugSnapshot(): StrokeFinalizeDebugSnapshot | null {
     if (!this.lastFinalizeDebugSnapshot) return null;
     return { ...this.lastFinalizeDebugSnapshot };
