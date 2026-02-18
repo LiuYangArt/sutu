@@ -9,19 +9,24 @@
 ## 0. 直接结论（含计划置信度）
 
 1. 这份计划的目标是：重建 Sutu 压感数值链路，使 `输入 -> PaintInfo -> 采样插值 -> 传感器组合 -> Dab` 的行为与 Krita 对齐。
-2. 原计划可执行度不够，核心问题是“门禁有框架但缺少可直接执行的前置冻结、脚本入口、契约样例和阶段退出条件”。
+2. 原计划可执行度仍不足，核心问题是“关键接线点偏离真实主链路（漏了 `useBrushRenderer/strokeBuffer`）、Krita 基线冻结项不完整、gate 执行入口不够落地”。
 3. 本版已补齐：
    - 强制前置检查（文件存在性 + hash 冻结）
-   - 分阶段输入/输出/验证命令/退出门禁
+   - 分阶段输入/输出/验证命令/退出门禁（含单后端先收敛）
    - 契约字段与单位约束
-   - 门禁产物 schema 与阈值治理流程
+   - 门禁产物 schema / 语义检查 / 阈值治理流程
+   - Krita 关键运行参数冻结清单（`DisablePressure/useTimestampsForBrushSpeed/maxAllowedSpeedValue/speedValueSmoothing`）
+   - 基于现有 `M4 gate` 基础设施的复用路线（避免重复造轮子）
+   - 真实接线文件清单（`useBrushRenderer/strokeBuffer/useGlobalExports`）
+   - 旧启发式分支下线清单（起笔门槛、人工 ramp、EMA/smoothstep 混入）
    - 影子模式切换策略与回滚口径
 4. 计划置信度（可按文档直接执行并得到明确结论）：
    - 优化前：`0.63`
-   - 优化后：`0.86`
+   - 优化后：`0.93`
 5. 仍存在的剩余不确定性（已显式纳入执行步骤）：
    - Krita 冻结基线是否覆盖足够设备/采样率分布
    - 高速窗口阈值需要通过多轮基线统计冻结
+   - 多组合传感器（add/max/min/difference）在真实笔刷预设上的覆盖是否充分
 
 ---
 
@@ -45,8 +50,10 @@
 1. `stage_gate=pass`
 2. `final_gate=pass`
 3. `fast_gate=pass`
-4. 手测矩阵通过：尾段衰减、低压可控性、高速稳定性与 Krita 无明显差异
-5. `pnpm check:all` 与 `cargo check --manifest-path src-tauri/Cargo.toml --lib` 通过
+4. `semantic_checks` 全 pass（无短路失败）
+5. 9.1 笔刷矩阵全通过，且每个预设都有 `docs/testing/krita-pressure-full-test-cases.md` 定义的 A~H 报告
+6. 手测矩阵通过：尾段衰减、低压可控性、高速稳定性与 Krita 无明显差异
+7. `pnpm check:all` 与 `cargo check --manifest-path src-tauri/Cargo.toml --lib` 通过
 
 ---
 
@@ -59,18 +66,51 @@
 3. 场景定义：`docs/testing/krita-pressure-full-test-cases.md`
 4. 冻结基线资产：Krita 导出产物（非 Sutu 自生成）
 
-### 2.2 前置阻塞检查（不通过则禁止进入 Phase 1）
+### 2.2 来源白名单与禁用规则（强约束）
+
+1. 实施、评审、自动化脚本生成只允许引用 2.1 列出的 Source of Truth。
+2. 禁止引用任何“废弃目录”内容（包含计划、研究、集成说明、历史脚本口径）。
+3. 若白名单文档与其他文档冲突，必须以白名单为准，不做折中解释。
+4. gate 报告中必须写入 `source_of_truth_version`（三份白名单文档路径 + git commit）。
+
+### 2.3 前置阻塞检查（不通过则禁止进入 Phase 1）
 
 1. 必需文档存在：
    - `docs/testing/krita-pressure-full-gate-spec.md`
    - `docs/testing/krita-pressure-full-test-cases.md`
+   - `docs/research/2026-02-18-krita-wacom-pressure-full-chain.md`
 2. 必需输入文件存在且可 hash：
    - `debug-stroke-capture.json`（固定路径或固定复制副本）
+   - 推荐固定副本路径：`artifacts/krita-pressure-full/baseline/<baseline_version>/debug-stroke-capture.json`
 3. 基线版本可追溯：
    - Krita 版本号
    - 设备型号与驱动版本
    - OS 版本
-4. 同输入重复 10 次导出，结构 hash 一致（允许 run_meta 时间戳字段不同）
+4. Gate 执行入口可用（最少其一）：
+   - 浏览器全局 API：`window.__kritaPressureFullGate`
+   - CLI 脚本：`node scripts/pressure/run-gate.mjs --help`
+5. 同输入重复 10 次导出，结构 hash 一致（允许 `run_meta.run_id/run_meta.time` 不同）
+6. 真实主链路接线点确认（必须在评审记录里打勾）：
+   - `src/components/Canvas/useBrushRenderer.ts`
+   - `src/utils/strokeBuffer.ts`
+   - `src/components/Canvas/useGlobalExports.ts`
+7. Krita 基线运行参数冻结（缺任一项视为基线无效）：
+   - `DisablePressure`（并记录 UI 实际语义映射）
+   - `useTimestampsForBrushSpeed`
+   - `maxAllowedSpeedValue`
+   - `speedValueSmoothing`
+   - Tool smoothing mode（本计划固定 `NO_SMOOTHING`）
+
+### 2.4 现有基础设施复用（必须优先）
+
+1. 复用固定输入读写能力，避免重复实现：
+   - `src/test/strokeCaptureFixedFile.ts`
+   - `window.__strokeCaptureLoadFixed / __strokeCaptureSaveFixed`
+2. 复用现有 gate 架构模式：
+   - `src/test/m4FeatureParityGate.ts`（组织 case + report + Playwright 调用模式）
+3. 复用现有浏览器暴露层：
+   - `src/components/Canvas/useGlobalExports.ts`
+4. 结论：`__kritaPressureFullGate` 为新增 API，但实现模式必须与现有 GPU parity gate API（`__gpuM4ParityGate`）一致，保证 DebugPanel 与脚本接入成本最低。
 
 ---
 
@@ -107,6 +147,16 @@
 4. 插值：`pressure/speed/time` 同时按 `t` 线性 mix。
 5. 传感器：二级 LUT 映射后再组合。
 
+### 4.3 必须下线的旧启发式分支（不下线视为未完成重建）
+
+1. 起笔最小位移硬门槛（`MIN_MOVEMENT_DISTANCE`）导致“未达门槛不出正常 dab”。
+2. 起笔人工压力 ramp（`appendStrokeStartTransitionDabs` 一类逻辑）。
+3. 非 buildup 模式下“首压强制归零”路径。
+4. 用 `smoothstep` 替代线性 `mix` 的 pressure 插值路径。
+5. 与 Krita 主语义无关、且会改变 dab 触发密度的自适应 spacing 改写（例如低压密度 boost）。
+
+说明：上述分支可保留为 `legacy` 对照实现，但默认生产路径必须不可达，并纳入 `semantic_checks`。
+
 ---
 
 ## 5. 契约冻结（Implementation Contract）
@@ -123,7 +173,7 @@
    - `device_time_us: number`
    - `host_time_us: number`
    - `phase: 'down' | 'move' | 'up' | 'hover'`
-   - `source: 'wintab' | 'mac_native' | 'pointer_event'`
+   - `source: 'wintab' | 'macnative' | 'pointerevent'`
 2. `PaintInfo`
    - `x_px`
    - `y_px`
@@ -153,6 +203,23 @@
 3. 时间内部统一 `us`，报告输出 `ms`。
 4. `first_point` 速度固定为 `0`。
 5. 时间戳突变（回退或超大间隔）写入 `anomaly_flags`，并进入门禁统计。
+6. 输入兼容归一化（`pointer_event -> pointerevent`、`win_tab -> wintab`、`mac_native -> macnative`）必须在适配层完成，核心层不再接受多别名。
+7. `timestamp_ms` 到 `*_time_us` 的转换必须可追溯（保留原始字段用于诊断，不允许静默覆盖）。
+
+## 5.3 输入别名归一化表（适配层唯一入口）
+
+1. `win_tab -> wintab`
+2. `mac_native -> macnative`
+3. `pointer_event -> pointerevent`
+4. 核心层仅接受规范值；若仍收到别名，直接记录 `anomaly_flags.source_alias_unresolved` 并 gate fail。
+
+## 5.4 Krita 反直觉布尔桥接（强约束）
+
+1. Krita 侧历史字段 `DisablePressure` 仅允许出现在“基线读取/转换层”。
+2. Sutu 核心与新 pipeline 统一使用正向字段 `pressureEnabled`。
+3. 必须补一组桥接测试：
+   - 输入 `DisablePressure=false` 时，映射后 `pressureEnabled=false`（压力固定 1.0）。
+   - 输入 `DisablePressure=true` 时，映射后 `pressureEnabled=true`（走全局曲线）。
 
 ---
 
@@ -171,14 +238,21 @@
 9. `src/engine/kritaPressure/pipeline/kritaPressurePipeline.ts`
 10. `src/engine/kritaPressure/testing/gateRunner.ts`
 11. `src-tauri/src/core/contracts/pressure_v1.rs`
+12. `src/engine/kritaPressure/bridge/disablePressureBridge.ts`
 
 ### 6.2 必改接线点（现有文件）
 
-1. `src/components/Canvas/useStrokeProcessor.ts`（改为调用新 pipeline）
-2. `src/components/Canvas/inputUtils.ts`（输入字段适配到 `RawInputSample`）
-3. `src/stores/tablet.ts`（保持 `device_time_us/host_time_us` 透传）
-4. `src/utils/pressureCurve.ts`（迁移为 Krita 对齐曲线实现或仅保留 UI 编辑用途）
-5. `src/utils/brushSpeedEstimator.ts`（替换为 Krita 语义实现或降级为 compatibility wrapper）
+1. `src/components/Canvas/useBrushRenderer.ts`（主链路接入新 pipeline，旧 pressure/speed 入口下线）
+2. `src/utils/strokeBuffer.ts`（移除起笔门槛/人工 ramp/非线性 mix；或改为 legacy shadow-only）
+3. `src/components/Canvas/useStrokeProcessor.ts`（仅保留队列与调度职责，不承载压感语义）
+4. `src/components/Canvas/inputUtils.ts`（输入字段适配到 `RawInputSample`）
+5. `src/stores/tablet.ts`（保持 `device_time_us/host_time_us/source/phase` 透传）
+6. `src/utils/pressureCurve.ts`（迁移为 Krita 全局曲线实现，UI 编辑逻辑与运行时映射解耦）
+7. `src/utils/brushSpeedEstimator.ts`（替换为 Krita 语义实现或降级为 compatibility wrapper）
+8. `src/components/Canvas/useGlobalExports.ts`（暴露 `window.__kritaPressureFullGate`）
+9. `src/components/DebugPanel/index.tsx`（提供可视化 gate 触发与结果展示入口）
+10. `src/stores/settings.ts` + `src/components/SettingsPanel/index.tsx`（迁移/冻结与 Krita 不一致的旧速度启发式设置）
+11. `src/test/m4FeatureParityGate.ts`（抽象可复用部分到 shared gate helper，避免实现分叉）
 
 ---
 
@@ -192,19 +266,23 @@
 
 1. 固定输入文件并记录 `sha256`。
 2. 固定画布参数：尺寸、DPI、缩放、背景。
-3. 固定笔刷参数：`size/spacing/flow/opacity/hardness + sensor settings`。
-4. 固定导出 schema：`stage/final/fast/summary`。
-5. 冻结诊断最小字段（写入 `summary.json`），不依赖外部诊断模板文件。
+3. 固定笔刷参数：`size/spacing/flow/opacity/hardness + sensor settings + smoothing mode(NO_SMOOTHING)`。
+4. 固定 Krita 运行参数：`DisablePressure/useTimestampsForBrushSpeed/maxAllowedSpeedValue/speedValueSmoothing`，并写入基线 `meta.json`。
+5. 固定随机性来源：core gate 禁用随机动态（scatter/noise/color jitter）；需要覆盖随机场景时统一走固定 seed。
+6. 固定导出 schema：`stage/final/fast/summary`。
+7. 冻结诊断最小字段（写入 `summary.json`），不依赖外部诊断模板文件。
 
 输出：
 
 1. `docs/testing/krita-pressure-baseline-freeze-v1.md`
 2. `artifacts/krita-pressure-full/baseline/<baseline_version>/meta.json`
+3. `artifacts/krita-pressure-full/baseline/<baseline_version>/krita_settings.json`
 
 退出门禁：
 
 1. 同输入重复 10 次，除 `run_id/time` 外 hash 一致。
 2. 缺字段或未登记字段变更即 fail。
+3. `krita_settings.json` 缺少任一冻结字段即 fail。
 
 ## Phase 1：冻结契约与数值规范
 
@@ -228,7 +306,25 @@
 1. 契约评审通过。
 2. 契约测试全绿。
 
-## Phase 2：重建 Input -> PaintInfo
+## Phase 1.5：单后端单场景先收敛（防止全量并行失控）
+
+目标：先在最难场景建立“可收敛主链路”，再扩展全 case。
+
+执行项：
+
+1. 固定 `backend=wintab`、`case=fast_flick`（case 来源固定为 `docs/testing/krita-pressure-full-test-cases.md` 的 Case B）。
+2. 固定 `source=wintab` 规范值（禁止 `win_tab` 别名漏入核心层）。
+3. 固定 `seed=20260218`，确保单场景回放可重复。
+4. 先打通 `input -> global_curve -> speed -> sampling -> finalize` 最小闭环。
+5. 开启 `semantic_checks`（见 8.4）并要求全 pass。
+6. 输出单场景基线对齐报告，记录失败向量与修复顺序。
+
+退出门禁：
+
+1. `fast_flick` 在单后端下 `stage/final/fast` 三门全 pass。
+2. `semantic_checks` 全 pass，且无 `no_start_distance_gate/no_start_transition_ramp` 失败。
+
+## Phase 2：重建 Input -> PaintInfo（并替换真实入口）
 
 目标：完成全局压感和速度链路。
 
@@ -237,14 +333,15 @@
 1. 实现 LUT 1025 全局曲线与线性采样。
 2. 实现 Krita 语义 `SpeedSmoother`。
 3. 构建 `PaintInfoBuilder` 输出 pressure/speed/time。
-4. 输出阶段指标：`input_normalize/global_curve/speed_builder`。
+4. 在 `useBrushRenderer` 切换到新 `PaintInfoBuilder` 入口，旧 `mapInputPressureForStamper` 路径仅保留 shadow 对照。
+5. 输出阶段指标：`input_normalize/global_curve/speed_builder`。
 
 退出门禁：
 
 1. `input_normalize/global_curve/speed_builder` 全通过。
 2. `low_pressure_drag` 与 `timestamp_jump` 不出现阻塞失败。
 
-## Phase 3：重建采样、插值与 finalize
+## Phase 3：重建采样、插值与 finalize（并下线旧启发式）
 
 目标：对齐 dab 触发时机与尾段行为。
 
@@ -252,8 +349,9 @@
 
 1. 实现 `SegmentSampler`（spacing + timing + carry）。
 2. 实现 `PaintInfoMix`（pressure/speed/time 同步插值）。
-3. 实现 `finishStroke`（末段补点与末样本消费）。
-4. 输出阶段指标：`sampling/mix/finalize`。
+3. 实现 `finishStroke`（末段补点与末样本消费），与常规采样共享推进语义。
+4. 在主路径移除/禁用以下旧分支：`MIN_MOVEMENT_DISTANCE`、`appendStrokeStartTransitionDabs`、非 buildup 首压置零、`smoothstep` 压力插值。
+5. 输出阶段指标：`sampling/mix/finalize` + `semantic_checks`。
 
 退出门禁：
 
@@ -267,9 +365,11 @@
 执行项：
 
 1. 实现 `DynamicSensor` LUT 256 映射。
-2. 实现 `CurveOptionCombiner`（至少 multiply，预留 add/max/min/difference）。
-3. 对接到 `DabRequest.size/flow/opacity`。
-4. 输出阶段指标：`sensor_map/curve_combine`。
+2. 对齐特殊域处理：`additive` 与 `absolute rotation` 在映射前后必须执行域转换。
+3. 实现 `CurveOptionCombiner` 完整模式：`multiply/add/max/min/difference`。
+4. 对接到 `DabRequest.size/flow/opacity`。
+5. 固定最小笔刷矩阵（见 9.1），覆盖 pressure/speed + 多组合模式。
+6. 输出阶段指标：`sensor_map/curve_combine`。
 
 退出门禁：
 
@@ -282,9 +382,10 @@
 
 执行项：
 
-1. 在 `useStrokeProcessor` 接入新 pipeline。
+1. 在 `useBrushRenderer` 接入新 pipeline，`useStrokeProcessor` 仅保留调度。
 2. 增加短期开关：`pressurePipelineV2Shadow`（仅比对不出图）与 `pressurePipelineV2Primary`（新链路出图）。
 3. 影子模式下输出双链路差异日志。
+4. 要求差异日志可定位到：`input/global_curve/speed/sampling/mix/sensor/final_dab`。
 
 退出门禁：
 
@@ -298,10 +399,13 @@
 执行项：
 
 1. 实现 `gateRunner.ts`，输出 `stage/final/fast/summary`。
-2. 固化 A~H 场景执行顺序。
-3. 新增脚本入口：
+2. 在 `useGlobalExports.ts` 暴露 `window.__kritaPressureFullGate`，并保持与 `window.__gpuM4ParityGate` 一致的调用风格（`options -> result`）。
+3. 在 `DebugPanel` 增加一键触发和报告展示。
+4. 固化 A~H 场景执行顺序（顺序与命名严格以 `docs/testing/krita-pressure-full-test-cases.md` 为准）。
+5. 新增脚本入口：
    - `scripts/pressure/run-gate.mjs`
    - `scripts/pressure/check-determinism.mjs`
+6. `run-gate.mjs` 通过 Playwright 调用 `window.__kritaPressureFullGate` 并落盘 artifacts。
 
 退出门禁：
 
@@ -357,6 +461,18 @@ threshold_metric = max(
 2. Rust 检查：`cargo check --manifest-path src-tauri/Cargo.toml --lib`。
 3. 输出最终结论：`是否达标：是/否` + 差距 + 下一步。
 
+### 7.1 执行命令模板（本计划默认入口）
+
+1. 本地开发（Web）：
+   - `pnpm dev`
+2. 运行 Krita 压感 gate：
+   - `node scripts/pressure/run-gate.mjs --url http://127.0.0.1:1420 --capture artifacts/krita-pressure-full/baseline/<baseline_version>/debug-stroke-capture.json --baseline <baseline_version> --seed 20260218`
+3. 运行可重复性检查：
+   - `node scripts/pressure/check-determinism.mjs --runs 10 --baseline <baseline_version>`
+4. 最终质量检查：
+   - `cargo check --manifest-path src-tauri/Cargo.toml --lib`
+   - `pnpm check:all`
+
 ---
 
 ## 8. 门禁产物与 schema（必须遵守）
@@ -380,12 +496,57 @@ threshold_metric = max(
 8. `baseline_version`
 9. `threshold_version`
 10. `case_results`
+11. `semantic_checks`
+12. `preset_results`
 
 ### 8.3 判定规则
 
 1. 仅当 `stage_gate=pass` 且 `final_gate=pass` 且 `fast_gate=pass` 时，`overall=pass`。
 2. 任一门禁失败即 `overall=fail`。
 3. 样本不足（高速窗口数不足）直接 fail，不允许降级为 warning。
+
+### 8.4 `semantic_checks`（短路失败，先于数值门禁）
+
+1. `no_start_distance_gate`：主路径不存在起笔最小位移硬门槛。
+2. `no_start_transition_ramp`：主路径不存在人工起笔 pressure ramp。
+3. `no_forced_zero_initial_pressure_non_buildup`：非 buildup 不允许强制首压归零。
+4. `linear_mix_pressure_speed_time`：`pressure/speed/time` 同步线性插值，无 `smoothstep` 替代。
+5. `pointerup_finalize_consumes_pending_segment`：抬笔后 pending segment 被消费，无末点漏样。
+6. `disable_pressure_bridge_matches_contract`：Krita 历史反直觉布尔仅在适配层处理，核心层语义单向正向。
+
+### 8.5 可重复性要求（Determinism）
+
+1. 同输入同配置重复 10 次，`semantic_checks` 结果必须完全一致。
+2. 指标字段按 canonical JSON（排序 key + 去除运行时字段）计算 hash。
+3. 若出现 hash 漂移，优先判定为阻塞失败，禁止带病进入阈值校准。
+
+### 8.6 阶段指标最小集合（否则视为报告不完整）
+
+1. `input_normalize`：
+   - `pressure_clamp_violation_count`
+   - `source_alias_unresolved_count`
+   - `timestamp_non_monotonic_count`
+2. `global_curve`：
+   - `pressure_curve_mae`
+   - `pressure_curve_p95`
+3. `speed_builder`：
+   - `speed_mae`
+   - `speed_p95`
+   - `speed_first_point_is_zero`（bool）
+4. `sampling`：
+   - `dab_count_delta`
+   - `carry_distance_error_px`
+   - `carry_time_error_ms`
+5. `mix`：
+   - `pressure_mix_mae`
+   - `speed_mix_mae`
+   - `time_mix_mae_us`
+6. `sensor_map`：
+   - `sensor_value_mae`
+   - `sensor_value_p95`
+7. `curve_combine`：
+   - `combiner_output_mae`
+   - `combiner_output_p95`
 
 ---
 
@@ -402,6 +563,16 @@ threshold_metric = max(
 5. 预期结果：
    - 自动门禁三门全 pass
    - 手测四场景无 blocker
+
+### 9.1 最小笔刷矩阵（不满足则不得宣称“与 Krita 一致”）
+
+1. `P0_pressure_size_multiply`：仅 pressure->size，combiner=`multiply`。
+2. `P1_pressure_flow_opacity`：pressure 同时驱动 flow + opacity。
+3. `P2_speed_sensor`：启用 speed 传感器，验证 `SpeedSmoother` 与 tail 稳定性。
+4. `P3_combiner_modes`：同一输入分别验证 `add/max/min/difference`。
+5. `P4_low_pressure_micro`：低压近零区可见性与连续性。
+
+要求：每个预设都要跑 `docs/testing/krita-pressure-full-test-cases.md` 定义的 A~H 场景，报告内分预设输出 `stage/final/fast` 与 `semantic_checks`。
 
 ---
 
@@ -427,6 +598,8 @@ threshold_metric = max(
    对策：高速窗口最小数量门槛，不足直接 fail。
 5. 风险：布尔命名语义反转再次引入分支错误。  
    对策：Sutu 内部统一正向命名，适配层单独处理 Krita 历史语义。
+6. 风险：只在单一笔刷预设通过，导致“局部一致、整体失真”。  
+   对策：强制执行 9.1 笔刷矩阵，缺一项即不得进入切主阶段。
 
 ---
 
@@ -434,41 +607,59 @@ threshold_metric = max(
 
 1. 先冻结（输入/画布/笔刷/schema/hash）。
 2. 再锁契约（TS + Rust + 单测）。
-3. 分三段重建核心链路（Input->PaintInfo、采样插值、动态传感器）。
-4. 影子模式跑通后再切主。
-5. 门禁自动化与阈值治理完成后，给最终达标结论。
+3. 先在 `wintab + fast_flick` 单点收敛，再扩展全场景。
+4. 分三段重建核心链路（Input->PaintInfo、采样插值、动态传感器），并下线旧启发式分支。
+5. 影子模式跑通后再切主。
+6. 门禁自动化（API + CLI）与阈值治理完成后，给最终达标结论。
 
 ---
 
 ## 13. Task List（可直接执行）
 
-1. [ ] 冻结诊断最小字段规范并写入 gate 产物 schema（`summary.json`）。
-2. [ ] 冻结输入/画布/笔刷/导出 schema，并登记 `sha256`。
-3. [ ] 新建 `docs/testing/krita-pressure-baseline-freeze-v1.md`。
-4. [ ] 定义并冻结 `RawInputSample/PaintInfo/DabRequest/GateArtifact`。
-5. [ ] 新建 `src-tauri/src/core/contracts/pressure_v1.rs`。
-6. [ ] 新建 `src/engine/kritaPressure/core/types.ts`。
-7. [ ] 实现 `globalPressureCurve.ts`（LUT 1025 + 线性采样）。
-8. [ ] 实现 `speedSmoother.ts`（Krita 语义）。
-9. [ ] 实现 `paintInfoBuilder.ts`。
-10. [ ] 实现 `segmentSampler.ts`（spacing/timing/carry）。
-11. [ ] 实现 `paintInfoMix.ts`。
-12. [ ] 实现 `dynamicSensor.ts`（LUT 256）。
-13. [ ] 实现 `curveOptionCombiner.ts`。
-14. [ ] 实现 `kritaPressurePipeline.ts`。
-15. [ ] 接线 `useStrokeProcessor.ts` 与 `inputUtils.ts`。
-16. [ ] 增加影子模式开关 `pressurePipelineV2Shadow/Primary`。
-17. [ ] 实现 `src/engine/kritaPressure/testing/gateRunner.ts`。
-18. [ ] 新增脚本 `scripts/pressure/run-gate.mjs`。
-19. [ ] 新增脚本 `scripts/pressure/check-determinism.mjs`。
-20. [ ] 跑 A~H 场景并输出 artifacts。
-21. [ ] 生成 `docs/testing/krita-pressure-thresholds.v1.json`。
-22. [ ] 执行影子模式 100 次回放稳定性验证。
-23. [ ] 一次切换到新链路并观察一个迭代周期。
-24. [ ] 删除旧压感核心路径与死代码。
-25. [ ] 执行 `cargo check --manifest-path src-tauri/Cargo.toml --lib`。
-26. [ ] 执行 `pnpm check:all`。
-27. [ ] 输出最终结论：`是否达标：是/否` + 差距 + 下一步。
+1. [ ] 建立 Phase 0 冻结文档：`docs/testing/krita-pressure-baseline-freeze-v1.md`。
+2. [ ] 冻结输入副本到 `artifacts/krita-pressure-full/baseline/<baseline_version>/debug-stroke-capture.json`。
+3. [ ] 记录并校验输入 `sha256`，写入 `meta.json`。
+4. [ ] 冻结 Krita 运行参数并落盘 `krita_settings.json`（`DisablePressure/useTimestampsForBrushSpeed/maxAllowedSpeedValue/speedValueSmoothing`）。
+5. [ ] 冻结 gate 产物 schema（含 `semantic_checks` 与 8.6 指标字段）。
+6. [ ] 定义并冻结 `RawInputSample/PaintInfo/DabRequest/GateArtifact` 契约。
+7. [ ] 新建 `src-tauri/src/core/contracts/pressure_v1.rs` 并更新 `src-tauri/src/core/contracts/mod.rs` 导出。
+8. [ ] 新建 `src/engine/kritaPressure/core/types.ts`，与 Rust 契约保持同字段语义（核心层仅接受规范 `source`）。
+9. [ ] 增加 TS<->Rust 契约 roundtrip 测试（含 source alias 归一化）。
+10. [ ] 新建 `disablePressureBridge.ts`，实现 Krita 历史字段到 `pressureEnabled` 的单向桥接。
+11. [ ] 增加 `DisablePressure -> pressureEnabled` 桥接双向用例测试。
+12. [ ] 实现 `globalPressureCurve.ts`（LUT 1025 + 线性采样）。
+13. [ ] 实现 `speedSmoother.ts`（首点 0 + filtered mean 时间差语义）。
+14. [ ] 实现 `paintInfoBuilder.ts`。
+15. [ ] 在 `wintab + fast_flick + seed=20260218` 场景打通最小闭环，输出单场景报告。
+16. [ ] 实现 `segmentSampler.ts`（spacing/timing/carry）。
+17. [ ] 实现 `paintInfoMix.ts`（pressure/speed/time 线性 mix）。
+18. [ ] 在 `strokeBuffer` 主路径下线：`MIN_MOVEMENT_DISTANCE` 起笔阻断。
+19. [ ] 在 `strokeBuffer` 主路径下线：`appendStrokeStartTransitionDabs` 人工 ramp。
+20. [ ] 在 `strokeBuffer` 主路径下线：非 buildup 首压归零路径。
+21. [ ] 在 `strokeBuffer` 主路径下线：`smoothstep` 压力插值替代线性 mix。
+22. [ ] 实现 `dynamicSensor.ts`（LUT 256 + additive/absolute rotation 域转换）。
+23. [ ] 实现 `curveOptionCombiner.ts` 全模式（`multiply/add/max/min/difference`）。
+24. [ ] 实现 `kritaPressurePipeline.ts`。
+25. [ ] 在 `useBrushRenderer.ts` 接入新 pipeline（主路径）。
+26. [ ] 在 `useStrokeProcessor.ts` 保持调度职责，移除压感语义耦合。
+27. [ ] 在 `inputUtils.ts` 与 `tablet.ts` 完成 `source/time` 归一化与透传。
+28. [ ] 增加影子模式开关 `pressurePipelineV2Shadow/Primary` 与阶段级差异日志。
+29. [ ] 实现 `src/engine/kritaPressure/testing/gateRunner.ts`。
+30. [ ] 在 `src/test/m4FeatureParityGate.ts` 提取 shared helper，复用于 `kritaPressureFullGate`。
+31. [ ] 在 `useGlobalExports.ts` 暴露 `window.__kritaPressureFullGate`（调用风格对齐 `__gpuM4ParityGate`）。
+32. [ ] 在 `DebugPanel/index.tsx` 增加 gate 一键触发与结果展示。
+33. [ ] 新增 `scripts/pressure/run-gate.mjs`（Playwright 调用浏览器 gate API）。
+34. [ ] 新增 `scripts/pressure/check-determinism.mjs`（10 次 canonical hash 检查）。
+35. [ ] 执行 `node scripts/pressure/run-gate.mjs --url http://127.0.0.1:1420 --capture artifacts/krita-pressure-full/baseline/<baseline_version>/debug-stroke-capture.json --baseline <baseline_version> --seed 20260218`。
+36. [ ] 执行 `node scripts/pressure/check-determinism.mjs --runs 10 --baseline <baseline_version>`。
+37. [ ] 跑 `docs/testing/krita-pressure-full-test-cases.md` 定义的 A~H 场景 x 9.1 笔刷矩阵，输出 artifacts。
+38. [ ] 生成 `docs/testing/krita-pressure-thresholds.v1.json` 并附阈值审计记录。
+39. [ ] 执行影子模式 100 次回放稳定性验证。
+40. [ ] 一次切换到新链路并观察一个迭代周期。
+41. [ ] 删除旧压感核心路径与死代码（含不可达 legacy 分支）。
+42. [ ] 执行 `cargo check --manifest-path src-tauri/Cargo.toml --lib`。
+43. [ ] 执行 `pnpm check:all`。
+44. [ ] 输出最终结论：`是否达标：是/否` + 差距 + 下一步。
 
 ---
 
@@ -476,15 +667,16 @@ threshold_metric = max(
 
 1. 旧链路反复修补失败，说明问题是系统语义偏差，而非局部 bug。
 2. Krita 压感是“多阶段耦合系统”，单点对齐不会稳定达标。
-3. 必须把“可复现基线 + 阶段门禁 + 最终门禁 + 高速门禁 + 阈值治理”作为一个整体交付。
-4. 影子模式先对齐、再切主，可显著降低一次替换风险。
+3. 若不在真实主链路（`useBrushRenderer/strokeBuffer`）接线，再完整的核心模块也不会生效。
+4. 必须把“可复现基线 + 语义短路检查 + 阶段门禁 + 最终门禁 + 高速门禁 + 阈值治理”作为一个整体交付。
+5. 先 `wintab + fast_flick` 单点收敛再扩展，能显著降低并行改动导致的定位复杂度。
+6. 影子模式先对齐、再切主，可显著降低一次替换风险。
 
 ---
 
 ## 15. 参考
 
 1. `docs/research/2026-02-18-krita-wacom-pressure-full-chain.md`
-2. `docs/research/2026-02-18-krita-wacom-pressure-one-page.md`
-3. `docs/testing/krita-pressure-full-gate-spec.md`
-4. `docs/testing/krita-pressure-full-test-cases.md`
-5. `docs/testing/cross-platform-core-consistency-v1.md`
+2. `docs/testing/krita-pressure-full-gate-spec.md`
+3. `docs/testing/krita-pressure-full-test-cases.md`
+4. `docs/testing/cross-platform-core-consistency-v1.md`
