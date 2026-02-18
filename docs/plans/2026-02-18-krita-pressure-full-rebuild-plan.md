@@ -683,3 +683,55 @@ threshold_metric = max(
 2. `docs/testing/krita-pressure-full-gate-spec.md`
 3. `docs/testing/krita-pressure-full-test-cases.md`
 4. `docs/testing/cross-platform-core-consistency-v1.md`
+
+---
+
+## 16. 当前实现链路图（Sutu 主路径）
+
+```mermaid
+flowchart TD
+    A["Wacom/Pointer 输入"] --> B["Rust tablet 流 + PointerEvent<br/>wintab/macnative/pointerevent"]
+    B --> C["usePointerHandlers/useRawPointerInput<br/>读 coalesced/raw + native buffer"]
+    C --> D["inputUtils.getEffectiveInputData<br/>pressure/tilt/rotation/source/time 归一化"]
+    D --> E["pendingPoints/inputQueue<br/>按 starting/active 入队"]
+    E --> F["useStrokeProcessor RAF 批处理出队"]
+    F --> G["useBrushRenderer.processPoint"]
+    G --> H["PaintInfoBuilder.build<br/>globalPressureCurve(1025) + speedSmoother"]
+    H --> I["BrushStamper.processPoint<br/>SegmentSampler(spacing+timing+carry)<br/>pressure/time 线性插值"]
+    I --> J["renderPrimaryDabs<br/>shape/transfer/scatter/color/texture 动态"]
+    J --> K["StrokeAccumulator / GPUStrokeAccumulator<br/>stamp dab 到当前笔划缓冲"]
+    K --> L["endStroke 合成到图层<br/>opacity ceiling + paint/erase"]
+
+    M["KritaPressurePipeline + gateRunner"] -. "当前用于测试/门禁" .-> H
+```
+
+主链代码锚点：
+1. `src/components/Canvas/usePointerHandlers.ts`
+2. `src/components/Canvas/useRawPointerInput.ts`
+3. `src/components/Canvas/inputUtils.ts`
+4. `src/components/Canvas/useStrokeProcessor.ts`
+5. `src/components/Canvas/useBrushRenderer.ts`
+6. `src/engine/kritaPressure/core/paintInfoBuilder.ts`
+7. `src/engine/kritaPressure/core/globalPressureCurve.ts`
+8. `src/engine/kritaPressure/core/speedSmoother.ts`
+9. `src/utils/strokeBuffer.ts`
+10. `src/utils/freehand/segmentSampler.ts`
+11. `src/engine/kritaPressure/pipeline/kritaPressurePipeline.ts`
+
+---
+
+## 17. 与 Krita 链路一致性对比（基于当前实现）
+
+| 维度 | Krita | Sutu 当前实现 | 结论 |
+| --- | --- | --- | --- |
+| 输入接入层 | Qt `QTabletEvent -> InputManager -> ToolProxy` | Rust tablet 流 + `PointerEvent` 双源汇合 | 架构不同，但语义可对齐 |
+| 全局压感曲线 | `pressureToCurve` + 全局 LUT | `globalPressureCurve.ts` 1025 LUT | 一致 |
+| 速度估计 | `KisSpeedSmoother`（首点 0、filtered mean） | `speedSmoother.ts` 同语义 | 一致 |
+| 采样与插值 | `paintLine` spacing/timing + `mix()` 线性插值 | `SegmentSampler` + `BrushStamper` 线性插值 | 一致 |
+| 动态传感器通用层 | `DynamicSensor + CurveOption` 全链路参与 | 主路径仍以 `shape/transfer/...` 为主；`dynamicSensor.ts`、`curveOptionCombiner.ts` 尚未接入主绘制路径 | 不一致 |
+| DisablePressure 运行态语义 | 历史字段命名反直觉，运行态可切换 | 有桥接 `disablePressureBridge.ts`，但主路径当前固定 `pressure_enabled=true` | 部分一致 |
+| Tool 平滑分支 | 多种 smoothing 分支（含 pressure smoothing） | 当前主路径无等价分支 | 不一致 |
+
+结论：
+1. 当前 Sutu 在“输入归一化 -> 全局压感 -> 速度 -> spacing/timing 采样 -> 线性插值 -> dab 合成”主干上，已与 Krita 关键语义对齐。
+2. 但在“动态传感器通用层接线、DisablePressure 运行态切换、Tool 级平滑分支”三处尚未完全一致，因此不能宣称“完全一致”。
