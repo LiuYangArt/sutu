@@ -62,7 +62,11 @@ import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { computeTextureDepth } from '@/utils/textureDynamics';
 import { useSelectionStore } from '@/stores/selection';
 import { useToastStore } from '@/stores/toast';
-import { samplePressureCurveLut } from '@/utils/pressureCurve';
+import {
+  PaintInfoBuilder,
+  createDefaultGlobalPressureLut,
+  normalizeInputSource,
+} from '@/engine/kritaPressure';
 
 const MIN_ROUNDNESS = 0.01;
 const STROKE_PROGRESS_DISTANCE_PX = 1200;
@@ -215,7 +219,7 @@ function resolveRenderableDabSizeAndOpacity(
 const PRESSURE_TAIL_PARITY_STAMPER_OPTIONS = Object.freeze({
   maxBrushSpeedPxPerMs: 30,
   brushSpeedSmoothingSamples: 3,
-  lowPressureAdaptiveSmoothingEnabled: false as const,
+  maxDabIntervalMs: 16,
 });
 
 export interface BrushRenderConfig {
@@ -289,7 +293,12 @@ export interface UseBrushRendererResult {
     config: BrushRenderConfig,
     pointIndex?: number,
     dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-    inputMeta?: { timestampMs?: number }
+    inputMeta?: {
+      timestampMs?: number;
+      source?: 'wintab' | 'macnative' | 'pointerevent';
+      hostTimeUs?: number;
+      deviceTimeUs?: number;
+    }
   ) => void;
   endStroke: (layerCtx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -344,6 +353,15 @@ export function useBrushRenderer({
 
   // Shared stamper (generates dab positions)
   const stamperRef = useRef<BrushStamper>(new BrushStamper());
+  const paintInfoBuilderRef = useRef<PaintInfoBuilder>(
+    new PaintInfoBuilder({
+      pressure_enabled: true,
+      global_pressure_lut: createDefaultGlobalPressureLut(),
+      use_device_time_for_speed: false,
+      max_allowed_speed_px_per_ms: 30,
+      speed_smoothing_samples: 3,
+    })
+  );
 
   // Secondary brush stamper (independent path for Dual Brush)
   const secondaryStamperRef = useRef<BrushStamper>(new BrushStamper());
@@ -483,6 +501,7 @@ export function useBrushRenderer({
       strokeCancelledRef.current = false;
       stamperRef.current.beginStroke();
       secondaryStamperRef.current.beginStroke();
+      paintInfoBuilderRef.current.reset();
 
       // Shape Dynamics: Reset direction tracking for new stroke
       prevDabPosRef.current = null;
@@ -513,13 +532,6 @@ export function useBrushRenderer({
       }
     },
     [backend, ensureCPUBuffer]
-  );
-
-  const mapInputPressureForStamper = useCallback(
-    (config: BrushRenderConfig, rawPressure: number): number => {
-      return samplePressureCurveLut(config.globalPressureLut, rawPressure);
-    },
-    []
   );
 
   const mapStamperPressureToBrush = useCallback(
@@ -816,7 +828,6 @@ export function useBrushRenderer({
 
       const finalizeDabs = stamperRef.current.finishStroke(lastSpacingPxRef.current, {
         ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
-        trajectorySmoothingEnabled: false,
       });
       secondaryStamperRef.current.finishStroke(0);
       if (finalizeDabs.length > 0) {
@@ -839,7 +850,12 @@ export function useBrushRenderer({
       config: BrushRenderConfig,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number }
+      inputMeta?: {
+        timestampMs?: number;
+        source?: 'wintab' | 'macnative' | 'pointerevent';
+        hostTimeUs?: number;
+        deviceTimeUs?: number;
+      }
     ): void => {
       if (strokeCancelledRef.current) {
         return;
@@ -860,16 +876,51 @@ export function useBrushRenderer({
       const stamperOptions = {
         timestampMs: inputMeta?.timestampMs,
         ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
-        trajectorySmoothingEnabled: false,
       };
-
-      const globalPressure = mapInputPressureForStamper(config, pressure);
-      const adjustedPressure = mapStamperPressureToBrush(config, globalPressure);
       const effectiveDynamics = resolveEffectiveDynamicsConfig(config);
       const effectiveShapeDynamics = effectiveDynamics.shapeDynamics;
       const tiltX = dynamics?.tiltX ?? 0;
       const tiltY = dynamics?.tiltY ?? 0;
       const rotation = dynamics?.rotation ?? 0;
+      const timestampMs =
+        typeof inputMeta?.timestampMs === 'number' && Number.isFinite(inputMeta.timestampMs)
+          ? inputMeta.timestampMs
+          : typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now();
+      const normalizedSource =
+        normalizeInputSource(inputMeta?.source ?? 'pointerevent') ?? 'pointerevent';
+      const hostTimeUs =
+        typeof inputMeta?.hostTimeUs === 'number' && Number.isFinite(inputMeta.hostTimeUs)
+          ? Math.max(0, Math.round(inputMeta.hostTimeUs))
+          : Math.max(0, Math.round(timestampMs * 1000));
+      const deviceTimeUs =
+        typeof inputMeta?.deviceTimeUs === 'number' && Number.isFinite(inputMeta.deviceTimeUs)
+          ? Math.max(0, Math.round(inputMeta.deviceTimeUs))
+          : hostTimeUs;
+
+      paintInfoBuilderRef.current.updateConfig({
+        pressure_enabled: true,
+        global_pressure_lut: config.globalPressureLut ?? createDefaultGlobalPressureLut(),
+        use_device_time_for_speed: false,
+        max_allowed_speed_px_per_ms: config.maxBrushSpeedPxPerMs ?? 30,
+        speed_smoothing_samples: config.brushSpeedSmoothingSamples ?? 3,
+      });
+      const { info: paintInfo } = paintInfoBuilderRef.current.build({
+        x_px: x,
+        y_px: y,
+        pressure_01: pressure,
+        tilt_x_deg: tiltX * 90,
+        tilt_y_deg: tiltY * 90,
+        rotation_deg: rotation,
+        device_time_us: deviceTimeUs,
+        host_time_us: hostTimeUs,
+        source: normalizedSource,
+        phase: 'move',
+      });
+
+      const globalPressure = paintInfo.pressure_01;
+      const adjustedPressure = mapStamperPressureToBrush(config, globalPressure);
       const hasShapeSizeControl =
         effectiveShapeDynamics !== null && effectiveShapeDynamics.sizeControl !== 'off';
 
@@ -1015,14 +1066,7 @@ export function useBrushRenderer({
         void benchmarkProfiler.markRenderSubmit(pointIndex);
       }
     },
-    [
-      backend,
-      benchmarkProfiler,
-      ensureCPUBuffer,
-      mapInputPressureForStamper,
-      mapStamperPressureToBrush,
-      renderPrimaryDabs,
-    ]
+    [backend, benchmarkProfiler, ensureCPUBuffer, mapStamperPressureToBrush, renderPrimaryDabs]
   );
 
   /**

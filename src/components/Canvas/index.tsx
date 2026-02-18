@@ -209,6 +209,18 @@ declare global {
         mismatchRatio: number;
       }>;
     }>;
+    __kritaPressureFullGate?: (options?: {
+      capture?: StrokeCaptureData | string;
+      baselineVersion?: string;
+      thresholdVersion?: string;
+    }) => Promise<{
+      overall: 'pass' | 'fail';
+      stage_gate: 'pass' | 'fail';
+      final_gate: 'pass' | 'fail';
+      fast_gate: 'pass' | 'fail';
+      blocking_failures: string[];
+      run_meta: { run_id: string };
+    }>;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
     __brushTailTaperDebug?: () => StrokeFinalizeDebugSnapshot | null;
@@ -243,6 +255,9 @@ type QueuedPoint = {
   tiltY: number;
   rotation: number;
   timestampMs: number;
+  source: 'wintab' | 'macnative' | 'pointerevent';
+  hostTimeUs: number;
+  deviceTimeUs: number;
   pointIndex: number;
 };
 

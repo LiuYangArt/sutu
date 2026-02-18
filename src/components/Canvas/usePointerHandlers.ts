@@ -23,6 +23,9 @@ interface QueuedPoint {
   tiltY: number;
   rotation: number;
   timestampMs: number;
+  source: 'wintab' | 'macnative' | 'pointerevent';
+  hostTimeUs: number;
+  deviceTimeUs: number;
   pointIndex: number;
 }
 
@@ -363,14 +366,15 @@ export function usePointerHandlers({
               null)
             : null;
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
-        const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
-          evt,
-          shouldUseNativeBackend,
-          bufferedPoints,
-          tabletState.currentPoint,
-          nativeEvent,
-          nativePoint
-        );
+        const { pressure, tiltX, tiltY, rotation, timestampMs, source, hostTimeUs, deviceTimeUs } =
+          getEffectiveInputData(
+            evt,
+            shouldUseNativeBackend,
+            bufferedPoints,
+            tabletState.currentPoint,
+            nativeEvent,
+            nativePoint
+          );
 
         const idx = pointIndexRef.current++;
         latencyProfilerRef.current.markInputReceived(idx, evt);
@@ -385,6 +389,9 @@ export function usePointerHandlers({
             tiltY,
             rotation,
             timestampMs,
+            source,
+            hostTimeUs,
+            deviceTimeUs,
             pointIndex: idx,
           });
           window.__strokeDiagnostics?.onPointBuffered();
@@ -397,6 +404,9 @@ export function usePointerHandlers({
             tiltY,
             rotation,
             timestampMs,
+            source,
+            hostTimeUs,
+            deviceTimeUs,
             pointIndex: idx,
           });
           window.__strokeDiagnostics?.onPointBuffered();
@@ -610,6 +620,9 @@ export function usePointerHandlers({
       let tiltY = 0;
       let rotation = 0;
       let timestampMs = Number.isFinite(pe.timeStamp) ? pe.timeStamp : performance.now();
+      let source: 'wintab' | 'macnative' | 'pointerevent' = 'pointerevent';
+      let hostTimeUs = Math.round(timestampMs * 1000);
+      let deviceTimeUs = 0;
       if (pe.pointerType === 'pen') {
         pressure = pe.pressure > 0 ? pe.pressure : 0;
       } else if (pe.pressure > 0) {
@@ -639,15 +652,9 @@ export function usePointerHandlers({
         tiltY = effectiveInput.tiltY;
         rotation = effectiveInput.rotation;
         timestampMs = effectiveInput.timestampMs;
-        if (shouldUseNativeBackend) {
-          if (lastBufferedPoint) {
-            pressure = lastBufferedPoint.pressure;
-            timestampMs = lastBufferedPoint.timestamp_ms;
-          } else if (pe.pointerType === 'pen') {
-            window.__strokeDiagnostics?.onStartPressureFallback();
-            pressure = 0;
-          }
-        }
+        source = effectiveInput.source;
+        hostTimeUs = effectiveInput.hostTimeUs;
+        deviceTimeUs = effectiveInput.deviceTimeUs;
       }
 
       const canvas = canvasRef.current;
@@ -719,6 +726,9 @@ export function usePointerHandlers({
           tiltY,
           rotation,
           timestampMs,
+          source,
+          hostTimeUs,
+          deviceTimeUs,
           pointIndex: idx,
         },
       ];

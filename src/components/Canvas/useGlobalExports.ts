@@ -23,6 +23,7 @@ import {
   parseTextureSettings,
 } from './replayContextParsers';
 import type { M4ParityGateOptions, M4ParityGateResult } from '@/test/m4FeatureParityGate';
+import type { KritaPressureGateResult } from '@/engine/kritaPressure/testing/gateRunner';
 import type {
   FixedCaptureSource,
   FixedStrokeCaptureLoadResult,
@@ -299,6 +300,11 @@ export function useGlobalExports({
       ) => Promise<FixedStrokeCaptureSaveResult>;
       __strokeCaptureLoadFixed?: () => Promise<FixedStrokeCaptureLoadResult | null>;
       __gpuM4ParityGate?: (options?: M4ParityGateOptions) => Promise<M4ParityGateResult>;
+      __kritaPressureFullGate?: (options?: {
+        capture?: StrokeCaptureData | string;
+        baselineVersion?: string;
+        thresholdVersion?: string;
+      }) => Promise<KritaPressureGateResult>;
     };
 
     const isTauriRuntime = '__TAURI_INTERNALS__' in window;
@@ -841,6 +847,25 @@ export function useGlobalExports({
       return m4ParityGate(options);
     };
 
+    win.__kritaPressureFullGate = async (options): Promise<KritaPressureGateResult> => {
+      const resolvedOptions = options ?? {};
+      const fallbackCapture = getLastStrokeCapture?.() ?? null;
+      let resolvedCapture = parseStrokeCaptureInput(resolvedOptions.capture, fallbackCapture);
+      if (!resolvedCapture) {
+        const fixed = await win.__strokeCaptureLoadFixed?.();
+        resolvedCapture = fixed?.capture ?? null;
+      }
+      if (!resolvedCapture) {
+        throw new Error('Missing capture input for krita pressure full gate');
+      }
+
+      const { runKritaPressureGate } = await import('@/engine/kritaPressure/testing/gateRunner');
+      return runKritaPressureGate(resolvedCapture, {
+        baseline_version: resolvedOptions.baselineVersion ?? 'krita-5.2-default-wintab',
+        threshold_version: resolvedOptions.thresholdVersion ?? 'krita-pressure-thresholds.v1',
+      });
+    };
+
     async function tryGpuLayerExportDataUrl(layerId: string): Promise<string | undefined> {
       if (!exportGpuLayerImageData) return undefined;
       try {
@@ -1190,6 +1215,7 @@ export function useGlobalExports({
       delete win.__strokeCaptureSaveFixed;
       delete win.__strokeCaptureLoadFixed;
       delete win.__gpuM4ParityGate;
+      delete win.__kritaPressureFullGate;
     };
   }, [
     layerRendererRef,
@@ -1201,6 +1227,8 @@ export function useGlobalExports({
     jumpToHistoryIndex,
     handleClearLayer,
     handleDuplicateLayer,
+    handleSetLayerOpacity,
+    handleSetLayerBlendMode,
     handleRemoveLayer,
     handleRemoveLayers,
     handleMergeSelectedLayers,

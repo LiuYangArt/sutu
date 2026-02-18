@@ -11,49 +11,22 @@ function meanAdjacentDelta(values: number[]): number {
 }
 
 describe('BrushStamper speed-based smoothing and finalize sampling', () => {
-  it('uses averaged stroke-start anchor to suppress start jitter spikes', () => {
+  it('emits first dab immediately without start-distance gate', () => {
     const stamper = new BrushStamper();
     stamper.beginStroke();
 
-    const preMoveSamples = [
-      { x: 100, y: 100, p: 0.6, t: 0 },
-      { x: 100.3, y: 99.8, p: 0.6, t: 4 },
-      { x: 100.7, y: 100.2, p: 0.6, t: 8 },
-      // Outlier near threshold: should not pollute start anchor averaging.
-      { x: 102.6, y: 100.1, p: 0.6, t: 12 },
-    ];
-
-    for (const sample of preMoveSamples) {
-      const dabs = stamper.processPoint(sample.x, sample.y, sample.p, 2, false, {
-        timestampMs: sample.t,
-        maxBrushSpeedPxPerMs: 30,
-        brushSpeedSmoothingSamples: 3,
-        trajectorySmoothingEnabled: true,
-      });
-      expect(dabs).toEqual([]);
-    }
-
-    const startTransitionDabs = stamper.processPoint(106, 100, 0.6, 2, false, {
-      timestampMs: 16,
+    const firstDabs = stamper.processPoint(100, 100, 0.6, 2, false, {
+      timestampMs: 0,
       maxBrushSpeedPxPerMs: 30,
       brushSpeedSmoothingSamples: 3,
-      trajectorySmoothingEnabled: true,
     });
 
-    expect(startTransitionDabs.length).toBeGreaterThanOrEqual(3);
-    const first = startTransitionDabs[0];
-    const last = startTransitionDabs[startTransitionDabs.length - 1];
-    expect(first).toBeTruthy();
-    expect(last).toBeTruthy();
-    if (!first || !last) return;
-
-    // Averaged anchor should stay near stable start cluster, not jump to the outlier.
-    expect(first.x).toBeLessThan(101);
-    expect(first.pressure).toBeLessThan(last.pressure);
-    expect(last.pressure).toBeCloseTo(0.6, 2);
+    expect(firstDabs.length).toBe(1);
+    expect(firstDabs[0]?.x).toBe(100);
+    expect(firstDabs[0]?.pressure).toBeCloseTo(0.6, 4);
   });
 
-  it('adaptive low-pressure smoothing reduces pressure stepping', () => {
+  it('keeps lowPressureAdaptiveSmoothingEnabled as no-op in strict mode', () => {
     const adaptive = new BrushStamper();
     const baseline = new BrushStamper();
     adaptive.beginStroke();
@@ -73,7 +46,6 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         maxBrushSpeedPxPerMs: 1,
         brushSpeedSmoothingSamples: 3,
         lowPressureAdaptiveSmoothingEnabled: true,
-        trajectorySmoothingEnabled: true,
       });
       adaptivePressures.push(...adaptiveDabs.map((dab) => dab.pressure));
 
@@ -82,14 +54,16 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         maxBrushSpeedPxPerMs: 1,
         brushSpeedSmoothingSamples: 3,
         lowPressureAdaptiveSmoothingEnabled: false,
-        trajectorySmoothingEnabled: true,
       });
       baselinePressures.push(...baselineDabs.map((dab) => dab.pressure));
     }
 
     expect(adaptivePressures.length).toBeGreaterThan(2);
     expect(baselinePressures.length).toBeGreaterThan(2);
-    expect(meanAdjacentDelta(adaptivePressures)).toBeLessThan(meanAdjacentDelta(baselinePressures));
+    expect(meanAdjacentDelta(adaptivePressures)).toBeCloseTo(
+      meanAdjacentDelta(baselinePressures),
+      8
+    );
   });
 
   it('finalize dabs stay on the last real segment and keep pressure continuity', () => {
@@ -102,7 +76,6 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         timestampMs: i * 4,
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
-        trajectorySmoothingEnabled: true,
       });
       mainDabs.push(...dabs);
     }
@@ -111,7 +84,6 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
       maxBrushSpeedPxPerMs: 30,
       brushSpeedSmoothingSamples: 3,
       maxDabIntervalMs: 1,
-      trajectorySmoothingEnabled: true,
     });
     const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
     expect(mainDabs.length).toBeGreaterThan(0);
@@ -158,8 +130,8 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
     });
     const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
 
-    expect(finalizeDabs).toEqual([]);
-    expect(snapshot?.reason).toBe('no_pending_segment');
+    expect(finalizeDabs.length).toBeGreaterThan(0);
+    expect(snapshot?.reason).toBe('emitted_segment');
   });
 
   it('timing channel emits extra dabs when distance movement is tiny', () => {
@@ -172,14 +144,12 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
         maxDabIntervalMs,
-        trajectorySmoothingEnabled: true,
       });
       stamper.processPoint(4, 0, 0.45, 6, false, {
         timestampMs: 8,
         maxBrushSpeedPxPerMs: 30,
         brushSpeedSmoothingSamples: 3,
         maxDabIntervalMs,
-        trajectorySmoothingEnabled: true,
       });
 
       let emitted = 0;
@@ -189,7 +159,6 @@ describe('BrushStamper speed-based smoothing and finalize sampling', () => {
           maxBrushSpeedPxPerMs: 30,
           brushSpeedSmoothingSamples: 3,
           maxDabIntervalMs,
-          trajectorySmoothingEnabled: true,
         });
         emitted += dabs.length;
       }

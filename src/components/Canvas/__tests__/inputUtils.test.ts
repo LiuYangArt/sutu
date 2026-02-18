@@ -49,12 +49,15 @@ describe('inputUtils.getEffectiveInputData', () => {
   it('非原生后端模式使用 PointerEvent，并归一化 tilt 与读取 twist', () => {
     const evt = createPointerEvent({ pressure: 0.62, tiltX: 45, tiltY: -30, twist: 270 });
     const result = getEffectiveInputData(evt, false, [], null);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       pressure: 0.62,
       tiltX: 0.5,
       tiltY: -1 / 3,
       rotation: 270,
       timestampMs: 42,
+      source: 'pointerevent',
+      hostTimeUs: 42_000,
+      deviceTimeUs: 0,
     });
   });
 
@@ -78,16 +81,17 @@ describe('inputUtils.getEffectiveInputData', () => {
     const sampled = createPointerEvent({ pressure: 0.55, tiltX: 0, tiltY: 0, twist: 0 });
     const fallback = createPointerEvent({ pressure: 0.8, tiltX: 36, tiltY: -18, twist: 123 });
     const result = getEffectiveInputData(sampled, false, [], null, fallback);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       pressure: 0.55,
-      tiltX: 36 / 90,
-      tiltY: -18 / 90,
-      rotation: 123,
+      tiltX: 0,
+      tiltY: 0,
+      rotation: 0,
       timestampMs: 42,
+      source: 'pointerevent',
     });
   });
 
-  it('非原生后端下 pressure=0 时回退 webkitForce', () => {
+  it('非原生后端下 pressure=0 保持原始压力值', () => {
     const evt = createPointerEvent({
       pointerType: 'mouse',
       pressure: 0,
@@ -96,11 +100,11 @@ describe('inputUtils.getEffectiveInputData', () => {
       WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN: 2,
     });
     const result = getEffectiveInputData(evt, false, [], null);
-    expect(result.pressure).toBeCloseTo(0.5, 6);
+    expect(result.pressure).toBe(0);
     expect(result.timestampMs).toBe(42);
   });
 
-  it('非原生后端下样本 pressure 为 synthetic 0.5 时回退 fallbackEvent webkitForce', () => {
+  it('非原生后端下 synthetic 0.5 不再回退 fallbackEvent', () => {
     const sampled = createPointerEvent({ pointerType: 'mouse', pressure: 0.5, webkitForce: 0 });
     const fallback = createPointerEvent({
       pointerType: 'mouse',
@@ -108,7 +112,7 @@ describe('inputUtils.getEffectiveInputData', () => {
       webkitForce: 2.4,
     });
     const result = getEffectiveInputData(sampled, false, [], null, fallback);
-    expect(result.pressure).toBeCloseTo(0.8, 6);
+    expect(result.pressure).toBeCloseTo(0.5, 6);
     expect(result.timestampMs).toBe(42);
   });
 
@@ -119,12 +123,15 @@ describe('inputUtils.getEffectiveInputData', () => {
     ];
     const current = createRawPoint({ pressure: 0.9, tilt_x: 30, tilt_y: 30, rotation: 320 });
     const result = getEffectiveInputData(evt, true, buffered, current);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       pressure: 0.33,
       tiltX: 21 / 90,
       tiltY: -12 / 90,
       rotation: 210,
       timestampMs: 88,
+      source: 'pointerevent',
+      hostTimeUs: 42_000,
+      deviceTimeUs: 42_000,
     });
   });
 
@@ -143,12 +150,15 @@ describe('inputUtils.getEffectiveInputData', () => {
     });
 
     const result = getEffectiveInputData(evt, true, buffered, null, evt, preferred);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       pressure: 0.77,
       tiltX: 11 / 90,
       tiltY: -7 / 90,
       rotation: 222,
       timestampMs: 88,
+      source: 'pointerevent',
+      hostTimeUs: 42_000,
+      deviceTimeUs: 42_000,
     });
   });
 
@@ -162,12 +172,15 @@ describe('inputUtils.getEffectiveInputData', () => {
       timestamp_ms: 64,
     });
     const result = getEffectiveInputData(evt, true, [], current);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       pressure: 0.41,
       tiltX: 8 / 90,
       tiltY: 3 / 90,
       rotation: 288,
       timestampMs: 64,
+      source: 'pointerevent',
+      hostTimeUs: 42_000,
+      deviceTimeUs: 42_000,
     });
   });
 
@@ -175,12 +188,13 @@ describe('inputUtils.getEffectiveInputData', () => {
     const evt = createPointerEvent({ pressure: 0.4, tiltX: 2, tiltY: -1, twist: 123 });
     const buffered = [createRawPoint({ pressure: 0.39, tilt_x: 4, tilt_y: -2, timestamp_ms: 71 })];
     const result = getEffectiveInputData(evt, true, buffered, null);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       pressure: 0.39,
       tiltX: 4 / 90,
       tiltY: -2 / 90,
       rotation: 123,
       timestampMs: 71,
+      source: 'pointerevent',
     });
   });
 
@@ -193,24 +207,30 @@ describe('inputUtils.getEffectiveInputData', () => {
       twist: 9,
     });
     const result = getEffectiveInputData(evt, true, [], null);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       pressure: 0,
       tiltX: 1 / 90,
       tiltY: 2 / 90,
       rotation: 9,
       timestampMs: 42,
+      source: 'pointerevent',
+      hostTimeUs: 42_000,
+      deviceTimeUs: 0,
     });
   });
 
-  it('原生后端 mouse 无可用数据时返回 0.5 压力兜底', () => {
+  it('原生后端 mouse 无可用数据时不再返回 0.5 兜底', () => {
     const evt = createPointerEvent({ pointerType: 'mouse', pressure: 0, tiltX: 1, tiltY: 2 });
     const result = getEffectiveInputData(evt, true, [], null);
-    expect(result).toEqual({
-      pressure: 0.5,
+    expect(result).toMatchObject({
+      pressure: 0,
       tiltX: 1 / 90,
       tiltY: 2 / 90,
       rotation: 0,
       timestampMs: 42,
+      source: 'pointerevent',
+      hostTimeUs: 42_000,
+      deviceTimeUs: 0,
     });
   });
 

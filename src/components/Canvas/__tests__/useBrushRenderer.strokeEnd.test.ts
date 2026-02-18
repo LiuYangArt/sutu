@@ -173,13 +173,13 @@ describe('useBrushRenderer stroke finalize path', () => {
     const dabCountAfterPrepare = gpu.stampDabCalls.length;
     const finishCallsAfterPrepare = finishSpy.mock.calls.length;
     expect(finishCallsAfterPrepare).toBeGreaterThanOrEqual(2);
-    expect(dabCountAfterPrepare).toBe(dabCountBeforePrepare);
+    expect(dabCountAfterPrepare).toBe(dabCountBeforePrepare + 1);
     const finalizeCalls = gpu.stampDabCalls.slice(dabCountBeforePrepare) as Array<{
       x?: number;
       y?: number;
       pressure?: number;
     }>;
-    expect(finalizeCalls).toEqual([]);
+    expect(finalizeCalls.length).toBe(1);
 
     await act(async () => {
       await result.current.prepareStrokeEndGpu();
@@ -250,7 +250,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     });
 
     const finalizeCalls = gpu.stampDabCalls.slice(beforeTailCount) as Array<{ size?: number }>;
-    expect(finalizeCalls).toEqual([]);
+    expect(finalizeCalls.length).toBe(1);
 
     const calls = shapeSpy.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
@@ -266,7 +266,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     const finalizeDynamics = calls
       .slice(beforeFinalizeShapeCallCount)
       .map((call) => call[4] as DynamicsInput);
-    expect(finalizeDynamics).toEqual([]);
+    expect(finalizeDynamics.length).toBe(1);
   });
 
   it('forces size pressure override from toolbar even when Shape Dynamics size control is non-pressure', async () => {

@@ -25,6 +25,9 @@ interface QueuedPoint {
   tiltY: number;
   rotation: number;
   timestampMs: number;
+  source: 'wintab' | 'macnative' | 'pointerevent';
+  hostTimeUs: number;
+  deviceTimeUs: number;
   pointIndex: number;
 }
 
@@ -83,7 +86,12 @@ interface UseStrokeProcessorParams {
     config: BrushRenderConfig,
     pointIndex?: number,
     dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-    inputMeta?: { timestampMs?: number }
+    inputMeta?: {
+      timestampMs?: number;
+      source?: 'wintab' | 'macnative' | 'pointerevent';
+      hostTimeUs?: number;
+      deviceTimeUs?: number;
+    }
   ) => void;
   endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -306,7 +314,12 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number }
+      inputMeta?: {
+        timestampMs?: number;
+        source?: 'wintab' | 'macnative' | 'pointerevent';
+        hostTimeUs?: number;
+        deviceTimeUs?: number;
+      }
     ) => {
       const constrained = constrainShiftLinePoint(x, y);
       const config = getBrushConfig();
@@ -351,7 +364,12 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number }
+      inputMeta?: {
+        timestampMs?: number;
+        source?: 'wintab' | 'macnative' | 'pointerevent';
+        hostTimeUs?: number;
+        deviceTimeUs?: number;
+      }
     ) => {
       processSinglePoint(x, y, pressure, pointIndex, dynamics, inputMeta);
       // Mark that we need to render after processing
@@ -411,7 +429,12 @@ export function useStrokeProcessor({
                 tiltY: p.tiltY,
                 rotation: p.rotation,
               },
-              { timestampMs: p.timestampMs }
+              {
+                timestampMs: p.timestampMs,
+                source: p.source,
+                hostTimeUs: p.hostTimeUs,
+                deviceTimeUs: p.deviceTimeUs,
+              }
             );
           }
 
@@ -459,7 +482,12 @@ export function useStrokeProcessor({
               pressure,
               undefined,
               lastDynamicsRef.current,
-              { timestampMs: time }
+              {
+                timestampMs: time,
+                source: 'pointerevent',
+                hostTimeUs: Math.round(time * 1000),
+                deviceTimeUs: 0,
+              }
             );
             steps++;
           }
@@ -534,7 +562,12 @@ export function useStrokeProcessor({
               tiltY: p.tiltY,
               rotation: p.rotation,
             },
-            { timestampMs: p.timestampMs }
+            {
+              timestampMs: p.timestampMs,
+              source: p.source,
+              hostTimeUs: p.hostTimeUs,
+              deviceTimeUs: p.deviceTimeUs,
+            }
           );
         }
         inputQueueRef.current = [];
@@ -695,7 +728,12 @@ export function useStrokeProcessor({
             tiltY: p.tiltY,
             rotation: p.rotation,
           },
-          { timestampMs: p.timestampMs }
+          {
+            timestampMs: p.timestampMs,
+            source: p.source,
+            hostTimeUs: p.hostTimeUs,
+            deviceTimeUs: p.deviceTimeUs,
+          }
         );
         window.__strokeDiagnostics?.onPointBuffered();
       }

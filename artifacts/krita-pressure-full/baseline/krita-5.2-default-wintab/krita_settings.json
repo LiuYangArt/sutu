@@ -1,0 +1,9 @@
+{
+  "DisablePressure": true,
+  "pressureEnabled": true,
+  "useTimestampsForBrushSpeed": false,
+  "maxAllowedSpeedValue": 30,
+  "speedValueSmoothing": 3,
+  "toolSmoothingMode": "NO_SMOOTHING",
+  "tabletPressureCurve": "linear"
+}

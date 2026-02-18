@@ -24,6 +24,9 @@ type QueuedPoint = {
   tiltY: number;
   rotation: number;
   timestampMs: number;
+  source: 'wintab' | 'macnative' | 'pointerevent';
+  hostTimeUs: number;
+  deviceTimeUs: number;
   pointIndex: number;
 };
 
@@ -118,14 +121,15 @@ export function useRawPointerInput({
         );
 
         // Resolve pressure/tilt from native backend or PointerEvent
-        const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
-          evt,
-          shouldUseNativeBackend,
-          bufferedPoints,
-          tabletState.currentPoint,
-          pe,
-          nativePoint
-        );
+        const { pressure, tiltX, tiltY, rotation, timestampMs, source, hostTimeUs, deviceTimeUs } =
+          getEffectiveInputData(
+            evt,
+            shouldUseNativeBackend,
+            bufferedPoints,
+            tabletState.currentPoint,
+            pe,
+            nativePoint
+          );
 
         const idx = pointIndexRef.current++;
         latencyProfiler.markInputReceived(idx, evt);
@@ -138,6 +142,9 @@ export function useRawPointerInput({
           tiltY,
           rotation,
           timestampMs,
+          source,
+          hostTimeUs,
+          deviceTimeUs,
           pointIndex: idx,
         };
 

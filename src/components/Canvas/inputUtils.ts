@@ -1,16 +1,6 @@
 import { RawInputPoint } from '@/stores/tablet';
 
-type WebKitPointerEvent = PointerEvent & {
-  webkitForce?: number;
-  WEBKIT_FORCE_AT_MOUSE_DOWN?: number;
-  WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN?: number;
-};
-
-function getNativeBackendPressureFallback(evt: PointerEvent): number {
-  if (evt.pointerType === 'pen') return 0;
-  if (evt.pressure > 0) return evt.pressure;
-  return 0.5;
-}
+type StrictInputSource = 'wintab' | 'macnative' | 'pointerevent';
 
 function clampUnit(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -37,50 +27,8 @@ function resolveNativeTimestampMs(
   return fallbackTimestampMs;
 }
 
-function getWebKitPressure(evt: PointerEvent): number | null {
-  const webkitEvt = evt as WebKitPointerEvent;
-  const force = webkitEvt.webkitForce;
-  if (!Number.isFinite(force) || force! <= 0) return null;
-
-  const base = webkitEvt.WEBKIT_FORCE_AT_MOUSE_DOWN;
-  const max = webkitEvt.WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN;
-  if (Number.isFinite(base) && Number.isFinite(max) && max! > base!) {
-    return clampUnit((force! - base!) / (max! - base!));
-  }
-
-  // Fallback range normalization for WebKit variants.
-  return clampUnit(force! <= 1 ? force! : force! / 3);
-}
-
-function resolvePointerPressure(evt: PointerEvent, fallbackEvent?: PointerEvent): number {
-  const raw = evt.pressure;
-  const hasFinitePressure = Number.isFinite(raw);
-  const pressure = hasFinitePressure ? clampUnit(raw) : 0;
-  const likelySyntheticMousePressure =
-    evt.pointerType !== 'pen' && Math.abs(pressure - 0.5) <= 1e-6;
-  const needsFallback = !hasFinitePressure || pressure <= 0 || likelySyntheticMousePressure;
-
-  if (!needsFallback) {
-    return pressure;
-  }
-
-  const webkitPressure = getWebKitPressure(evt);
-  if (webkitPressure !== null) {
-    return webkitPressure;
-  }
-
-  if (fallbackEvent && fallbackEvent !== evt) {
-    const fallbackWebKitPressure = getWebKitPressure(fallbackEvent);
-    if (fallbackWebKitPressure !== null) {
-      return fallbackWebKitPressure;
-    }
-    const fallbackPressure = fallbackEvent.pressure;
-    if (Number.isFinite(fallbackPressure) && fallbackPressure > 0) {
-      return clampUnit(fallbackPressure);
-    }
-  }
-
-  return pressure;
+function resolvePointerPressure(evt: PointerEvent): number {
+  return clampUnit(evt.pressure);
 }
 
 export function isNativeTabletStreamingBackend(activeBackend: string | null | undefined): boolean {
@@ -172,45 +120,52 @@ function resolveTabletRotation(
   return normalizeRotationDegrees(point.rotation!);
 }
 
-function resolvePointerOrientation(
-  evt: PointerEvent,
-  fallbackEvent?: PointerEvent
-): { tiltX: number; tiltY: number; rotation: number } {
+function resolvePointerOrientation(evt: PointerEvent): {
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+} {
   const primaryTilt = getNormalizedTiltFromPointerEvent(evt);
   const primaryRotation = getRotationFromPointerEvent(evt);
-  const hasPrimaryTilt = Math.abs(primaryTilt.tiltX) > 1e-5 || Math.abs(primaryTilt.tiltY) > 1e-5;
-  const hasPrimaryRotation = Math.abs(primaryRotation) > 1e-5;
+  return { tiltX: primaryTilt.tiltX, tiltY: primaryTilt.tiltY, rotation: primaryRotation };
+}
 
-  if (!fallbackEvent || (hasPrimaryTilt && hasPrimaryRotation)) {
-    return { tiltX: primaryTilt.tiltX, tiltY: primaryTilt.tiltY, rotation: primaryRotation };
+function resolveSource(
+  isNativeBackendActive: boolean,
+  preferredNativePoint?: RawInputPoint | null
+): StrictInputSource {
+  if (!isNativeBackendActive) return 'pointerevent';
+  const source = (preferredNativePoint as { source?: string } | undefined)?.source;
+  if (source === 'wintab' || source === 'macnative' || source === 'pointerevent') {
+    return source;
   }
-
-  const fallbackTilt = getNormalizedTiltFromPointerEvent(fallbackEvent);
-  const fallbackRotation = getRotationFromPointerEvent(fallbackEvent);
-  const resolvedTilt = hasPrimaryTilt ? primaryTilt : fallbackTilt;
-  const resolvedRotation = hasPrimaryRotation ? primaryRotation : fallbackRotation;
-  return {
-    tiltX: resolvedTilt.tiltX,
-    tiltY: resolvedTilt.tiltY,
-    rotation: resolvedRotation,
-  };
+  return 'pointerevent';
 }
 
 /**
- * Resolves pressure and tilt data, preferring native tablet backend buffer when active.
- * Respects pressure=0 from backend smoothing.
+ * Strict input resolution path without synthetic fallback pressure.
  */
 export function getEffectiveInputData(
   evt: PointerEvent,
   isNativeBackendActive: boolean,
   bufferedPoints: RawInputPoint[],
   currentPoint: RawInputPoint | null,
-  fallbackEvent?: PointerEvent,
+  _fallbackEvent?: PointerEvent,
   preferredNativePoint?: RawInputPoint | null
-): { pressure: number; tiltX: number; tiltY: number; rotation: number; timestampMs: number } {
-  const pointerOrientation = resolvePointerOrientation(evt, fallbackEvent);
-  const pointerPressure = resolvePointerPressure(evt, fallbackEvent);
+): {
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+  timestampMs: number;
+  source: StrictInputSource;
+  hostTimeUs: number;
+  deviceTimeUs: number;
+} {
+  const pointerOrientation = resolvePointerOrientation(evt);
+  const pointerPressure = resolvePointerPressure(evt);
   const pointerTimestampMs = resolvePointerTimestampMs(evt);
+  const pointerHostTimeUs = Math.max(0, Math.round(pointerTimestampMs * 1000));
 
   if (!isNativeBackendActive) {
     return {
@@ -219,52 +174,92 @@ export function getEffectiveInputData(
       tiltY: pointerOrientation.tiltY,
       rotation: pointerOrientation.rotation,
       timestampMs: pointerTimestampMs,
+      source: 'pointerevent',
+      hostTimeUs: pointerHostTimeUs,
+      deviceTimeUs: 0,
     };
   }
 
-  // Note: Native backend timestamps are not guaranteed to share a time origin with
-  // PointerEvent.timeStamp, so we avoid time-based matching here.
-  // Prefer the caller-provided sample for this event, then fallback to batch tail.
   if (preferredNativePoint) {
+    const pointWithTimes = preferredNativePoint as RawInputPoint & {
+      host_time_us?: number;
+      device_time_us?: number;
+    };
+    const hostTimeUs = Number.isFinite(pointWithTimes.host_time_us)
+      ? Math.max(0, Math.round(pointWithTimes.host_time_us!))
+      : pointerHostTimeUs;
+    const deviceTimeUs = Number.isFinite(pointWithTimes.device_time_us)
+      ? Math.max(0, Math.round(pointWithTimes.device_time_us!))
+      : hostTimeUs;
+
     return {
-      pressure: preferredNativePoint.pressure,
+      pressure: clampUnit(preferredNativePoint.pressure),
       tiltX: normalizeTiltComponent(preferredNativePoint.tilt_x),
       tiltY: normalizeTiltComponent(preferredNativePoint.tilt_y),
       rotation: resolveTabletRotation(preferredNativePoint, pointerOrientation.rotation),
       timestampMs: resolveNativeTimestampMs(preferredNativePoint, pointerTimestampMs),
+      source: resolveSource(true, preferredNativePoint),
+      hostTimeUs,
+      deviceTimeUs,
     };
   }
 
   if (bufferedPoints.length > 0) {
-    const pt = bufferedPoints[bufferedPoints.length - 1]!;
+    const pt = bufferedPoints[bufferedPoints.length - 1]! as RawInputPoint & {
+      host_time_us?: number;
+      device_time_us?: number;
+    };
+    const hostTimeUs = Number.isFinite(pt.host_time_us)
+      ? Math.max(0, Math.round(pt.host_time_us!))
+      : pointerHostTimeUs;
+    const deviceTimeUs = Number.isFinite(pt.device_time_us)
+      ? Math.max(0, Math.round(pt.device_time_us!))
+      : hostTimeUs;
+
     return {
-      pressure: pt.pressure,
+      pressure: clampUnit(pt.pressure),
       tiltX: normalizeTiltComponent(pt.tilt_x),
       tiltY: normalizeTiltComponent(pt.tilt_y),
       rotation: resolveTabletRotation(pt, pointerOrientation.rotation),
       timestampMs: resolveNativeTimestampMs(pt, pointerTimestampMs),
+      source: resolveSource(true, pt),
+      hostTimeUs,
+      deviceTimeUs,
     };
   }
 
-  // 2. Fallback: Use currentPoint (last known input) if available
   if (currentPoint) {
+    const pointWithTimes = currentPoint as RawInputPoint & {
+      host_time_us?: number;
+      device_time_us?: number;
+    };
+    const hostTimeUs = Number.isFinite(pointWithTimes.host_time_us)
+      ? Math.max(0, Math.round(pointWithTimes.host_time_us!))
+      : pointerHostTimeUs;
+    const deviceTimeUs = Number.isFinite(pointWithTimes.device_time_us)
+      ? Math.max(0, Math.round(pointWithTimes.device_time_us!))
+      : hostTimeUs;
+
     return {
-      pressure: currentPoint.pressure,
+      pressure: clampUnit(currentPoint.pressure),
       tiltX: normalizeTiltComponent(currentPoint.tilt_x),
       tiltY: normalizeTiltComponent(currentPoint.tilt_y),
       rotation: resolveTabletRotation(currentPoint, pointerOrientation.rotation),
       timestampMs: resolveNativeTimestampMs(currentPoint, pointerTimestampMs),
+      source: resolveSource(true, currentPoint),
+      hostTimeUs,
+      deviceTimeUs,
     };
   }
 
-  // 3. Ultimate Fallback: Use PointerEvent data
   return {
-    // Mouse/touch often report pressure=0; use 0.5 as a reasonable default.
-    // In native streaming mode, treat pen pressure as unknown (0) when we can't match tablet samples.
-    pressure: getNativeBackendPressureFallback(evt),
+    pressure: pointerPressure,
     tiltX: pointerOrientation.tiltX,
     tiltY: pointerOrientation.tiltY,
     rotation: pointerOrientation.rotation,
     timestampMs: pointerTimestampMs,
+    source: 'pointerevent',
+    hostTimeUs: pointerHostTimeUs,
+    deviceTimeUs: 0,
   };
 }

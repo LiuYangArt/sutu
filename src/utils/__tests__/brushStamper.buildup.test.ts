@@ -2,27 +2,27 @@ import { describe, it, expect } from 'vitest';
 import { BrushStamper } from '@/utils/strokeBuffer';
 
 describe('BrushStamper build-up', () => {
-  it('does not emit dabs while stationary when buildup disabled', () => {
+  it('strict mode emits first dab immediately and avoids stationary buildup when disabled', () => {
     const stamper = new BrushStamper();
     stamper.beginStroke();
 
-    expect(stamper.processPoint(10, 10, 0.5, 10)).toEqual([]);
+    const first = stamper.processPoint(10, 10, 0.5, 10);
+    expect(first.length).toBe(1);
+    expect(first[0]!.x).toBeCloseTo(10, 6);
+    expect(first[0]!.y).toBeCloseTo(10, 6);
+    expect(first[0]!.pressure).toBeCloseTo(0.5, 6);
+
     expect(stamper.processPoint(10, 10, 0.5, 10)).toEqual([]);
     expect(stamper.processPoint(10, 10, 0.5, 10)).toEqual([]);
 
-    // Still under MIN_MOVEMENT_DISTANCE (3px)
+    // Under spacing threshold, still no extra dabs.
     expect(stamper.processPoint(12, 10, 0.5, 10)).toEqual([]);
 
-    // Now move enough -> should start emitting a smooth start transition
-    const dabs = stamper.processPoint(13, 10, 0.5, 10);
-    expect(dabs.length).toBeGreaterThanOrEqual(2);
-    expect(dabs[0]!.x).toBeGreaterThan(10);
-    expect(dabs[0]!.x).toBeLessThan(13);
-    expect(dabs[0]!.y).toBeCloseTo(10, 6);
-    expect(dabs[0]!.pressure).toBeGreaterThan(0);
-    expect(dabs[0]!.pressure).toBeLessThan(0.5);
+    // Move enough to cross spacing threshold and emit regular dabs.
+    const dabs = stamper.processPoint(25, 10, 0.5, 10);
+    expect(dabs.length).toBeGreaterThanOrEqual(1);
     const last = dabs[dabs.length - 1]!;
-    expect(last.x).toBeCloseTo(13, 6);
+    expect(last.x).toBeLessThanOrEqual(25);
     expect(last.y).toBeCloseTo(10, 6);
     expect(last.pressure).toBeCloseTo(0.5, 6);
   });

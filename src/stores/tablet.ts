@@ -59,7 +59,7 @@ interface TabletStatusStatePatch {
   info: TabletInfo | null;
 }
 
-export type InputSource = 'wintab' | 'pointerevent' | 'mac_native' | 'win_tab' | 'pointer_event';
+export type InputSource = 'wintab' | 'pointerevent' | 'macnative';
 export type InputPhase = 'unknown' | 'hover' | 'down' | 'move' | 'up';
 
 export interface RawInputPoint {

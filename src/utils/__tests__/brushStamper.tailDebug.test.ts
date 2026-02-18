@@ -22,7 +22,6 @@ function runStrokeWithSamples(params: {
   spacingPx?: number;
   finishSpacingPx?: number;
   maxDabIntervalMs?: number;
-  trajectorySmoothingEnabled?: boolean;
 }): {
   finalizeDabs: Array<{ x: number; y: number; pressure: number }>;
   snapshot: StrokeFinalizeDebugSnapshot;
@@ -39,7 +38,6 @@ function runStrokeWithSamples(params: {
       maxBrushSpeedPxPerMs: params.maxBrushSpeedPxPerMs,
       brushSpeedSmoothingSamples: 3,
       maxDabIntervalMs: params.maxDabIntervalMs,
-      trajectorySmoothingEnabled: params.trajectorySmoothingEnabled ?? true,
     });
   }
 
@@ -47,7 +45,6 @@ function runStrokeWithSamples(params: {
     maxBrushSpeedPxPerMs: params.maxBrushSpeedPxPerMs,
     brushSpeedSmoothingSamples: 3,
     maxDabIntervalMs: params.maxDabIntervalMs,
-    trajectorySmoothingEnabled: params.trajectorySmoothingEnabled ?? true,
   });
   const snapshot = stamper.getStrokeFinalizeDebugSnapshot();
   if (!snapshot) {
@@ -65,34 +62,6 @@ describe('BrushStamper finalize debug snapshot', () => {
         stamper.finishStroke(24);
         return stamper.getStrokeFinalizeDebugSnapshot()!;
       },
-    ],
-    [
-      'no_pending_segment',
-      () =>
-        runStrokeWithSamples({
-          points: [{ x: 0, y: 0 }],
-          pressures: [0.4],
-          timestampStepMs: 5,
-          maxBrushSpeedPxPerMs: 30,
-        }).snapshot,
-    ],
-    [
-      'segment_below_threshold',
-      () =>
-        runStrokeWithSamples({
-          points: [
-            { x: 0, y: 0 },
-            { x: 4, y: 0 },
-            { x: 4.1, y: 0 },
-            { x: 4.2, y: 0 },
-          ],
-          pressures: [0.4, 0.4, 0.4, 0.4],
-          timestampStepMs: 1,
-          maxBrushSpeedPxPerMs: 30,
-          spacingPx: 4,
-          finishSpacingPx: 24,
-          maxDabIntervalMs: 1000,
-        }).snapshot,
     ],
     [
       'emitted_segment',
@@ -126,7 +95,7 @@ describe('BrushStamper finalize debug snapshot', () => {
     expect(snapshot.reason).toBe('emitted_segment');
     expect(finalizeDabs.length).toBeGreaterThan(0);
     for (const dab of finalizeDabs) {
-      expect(dab.x).toBeGreaterThanOrEqual(42 - 1e-6);
+      expect(dab.x).toBeGreaterThanOrEqual(48 - 1e-6);
       expect(dab.x).toBeLessThanOrEqual(48 + 1e-6);
       expect(dab.y).toBeCloseTo(0, 6);
     }

@@ -1,5 +1,7 @@
 use crate::benchmark::BackendBenchmark;
 use serde::{Deserialize, Serialize};
+pub mod pressure_v1;
+pub use pressure_v1::{DabRequestV1, PaintInfoV1, RawInputSampleV1};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
