@@ -688,6 +688,10 @@ threshold_metric = max(
 69. [x] 修复 WinTab 单笔几何源混用：新增 `per-stroke source lock`（`native/pointer` 二选一），WinTab 笔触一旦锁定 native，`move/up` 不再回退 pointer 坐标。
 70. [x] 修复 WinTab 空 buffer 收尾行为：native 锁定下若本帧无新 native 样本，`move` 不注入 pointer 点，`pointerup` 复用最后 native 映射点（或最后输入点）避免外射。
 71. [x] 新增回归测试：覆盖“native 锁定 + 空 buffer 时不回退 pointer move”与“无 fresh native up 样本时仍在最后 native 点收尾”。
+72. [x] 按 `d48e15c` 稳定语义回收坐标职责：`usePointerHandlers/useRawPointerInput` 几何坐标统一由 PointerEvent 提供，native 仅提供 pressure/tilt/rotation/time/source。
+73. [x] 更新 `usePointerHandlers.nativeOffset.test.ts` 断言语义为“Pointer 几何 + native 传感器”，覆盖 WinTab 异常点与 MacNative 反向样本。
+74. [x] 新增 `useRawPointerInput.test.ts`，覆盖 raw 路径同语义（几何不消费 native x/y）。
+75. [x] 产出复盘文档 `docs/postmortem/2026-02-18-native-input-coordinate-regression-pointer-geometry-rollback.md`。
 
 当前冻结基线版本：`krita-5.2-default-wintab`。
 

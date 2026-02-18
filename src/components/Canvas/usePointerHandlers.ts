@@ -34,13 +34,6 @@ type QueuedPointPhase = QueuedPoint['phase'];
 const MAX_NATIVE_RECENT_POINTS = 64;
 const MAX_NATIVE_RECENT_WINDOW_US = 120_000;
 const MAX_NATIVE_CONSECUTIVE_GAP_US = 40_000;
-interface NativePointMapping {
-  native_to_client_scale_x: number;
-  native_to_client_scale_y: number;
-  client_offset_x: number;
-  client_offset_y: number;
-}
-type StrokeGeometrySource = 'unset' | 'native' | 'pointer';
 
 interface UsePointerHandlersParams {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -189,76 +182,6 @@ function selectRecentNativeStrokePoints(points: TabletInputPoint[]): TabletInput
   return recent.slice(recent.length - MAX_NATIVE_RECENT_POINTS);
 }
 
-function toNonReleasePointerEvent(event: PointerEvent): PointerEvent {
-  return {
-    ...event,
-    type: 'pointermove',
-  } as PointerEvent;
-}
-
-function resolveNativePointMapping(
-  canvas: HTMLCanvasElement,
-  rect: DOMRect,
-  anchorEvent: Pick<PointerEvent, 'clientX' | 'clientY'>,
-  anchorNativePoint: { x: number; y: number } | null
-): NativePointMapping {
-  if (
-    !anchorNativePoint ||
-    !Number.isFinite(anchorNativePoint.x) ||
-    !Number.isFinite(anchorNativePoint.y)
-  ) {
-    return {
-      native_to_client_scale_x: 1,
-      native_to_client_scale_y: 1,
-      client_offset_x: 0,
-      client_offset_y: 0,
-    };
-  }
-
-  const canvas_to_client_scale_x =
-    rect.width > 1e-6 ? Math.max(1e-6, canvas.width / rect.width) : 1;
-  const canvas_to_client_scale_y =
-    rect.height > 1e-6 ? Math.max(1e-6, canvas.height / rect.height) : 1;
-  const ratio_x =
-    Math.abs(anchorEvent.clientX) > 8
-      ? Math.abs(anchorNativePoint.x / anchorEvent.clientX)
-      : Number.NaN;
-  const ratio_y =
-    Math.abs(anchorEvent.clientY) > 8
-      ? Math.abs(anchorNativePoint.y / anchorEvent.clientY)
-      : Number.NaN;
-  const dpi_scaled_x =
-    Number.isFinite(ratio_x) &&
-    canvas_to_client_scale_x > 1.05 &&
-    Math.abs(ratio_x - canvas_to_client_scale_x) <= Math.max(0.25, canvas_to_client_scale_x * 0.3);
-  const dpi_scaled_y =
-    Number.isFinite(ratio_y) &&
-    canvas_to_client_scale_y > 1.05 &&
-    Math.abs(ratio_y - canvas_to_client_scale_y) <= Math.max(0.25, canvas_to_client_scale_y * 0.3);
-
-  const native_to_client_scale_x = dpi_scaled_x ? 1 / canvas_to_client_scale_x : 1;
-  const native_to_client_scale_y = dpi_scaled_y ? 1 / canvas_to_client_scale_y : 1;
-  const anchor_native_client_x = anchorNativePoint.x * native_to_client_scale_x;
-  const anchor_native_client_y = anchorNativePoint.y * native_to_client_scale_y;
-  return {
-    native_to_client_scale_x,
-    native_to_client_scale_y,
-    client_offset_x: anchorEvent.clientX - anchor_native_client_x,
-    client_offset_y: anchorEvent.clientY - anchor_native_client_y,
-  };
-}
-
-function nativePointToCanvasPoint(
-  canvas: HTMLCanvasElement,
-  nativePoint: { x: number; y: number },
-  rect: DOMRect,
-  mapping: NativePointMapping
-): { x: number; y: number } {
-  const client_x = nativePoint.x * mapping.native_to_client_scale_x + mapping.client_offset_x;
-  const client_y = nativePoint.y * mapping.native_to_client_scale_y + mapping.client_offset_y;
-  return clientToCanvasPoint(canvas, client_x, client_y, rect);
-}
-
 export function usePointerHandlers({
   containerRef,
   canvasRef,
@@ -310,9 +233,6 @@ export function usePointerHandlers({
   const nativeSeqCursorRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
   const isPanningRef = useRef(isPanning);
-  const strokeNativeMappingRef = useRef<NativePointMapping | null>(null);
-  const strokeGeometrySourceRef = useRef<StrokeGeometrySource>('unset');
-  const lastNativeMappedCanvasPointRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     isPanningRef.current = isPanning;
@@ -359,9 +279,6 @@ export function usePointerHandlers({
 
   const beginPointerSession = useCallback(
     (pointerId: number, isTrusted: boolean) => {
-      strokeNativeMappingRef.current = null;
-      strokeGeometrySourceRef.current = 'unset';
-      lastNativeMappedCanvasPointRef.current = null;
       setActivePointerId(pointerId);
       trySetPointerCapture(pointerId, isTrusted);
     },
@@ -374,29 +291,8 @@ export function usePointerHandlers({
         typeof pointerId === 'number' ? pointerId : (activePointerIdRef.current ?? null);
       tryReleasePointerCapture(releaseId);
       clearActivePointerId(pointerId);
-      strokeNativeMappingRef.current = null;
-      strokeGeometrySourceRef.current = 'unset';
-      lastNativeMappedCanvasPointRef.current = null;
     },
     [clearActivePointerId, tryReleasePointerCapture]
-  );
-
-  const resolveStrokeNativeMapping = useCallback(
-    (
-      canvas: HTMLCanvasElement,
-      rect: DOMRect,
-      anchorEvent: Pick<PointerEvent, 'clientX' | 'clientY'>,
-      anchorNativePoint: { x: number; y: number } | null
-    ): NativePointMapping => {
-      const existing = strokeNativeMappingRef.current;
-      if (existing) {
-        return existing;
-      }
-      const computed = resolveNativePointMapping(canvas, rect, anchorEvent, anchorNativePoint);
-      strokeNativeMappingRef.current = computed;
-      return computed;
-    },
-    []
   );
 
   const pickColorAt = useCallback(
@@ -524,104 +420,25 @@ export function usePointerHandlers({
       const bufferedPoints = shouldUseNativeBackend
         ? selectRecentNativeStrokePoints(bufferedPointsRaw)
         : bufferedPointsRaw;
-      const preferNativeGeometry = strokeGeometrySourceRef.current === 'native';
+      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
 
-      if (preferNativeGeometry && shouldUseNativeBackend && bufferedPoints.length > 0) {
-        const anchorNativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-        const nativeMapping = resolveStrokeNativeMapping(
-          canvas,
-          rect,
-          lastEvent,
-          anchorNativePoint
-        );
-        const inputEvent = toNonReleasePointerEvent(nativeEvent);
-
-        for (const nativePoint of bufferedPoints) {
-          const nativePhase = normalizeQueuedPhase((nativePoint as { phase?: unknown }).phase);
-          if (nativePhase === 'hover' || nativePhase === 'up') {
-            continue;
-          }
-
-          const { x: canvasX, y: canvasY } = nativePointToCanvasPoint(
-            canvas,
-            nativePoint,
-            rect,
-            nativeMapping
-          );
-          lastNativeMappedCanvasPointRef.current = { x: canvasX, y: canvasY };
-          const {
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            source,
-            hostTimeUs,
-            deviceTimeUs,
-          } = getEffectiveInputData(
-            inputEvent,
-            true,
-            bufferedPoints,
-            tabletState.currentPoint,
-            nativeEvent,
-            nativePoint
-          );
-
-          const idx = pointIndexRef.current++;
-          latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
-
-          const queuedPhase: QueuedPointPhase = nativePhase === 'down' ? 'down' : 'move';
-          const state = strokeStateRef.current;
-          if (state === 'starting') {
-            pendingPointsRef.current.push({
-              x: canvasX,
-              y: canvasY,
-              pressure,
-              tiltX,
-              tiltY,
-              rotation,
-              timestampMs,
-              source,
-              phase: queuedPhase,
-              hostTimeUs,
-              deviceTimeUs,
-              pointIndex: idx,
-            });
-            window.__strokeDiagnostics?.onPointBuffered();
-          } else if (state === 'active') {
-            inputQueueRef.current.push({
-              x: canvasX,
-              y: canvasY,
-              pressure,
-              tiltX,
-              tiltY,
-              rotation,
-              timestampMs,
-              source,
-              phase: queuedPhase,
-              hostTimeUs,
-              deviceTimeUs,
-              pointIndex: idx,
-            });
-            window.__strokeDiagnostics?.onPointBuffered();
-          }
-        }
-        return;
-      }
-      if (preferNativeGeometry) {
-        return;
-      }
-
-      for (const evt of coalescedEvents) {
+      for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
+        const evt = coalescedEvents[eventIndex]!;
+        const nativePoint =
+          shouldUseNativeBackend && bufferedPoints.length > 0
+            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
+              bufferedPoints[bufferedPoints.length - 1] ??
+              null)
+            : null;
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
         const { pressure, tiltX, tiltY, rotation, timestampMs, source, hostTimeUs, deviceTimeUs } =
           getEffectiveInputData(
             evt,
-            false,
+            shouldUseNativeBackend,
             bufferedPoints,
             tabletState.currentPoint,
             nativeEvent,
-            null
+            nativePoint
           );
 
         const idx = pointIndexRef.current++;
@@ -684,7 +501,6 @@ export function usePointerHandlers({
       strokeStateRef,
       pendingPointsRef,
       inputQueueRef,
-      resolveStrokeNativeMapping,
     ]
   );
 
@@ -743,7 +559,6 @@ export function usePointerHandlers({
           const tabletState = useTabletStore.getState();
           const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
           const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
-          const preferNativeGeometry = strokeGeometrySourceRef.current === 'native';
           const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
             ? readPointBufferSince(nativeSeqCursorRef.current)
             : { points: [], nextSeq: nativeSeqCursorRef.current };
@@ -754,132 +569,41 @@ export function usePointerHandlers({
             ? selectRecentNativeStrokePoints(bufferedPointsRaw)
             : bufferedPointsRaw;
           const queuedTailPoints: QueuedPoint[] = [];
-
-          if (preferNativeGeometry && shouldUseNativeBackend && bufferedPoints.length > 0) {
-            const anchorNativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-            const nativeMapping = resolveStrokeNativeMapping(
-              canvas,
-              rect,
-              nativeEvent,
-              anchorNativePoint
-            );
-            const moveEvent = toNonReleasePointerEvent(nativeEvent);
-
-            for (const nativePoint of bufferedPoints) {
-              const nativePhase = normalizeQueuedPhase((nativePoint as { phase?: unknown }).phase);
-              if (nativePhase === 'hover') {
-                continue;
-              }
-              const inputEvent = nativePhase === 'up' ? nativeEvent : moveEvent;
-              const {
-                pressure,
-                tiltX,
-                tiltY,
-                rotation,
-                timestampMs,
-                source,
-                hostTimeUs,
-                deviceTimeUs,
-              } = getEffectiveInputData(
-                inputEvent,
-                true,
-                bufferedPoints,
-                tabletState.currentPoint,
-                nativeEvent,
-                nativePoint
-              );
-              const { x: canvasX, y: canvasY } = nativePointToCanvasPoint(
-                canvas,
-                nativePoint,
-                rect,
-                nativeMapping
-              );
-              lastNativeMappedCanvasPointRef.current = { x: canvasX, y: canvasY };
-              const phase: QueuedPointPhase =
-                nativePhase === 'up' ? 'up' : nativePhase === 'down' ? 'down' : 'move';
-              const idx = pointIndexRef.current++;
-              latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
-              queuedTailPoints.push({
-                x: canvasX,
-                y: canvasY,
-                pressure,
-                tiltX,
-                tiltY,
-                rotation,
-                timestampMs,
-                source,
-                phase,
-                hostTimeUs,
-                deviceTimeUs,
-                pointIndex: idx,
-              });
-            }
-          }
-
-          const hasUpPoint = queuedTailPoints.some((point) => point.phase === 'up');
-          if (!hasUpPoint) {
-            const nativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-            const {
-              pressure,
-              tiltX,
-              tiltY,
-              rotation,
-              timestampMs,
-              source,
-              hostTimeUs,
-              deviceTimeUs,
-            } = getEffectiveInputData(
-              nativeEvent,
-              preferNativeGeometry && shouldUseNativeBackend,
-              bufferedPoints,
-              tabletState.currentPoint,
-              nativeEvent,
-              nativePoint
-            );
-            const lastQueuedPoint = queuedTailPoints[queuedTailPoints.length - 1] ?? null;
-            const fallbackCanvasPoint = (() => {
-              if (lastQueuedPoint) {
-                return { x: lastQueuedPoint.x, y: lastQueuedPoint.y };
-              }
-              if (preferNativeGeometry) {
-                if (lastNativeMappedCanvasPointRef.current) {
-                  return {
-                    x: lastNativeMappedCanvasPointRef.current.x,
-                    y: lastNativeMappedCanvasPointRef.current.y,
-                  };
-                }
-                if (lastInputPosRef.current) {
-                  return { x: lastInputPosRef.current.x, y: lastInputPosRef.current.y };
-                }
-              }
-              if (shouldUseNativeBackend && nativePoint) {
-                const nativeMapping = resolveStrokeNativeMapping(
-                  canvas,
-                  rect,
-                  nativeEvent,
-                  nativePoint
-                );
-                return nativePointToCanvasPoint(canvas, nativePoint, rect, nativeMapping);
-              }
-              return pointerEventToCanvasPoint(canvas, nativeEvent, rect);
-            })();
-            const idx = pointIndexRef.current++;
-            latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
-            queuedTailPoints.push({
-              x: fallbackCanvasPoint.x,
-              y: fallbackCanvasPoint.y,
-              pressure,
-              tiltX,
-              tiltY,
-              rotation,
-              timestampMs,
-              source,
-              phase: 'up',
-              hostTimeUs,
-              deviceTimeUs,
-              pointIndex: idx,
-            });
-          }
+          const nativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
+          const {
+            pressure,
+            tiltX,
+            tiltY,
+            rotation,
+            timestampMs,
+            source,
+            hostTimeUs,
+            deviceTimeUs,
+          } = getEffectiveInputData(
+            nativeEvent,
+            shouldUseNativeBackend,
+            bufferedPoints,
+            tabletState.currentPoint,
+            nativeEvent,
+            nativePoint
+          );
+          const fallbackCanvasPoint = pointerEventToCanvasPoint(canvas, nativeEvent, rect);
+          const idx = pointIndexRef.current++;
+          latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
+          queuedTailPoints.push({
+            x: fallbackCanvasPoint.x,
+            y: fallbackCanvasPoint.y,
+            pressure,
+            tiltX,
+            tiltY,
+            rotation,
+            timestampMs,
+            source,
+            phase: 'up',
+            hostTimeUs,
+            deviceTimeUs,
+            pointIndex: idx,
+          });
 
           const state = strokeStateRef.current;
           if (state === 'starting') {
@@ -920,7 +644,6 @@ export function usePointerHandlers({
       inputQueueRef,
       pointIndexRef,
       latencyProfilerRef,
-      resolveStrokeNativeMapping,
     ]
   );
 
@@ -1041,8 +764,6 @@ export function usePointerHandlers({
       let source: 'wintab' | 'macnative' | 'pointerevent' = 'pointerevent';
       let hostTimeUs = Math.round(timestampMs * 1000);
       let deviceTimeUs = 0;
-      let shouldUseNativeStrokeBuffer = false;
-      let nativeBufferedPointsForStroke: TabletInputPoint[] = [];
       if (pe.pointerType === 'pen') {
         pressure = pe.pressure > 0 ? pe.pressure : 0;
       } else if (pe.pressure > 0) {
@@ -1061,8 +782,6 @@ export function usePointerHandlers({
         const bufferedPoints = shouldUseNativeBackend
           ? selectRecentNativeStrokePoints(bufferedPointsRaw)
           : bufferedPointsRaw;
-        shouldUseNativeStrokeBuffer = shouldUseNativeBackend;
-        nativeBufferedPointsForStroke = bufferedPoints;
         const preferredStartPoint =
           bufferedPoints.find(
             (point) => normalizeQueuedPhase((point as { phase?: unknown }).phase) !== 'hover'
@@ -1139,12 +858,11 @@ export function usePointerHandlers({
       if (!isStrokeTool(currentTool)) {
         return;
       }
-      strokeGeometrySourceRef.current = shouldUseNativeStrokeBuffer ? 'native' : 'pointer';
 
       onBeforeCanvasMutation?.();
 
       isDrawingRef.current = true;
-      let strokeSeedPoints: Array<Omit<QueuedPoint, 'pointIndex'>> = [
+      const strokeSeedPoints: Array<Omit<QueuedPoint, 'pointIndex'>> = [
         {
           x: constrainedDown.x,
           y: constrainedDown.y,
@@ -1159,65 +877,6 @@ export function usePointerHandlers({
           deviceTimeUs,
         },
       ];
-
-      if (shouldUseNativeStrokeBuffer && nativeBufferedPointsForStroke.length > 0) {
-        const rect = canvas.getBoundingClientRect();
-        const anchorNativePoint =
-          nativeBufferedPointsForStroke[nativeBufferedPointsForStroke.length - 1] ?? null;
-        const nativeMapping = resolveStrokeNativeMapping(canvas, rect, pe, anchorNativePoint);
-        const moveEvent = toNonReleasePointerEvent(pe);
-        const nativeSeedPoints: Array<Omit<QueuedPoint, 'pointIndex'>> = [];
-        for (const nativePoint of nativeBufferedPointsForStroke) {
-          const nativePhase = normalizeQueuedPhase((nativePoint as { phase?: unknown }).phase);
-          if (nativePhase === 'hover' || nativePhase === 'up') {
-            continue;
-          }
-          const inputEvent = nativePhase === 'down' ? pe : moveEvent;
-          const {
-            pressure: nativePressure,
-            tiltX: nativeTiltX,
-            tiltY: nativeTiltY,
-            rotation: nativeRotation,
-            timestampMs: nativeTimestampMs,
-            source: nativeSource,
-            hostTimeUs: nativeHostTimeUs,
-            deviceTimeUs: nativeDeviceTimeUs,
-          } = getEffectiveInputData(
-            inputEvent,
-            true,
-            nativeBufferedPointsForStroke,
-            useTabletStore.getState().currentPoint,
-            pe,
-            nativePoint
-          );
-          const mapped = nativePointToCanvasPoint(canvas, nativePoint, rect, nativeMapping);
-          const constrained = constrainShiftLinePoint(mapped.x, mapped.y);
-          nativeSeedPoints.push({
-            x: constrained.x,
-            y: constrained.y,
-            pressure: nativePressure,
-            tiltX: nativeTiltX,
-            tiltY: nativeTiltY,
-            rotation: nativeRotation,
-            timestampMs: nativeTimestampMs,
-            source: nativeSource,
-            phase: nativePhase === 'down' ? 'down' : 'move',
-            hostTimeUs: nativeHostTimeUs,
-            deviceTimeUs: nativeDeviceTimeUs,
-          });
-        }
-        if (nativeSeedPoints.length > 0) {
-          if (nativeSeedPoints[0]!.phase !== 'down') {
-            nativeSeedPoints[0] = { ...nativeSeedPoints[0]!, phase: 'down' };
-          }
-          strokeSeedPoints = nativeSeedPoints;
-          const tail = nativeSeedPoints[nativeSeedPoints.length - 1]!;
-          lastInputPosRef.current = { x: tail.x, y: tail.y };
-          lastNativeMappedCanvasPointRef.current = { x: tail.x, y: tail.y };
-        }
-      } else if (strokeGeometrySourceRef.current === 'native') {
-        lastNativeMappedCanvasPointRef.current = { x: constrainedDown.x, y: constrainedDown.y };
-      }
 
       strokeStateRef.current = 'starting';
       pendingPointsRef.current = strokeSeedPoints.map((point, index) => {
@@ -1273,7 +932,6 @@ export function usePointerHandlers({
       pendingEndRef,
       captureBeforeImage,
       initializeBrushStroke,
-      resolveStrokeNativeMapping,
     ]
   );
 

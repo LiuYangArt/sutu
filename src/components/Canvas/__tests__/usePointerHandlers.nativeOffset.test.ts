@@ -168,7 +168,7 @@ function createHookParams(ctx: HookContext, tool: ToolType = 'brush') {
   };
 }
 
-describe('usePointerHandlers native offset stability', () => {
+describe('usePointerHandlers pointer geometry with native sensor data', () => {
   beforeEach(() => {
     readPointBufferSinceMock.mockReset();
     getTabletStateMock.mockReset();
@@ -180,7 +180,7 @@ describe('usePointerHandlers native offset stability', () => {
     });
   });
 
-  it('keeps one native offset for the whole stroke instead of re-anchoring each move', () => {
+  it('uses pointer geometry for move while keeping native pressure/tilt source', () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');
     const { result } = renderHook(() => usePointerHandlers(params as any));
@@ -210,14 +210,16 @@ describe('usePointerHandlers native offset stability', () => {
     });
 
     const tail = params.pendingPointsRef.current[params.pendingPointsRef.current.length - 1] as
-      | { x: number; y: number }
+      | { x: number; y: number; pressure: number; source: string }
       | undefined;
     expect(tail).toBeDefined();
-    expect(tail?.x).toBeCloseTo(105, 6);
-    expect(tail?.y).toBeCloseTo(103, 6);
+    expect(tail?.x).toBeCloseTo(120, 6);
+    expect(tail?.y).toBeCloseTo(130, 6);
+    expect(tail?.pressure).toBeCloseTo(0.3, 6);
+    expect(tail?.source).toBe('wintab');
   });
 
-  it('uses last native mapped position for synthetic pointerup tail to avoid fly-away segment', () => {
+  it('uses pointerup geometry for synthetic tail even when native coordinates differ', () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');
     const { result } = renderHook(() => usePointerHandlers(params as any));
@@ -260,11 +262,11 @@ describe('usePointerHandlers native offset stability', () => {
     expect(queue.length).toBeGreaterThan(0);
     const tail = queue[queue.length - 1];
     expect(tail?.phase).toBe('up');
-    expect(tail?.x).toBeCloseTo(105, 6);
-    expect(tail?.y).toBeCloseTo(103, 6);
+    expect(tail?.x).toBeCloseTo(400, 6);
+    expect(tail?.y).toBeCloseTo(420, 6);
   });
 
-  it('does not fall back to pointermove geometry when wintab stroke is locked to native data', () => {
+  it('falls back to pointermove geometry when there are no fresh native points', () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');
     const { result } = renderHook(() => usePointerHandlers(params as any));
@@ -298,10 +300,12 @@ describe('usePointerHandlers native offset stability', () => {
     });
 
     const queue = params.inputQueueRef.current as Array<{ x: number; y: number }>;
-    expect(queue).toHaveLength(0);
+    expect(queue).toHaveLength(1);
+    expect(queue[0]?.x).toBeCloseTo(900, 6);
+    expect(queue[0]?.y).toBeCloseTo(920, 6);
   });
 
-  it('uses last native mapped point for pointerup when wintab has no fresh native up sample', () => {
+  it('uses pointerup geometry when wintab has no fresh native up sample', () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');
     const { result } = renderHook(() => usePointerHandlers(params as any));
@@ -355,8 +359,8 @@ describe('usePointerHandlers native offset stability', () => {
     expect(queue.length).toBeGreaterThan(0);
     const tail = queue[queue.length - 1];
     expect(tail?.phase).toBe('up');
-    expect(tail?.x).toBeCloseTo(105, 6);
-    expect(tail?.y).toBeCloseTo(103, 6);
+    expect(tail?.x).toBeCloseTo(900, 6);
+    expect(tail?.y).toBeCloseTo(920, 6);
   });
 
   it('handles native points in physical pixels under DPI scaling without outward emission', () => {
@@ -448,5 +452,51 @@ describe('usePointerHandlers native offset stability', () => {
     expect(first).toBeDefined();
     expect(first?.x).toBeCloseTo(100, 6);
     expect(first?.y).toBeCloseTo(100, 6);
+  });
+
+  it('keeps pointer geometry on macnative even when native y is reversed-style data', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    getTabletStateMock.mockReturnValue({
+      isStreaming: true,
+      backend: 'macnative',
+      activeBackend: 'macnative',
+      currentPoint: null,
+    });
+
+    readPointBufferSinceMock
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 1, source: 'macnative', x: 80, y: 420, pressure: 0.2 })],
+        nextSeq: 1,
+      })
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 2, source: 'macnative', x: 82, y: 410, pressure: 0.4 })],
+        nextSeq: 2,
+      });
+
+    const down = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 100, clientY: 200 })
+    );
+    act(() => {
+      result.current.handlePointerDown(down);
+    });
+
+    const move = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 130, clientY: 160 })
+    );
+    act(() => {
+      result.current.handlePointerMove(move);
+    });
+
+    const tail = params.pendingPointsRef.current[params.pendingPointsRef.current.length - 1] as
+      | { x: number; y: number; source: string; pressure: number }
+      | undefined;
+    expect(tail).toBeDefined();
+    expect(tail?.x).toBeCloseTo(130, 6);
+    expect(tail?.y).toBeCloseTo(160, 6);
+    expect(tail?.source).toBe('macnative');
+    expect(tail?.pressure).toBeCloseTo(0.4, 6);
   });
 });

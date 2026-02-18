@@ -1,8 +1,30 @@
 # Native 输入坐标回归重构方案（WinTab + MacNative）
 
 **日期**：2026-02-18  
-**状态**：待实施  
+**状态**：已实施（第一阶段止血）  
 **范围**：`wintab`、`macnative` 输入坐标链路（不改 KritaPressurePipeline 主体）
+
+---
+
+## 0. 2026-02-18 实施结论（对齐 `d48e15c` 稳定语义）
+
+本轮按“恢复稳定语义”落地，而不是继续推进“native 几何主路径”。
+
+1. `src/components/Canvas/usePointerHandlers.ts`：删除/停用 native 几何映射链路，`down/move/up` 坐标统一由 `PointerEvent` 计算；native 仅提供 pressure/tilt/rotation/time/source。  
+2. `src/components/Canvas/useRawPointerInput.ts`：raw 路径同步改为 PointerEvent 几何坐标，native 仅参与传感器字段归一化。  
+3. 测试更新：
+   - 更新 `src/components/Canvas/__tests__/usePointerHandlers.nativeOffset.test.ts`（改为验证“几何跟随 pointer + native 传感器保留”）。
+   - 新增 `src/components/Canvas/__tests__/useRawPointerInput.test.ts`（覆盖 raw 路径同语义）。
+4. 验证结果：
+   - `pnpm -s vitest run src/components/Canvas/__tests__/usePointerHandlers.nativeOffset.test.ts` 通过
+   - `pnpm -s vitest run src/components/Canvas/__tests__/useRawPointerInput.test.ts` 通过
+   - `pnpm -s vitest run src/components/Canvas/__tests__/inputUtils.test.ts` 通过
+   - `pnpm -s typecheck` 通过
+   - `cargo check --manifest-path src-tauri/Cargo.toml --lib` 通过
+
+说明：
+1. 本次是“先恢复稳定”的收敛方案，目标是立即消除 WinTab 外射与 MacNative 镜像回归。  
+2. 原文档中“后端坐标契约化（coord_space/origin/axis）”仍可作为下一阶段演进路线，不在本次变更范围内。
 
 ---
 
@@ -182,12 +204,12 @@
 - [ ] 建立 native 坐标契约字段并完成 Rust/TS 对齐。  
 - [ ] WinTab 坐标输出改造为统一 client 语义。  
 - [ ] MacNative 坐标输出改造为统一 client 语义。  
-- [ ] 前端移除 native 几何启发式映射主路径。  
-- [ ] 新增 WinTab 外射回归测试。  
-- [ ] 新增 MacNative 镜像回归测试。  
-- [ ] 新增 PointerEvent 不回归对照测试。  
+- [x] 前端移除 native 几何启发式映射主路径（几何统一走 PointerEvent）。  
+- [x] 新增/更新 WinTab 外射回归测试（PointerEvent 几何 + native 传感器）。  
+- [x] 新增/更新 MacNative 镜像回归测试（PointerEvent 几何 + native 传感器）。  
+- [x] 新增 raw 路径不回归对照测试（`useRawPointerInput` 同语义）。  
 - [ ] 更新 `docs/plans/2026-02-18-krita-pressure-full-rebuild-plan.md` 对应任务状态。  
-- [ ] 产出 postmortem（记录“为何回归、如何避免再发”）。
+- [x] 产出 postmortem（记录“为何回归、如何避免再发”）。
 
 ---
 
@@ -197,4 +219,3 @@
 2. 回归窗口显示后端代码基本不变、前端几何消费策略变了，主因在消费链路而非设备驱动。  
 3. 坐标问题不能靠前端启发式长期修补，必须把坐标语义前移到后端契约层。  
 4. 先统一坐标语义，再谈手感对齐；否则任何 pressure/speed 调参都会被错误几何掩盖。
-

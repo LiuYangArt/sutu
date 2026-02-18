@@ -33,13 +33,6 @@ type QueuedPoint = {
 const MAX_NATIVE_RECENT_POINTS = 64;
 const MAX_NATIVE_RECENT_WINDOW_US = 120_000;
 const MAX_NATIVE_CONSECUTIVE_GAP_US = 40_000;
-interface NativePointMapping {
-  native_to_client_scale_x: number;
-  native_to_client_scale_y: number;
-  client_offset_x: number;
-  client_offset_y: number;
-}
-type StrokeGeometrySource = 'unset' | 'native' | 'pointer';
 
 function normalizeQueuedPhase(phase: unknown): QueuedPoint['phase'] {
   if (phase === 'down' || phase === 'move' || phase === 'up' || phase === 'hover') {
@@ -97,76 +90,6 @@ function selectRecentNativeStrokePoints(points: TabletInputPoint[]): TabletInput
   return recent.slice(recent.length - MAX_NATIVE_RECENT_POINTS);
 }
 
-function resolveNativePointMapping(
-  canvas: HTMLCanvasElement,
-  rect: DOMRect,
-  anchorEvent: Pick<PointerEvent, 'clientX' | 'clientY'>,
-  anchorNativePoint: { x: number; y: number } | null
-): NativePointMapping {
-  if (
-    !anchorNativePoint ||
-    !Number.isFinite(anchorNativePoint.x) ||
-    !Number.isFinite(anchorNativePoint.y)
-  ) {
-    return {
-      native_to_client_scale_x: 1,
-      native_to_client_scale_y: 1,
-      client_offset_x: 0,
-      client_offset_y: 0,
-    };
-  }
-
-  const canvas_to_client_scale_x =
-    rect.width > 1e-6 ? Math.max(1e-6, canvas.width / rect.width) : 1;
-  const canvas_to_client_scale_y =
-    rect.height > 1e-6 ? Math.max(1e-6, canvas.height / rect.height) : 1;
-  const ratio_x =
-    Math.abs(anchorEvent.clientX) > 8
-      ? Math.abs(anchorNativePoint.x / anchorEvent.clientX)
-      : Number.NaN;
-  const ratio_y =
-    Math.abs(anchorEvent.clientY) > 8
-      ? Math.abs(anchorNativePoint.y / anchorEvent.clientY)
-      : Number.NaN;
-  const dpi_scaled_x =
-    Number.isFinite(ratio_x) &&
-    canvas_to_client_scale_x > 1.05 &&
-    Math.abs(ratio_x - canvas_to_client_scale_x) <= Math.max(0.25, canvas_to_client_scale_x * 0.3);
-  const dpi_scaled_y =
-    Number.isFinite(ratio_y) &&
-    canvas_to_client_scale_y > 1.05 &&
-    Math.abs(ratio_y - canvas_to_client_scale_y) <= Math.max(0.25, canvas_to_client_scale_y * 0.3);
-
-  const native_to_client_scale_x = dpi_scaled_x ? 1 / canvas_to_client_scale_x : 1;
-  const native_to_client_scale_y = dpi_scaled_y ? 1 / canvas_to_client_scale_y : 1;
-  const anchor_native_client_x = anchorNativePoint.x * native_to_client_scale_x;
-  const anchor_native_client_y = anchorNativePoint.y * native_to_client_scale_y;
-  return {
-    native_to_client_scale_x,
-    native_to_client_scale_y,
-    client_offset_x: anchorEvent.clientX - anchor_native_client_x,
-    client_offset_y: anchorEvent.clientY - anchor_native_client_y,
-  };
-}
-
-function nativePointToCanvasPoint(
-  canvas: HTMLCanvasElement,
-  point: TabletInputPoint,
-  rect: DOMRect,
-  mapping: NativePointMapping
-): { x: number; y: number } {
-  const client_x = point.x * mapping.native_to_client_scale_x + mapping.client_offset_x;
-  const client_y = point.y * mapping.native_to_client_scale_y + mapping.client_offset_y;
-  return clientToCanvasPoint(canvas, client_x, client_y, rect);
-}
-
-function toNonReleasePointerEvent(event: PointerEvent): PointerEvent {
-  return {
-    ...event,
-    type: 'pointermove',
-  } as PointerEvent;
-}
-
 interface RawPointerInputConfig {
   containerRef: React.RefObject<HTMLDivElement | null>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -199,8 +122,6 @@ export function useRawPointerInput({
   // Track if we're using raw input (for diagnostics)
   const usingRawInputRef = useRef(false);
   const nativeSeqCursorRef = useRef(0);
-  const strokeNativeMappingRef = useRef<NativePointMapping | null>(null);
-  const strokeGeometrySourceRef = useRef<StrokeGeometrySource>('unset');
 
   useEffect(() => {
     const container = containerRef.current;
@@ -209,7 +130,6 @@ export function useRawPointerInput({
     // Only enable when pointerrawupdate is supported
     if (!container || !canvas || !supportsPointerRawUpdate) {
       usingRawInputRef.current = false;
-      strokeGeometrySourceRef.current = 'unset';
       return;
     }
 
@@ -230,17 +150,13 @@ export function useRawPointerInput({
 
       // Only process during active drawing with brush-like tools
       if (!isDrawingRef.current || (currentTool !== 'brush' && currentTool !== 'eraser')) {
-        strokeNativeMappingRef.current = null;
         usingRawInputRef.current = false;
-        strokeGeometrySourceRef.current = 'unset';
         return;
       }
 
       const state = strokeStateRef.current;
       if (state !== 'starting' && state !== 'active') {
-        strokeNativeMappingRef.current = null;
         usingRawInputRef.current = false;
-        strokeGeometrySourceRef.current = 'unset';
         return;
       }
 
@@ -257,82 +173,16 @@ export function useRawPointerInput({
       const bufferedPoints = shouldUseNativeBackend
         ? selectRecentNativeStrokePoints(bufferedPointsRaw)
         : bufferedPointsRaw;
-      if (strokeGeometrySourceRef.current === 'unset') {
-        strokeGeometrySourceRef.current = shouldUseNativeBackend ? 'native' : 'pointer';
-      }
-      const preferNativeGeometry = strokeGeometrySourceRef.current === 'native';
-      if (preferNativeGeometry && shouldUseNativeBackend && bufferedPoints.length > 0) {
-        const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? pe;
-        const anchorNativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-        const nativeMapping = (() => {
-          const existing = strokeNativeMappingRef.current;
-          if (existing) return existing;
-          const computed = resolveNativePointMapping(canvas, rect, lastEvent, anchorNativePoint);
-          strokeNativeMappingRef.current = computed;
-          return computed;
-        })();
-        const moveEvent = toNonReleasePointerEvent(pe);
+      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
 
-        for (const nativePoint of bufferedPoints) {
-          const nativePhase = normalizeQueuedPhase((nativePoint as { phase?: unknown }).phase);
-          if (nativePhase === 'hover' || nativePhase === 'up') {
-            continue;
-          }
-          const { x: canvasX, y: canvasY } = nativePointToCanvasPoint(
-            canvas,
-            nativePoint,
-            rect,
-            nativeMapping
-          );
-
-          const {
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            source,
-            hostTimeUs,
-            deviceTimeUs,
-          } = getEffectiveInputData(
-            moveEvent,
-            true,
-            bufferedPoints,
-            tabletState.currentPoint,
-            pe,
-            nativePoint
-          );
-
-          const idx = pointIndexRef.current++;
-          latencyProfiler.markInputReceived(idx, pe);
-          const point: QueuedPoint = {
-            x: canvasX,
-            y: canvasY,
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            source,
-            phase: nativePhase === 'down' ? 'down' : 'move',
-            hostTimeUs,
-            deviceTimeUs,
-            pointIndex: idx,
-          };
-          if (state === 'starting') {
-            pendingPointsRef.current.push(point);
-          } else if (state === 'active') {
-            inputQueueRef.current.push(point);
-          }
-          onPointBuffered?.();
-        }
-        return;
-      }
-      if (preferNativeGeometry) {
-        return;
-      }
-
-      for (const evt of coalescedEvents) {
+      for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
+        const evt = coalescedEvents[eventIndex]!;
+        const nativePoint =
+          shouldUseNativeBackend && bufferedPoints.length > 0
+            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
+              bufferedPoints[bufferedPoints.length - 1] ??
+              null)
+            : null;
         const { x: canvasX, y: canvasY } = clientToCanvasPoint(
           canvas,
           evt.clientX,
@@ -340,7 +190,14 @@ export function useRawPointerInput({
           rect
         );
         const { pressure, tiltX, tiltY, rotation, timestampMs, source, hostTimeUs, deviceTimeUs } =
-          getEffectiveInputData(evt, false, bufferedPoints, tabletState.currentPoint, pe, null);
+          getEffectiveInputData(
+            evt,
+            shouldUseNativeBackend,
+            bufferedPoints,
+            tabletState.currentPoint,
+            pe,
+            nativePoint
+          );
 
         const idx = pointIndexRef.current++;
         latencyProfiler.markInputReceived(idx, evt);
@@ -376,8 +233,6 @@ export function useRawPointerInput({
     return () => {
       container.removeEventListener('pointerrawupdate', handleRawUpdate);
       usingRawInputRef.current = false;
-      strokeNativeMappingRef.current = null;
-      strokeGeometrySourceRef.current = 'unset';
     };
   }, [
     containerRef,
