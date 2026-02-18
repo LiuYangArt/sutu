@@ -675,6 +675,19 @@ threshold_metric = max(
 56. [x] 修复与新语义冲突的回归测试（`useBrushRendererOpacity`、`selection.commit` 异步等待稳定性）。
 57. [x] 新增阈值审计脚本 `scripts/pressure/audit-thresholds.mjs`，支持 30 轮统计并生成审计文档。
 58. [x] 新增影子稳定性脚本 `scripts/pressure/run-shadow-stability.mjs`，支持 100 次回放稳定性验证与落盘。
+59. [x] 修复单笔 OOM 崩溃：`segmentSampler` 增加有上限的安全采样逻辑，防止异常时间差触发超高循环次数。
+60. [x] 修复输入时间域混用：在 `useBrushRenderer` 对 `host/device` 时间做同笔单调归一化，避免异常 `duration_us` 放大。
+61. [x] 修复原生输入坐标漂移：`usePointerHandlers` 改为“每 stroke 固定 native offset”，禁止 move/up 阶段反复重锚定导致 dab 飘移。
+62. [x] 修复收笔外飞：native backend 无 `up` 样本时，synthetic `up` 复用最后 native 映射点收笔，不再使用 `pointerup` 事件坐标直连。
+63. [x] 新增回归测试 `usePointerHandlers.nativeOffset.test.ts`，锁定“offset 稳定 + 收笔不外飞”行为。
+64. [x] 修复原生缓冲历史污染：`usePointerHandlers` 仅消费“最近连续接触段” native 样本，避免跨笔历史点串入当前 stroke。
+65. [x] 修复 `pointerrawupdate` 路径同类问题：空闲阶段推进 native cursor，并在绘制阶段统一应用“最近连续样本 + 每 stroke 固定 offset”策略。
+66. [x] 新增回归测试覆盖“pointerdown 丢弃 pre-hover 历史样本”，防止首段直连旧点。
+67. [x] 修复 WinTab 坐标单位不一致（物理像素 vs CSS 像素）导致的外射：native 映射从“纯平移”升级为“每 stroke 锁定的 scale+offset”。
+68. [x] 新增 DPI 回归测试：验证 native 物理像素输入在高 DPR 场景下不会放大外射。
+69. [x] 修复 WinTab 单笔几何源混用：新增 `per-stroke source lock`（`native/pointer` 二选一），WinTab 笔触一旦锁定 native，`move/up` 不再回退 pointer 坐标。
+70. [x] 修复 WinTab 空 buffer 收尾行为：native 锁定下若本帧无新 native 样本，`move` 不注入 pointer 点，`pointerup` 复用最后 native 映射点（或最后输入点）避免外射。
+71. [x] 新增回归测试：覆盖“native 锁定 + 空 buffer 时不回退 pointer move”与“无 fresh native up 样本时仍在最后 native 点收尾”。
 
 当前冻结基线版本：`krita-5.2-default-wintab`。
 

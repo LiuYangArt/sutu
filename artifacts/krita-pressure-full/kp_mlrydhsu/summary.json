@@ -1,0 +1,538 @@
+{
+  "run_meta": {
+    "run_id": "kp_mlrydhsu",
+    "created_at": "2026-02-18T11:32:42.580Z",
+    "source_of_truth_version": [
+      "docs/research/2026-02-18-krita-wacom-pressure-full-chain.md",
+      "docs/testing/krita-pressure-full-gate-spec.md",
+      "docs/testing/krita-pressure-full-test-cases.md"
+    ],
+    "env": {
+      "krita_version": "5.2",
+      "tablet": "Wacom",
+      "os": "Windows 11"
+    }
+  },
+  "input_hash": "9d17bed1",
+  "baseline_version": "krita-5.2-default-wintab",
+  "threshold_version": "krita-pressure-thresholds.v1",
+  "stage_metrics": {
+    "pressure_clamp_violation_count": 0,
+    "source_alias_unresolved_count": 0,
+    "timestamp_non_monotonic_count": 0,
+    "speed_first_point_is_zero": true,
+    "pressure_curve_mae": 0,
+    "pressure_curve_p95": 0,
+    "speed_mae": 0,
+    "speed_p95": 0,
+    "dab_count_delta": 0,
+    "carry_distance_error_px": 0.8739898880630976,
+    "carry_time_error_ms": 0.2,
+    "pressure_mix_mae": 0,
+    "speed_mix_mae": 0,
+    "time_mix_mae_us": 0,
+    "sensor_value_mae": 0,
+    "sensor_value_p95": 0,
+    "combiner_output_mae": 0,
+    "combiner_output_p95": 0,
+    "timestamp_jump_count": 2
+  },
+  "final_metrics": {
+    "width_profile_delta": 0,
+    "tail_decay_delta": 0,
+    "pixel_roi_delta": 0
+  },
+  "fast_windows_metrics": {
+    "fast_window_count": 2,
+    "fast_window_min_required": 1,
+    "fast_speed_p95": 0.7912155749524649,
+    "fast_speed_mae": 0
+  },
+  "semantic_checks": {
+    "no_start_distance_gate": "pass",
+    "no_start_transition_ramp": "pass",
+    "no_forced_zero_initial_pressure_non_buildup": "pass",
+    "linear_mix_pressure_speed_time": "pass",
+    "pointerup_finalize_consumes_pending_segment": "pass",
+    "disable_pressure_bridge_matches_contract": "pass"
+  },
+  "stage_gate": "pass",
+  "final_gate": "pass",
+  "fast_gate": "pass",
+  "overall": "pass",
+  "blocking_failures": [],
+  "case_results": [
+    {
+      "case_id": "A",
+      "case_name": "slow_lift",
+      "sample_count": 32,
+      "dab_count": 4690,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 0,
+        "fast_speed_p95": 0.7632346106587161,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "B",
+      "case_name": "fast_flick",
+      "sample_count": 5,
+      "dab_count": 1364,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 1,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 0.9175368741566418,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "C",
+      "case_name": "abrupt_stop",
+      "sample_count": 16,
+      "dab_count": 2793,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 0,
+        "fast_speed_p95": 0.7763896664085264,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "D",
+      "case_name": "low_pressure_drag",
+      "sample_count": 40,
+      "dab_count": 9265,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 0,
+        "fast_speed_p95": 1,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "E",
+      "case_name": "first_point_boundary",
+      "sample_count": 8,
+      "dab_count": 709,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 0,
+        "fast_window_min_required": 0,
+        "fast_speed_p95": 0,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "F",
+      "case_name": "final_point_boundary",
+      "sample_count": 8,
+      "dab_count": 1827,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 1,
+        "fast_window_min_required": 0,
+        "fast_speed_p95": 1,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "G",
+      "case_name": "near_zero_pressure_jitter",
+      "sample_count": 22,
+      "dab_count": 9263,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 0,
+        "fast_speed_p95": 1,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "case_id": "H",
+      "case_name": "timestamp_jump",
+      "sample_count": 71,
+      "dab_count": 9371,
+      "stage_metrics": {
+        "pressure_clamp_violation_count": 0,
+        "source_alias_unresolved_count": 0,
+        "timestamp_non_monotonic_count": 0,
+        "speed_first_point_is_zero": true,
+        "pressure_curve_mae": 0,
+        "pressure_curve_p95": 0,
+        "speed_mae": 0,
+        "speed_p95": 0,
+        "dab_count_delta": 0,
+        "carry_distance_error_px": 0.8739898880630976,
+        "carry_time_error_ms": 0.2,
+        "pressure_mix_mae": 0,
+        "speed_mix_mae": 0,
+        "time_mix_mae_us": 0,
+        "sensor_value_mae": 0,
+        "sensor_value_p95": 0,
+        "combiner_output_mae": 0,
+        "combiner_output_p95": 0,
+        "timestamp_jump_count": 2
+      },
+      "final_metrics": {
+        "width_profile_delta": 0,
+        "tail_decay_delta": 0,
+        "pixel_roi_delta": 0
+      },
+      "fast_windows_metrics": {
+        "fast_window_count": 2,
+        "fast_window_min_required": 1,
+        "fast_speed_p95": 0.7934949252670478,
+        "fast_speed_mae": 0
+      },
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    }
+  ],
+  "preset_results": [
+    {
+      "preset_id": "P0_pressure_size_multiply",
+      "preset_name": "pressure -> size (multiply)",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P1_pressure_flow_opacity",
+      "preset_name": "pressure -> flow+opacity",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P2_speed_sensor",
+      "preset_name": "speed sensor",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P3_combiner_modes",
+      "preset_name": "combiner difference",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    },
+    {
+      "preset_id": "P4_low_pressure_micro",
+      "preset_name": "low pressure near zero",
+      "case_results": {
+        "A": "pass",
+        "B": "pass",
+        "C": "pass",
+        "D": "pass",
+        "E": "pass",
+        "F": "pass",
+        "G": "pass",
+        "H": "pass"
+      },
+      "sensor_map_mae": 0,
+      "sensor_map_p95": 0,
+      "combiner_output_mae": 0,
+      "combiner_output_p95": 0,
+      "stage_gate": "pass",
+      "final_gate": "pass",
+      "fast_gate": "pass",
+      "overall": "pass",
+      "blocking_failures": []
+    }
+  ],
+  "summary": {
+    "overall": "pass",
+    "stage_gate": "pass",
+    "final_gate": "pass",
+    "fast_gate": "pass",
+    "blocking_failures_count": 0,
+    "case_passed": 8,
+    "case_total": 8,
+    "preset_passed": 5,
+    "preset_total": 5
+  }
+}

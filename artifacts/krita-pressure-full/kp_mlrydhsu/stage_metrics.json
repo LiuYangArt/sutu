@@ -1,0 +1,21 @@
+{
+  "pressure_clamp_violation_count": 0,
+  "source_alias_unresolved_count": 0,
+  "timestamp_non_monotonic_count": 0,
+  "speed_first_point_is_zero": true,
+  "pressure_curve_mae": 0,
+  "pressure_curve_p95": 0,
+  "speed_mae": 0,
+  "speed_p95": 0,
+  "dab_count_delta": 0,
+  "carry_distance_error_px": 0.8739898880630976,
+  "carry_time_error_ms": 0.2,
+  "pressure_mix_mae": 0,
+  "speed_mix_mae": 0,
+  "time_mix_mae_us": 0,
+  "sensor_value_mae": 0,
+  "sensor_value_p95": 0,
+  "combiner_output_mae": 0,
+  "combiner_output_p95": 0,
+  "timestamp_jump_count": 2
+}

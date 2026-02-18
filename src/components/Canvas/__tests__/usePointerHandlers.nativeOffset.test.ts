@@ -1,0 +1,452 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import type { RefObject } from 'react';
+import type { ToolType } from '@/stores/tool';
+import type { TabletInputPoint } from '@/stores/tablet';
+
+const readPointBufferSinceMock = vi.fn();
+const getTabletStateMock = vi.fn();
+
+vi.mock('@/stores/tablet', () => ({
+  readPointBufferSince: (...args: unknown[]) => readPointBufferSinceMock(...args),
+  useTabletStore: {
+    getState: () => getTabletStateMock(),
+  },
+}));
+
+import { usePointerHandlers } from '../usePointerHandlers';
+
+interface HookContext {
+  container: HTMLDivElement;
+  canvas: HTMLCanvasElement;
+  containerRef: RefObject<HTMLDivElement | null>;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+}
+
+function createNativePoint(partial: Partial<TabletInputPoint>): TabletInputPoint {
+  return {
+    seq: partial.seq ?? 1,
+    stream_id: partial.stream_id ?? 1,
+    source: partial.source ?? 'wintab',
+    pointer_id: partial.pointer_id ?? 1,
+    phase: partial.phase ?? 'move',
+    x: partial.x ?? 0,
+    y: partial.y ?? 0,
+    pressure: partial.pressure ?? 0.5,
+    tilt_x: partial.tilt_x ?? 0,
+    tilt_y: partial.tilt_y ?? 0,
+    rotation: partial.rotation ?? 0,
+    host_time_us: partial.host_time_us ?? 1000,
+    device_time_us: partial.device_time_us ?? 1000,
+    timestamp_ms: partial.timestamp_ms ?? 1,
+  };
+}
+
+function createNativePointerEvent(
+  init: Partial<PointerEvent> & {
+    pointerId?: number;
+    clientX?: number;
+    clientY?: number;
+    pointerType?: string;
+    pressure?: number;
+    isTrusted?: boolean;
+  } = {}
+): PointerEvent {
+  const event = {
+    pointerId: init.pointerId ?? 1,
+    clientX: init.clientX ?? 12,
+    clientY: init.clientY ?? 18,
+    pointerType: init.pointerType ?? 'pen',
+    pressure: init.pressure ?? 0.5,
+    tiltX: init.tiltX ?? 0,
+    tiltY: init.tiltY ?? 0,
+    twist: init.twist ?? 0,
+    button: init.button ?? 0,
+    buttons: init.buttons ?? 1,
+    isPrimary: init.isPrimary ?? true,
+    isTrusted: init.isTrusted ?? true,
+    getCoalescedEvents: init.getCoalescedEvents ?? (() => []),
+    type: init.type ?? 'pointermove',
+    timeStamp: init.timeStamp ?? 1,
+  } as unknown as PointerEvent;
+  return event;
+}
+
+function createReactPointerEvent(nativeEvent: PointerEvent): React.PointerEvent {
+  return {
+    pointerId: nativeEvent.pointerId,
+    clientX: nativeEvent.clientX,
+    clientY: nativeEvent.clientY,
+    nativeEvent,
+    button: nativeEvent.button,
+    buttons: nativeEvent.buttons,
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+  } as unknown as React.PointerEvent;
+}
+
+function createHookContext(): HookContext {
+  const container = document.createElement('div');
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  container.appendChild(canvas);
+
+  Object.assign(container, {
+    setPointerCapture: vi.fn(),
+    releasePointerCapture: vi.fn(),
+    focus: vi.fn(),
+  });
+  canvas.getBoundingClientRect = vi.fn(
+    () =>
+      ({
+        left: 0,
+        top: 0,
+        width: 512,
+        height: 512,
+        right: 512,
+        bottom: 512,
+      }) as DOMRect
+  );
+
+  return {
+    container,
+    canvas,
+    containerRef: { current: container },
+    canvasRef: { current: canvas },
+  };
+}
+
+function createHookParams(ctx: HookContext, tool: ToolType = 'brush') {
+  return {
+    containerRef: ctx.containerRef,
+    canvasRef: ctx.canvasRef,
+    layerRendererRef: { current: null },
+    useGpuDisplay: false,
+    sampleGpuPixelColor: undefined,
+    currentTool: tool,
+    scale: 1,
+    spacePressed: false,
+    isPanning: false,
+    setIsPanning: vi.fn(),
+    panStartRef: { current: null },
+    pan: vi.fn(),
+    isZoomingRef: { current: false },
+    zoomStartRef: { current: null },
+    setScale: vi.fn(),
+    setBrushColor: vi.fn(),
+    width: 512,
+    height: 512,
+    layers: [{ id: 'layer-1', visible: true }] as Array<{ id: string; visible: boolean }>,
+    activeLayerId: 'layer-1',
+    captureBeforeImage: vi.fn(async () => undefined),
+    initializeBrushStroke: vi.fn(async () => undefined),
+    finishCurrentStroke: vi.fn(async () => undefined),
+    isSelectionToolActive: false,
+    handleSelectionPointerDown: vi.fn(() => false),
+    handleSelectionPointerMove: vi.fn(),
+    handleSelectionPointerUp: vi.fn(),
+    handleMovePointerDown: vi.fn(() => false),
+    handleMovePointerMove: vi.fn(() => false),
+    handleMovePointerUp: vi.fn(() => false),
+    handleGradientPointerDown: vi.fn(() => false),
+    handleGradientPointerMove: vi.fn(),
+    handleGradientPointerUp: vi.fn(),
+    updateShiftLineCursor: vi.fn(),
+    lockShiftLine: vi.fn(),
+    constrainShiftLinePoint: vi.fn((x: number, y: number) => ({ x, y })),
+    usingRawInput: { current: false },
+    isDrawingRef: { current: false },
+    strokeStateRef: { current: 'idle' },
+    pendingPointsRef: { current: [] as Array<Record<string, unknown>> },
+    inputQueueRef: { current: [] as Array<Record<string, unknown>> },
+    pointIndexRef: { current: 0 },
+    pendingEndRef: { current: false },
+    lastInputPosRef: { current: null },
+    latencyProfilerRef: { current: { markInputReceived: vi.fn() } },
+    onBeforeCanvasMutation: vi.fn(),
+  };
+}
+
+describe('usePointerHandlers native offset stability', () => {
+  beforeEach(() => {
+    readPointBufferSinceMock.mockReset();
+    getTabletStateMock.mockReset();
+    getTabletStateMock.mockReturnValue({
+      isStreaming: true,
+      backend: 'wintab',
+      activeBackend: 'wintab',
+      currentPoint: null,
+    });
+  });
+
+  it('keeps one native offset for the whole stroke instead of re-anchoring each move', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 1, x: 50, y: 60, pressure: 0.2 })],
+        nextSeq: 1,
+      })
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 2, x: 55, y: 63, pressure: 0.3 })],
+        nextSeq: 2,
+      });
+
+    const down = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 })
+    );
+    act(() => {
+      result.current.handlePointerDown(down);
+    });
+
+    const move = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 120, clientY: 130 })
+    );
+    act(() => {
+      result.current.handlePointerMove(move);
+    });
+
+    const tail = params.pendingPointsRef.current[params.pendingPointsRef.current.length - 1] as
+      | { x: number; y: number }
+      | undefined;
+    expect(tail).toBeDefined();
+    expect(tail?.x).toBeCloseTo(105, 6);
+    expect(tail?.y).toBeCloseTo(103, 6);
+  });
+
+  it('uses last native mapped position for synthetic pointerup tail to avoid fly-away segment', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 1, x: 50, y: 60, pressure: 0.2 })],
+        nextSeq: 1,
+      })
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 2, x: 55, y: 63, pressure: 0.35 })],
+        nextSeq: 2,
+      });
+
+    const down = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 })
+    );
+    act(() => {
+      result.current.handlePointerDown(down);
+    });
+
+    params.strokeStateRef.current = 'active';
+    params.isDrawingRef.current = true;
+    params.inputQueueRef.current = [];
+
+    const up = createReactPointerEvent(
+      createNativePointerEvent({
+        pointerId: 1,
+        clientX: 400,
+        clientY: 420,
+        type: 'pointerup',
+        pressure: 0,
+      })
+    );
+    act(() => {
+      result.current.handlePointerUp(up);
+    });
+
+    const queue = params.inputQueueRef.current as Array<{ phase: string; x: number; y: number }>;
+    expect(queue.length).toBeGreaterThan(0);
+    const tail = queue[queue.length - 1];
+    expect(tail?.phase).toBe('up');
+    expect(tail?.x).toBeCloseTo(105, 6);
+    expect(tail?.y).toBeCloseTo(103, 6);
+  });
+
+  it('does not fall back to pointermove geometry when wintab stroke is locked to native data', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 1, x: 50, y: 60, pressure: 0.2 })],
+        nextSeq: 1,
+      })
+      .mockReturnValueOnce({
+        points: [],
+        nextSeq: 1,
+      });
+
+    const down = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 })
+    );
+    act(() => {
+      result.current.handlePointerDown(down);
+    });
+
+    params.strokeStateRef.current = 'active';
+    params.isDrawingRef.current = true;
+    params.inputQueueRef.current = [];
+
+    const move = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 900, clientY: 920 })
+    );
+    act(() => {
+      result.current.handlePointerMove(move);
+    });
+
+    const queue = params.inputQueueRef.current as Array<{ x: number; y: number }>;
+    expect(queue).toHaveLength(0);
+  });
+
+  it('uses last native mapped point for pointerup when wintab has no fresh native up sample', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 1, x: 50, y: 60, pressure: 0.2 })],
+        nextSeq: 1,
+      })
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 2, x: 55, y: 63, pressure: 0.35 })],
+        nextSeq: 2,
+      })
+      .mockReturnValueOnce({
+        points: [],
+        nextSeq: 2,
+      });
+
+    const down = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 })
+    );
+    act(() => {
+      result.current.handlePointerDown(down);
+    });
+
+    params.strokeStateRef.current = 'active';
+    params.isDrawingRef.current = true;
+    params.inputQueueRef.current = [];
+
+    const move = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 120, clientY: 130 })
+    );
+    act(() => {
+      result.current.handlePointerMove(move);
+    });
+
+    const up = createReactPointerEvent(
+      createNativePointerEvent({
+        pointerId: 1,
+        clientX: 900,
+        clientY: 920,
+        type: 'pointerup',
+        pressure: 0,
+      })
+    );
+    act(() => {
+      result.current.handlePointerUp(up);
+    });
+
+    const queue = params.inputQueueRef.current as Array<{ phase: string; x: number; y: number }>;
+    expect(queue.length).toBeGreaterThan(0);
+    const tail = queue[queue.length - 1];
+    expect(tail?.phase).toBe('up');
+    expect(tail?.x).toBeCloseTo(105, 6);
+    expect(tail?.y).toBeCloseTo(103, 6);
+  });
+
+  it('handles native points in physical pixels under DPI scaling without outward emission', () => {
+    const ctx = createHookContext();
+    ctx.canvas.width = 1024;
+    ctx.canvas.height = 1024;
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 1, x: 200, y: 200, pressure: 0.2 })],
+        nextSeq: 1,
+      })
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 2, x: 240, y: 260, pressure: 0.3 })],
+        nextSeq: 2,
+      });
+
+    const down = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 })
+    );
+    act(() => {
+      result.current.handlePointerDown(down);
+    });
+
+    const move = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 120, clientY: 130 })
+    );
+    act(() => {
+      result.current.handlePointerMove(move);
+    });
+
+    const queue = params.pendingPointsRef.current as Array<{ x: number; y: number }>;
+    const tail = queue[queue.length - 1];
+    expect(tail).toBeDefined();
+    expect(tail?.x).toBeCloseTo(240, 6);
+    expect(tail?.y).toBeCloseTo(260, 6);
+  });
+
+  it('drops stale pre-hover native backlog on pointerdown so first dab starts near current pen contact', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock.mockReturnValueOnce({
+      points: [
+        createNativePoint({
+          seq: 1,
+          phase: 'move',
+          x: 10,
+          y: 10,
+          pressure: 0.7,
+          host_time_us: 1_000,
+          timestamp_ms: 1,
+        }),
+        createNativePoint({
+          seq: 2,
+          phase: 'hover',
+          x: 20,
+          y: 20,
+          pressure: 0,
+          host_time_us: 2_000,
+          timestamp_ms: 2,
+        }),
+        createNativePoint({
+          seq: 3,
+          phase: 'move',
+          x: 50,
+          y: 60,
+          pressure: 0.3,
+          host_time_us: 3_000,
+          timestamp_ms: 3,
+        }),
+      ],
+      nextSeq: 3,
+    });
+
+    const down = createReactPointerEvent(
+      createNativePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 })
+    );
+    act(() => {
+      result.current.handlePointerDown(down);
+    });
+
+    const queue = params.pendingPointsRef.current as Array<{ x: number; y: number }>;
+    expect(queue.length).toBeGreaterThan(0);
+    const first = queue[0];
+    expect(first).toBeDefined();
+    expect(first?.x).toBeCloseTo(100, 6);
+    expect(first?.y).toBeCloseTo(100, 6);
+  });
+});

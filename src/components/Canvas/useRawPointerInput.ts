@@ -30,6 +30,16 @@ type QueuedPoint = {
   deviceTimeUs: number;
   pointIndex: number;
 };
+const MAX_NATIVE_RECENT_POINTS = 64;
+const MAX_NATIVE_RECENT_WINDOW_US = 120_000;
+const MAX_NATIVE_CONSECUTIVE_GAP_US = 40_000;
+interface NativePointMapping {
+  native_to_client_scale_x: number;
+  native_to_client_scale_y: number;
+  client_offset_x: number;
+  client_offset_y: number;
+}
+type StrokeGeometrySource = 'unset' | 'native' | 'pointer';
 
 function normalizeQueuedPhase(phase: unknown): QueuedPoint['phase'] {
   if (phase === 'down' || phase === 'move' || phase === 'up' || phase === 'hover') {
@@ -38,20 +48,104 @@ function normalizeQueuedPhase(phase: unknown): QueuedPoint['phase'] {
   return 'move';
 }
 
-function resolveNativePointOffset(
+function resolveNativePointTimeUs(point: TabletInputPoint): number {
+  if (Number.isFinite(point.host_time_us)) {
+    return Math.max(0, Math.round(point.host_time_us));
+  }
+  if (Number.isFinite(point.timestamp_ms)) {
+    return Math.max(0, Math.round(point.timestamp_ms * 1000));
+  }
+  return 0;
+}
+
+function selectRecentNativeStrokePoints(points: TabletInputPoint[]): TabletInputPoint[] {
+  if (points.length === 0) return [];
+
+  let contactStart = 0;
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    const phase = normalizeQueuedPhase((points[i] as { phase?: unknown }).phase);
+    if (phase === 'hover' || phase === 'up') {
+      contactStart = i + 1;
+      break;
+    }
+  }
+
+  const contactSlice = points.slice(contactStart);
+  const source = contactSlice.length > 0 ? contactSlice : points;
+  if (source.length === 0) return [];
+
+  const tailTimeUs = resolveNativePointTimeUs(source[source.length - 1]!);
+  let start = source.length - 1;
+  for (let i = source.length - 2; i >= 0; i -= 1) {
+    const current = source[i]!;
+    const next = source[i + 1]!;
+    const currentTimeUs = resolveNativePointTimeUs(current);
+    const nextTimeUs = resolveNativePointTimeUs(next);
+    if (tailTimeUs - currentTimeUs > MAX_NATIVE_RECENT_WINDOW_US) {
+      break;
+    }
+    if (nextTimeUs > currentTimeUs && nextTimeUs - currentTimeUs > MAX_NATIVE_CONSECUTIVE_GAP_US) {
+      break;
+    }
+    start = i;
+  }
+
+  const recent = source.slice(start);
+  if (recent.length <= MAX_NATIVE_RECENT_POINTS) {
+    return recent;
+  }
+  return recent.slice(recent.length - MAX_NATIVE_RECENT_POINTS);
+}
+
+function resolveNativePointMapping(
+  canvas: HTMLCanvasElement,
+  rect: DOMRect,
   anchorEvent: Pick<PointerEvent, 'clientX' | 'clientY'>,
   anchorNativePoint: { x: number; y: number } | null
-): { x: number; y: number } {
+): NativePointMapping {
   if (
     !anchorNativePoint ||
     !Number.isFinite(anchorNativePoint.x) ||
     !Number.isFinite(anchorNativePoint.y)
   ) {
-    return { x: 0, y: 0 };
+    return {
+      native_to_client_scale_x: 1,
+      native_to_client_scale_y: 1,
+      client_offset_x: 0,
+      client_offset_y: 0,
+    };
   }
+
+  const canvas_to_client_scale_x =
+    rect.width > 1e-6 ? Math.max(1e-6, canvas.width / rect.width) : 1;
+  const canvas_to_client_scale_y =
+    rect.height > 1e-6 ? Math.max(1e-6, canvas.height / rect.height) : 1;
+  const ratio_x =
+    Math.abs(anchorEvent.clientX) > 8
+      ? Math.abs(anchorNativePoint.x / anchorEvent.clientX)
+      : Number.NaN;
+  const ratio_y =
+    Math.abs(anchorEvent.clientY) > 8
+      ? Math.abs(anchorNativePoint.y / anchorEvent.clientY)
+      : Number.NaN;
+  const dpi_scaled_x =
+    Number.isFinite(ratio_x) &&
+    canvas_to_client_scale_x > 1.05 &&
+    Math.abs(ratio_x - canvas_to_client_scale_x) <= Math.max(0.25, canvas_to_client_scale_x * 0.3);
+  const dpi_scaled_y =
+    Number.isFinite(ratio_y) &&
+    canvas_to_client_scale_y > 1.05 &&
+    Math.abs(ratio_y - canvas_to_client_scale_y) <= Math.max(0.25, canvas_to_client_scale_y * 0.3);
+
+  const native_to_client_scale_x = dpi_scaled_x ? 1 / canvas_to_client_scale_x : 1;
+  const native_to_client_scale_y = dpi_scaled_y ? 1 / canvas_to_client_scale_y : 1;
+  const anchor_native_client_x = anchorNativePoint.x * native_to_client_scale_x;
+  const anchor_native_client_y = anchorNativePoint.y * native_to_client_scale_y;
   return {
-    x: anchorEvent.clientX - anchorNativePoint.x,
-    y: anchorEvent.clientY - anchorNativePoint.y,
+    native_to_client_scale_x,
+    native_to_client_scale_y,
+    client_offset_x: anchorEvent.clientX - anchor_native_client_x,
+    client_offset_y: anchorEvent.clientY - anchor_native_client_y,
   };
 }
 
@@ -59,9 +153,11 @@ function nativePointToCanvasPoint(
   canvas: HTMLCanvasElement,
   point: TabletInputPoint,
   rect: DOMRect,
-  offset: { x: number; y: number }
+  mapping: NativePointMapping
 ): { x: number; y: number } {
-  return clientToCanvasPoint(canvas, point.x + offset.x, point.y + offset.y, rect);
+  const client_x = point.x * mapping.native_to_client_scale_x + mapping.client_offset_x;
+  const client_y = point.y * mapping.native_to_client_scale_y + mapping.client_offset_y;
+  return clientToCanvasPoint(canvas, client_x, client_y, rect);
 }
 
 function toNonReleasePointerEvent(event: PointerEvent): PointerEvent {
@@ -103,6 +199,8 @@ export function useRawPointerInput({
   // Track if we're using raw input (for diagnostics)
   const usingRawInputRef = useRef(false);
   const nativeSeqCursorRef = useRef(0);
+  const strokeNativeMappingRef = useRef<NativePointMapping | null>(null);
+  const strokeGeometrySourceRef = useRef<StrokeGeometrySource>('unset');
 
   useEffect(() => {
     const container = containerRef.current;
@@ -111,6 +209,7 @@ export function useRawPointerInput({
     // Only enable when pointerrawupdate is supported
     if (!container || !canvas || !supportsPointerRawUpdate) {
       usingRawInputRef.current = false;
+      strokeGeometrySourceRef.current = 'unset';
       return;
     }
 
@@ -118,11 +217,32 @@ export function useRawPointerInput({
       // Cast to PointerEvent (pointerrawupdate is a PointerEvent)
       const pe = e as PointerEvent;
 
+      // Get tablet state for pressure resolution and keep native cursor fresh
+      const tabletState = useTabletStore.getState();
+      const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
+      const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
+      const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
+        ? readPointBufferSince(nativeSeqCursorRef.current)
+        : { points: [], nextSeq: nativeSeqCursorRef.current };
+      if (shouldUseNativeBackend) {
+        nativeSeqCursorRef.current = nextSeq;
+      }
+
       // Only process during active drawing with brush-like tools
-      if (!isDrawingRef.current || (currentTool !== 'brush' && currentTool !== 'eraser')) return;
+      if (!isDrawingRef.current || (currentTool !== 'brush' && currentTool !== 'eraser')) {
+        strokeNativeMappingRef.current = null;
+        usingRawInputRef.current = false;
+        strokeGeometrySourceRef.current = 'unset';
+        return;
+      }
 
       const state = strokeStateRef.current;
-      if (state !== 'starting' && state !== 'active') return;
+      if (state !== 'starting' && state !== 'active') {
+        strokeNativeMappingRef.current = null;
+        usingRawInputRef.current = false;
+        strokeGeometrySourceRef.current = 'unset';
+        return;
+      }
 
       // Mark that raw input is being used
       usingRawInputRef.current = true;
@@ -134,20 +254,23 @@ export function useRawPointerInput({
       const sampledEvents = pe.getCoalescedEvents?.();
       const coalescedEvents = sampledEvents && sampledEvents.length > 0 ? sampledEvents : [pe];
 
-      // Get tablet state for pressure resolution
-      const tabletState = useTabletStore.getState();
-      const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
-      const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
-      const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
-        ? readPointBufferSince(nativeSeqCursorRef.current)
-        : { points: [], nextSeq: nativeSeqCursorRef.current };
-      if (shouldUseNativeBackend) {
-        nativeSeqCursorRef.current = nextSeq;
+      const bufferedPoints = shouldUseNativeBackend
+        ? selectRecentNativeStrokePoints(bufferedPointsRaw)
+        : bufferedPointsRaw;
+      if (strokeGeometrySourceRef.current === 'unset') {
+        strokeGeometrySourceRef.current = shouldUseNativeBackend ? 'native' : 'pointer';
       }
-      if (shouldUseNativeBackend && bufferedPoints.length > 0) {
+      const preferNativeGeometry = strokeGeometrySourceRef.current === 'native';
+      if (preferNativeGeometry && shouldUseNativeBackend && bufferedPoints.length > 0) {
         const lastEvent = coalescedEvents[coalescedEvents.length - 1] ?? pe;
         const anchorNativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-        const nativeOffset = resolveNativePointOffset(lastEvent, anchorNativePoint);
+        const nativeMapping = (() => {
+          const existing = strokeNativeMappingRef.current;
+          if (existing) return existing;
+          const computed = resolveNativePointMapping(canvas, rect, lastEvent, anchorNativePoint);
+          strokeNativeMappingRef.current = computed;
+          return computed;
+        })();
         const moveEvent = toNonReleasePointerEvent(pe);
 
         for (const nativePoint of bufferedPoints) {
@@ -159,7 +282,7 @@ export function useRawPointerInput({
             canvas,
             nativePoint,
             rect,
-            nativeOffset
+            nativeMapping
           );
 
           const {
@@ -203,6 +326,9 @@ export function useRawPointerInput({
           }
           onPointBuffered?.();
         }
+        return;
+      }
+      if (preferNativeGeometry) {
         return;
       }
 
@@ -250,6 +376,8 @@ export function useRawPointerInput({
     return () => {
       container.removeEventListener('pointerrawupdate', handleRawUpdate);
       usingRawInputRef.current = false;
+      strokeNativeMappingRef.current = null;
+      strokeGeometrySourceRef.current = 'unset';
     };
   }, [
     containerRef,

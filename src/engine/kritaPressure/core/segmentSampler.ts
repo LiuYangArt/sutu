@@ -6,6 +6,8 @@ export interface SegmentSamplerRequest {
 }
 
 const EPSILON = 1e-6;
+const MAX_SEGMENT_SAMPLES = 8192;
+const MIN_STEP_T = 1 / MAX_SEGMENT_SAMPLES;
 
 function clampPositive(value: number, fallback: number): number {
   if (!Number.isFinite(value) || value <= 0) return fallback;
@@ -52,9 +54,16 @@ export class KritaSegmentSampler {
     if (distancePx > EPSILON) {
       const firstT = (spacingPx - this.distanceCarryPx) / distancePx;
       const stepT = spacingPx / distancePx;
-      for (let t = firstT; t <= 1 + EPSILON; t += stepT) {
-        if (t > EPSILON) {
-          samples.push(Math.min(1, Math.max(0, t)));
+      if (Number.isFinite(firstT) && Number.isFinite(stepT) && stepT > EPSILON) {
+        const safeStepT = Math.max(stepT, MIN_STEP_T);
+        for (let i = 0; i < MAX_SEGMENT_SAMPLES; i += 1) {
+          const t = firstT + safeStepT * i;
+          if (t > 1 + EPSILON) {
+            break;
+          }
+          if (t > EPSILON) {
+            samples.push(Math.min(1, Math.max(0, t)));
+          }
         }
       }
     }
@@ -62,9 +71,16 @@ export class KritaSegmentSampler {
     if (durationUs > EPSILON) {
       const firstT = (maxIntervalUs - this.timeCarryUs) / durationUs;
       const stepT = maxIntervalUs / durationUs;
-      for (let t = firstT; t <= 1 + EPSILON; t += stepT) {
-        if (t > EPSILON) {
-          samples.push(Math.min(1, Math.max(0, t)));
+      if (Number.isFinite(firstT) && Number.isFinite(stepT) && stepT > EPSILON) {
+        const safeStepT = Math.max(stepT, MIN_STEP_T);
+        for (let i = 0; i < MAX_SEGMENT_SAMPLES; i += 1) {
+          const t = firstT + safeStepT * i;
+          if (t > 1 + EPSILON) {
+            break;
+          }
+          if (t > EPSILON) {
+            samples.push(Math.min(1, Math.max(0, t)));
+          }
         }
       }
     }

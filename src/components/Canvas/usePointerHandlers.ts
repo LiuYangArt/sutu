@@ -31,6 +31,16 @@ interface QueuedPoint {
 }
 
 type QueuedPointPhase = QueuedPoint['phase'];
+const MAX_NATIVE_RECENT_POINTS = 64;
+const MAX_NATIVE_RECENT_WINDOW_US = 120_000;
+const MAX_NATIVE_CONSECUTIVE_GAP_US = 40_000;
+interface NativePointMapping {
+  native_to_client_scale_x: number;
+  native_to_client_scale_y: number;
+  client_offset_x: number;
+  client_offset_y: number;
+}
+type StrokeGeometrySource = 'unset' | 'native' | 'pointer';
 
 interface UsePointerHandlersParams {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -130,6 +140,55 @@ function normalizeQueuedPhase(phase: unknown): QueuedPointPhase {
   return 'move';
 }
 
+function resolveNativePointTimeUs(point: TabletInputPoint): number {
+  if (Number.isFinite(point.host_time_us)) {
+    return Math.max(0, Math.round(point.host_time_us));
+  }
+  if (Number.isFinite(point.timestamp_ms)) {
+    return Math.max(0, Math.round(point.timestamp_ms * 1000));
+  }
+  return 0;
+}
+
+function selectRecentNativeStrokePoints(points: TabletInputPoint[]): TabletInputPoint[] {
+  if (points.length === 0) return [];
+
+  let contactStart = 0;
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    const phase = normalizeQueuedPhase((points[i] as { phase?: unknown }).phase);
+    if (phase === 'hover' || phase === 'up') {
+      contactStart = i + 1;
+      break;
+    }
+  }
+
+  const contactSlice = points.slice(contactStart);
+  const source = contactSlice.length > 0 ? contactSlice : points;
+  if (source.length === 0) return [];
+
+  const tailTimeUs = resolveNativePointTimeUs(source[source.length - 1]!);
+  let start = source.length - 1;
+  for (let i = source.length - 2; i >= 0; i -= 1) {
+    const current = source[i]!;
+    const next = source[i + 1]!;
+    const currentTimeUs = resolveNativePointTimeUs(current);
+    const nextTimeUs = resolveNativePointTimeUs(next);
+    if (tailTimeUs - currentTimeUs > MAX_NATIVE_RECENT_WINDOW_US) {
+      break;
+    }
+    if (nextTimeUs > currentTimeUs && nextTimeUs - currentTimeUs > MAX_NATIVE_CONSECUTIVE_GAP_US) {
+      break;
+    }
+    start = i;
+  }
+
+  const recent = source.slice(start);
+  if (recent.length <= MAX_NATIVE_RECENT_POINTS) {
+    return recent;
+  }
+  return recent.slice(recent.length - MAX_NATIVE_RECENT_POINTS);
+}
+
 function toNonReleasePointerEvent(event: PointerEvent): PointerEvent {
   return {
     ...event,
@@ -137,20 +196,55 @@ function toNonReleasePointerEvent(event: PointerEvent): PointerEvent {
   } as PointerEvent;
 }
 
-function resolveNativePointOffset(
+function resolveNativePointMapping(
+  canvas: HTMLCanvasElement,
+  rect: DOMRect,
   anchorEvent: Pick<PointerEvent, 'clientX' | 'clientY'>,
   anchorNativePoint: { x: number; y: number } | null
-): { x: number; y: number } {
+): NativePointMapping {
   if (
     !anchorNativePoint ||
     !Number.isFinite(anchorNativePoint.x) ||
     !Number.isFinite(anchorNativePoint.y)
   ) {
-    return { x: 0, y: 0 };
+    return {
+      native_to_client_scale_x: 1,
+      native_to_client_scale_y: 1,
+      client_offset_x: 0,
+      client_offset_y: 0,
+    };
   }
+
+  const canvas_to_client_scale_x =
+    rect.width > 1e-6 ? Math.max(1e-6, canvas.width / rect.width) : 1;
+  const canvas_to_client_scale_y =
+    rect.height > 1e-6 ? Math.max(1e-6, canvas.height / rect.height) : 1;
+  const ratio_x =
+    Math.abs(anchorEvent.clientX) > 8
+      ? Math.abs(anchorNativePoint.x / anchorEvent.clientX)
+      : Number.NaN;
+  const ratio_y =
+    Math.abs(anchorEvent.clientY) > 8
+      ? Math.abs(anchorNativePoint.y / anchorEvent.clientY)
+      : Number.NaN;
+  const dpi_scaled_x =
+    Number.isFinite(ratio_x) &&
+    canvas_to_client_scale_x > 1.05 &&
+    Math.abs(ratio_x - canvas_to_client_scale_x) <= Math.max(0.25, canvas_to_client_scale_x * 0.3);
+  const dpi_scaled_y =
+    Number.isFinite(ratio_y) &&
+    canvas_to_client_scale_y > 1.05 &&
+    Math.abs(ratio_y - canvas_to_client_scale_y) <= Math.max(0.25, canvas_to_client_scale_y * 0.3);
+
+  const native_to_client_scale_x = dpi_scaled_x ? 1 / canvas_to_client_scale_x : 1;
+  const native_to_client_scale_y = dpi_scaled_y ? 1 / canvas_to_client_scale_y : 1;
+  const anchor_native_client_x = anchorNativePoint.x * native_to_client_scale_x;
+  const anchor_native_client_y = anchorNativePoint.y * native_to_client_scale_y;
   return {
-    x: anchorEvent.clientX - anchorNativePoint.x,
-    y: anchorEvent.clientY - anchorNativePoint.y,
+    native_to_client_scale_x,
+    native_to_client_scale_y,
+    client_offset_x: anchorEvent.clientX - anchor_native_client_x,
+    client_offset_y: anchorEvent.clientY - anchor_native_client_y,
   };
 }
 
@@ -158,9 +252,11 @@ function nativePointToCanvasPoint(
   canvas: HTMLCanvasElement,
   nativePoint: { x: number; y: number },
   rect: DOMRect,
-  offset: { x: number; y: number }
+  mapping: NativePointMapping
 ): { x: number; y: number } {
-  return clientToCanvasPoint(canvas, nativePoint.x + offset.x, nativePoint.y + offset.y, rect);
+  const client_x = nativePoint.x * mapping.native_to_client_scale_x + mapping.client_offset_x;
+  const client_y = nativePoint.y * mapping.native_to_client_scale_y + mapping.client_offset_y;
+  return clientToCanvasPoint(canvas, client_x, client_y, rect);
 }
 
 export function usePointerHandlers({
@@ -214,6 +310,9 @@ export function usePointerHandlers({
   const nativeSeqCursorRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
   const isPanningRef = useRef(isPanning);
+  const strokeNativeMappingRef = useRef<NativePointMapping | null>(null);
+  const strokeGeometrySourceRef = useRef<StrokeGeometrySource>('unset');
+  const lastNativeMappedCanvasPointRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     isPanningRef.current = isPanning;
@@ -260,6 +359,9 @@ export function usePointerHandlers({
 
   const beginPointerSession = useCallback(
     (pointerId: number, isTrusted: boolean) => {
+      strokeNativeMappingRef.current = null;
+      strokeGeometrySourceRef.current = 'unset';
+      lastNativeMappedCanvasPointRef.current = null;
       setActivePointerId(pointerId);
       trySetPointerCapture(pointerId, isTrusted);
     },
@@ -272,8 +374,29 @@ export function usePointerHandlers({
         typeof pointerId === 'number' ? pointerId : (activePointerIdRef.current ?? null);
       tryReleasePointerCapture(releaseId);
       clearActivePointerId(pointerId);
+      strokeNativeMappingRef.current = null;
+      strokeGeometrySourceRef.current = 'unset';
+      lastNativeMappedCanvasPointRef.current = null;
     },
     [clearActivePointerId, tryReleasePointerCapture]
+  );
+
+  const resolveStrokeNativeMapping = useCallback(
+    (
+      canvas: HTMLCanvasElement,
+      rect: DOMRect,
+      anchorEvent: Pick<PointerEvent, 'clientX' | 'clientY'>,
+      anchorNativePoint: { x: number; y: number } | null
+    ): NativePointMapping => {
+      const existing = strokeNativeMappingRef.current;
+      if (existing) {
+        return existing;
+      }
+      const computed = resolveNativePointMapping(canvas, rect, anchorEvent, anchorNativePoint);
+      strokeNativeMappingRef.current = computed;
+      return computed;
+    },
+    []
   );
 
   const pickColorAt = useCallback(
@@ -392,16 +515,25 @@ export function usePointerHandlers({
       const tabletState = useTabletStore.getState();
       const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
       const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
-      const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+      const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
         ? readPointBufferSince(nativeSeqCursorRef.current)
         : { points: [], nextSeq: nativeSeqCursorRef.current };
       if (shouldUseNativeBackend) {
         nativeSeqCursorRef.current = nextSeq;
       }
+      const bufferedPoints = shouldUseNativeBackend
+        ? selectRecentNativeStrokePoints(bufferedPointsRaw)
+        : bufferedPointsRaw;
+      const preferNativeGeometry = strokeGeometrySourceRef.current === 'native';
 
-      if (shouldUseNativeBackend && bufferedPoints.length > 0) {
+      if (preferNativeGeometry && shouldUseNativeBackend && bufferedPoints.length > 0) {
         const anchorNativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-        const nativeOffset = resolveNativePointOffset(lastEvent, anchorNativePoint);
+        const nativeMapping = resolveStrokeNativeMapping(
+          canvas,
+          rect,
+          lastEvent,
+          anchorNativePoint
+        );
         const inputEvent = toNonReleasePointerEvent(nativeEvent);
 
         for (const nativePoint of bufferedPoints) {
@@ -414,8 +546,9 @@ export function usePointerHandlers({
             canvas,
             nativePoint,
             rect,
-            nativeOffset
+            nativeMapping
           );
+          lastNativeMappedCanvasPointRef.current = { x: canvasX, y: canvasY };
           const {
             pressure,
             tiltX,
@@ -473,6 +606,9 @@ export function usePointerHandlers({
             window.__strokeDiagnostics?.onPointBuffered();
           }
         }
+        return;
+      }
+      if (preferNativeGeometry) {
         return;
       }
 
@@ -548,6 +684,7 @@ export function usePointerHandlers({
       strokeStateRef,
       pendingPointsRef,
       inputQueueRef,
+      resolveStrokeNativeMapping,
     ]
   );
 
@@ -606,17 +743,26 @@ export function usePointerHandlers({
           const tabletState = useTabletStore.getState();
           const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
           const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
-          const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+          const preferNativeGeometry = strokeGeometrySourceRef.current === 'native';
+          const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
             ? readPointBufferSince(nativeSeqCursorRef.current)
             : { points: [], nextSeq: nativeSeqCursorRef.current };
           if (shouldUseNativeBackend) {
             nativeSeqCursorRef.current = nextSeq;
           }
+          const bufferedPoints = shouldUseNativeBackend
+            ? selectRecentNativeStrokePoints(bufferedPointsRaw)
+            : bufferedPointsRaw;
           const queuedTailPoints: QueuedPoint[] = [];
 
-          if (shouldUseNativeBackend && bufferedPoints.length > 0) {
+          if (preferNativeGeometry && shouldUseNativeBackend && bufferedPoints.length > 0) {
             const anchorNativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-            const nativeOffset = resolveNativePointOffset(nativeEvent, anchorNativePoint);
+            const nativeMapping = resolveStrokeNativeMapping(
+              canvas,
+              rect,
+              nativeEvent,
+              anchorNativePoint
+            );
             const moveEvent = toNonReleasePointerEvent(nativeEvent);
 
             for (const nativePoint of bufferedPoints) {
@@ -646,8 +792,9 @@ export function usePointerHandlers({
                 canvas,
                 nativePoint,
                 rect,
-                nativeOffset
+                nativeMapping
               );
+              lastNativeMappedCanvasPointRef.current = { x: canvasX, y: canvasY };
               const phase: QueuedPointPhase =
                 nativePhase === 'up' ? 'up' : nativePhase === 'down' ? 'down' : 'move';
               const idx = pointIndexRef.current++;
@@ -683,18 +830,44 @@ export function usePointerHandlers({
               deviceTimeUs,
             } = getEffectiveInputData(
               nativeEvent,
-              shouldUseNativeBackend,
+              preferNativeGeometry && shouldUseNativeBackend,
               bufferedPoints,
               tabletState.currentPoint,
               nativeEvent,
               nativePoint
             );
-            const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, nativeEvent, rect);
+            const lastQueuedPoint = queuedTailPoints[queuedTailPoints.length - 1] ?? null;
+            const fallbackCanvasPoint = (() => {
+              if (lastQueuedPoint) {
+                return { x: lastQueuedPoint.x, y: lastQueuedPoint.y };
+              }
+              if (preferNativeGeometry) {
+                if (lastNativeMappedCanvasPointRef.current) {
+                  return {
+                    x: lastNativeMappedCanvasPointRef.current.x,
+                    y: lastNativeMappedCanvasPointRef.current.y,
+                  };
+                }
+                if (lastInputPosRef.current) {
+                  return { x: lastInputPosRef.current.x, y: lastInputPosRef.current.y };
+                }
+              }
+              if (shouldUseNativeBackend && nativePoint) {
+                const nativeMapping = resolveStrokeNativeMapping(
+                  canvas,
+                  rect,
+                  nativeEvent,
+                  nativePoint
+                );
+                return nativePointToCanvasPoint(canvas, nativePoint, rect, nativeMapping);
+              }
+              return pointerEventToCanvasPoint(canvas, nativeEvent, rect);
+            })();
             const idx = pointIndexRef.current++;
             latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
             queuedTailPoints.push({
-              x: canvasX,
-              y: canvasY,
+              x: fallbackCanvasPoint.x,
+              y: fallbackCanvasPoint.y,
               pressure,
               tiltX,
               tiltY,
@@ -747,6 +920,7 @@ export function usePointerHandlers({
       inputQueueRef,
       pointIndexRef,
       latencyProfilerRef,
+      resolveStrokeNativeMapping,
     ]
   );
 
@@ -878,12 +1052,15 @@ export function usePointerHandlers({
         const tabletState = useTabletStore.getState();
         const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
         const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
-        const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
+        const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
           ? readPointBufferSince(nativeSeqCursorRef.current)
           : { points: [], nextSeq: nativeSeqCursorRef.current };
         if (shouldUseNativeBackend) {
           nativeSeqCursorRef.current = nextSeq;
         }
+        const bufferedPoints = shouldUseNativeBackend
+          ? selectRecentNativeStrokePoints(bufferedPointsRaw)
+          : bufferedPointsRaw;
         shouldUseNativeStrokeBuffer = shouldUseNativeBackend;
         nativeBufferedPointsForStroke = bufferedPoints;
         const preferredStartPoint =
@@ -962,6 +1139,7 @@ export function usePointerHandlers({
       if (!isStrokeTool(currentTool)) {
         return;
       }
+      strokeGeometrySourceRef.current = shouldUseNativeStrokeBuffer ? 'native' : 'pointer';
 
       onBeforeCanvasMutation?.();
 
@@ -986,7 +1164,7 @@ export function usePointerHandlers({
         const rect = canvas.getBoundingClientRect();
         const anchorNativePoint =
           nativeBufferedPointsForStroke[nativeBufferedPointsForStroke.length - 1] ?? null;
-        const nativeOffset = resolveNativePointOffset(pe, anchorNativePoint);
+        const nativeMapping = resolveStrokeNativeMapping(canvas, rect, pe, anchorNativePoint);
         const moveEvent = toNonReleasePointerEvent(pe);
         const nativeSeedPoints: Array<Omit<QueuedPoint, 'pointIndex'>> = [];
         for (const nativePoint of nativeBufferedPointsForStroke) {
@@ -1012,7 +1190,7 @@ export function usePointerHandlers({
             pe,
             nativePoint
           );
-          const mapped = nativePointToCanvasPoint(canvas, nativePoint, rect, nativeOffset);
+          const mapped = nativePointToCanvasPoint(canvas, nativePoint, rect, nativeMapping);
           const constrained = constrainShiftLinePoint(mapped.x, mapped.y);
           nativeSeedPoints.push({
             x: constrained.x,
@@ -1035,7 +1213,10 @@ export function usePointerHandlers({
           strokeSeedPoints = nativeSeedPoints;
           const tail = nativeSeedPoints[nativeSeedPoints.length - 1]!;
           lastInputPosRef.current = { x: tail.x, y: tail.y };
+          lastNativeMappedCanvasPointRef.current = { x: tail.x, y: tail.y };
         }
+      } else if (strokeGeometrySourceRef.current === 'native') {
+        lastNativeMappedCanvasPointRef.current = { x: constrainedDown.x, y: constrainedDown.y };
       }
 
       strokeStateRef.current = 'starting';
@@ -1092,6 +1273,7 @@ export function usePointerHandlers({
       pendingEndRef,
       captureBeforeImage,
       initializeBrushStroke,
+      resolveStrokeNativeMapping,
     ]
   );
 

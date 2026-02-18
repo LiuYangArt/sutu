@@ -79,6 +79,7 @@ const MIN_ROUNDNESS = 0.01;
 const STROKE_PROGRESS_DISTANCE_PX = 1200;
 const STROKE_PROGRESS_TIME_MS = 1500;
 const STROKE_PROGRESS_DAB_COUNT = 180;
+const MAX_RAW_TIME_DELTA_US = 1_000_000;
 
 function resolveStrokeProgress(metrics: {
   distancePx: number;
@@ -112,6 +113,11 @@ function resolveStrokeProgress(metrics: {
 
 function clampRoundness(roundness: number): number {
   return Math.max(MIN_ROUNDNESS, Math.min(1, roundness));
+}
+
+function clampFiniteDeltaUs(deltaUs: number): number {
+  if (!Number.isFinite(deltaUs) || deltaUs <= 0) return 0;
+  return Math.min(MAX_RAW_TIME_DELTA_US, Math.round(deltaUs));
 }
 
 function computeTipDimensions(
@@ -424,6 +430,19 @@ export function useBrushRenderer({
   const strokeDistanceRef = useRef(0);
   const strokeStartTimestampMsRef = useRef<number | null>(null);
   const strokeCurrentTimestampMsRef = useRef<number | null>(null);
+  const normalizedTimeRef = useRef<{
+    lastTimestampMs: number | null;
+    lastRawHostUs: number | null;
+    lastRawDeviceUs: number | null;
+    hostUs: number;
+    deviceUs: number;
+  }>({
+    lastTimestampMs: null,
+    lastRawHostUs: null,
+    lastRawDeviceUs: null,
+    hostUs: 0,
+    deviceUs: 0,
+  });
 
   // Initialize WebGPU backend
   useEffect(() => {
@@ -537,6 +556,13 @@ export function useBrushRenderer({
       strokeDistanceRef.current = 0;
       strokeStartTimestampMsRef.current = null;
       strokeCurrentTimestampMsRef.current = null;
+      normalizedTimeRef.current = {
+        lastTimestampMs: null,
+        lastRawHostUs: null,
+        lastRawDeviceUs: null,
+        hostUs: 0,
+        deviceUs: 0,
+      };
       strokeFinalizeRef.current = {
         finalized: false,
         trigger: null,
@@ -1013,14 +1039,46 @@ export function useBrushRenderer({
       const normalizedSource =
         normalizeInputSource(inputMeta?.source ?? 'pointerevent') ?? 'pointerevent';
       const normalizedPhase = normalizeInputPhase(inputMeta?.phase ?? 'move');
-      const hostTimeUs =
+      const rawHostTimeUs =
         typeof inputMeta?.hostTimeUs === 'number' && Number.isFinite(inputMeta.hostTimeUs)
           ? Math.max(0, Math.round(inputMeta.hostTimeUs))
           : Math.max(0, Math.round(timestampMs * 1000));
-      const deviceTimeUs =
+      const rawDeviceTimeUs =
         typeof inputMeta?.deviceTimeUs === 'number' && Number.isFinite(inputMeta.deviceTimeUs)
           ? Math.max(0, Math.round(inputMeta.deviceTimeUs))
-          : hostTimeUs;
+          : rawHostTimeUs;
+
+      const timeState = normalizedTimeRef.current;
+      const fallbackDeltaUs =
+        timeState.lastTimestampMs === null
+          ? 0
+          : clampFiniteDeltaUs((timestampMs - timeState.lastTimestampMs) * 1000);
+
+      const nextHostDeltaUs =
+        timeState.lastRawHostUs === null
+          ? 0
+          : clampFiniteDeltaUs(rawHostTimeUs - timeState.lastRawHostUs);
+      const hostDeltaUs =
+        nextHostDeltaUs === 0 && timeState.lastRawHostUs !== null
+          ? fallbackDeltaUs
+          : nextHostDeltaUs;
+      timeState.hostUs += hostDeltaUs;
+      timeState.lastRawHostUs = rawHostTimeUs;
+
+      const nextDeviceDeltaUs =
+        timeState.lastRawDeviceUs === null
+          ? 0
+          : clampFiniteDeltaUs(rawDeviceTimeUs - timeState.lastRawDeviceUs);
+      const deviceDeltaUs =
+        nextDeviceDeltaUs === 0 && timeState.lastRawDeviceUs !== null
+          ? hostDeltaUs
+          : nextDeviceDeltaUs;
+      timeState.deviceUs += deviceDeltaUs;
+      timeState.lastRawDeviceUs = rawDeviceTimeUs;
+      timeState.lastTimestampMs = timestampMs;
+
+      const hostTimeUs = timeState.hostUs;
+      const deviceTimeUs = timeState.deviceUs;
       const pressureLut = config.globalPressureLut ?? createDefaultGlobalPressureLut();
       const globalPressureInput = sampleGlobalPressureCurve(pressureLut, pressure);
       const adjustedPressure = mapStamperPressureToBrush(config, globalPressureInput);
