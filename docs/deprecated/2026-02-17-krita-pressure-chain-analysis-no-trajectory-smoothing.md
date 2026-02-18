@@ -1,5 +1,10 @@
 # Krita 压感方案与执行链路分析（排除轨迹平滑）
 
+> 状态：**已合并入主文档，不再持续维护**。  
+> 请优先阅读：`docs/research/2026-02-18-krita-wacom-pressure-full-chain.md`  
+> 一页图速览：`docs/research/2026-02-18-krita-wacom-pressure-one-page.md`  
+> 本文档保留“排除轨迹平滑”的历史分析语境，供追溯。
+
 **日期**：2026-02-17  
 **范围**：仅分析 Krita 压感相关执行链路 + Tablet 设置中红框参数。  
 **明确排除**：Tool Options 的轨迹平滑（`NONE/BASIC/WEIGHTED/STABILIZER/PIXEL`）实现与调参。

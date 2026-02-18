@@ -4,7 +4,7 @@
 **状态**：已终止并回退（回退基线：`667152f`，仅保留文档）  
 **关联文档**：
 - `docs/plans/2026-02-17-krita-pressure-tail-parity-plan.md`
-- `docs/research/2026-02-17-krita-pressure-chain-analysis-no-trajectory-smoothing.md`
+- `docs/deprecated/2026-02-17-krita-pressure-chain-analysis-no-trajectory-smoothing.md`
 - `docs/testing/krita-tail-gate.md`
 - `docs/postmortem/2026-02-17-krita-pressure-visual-parity-rollback.md`
 

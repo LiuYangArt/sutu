@@ -3,7 +3,7 @@
 **日期**：2026-02-17  
 **当前分支**：`perf/146-krita-photoshop`  
 **目标**：最高优先级是“与 Krita 压感处理语义完全一致”。当前 issue 聚焦压感尖尾一致性，不推进轨迹平滑与 speed 调参优化，但所有实现必须服从该一致性目标。
-  krita压感方案分析文档： `docs/research/2026-02-17-krita-pressure-chain-analysis-no-trajectory-smoothing.md`
+  krita压感方案分析文档： `docs/deprecated/2026-02-17-krita-pressure-chain-analysis-no-trajectory-smoothing.md`
 
 > 2026-02-17 Phase0 执行补充：所有 gate/校准脚本、默认配置与文档示例统一固定使用 `http://localhost:1420/`，不再使用 `127.0.0.1` 作为默认地址。
 

@@ -1,5 +1,9 @@
 # Krita 压感处理机制分析（修订版）
 
+> 状态：**已合并入主文档，不再持续维护**。  
+> 请优先阅读：`docs/research/2026-02-18-krita-wacom-pressure-full-chain.md`  
+> 一页图速览：`docs/research/2026-02-18-krita-wacom-pressure-one-page.md`
+
 本文档基于当前本地 Krita 源码快照（`F:\CodeProjects\krita`）整理压感相关链路，作为 PaintBoard 对齐参考。
 
 - 修订日期：2026-02-17
