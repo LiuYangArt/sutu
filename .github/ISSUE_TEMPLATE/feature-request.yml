@@ -19,7 +19,7 @@ body:
     attributes:
       label: 需求背景/痛点 | Background / Pain Points
       description: 你遇到了什么问题，为什么需要这个功能 | What problem are you facing, and why is this feature needed?
-      placeholder: 例如：当前无法快速批量调整图层透明度，影响效率 | Example: It is currently hard to batch-adjust layer opacity, which hurts workflow efficiency
+      placeholder: "例如：当前无法快速批量调整图层透明度，影响效率 | Example: It is currently hard to batch-adjust layer opacity, which hurts workflow efficiency"
     validations:
       required: true
   - type: textarea
@@ -27,7 +27,7 @@ body:
     attributes:
       label: 建议方案 | Proposed Solution
       description: 描述你期望的功能行为或交互流程 | Describe the expected behavior or interaction flow
-      placeholder: 例如：在图层面板增加多选后统一调整透明度 | Example: Add multi-select in the layer panel and allow unified opacity adjustment
+      placeholder: "例如：在图层面板增加多选后统一调整透明度 | Example: Add multi-select in the layer panel and allow unified opacity adjustment"
     validations:
       required: true
   - type: textarea
@@ -35,7 +35,7 @@ body:
     attributes:
       label: 预期收益 | Expected Value
       description: 这个功能能解决什么问题，带来什么价值 | What problem does this solve, and what value does it bring?
-      placeholder: 例如：减少重复操作，提升大项目编辑效率 | Example: Reduce repetitive work and improve editing efficiency in large projects
+      placeholder: "例如：减少重复操作，提升大项目编辑效率 | Example: Reduce repetitive work and improve editing efficiency in large projects"
     validations:
       required: true
   - type: textarea
