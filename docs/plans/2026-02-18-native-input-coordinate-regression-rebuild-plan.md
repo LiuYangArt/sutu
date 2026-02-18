@@ -1,221 +1,274 @@
-# Native 输入坐标回归重构方案（WinTab + MacNative）
+# WinTab 输入链路彻底重构计划（无 Fallback，统一到单一路径）
 
 **日期**：2026-02-18  
-**状态**：已实施（第一阶段止血）  
-**范围**：`wintab`、`macnative` 输入坐标链路（不改 KritaPressurePipeline 主体）
+**状态**：Draft v1（待执行）  
+**决策**：不再做局部修补，直接重建输入融合链路（Input Fusion V3），一次切换到单一路径。
 
 ---
 
-## 0. 2026-02-18 实施结论（对齐 `d48e15c` 稳定语义）
+## 0. 直接结论（Implementation Plan）
 
-本轮按“恢复稳定语义”落地，而不是继续推进“native 几何主路径”。
+1. 当前 `pointerevent` 手感好、`wintab` 手感差，不是笔刷主算法的问题，核心是“输入融合层”语义不一致。  
+2. 必须重建 `WinTab + PointerEvent` 的融合系统：  
+   - 几何坐标只认 PointerEvent。  
+   - 压力/倾角/旋转只认 native 样本。  
+   - 用“时间戳最近邻匹配 + 单笔时序状态机”，替代当前“按数组索引配对”。  
+3. 运行时只保留一条生产路径，不保留 fallback 或旧路径开关。  
+4. 本计划目标是在不改 GPU 渲染主架构的前提下，让 WinTab 达到与 PointerEvent 同等级稳定性，并对齐 Krita 的压感尾段连续性。
 
-1. `src/components/Canvas/usePointerHandlers.ts`：删除/停用 native 几何映射链路，`down/move/up` 坐标统一由 `PointerEvent` 计算；native 仅提供 pressure/tilt/rotation/time/source。  
-2. `src/components/Canvas/useRawPointerInput.ts`：raw 路径同步改为 PointerEvent 几何坐标，native 仅参与传感器字段归一化。  
-3. 测试更新：
-   - 更新 `src/components/Canvas/__tests__/usePointerHandlers.nativeOffset.test.ts`（改为验证“几何跟随 pointer + native 传感器保留”）。
-   - 新增 `src/components/Canvas/__tests__/useRawPointerInput.test.ts`（覆盖 raw 路径同语义）。
-4. 验证结果：
-   - `pnpm -s vitest run src/components/Canvas/__tests__/usePointerHandlers.nativeOffset.test.ts` 通过
-   - `pnpm -s vitest run src/components/Canvas/__tests__/useRawPointerInput.test.ts` 通过
-   - `pnpm -s vitest run src/components/Canvas/__tests__/inputUtils.test.ts` 通过
-   - `pnpm -s typecheck` 通过
-   - `cargo check --manifest-path src-tauri/Cargo.toml --lib` 通过
-
-说明：
-1. 本次是“先恢复稳定”的收敛方案，目标是立即消除 WinTab 外射与 MacNative 镜像回归。  
-2. 原文档中“后端坐标契约化（coord_space/origin/axis）”仍可作为下一阶段演进路线，不在本次变更范围内。
+计划置信度：`0.90`（风险主要在 WinTab live 设备差异与 phase 合成边界）。
 
 ---
 
-## 1. 直接结论
+## 1. 问题定义（现状）
 
-当前问题是一次输入层回归，不是笔刷 pipeline 数学模型本身坏了。
+用户实测问题（WinTab）：
+1. 偶现丢笔（局部缺段）。  
+2. 尖尾缺失（收笔不自然、尾段发硬）。  
+3. 压力突变，出现不均匀锯齿感。  
 
-1. `pointerevent` 正常，说明下游 `KritaPressurePipeline` 基本可用。  
-2. `wintab` 乱飞、`macnative` 镜像，说明问题集中在“native 坐标进入前端主几何链路”的这段。  
-3. 相比早期稳定状态，本分支把几何主坐标从 `PointerEvent clientX/clientY` 切到了 native 点映射，但缺少后端坐标语义契约与每后端校准，导致回归。
-
----
-
-## 2. 已确认事实（代码证据）
-
-1. `7e0e4c4 -> 6196127` 期间，`src-tauri/src/input/wintab_backend.rs` 未发生改动；回归主要发生在前端消费逻辑变更。  
-2. `usePointerHandlers/useRawPointerInput` 现状会在 native 路径中将 `nativePoint.x/y` 映射后直接作为几何坐标。  
-3. `wintab` 后端样本语义较弱：`pointer_id=0`、phase 主要由 pressure 推断，不是完整的 pointer 事件语义。  
-4. `macnative` 使用 `NSEvent.locationInWindow()`，这是 AppKit 坐标；当前前端映射未做“后端坐标系契约化”，镜像/翻转无法被稳定识别。
+对照现象：
+1. 同笔刷参数下，`pointerevent` 已达到可接受手感。  
+2. Krita 的 WinTab 路径表现稳定，说明“WinTab 本身不可用”不是根因。
 
 ---
 
-## 3. 问题根因（第一性原理）
+## 2. 根因证据（来自当前实现）
 
-### 3.1 几何源切换回归
+1. **样本配对错误**：当前 native 样本与 pointer 样本按“尾部索引”硬配，不按时间对齐。  
+   - `src/components/Canvas/usePointerHandlers.ts`  
+   - `src/components/Canvas/useRawPointerInput.ts`  
+2. **近期样本截取存在污染风险**：contact 切片在 `hover/up` 尾部场景可能回退整段历史。  
+   - `src/components/Canvas/usePointerHandlers.ts`  
+   - `src/components/Canvas/useRawPointerInput.ts`  
+3. **WinTab phase 语义弱**：Rust 端 WinTab 仅发 `move/hover`，缺少真实 `down/up`。  
+   - `src-tauri/src/input/wintab_backend.rs`  
+4. **Rust 侧额外 pressure 平滑叠加**：会在临界压力段引入台阶和响应迟滞。  
+   - `src-tauri/src/commands.rs`  
+5. **收笔窗口队列治理仍有“清空旧点”路径**：在状态边界下可能造成局部缺段。  
+   - `src/components/Canvas/useStrokeProcessor.ts`
 
-重构后把“几何真值”切到 native 坐标，但 native 坐标没有先被标准化到统一契约（DOM client/CSS px）。
-
-结果：
-1. WinTab：偶发异常点进入几何主链，dab 会沿异常段发射。  
-2. MacNative：坐标系方向/原点差异未消解，表现为镜像或反向运动。
-
-### 3.2 双源汇合缺少硬边界
-
-虽然加入了 `per-stroke source lock`，但 native 源本身不稳定时，仍会把坏的 native 几何当作真值；锁只能防“混源”，不能防“坏源”。
-
-### 3.3 缺少“坐标契约 + 会话契约”
-
-当前契约只规范 pressure/tilt/time/source，缺少坐标语义字段（单位、原点、轴方向、宿主窗口空间）。  
-没有契约，就只能靠前端启发式推断（scale/offset），在多后端下必然脆弱。
+结论：问题集中在“输入采样与融合层”，不是 `KritaPressurePipeline` 核心公式。
 
 ---
 
-## 4. 重构目标（本轮必须达成）
+## 3. 目标、非目标、成功标准
 
-1. `wintab`：无乱飞、无外射、收笔稳定。  
-2. `macnative`：无左右镜像、无上下反向、轨迹与笔尖一致。  
-3. 前端不再使用“猜测型 native 坐标映射”作为长期方案。  
-4. 坐标在进入前端前已标准化为统一语义，前端只做消费，不做后端特定推断。
+### 3.1 目标
 
----
+1. 重建输入融合为单一路径，彻底消除 WinTab 与 PointerEvent 的手感分叉。  
+2. WinTab 达到：连续、可控、尾段自然、无明显台阶。  
+3. 保持现有 GPU-first 渲染架构与 `KritaPressurePipeline` 主干不变。  
 
-## 5. 重构方案（目标架构）
+### 3.2 非目标
 
-## 5.1 输入契约升级（新增坐标语义）
+1. 不重做 Brush UI。  
+2. 不引入 iPad 路径改造。  
+3. 不保留旧路径 fallback 或运行时双轨并行。
 
-在 V2 输入样本契约中新增/冻结：
+### 3.3 成功标准（全部满足）
 
-1. `coord_space`: `window_client_css_px`（本轮唯一合法值）  
-2. `coord_origin`: `top_left`  
-3. `axis_x`: `right_positive`  
-4. `axis_y`: `down_positive`
-
-说明：
-1. 后端必须输出上述统一语义；前端不再做坐标系猜测。  
-2. 若后端无法满足，样本标记 invalid 并丢弃，不进入几何主链。
-
-## 5.2 后端标准化（Rust）
-
-### WinTab
-
-1. 在 Rust 侧完成坐标转换，输出到 `window_client_css_px`。  
-2. 明确 down/move/up 会话边界，不再仅依赖 pressure>0 推断。  
-3. 保留原始字段仅用于诊断，不再直接给前端做几何。
-
-### MacNative
-
-1. 将 `locationInWindow` 转为与 WebView DOM 一致的 top-left client 坐标。  
-2. 在 Rust 侧完成必要的翻转处理（尤其是 y 轴）；禁止前端再做镜像猜测。  
-3. 验证左/右、上/下方向一致性后再放量。
-
-## 5.3 前端简化（TS）
-
-1. 删除 `resolveNativePointMapping` 这类启发式几何映射主路径。  
-2. native 模式下直接消费标准化后的 `x/y`。  
-3. `getEffectiveInputData` 仅做 pressure/tilt/time/source 归一化，不再承担几何纠偏。  
-4. `pointerevent` 继续作为独立稳定路径，不和 native 几何混合。
-
-## 5.4 坏点防护（统一安全阈）
-
-新增统一防护层（后端或前端入口）：
-
-1. 单样本位移上限（按 dt 推导速度上限）。  
-2. 非法 timestamp / 倒序样本丢弃。  
-3. 异常突变点仅做“丢弃或截断”，不做几何补偿。
+1. WinTab 实测四场景通过：`slow_lift / fast_flick / abrupt_stop / low_pressure_drag`。  
+2. WinTab 与 PointerEvent 的压力轨迹误差收敛（同输入回放）：  
+   - `pressure_delta_p95 <= 0.03`  
+   - `tail_continuity_break_count = 0`  
+3. 无丢笔：`stroke_gap_count = 0`（定义见 8.4）。  
+4. `pnpm check:all` 与 `cargo check --manifest-path src-tauri/Cargo.toml --lib` 通过。  
+5. 删除旧融合路径后，生产代码无 legacy 可达分支。
 
 ---
 
-## 6. 实施阶段
+## 4. 方案对比（Plan Mode 选型）
 
-## Phase 0：冻结回归基线（1 天）
+### 方案 A（推荐）：Pointer 几何主权 + Native 传感器主权 + 时间对齐融合
 
-- [ ] 固定复现录制：`wintab` 乱飞 + `macnative` 镜像 + `pointerevent` 正常。  
-- [ ] 产出三组对照 trace（同动作、同画布、同缩放）。  
-- [ ] 在文档记录“最后正常提交”与“首个异常提交”。
+效果/用途：
+1. 保留已验证稳定的几何来源（PointerEvent）。  
+2. 充分利用 WinTab 压力与传感器。  
+3. 用时间匹配替代索引匹配，直接解决压力锯齿与尾段断裂。
 
-产出：
-1. `artifacts/native-input-regression/*`  
-2. 回归对照表（动作 -> 预期 -> 实际）
+优点：
+1. 风险最可控，改造范围集中在融合层。  
+2. 不依赖 native 几何坐标契约冻结。  
+3. 与当前 postmortem 的“Pointer 几何稳定语义”一致。
 
-## Phase 1：Rust 坐标标准化（2-3 天）
+缺点：
+1. 需要严格处理两时钟域对齐。  
+2. 需要重写当前 handlers/raw 输入聚合逻辑。
 
-- [ ] WinTab 输出统一 client 坐标语义。  
-- [ ] MacNative 输出统一 client 坐标语义。  
-- [ ] 契约字段升级并加单测（序列化 + 向后兼容）。
+### 方案 B：纯 WinTab 几何 + 纯 WinTab 传感器（仿 Krita）
 
-产出：
-1. `src-tauri/src/input/*` 重构提交  
-2. 契约测试与样本快照
+效果/用途：
+1. 彻底摆脱 PointerEvent 对绘制的参与。  
+2. 架构上最接近 Krita 单链路模型。
 
-## Phase 2：前端消费重构（1-2 天）
+优点：
+1. 理论上模型最纯。  
+2. 后续跨端概念更统一。
 
-- [ ] 移除 native 几何启发式映射主路径。  
-- [ ] `usePointerHandlers/useRawPointerInput` 改为直接消费标准坐标。  
-- [ ] 保留最小兜底：仅在样本 invalid 时丢弃，不做坐标猜测。
+缺点：
+1. 需要先冻结 native 坐标单位/原点/缩放契约。  
+2. 当前历史问题说明该风险很高，短期成功率低。
 
-产出：
-1. `src/components/Canvas/usePointerHandlers.ts`  
-2. `src/components/Canvas/useRawPointerInput.ts`
+### 方案 C：继续局部修补（否决）
 
-## Phase 3：回归测试与验收（1-2 天）
+效果/用途：
+1. 小改快试。
 
-- [ ] 自动化回归：WinTab 外射、MacNative 镜像、PointerEvent 对照。  
-- [ ] 手工回归：快弧线、左侧逆时针圈、收笔甩尾。  
-- [ ] 通过后更新主计划状态与 postmortem。
+缺点：
+1. 已被实践证明成本更高、回归更多。  
+2. 无法根治系统性问题。
 
-产出：
-1. 新增测试文件与结果 artifacts  
-2. 文档更新（本计划 + 主计划）
-
----
-
-## 7. 验收标准（必须同时满足）
-
-1. WinTab：
-1. 不出现“向外发射线”。
-2. 收笔不外飞，末端位置连续。
-
-2. MacNative：
-1. 在画布左侧向左画圈，笔触仍在左侧，不出现左右镜像。
-2. 上下方向与笔尖移动一致。
-
-3. PointerEvent：
-1. 结果与当前正常状态一致，不退化。
-
-4. 自动化：
-1. 新增回归测试全部通过。
-2. `pnpm -s typecheck` 通过。
+**最终选型**：方案 A。
 
 ---
 
-## 8. 风险与应对
+## 5. 目标架构（Input Fusion V3）
 
-1. 风险：后端坐标标准化涉及平台 API 细节，首轮可能仍有偏差。  
-应对：先在 trace 可视化里验证方向与单位，再接入主绘制。
+### 5.1 单笔数据模型
 
-2. 风险：一次改动过大引入新回归。  
-应对：按 Phase 切分，逐阶段可回退，且每阶段有独立验收。
+新增统一事件契约（前端）：
+1. `GeometrySample`：`x/y/pointer_id/phase/host_time_us`（仅 PointerEvent）。  
+2. `SensorSample`：`pressure/tilt/rotation/source/device_time_us/host_time_us`（仅 native）。  
+3. `UnifiedInputSampleV3`：融合后输出给 `KritaPressurePipeline` 的唯一输入。
 
-3. 风险：MacNative/WinTab 行为差异长期存在。  
-应对：契约层统一坐标语义，后端各自适配，前端不再分支推断。
+### 5.2 融合规则（强约束）
+
+1. 几何坐标永远来自 `GeometrySample`。  
+2. 每个几何点从同 pointer_id、同 stroke_id 的传感器序列中，按 `host_time_us` 做最近邻匹配。  
+3. 超过 `max_sensor_skew_us`（默认 12ms）时，按“保持最近合法传感器值”策略，不允许跨笔借样。  
+4. phase 主权来自 PointerEvent（`down/move/up`），native phase 仅用于过滤 `hover`。  
+5. 收笔 `up` 必须消费 pending segment，禁止尾段漏样。
+
+### 5.3 模块落位
+
+1. `src/engine/inputFusionV3/types.ts`  
+2. `src/engine/inputFusionV3/strokeSession.ts`  
+3. `src/engine/inputFusionV3/temporalJoiner.ts`  
+4. `src/engine/inputFusionV3/unifiedInputAssembler.ts`  
+5. `src/engine/inputFusionV3/testing/unifiedInputGate.ts`
+
+### 5.4 旧代码处置（无 fallback）
+
+1. `usePointerHandlers/useRawPointerInput` 不再自行做 native-pointer 混配。  
+2. 旧 `nativeStartIndex + eventIndex` 路径删除。  
+3. 旧 runtime 模式开关删除，不再支持 legacy 主路径。
 
 ---
 
-## 9. Task List（执行清单）
+## 6. Rust 侧配套重构（必须）
 
-- [ ] 建立 native 坐标契约字段并完成 Rust/TS 对齐。  
-- [ ] WinTab 坐标输出改造为统一 client 语义。  
-- [ ] MacNative 坐标输出改造为统一 client 语义。  
-- [x] 前端移除 native 几何启发式映射主路径（几何统一走 PointerEvent）。  
-- [x] 新增/更新 WinTab 外射回归测试（PointerEvent 几何 + native 传感器）。  
-- [x] 新增/更新 MacNative 镜像回归测试（PointerEvent 几何 + native 传感器）。  
-- [x] 新增 raw 路径不回归对照测试（`useRawPointerInput` 同语义）。  
-- [ ] 更新 `docs/plans/2026-02-18-krita-pressure-full-rebuild-plan.md` 对应任务状态。  
-- [x] 产出 postmortem（记录“为何回归、如何避免再发”）。
+1. `wintab_backend.rs`：
+   - 保留高频采样。  
+   - 输出字段严格单调：`seq/host_time_us/device_time_us/source/pressure/tilt/rotation`。  
+   - 不再承担 UI 几何映射逻辑。  
+2. `commands.rs`：
+   - 删除 emitter 线程中的压力平滑（`PressureSmoother` 不再作用于生产链路）。  
+   - 保留可观测指标与队列指标上报。  
+3. backpressure 固定 `lossless`，并将 dropped 指标设为硬门禁。  
+4. `push_pointer_event` 仍保留用于 Pointer backend，不参与 WinTab 绘制融合主链。
 
 ---
 
-## 10. Thought（关键判断依据）
+## 7. 分阶段执行计划（无回退开关）
 
-1. 既然 `pointerevent` 正常，而 native 两后端异常，优先排除下游 pipeline。  
-2. 回归窗口显示后端代码基本不变、前端几何消费策略变了，主因在消费链路而非设备驱动。  
-3. 坐标问题不能靠前端启发式长期修补，必须把坐标语义前移到后端契约层。  
-4. 先统一坐标语义，再谈手感对齐；否则任何 pressure/speed 调参都会被错误几何掩盖。
+### Phase 0：冻结口径
+
+1. 固定设备、驱动、画布、笔刷预设。  
+2. 增加 WinTab live 采样基线（不是仅 replay capture）。  
+3. 定义输入级指标：`sensor_skew_us / pressure_jump_rate / gap_count`。
+
+### Phase 1：契约与模块骨架
+
+1. 落地 `inputFusionV3` 类型与接口。  
+2. 补齐单测骨架（时间匹配、跨笔隔离、up 消费）。
+
+### Phase 2：前端融合重写
+
+1. `usePointerHandlers` 只产出几何事件。  
+2. native 缓冲读取只产出传感器事件。  
+3. `unifiedInputAssembler` 生成唯一 `UnifiedInputSampleV3` 入队。
+
+### Phase 3：Rust 事件通道瘦身
+
+1. 下线生产 pressure smoothing。  
+2. 校验队列无 dropped；若 dropped > 0 直接 gate fail。
+
+### Phase 4：接入绘制主链
+
+1. `useStrokeProcessor` 仅消费统一样本队列。  
+2. `useBrushRenderer` 保持 `KritaPressurePipeline` 输入契约不变。  
+3. 删除旧融合分支和 legacy 配对代码。
+
+### Phase 5：门禁与实测
+
+1. 自动门禁：输入级 + stage/final/fast 全通过。  
+2. 手测矩阵：WinTab 与 PointerEvent 同笔刷对比。  
+3. 通过后一次切主，不保留 fallback。
+
+---
+
+## 8. Task List（按执行顺序）
+
+1. [ ] 新建 `src/engine/inputFusionV3/types.ts`（Geometry/Sensor/Unified 三类样本）。
+2. [ ] 新建 `src/engine/inputFusionV3/strokeSession.ts`（pointer_id + stroke_id 生命周期）。
+3. [ ] 新建 `src/engine/inputFusionV3/temporalJoiner.ts`（最近邻时间匹配 + skew 限制）。
+4. [ ] 新建 `src/engine/inputFusionV3/unifiedInputAssembler.ts`（融合入口）。
+5. [ ] 新建 `src/engine/inputFusionV3/testing/unifiedInputGate.ts`。
+6. [ ] 重构 `src/components/Canvas/usePointerHandlers.ts`：仅发几何事件，不做 native 索引配对。
+7. [ ] 重构 `src/components/Canvas/useRawPointerInput.ts`：与 handlers 共享统一 assembler。
+8. [ ] 删除 `nativeStartIndex + eventIndex` 相关逻辑。
+9. [ ] 重写 `selectRecentNativeStrokePoints`，确保不会跨笔回捞历史样本。
+10. [ ] 为 `selectRecentNativeStrokePoints` 补充跨笔污染回归测试。
+11. [ ] 改造 `src/components/Canvas/useStrokeProcessor.ts` 队列消费，禁止状态边界静默丢点。
+12. [ ] 为 `finishing` 阶段补“尾段必消费”测试。
+13. [ ] `src-tauri/src/commands.rs` 下线 emitter 线程 pressure smoothing。
+14. [ ] `src-tauri/src/input/wintab_backend.rs` 校验 `host/device` 时间单调性并补日志。
+15. [ ] `src/stores/tablet.ts` 增加 queue metrics 观测输出（调试可见）。
+16. [ ] 新增输入门禁脚本 `scripts/pressure/run-input-fusion-gate.mjs`。
+17. [ ] 门禁新增指标：`sensor_skew_p95_us`。
+18. [ ] 门禁新增指标：`pressure_jump_rate`（每 1000 点压力突变次数）。
+19. [ ] 门禁新增指标：`stroke_gap_count`。
+20. [ ] 门禁新增指标：`tail_terminal_pressure_delta`。
+21. [ ] 跑 WinTab live case A~H 并落盘 artifacts。
+22. [ ] 跑 PointerEvent 同 case 作为对照 artifacts。
+23. [ ] 对比 WinTab vs PointerEvent 指标差异，确认收敛。
+24. [ ] 删除旧融合路径不可达代码。
+25. [ ] 清理 legacy runtime mode 与文档。
+26. [ ] 执行 `cargo check --manifest-path src-tauri/Cargo.toml --lib`。
+27. [ ] 执行 `pnpm check:all`。
+28. [ ] 输出最终验收报告（含手测截图与指标表）。
+
+---
+
+## 9. 验证方案（如何手动验证）
+
+1. 进入设置，后端切到 `wintab`，固定同一笔刷预设（size/spacing/flow/opacity/hardness）。  
+2. 画 3 组笔触：慢抬笔、快速甩笔、突然停笔。  
+3. 预期结果：  
+   - 无明显断段（不出现“空白缺口”）。  
+   - 尾段连续变细，不出现硬截断。  
+   - 同力度下宽度变化平滑，无台阶锯齿。  
+4. 切到 `pointerevent` 用同样动作重复。  
+5. 预期结果：两组手感接近，不再出现 WinTab 明显劣化。
+
+---
+
+## 10. 风险与对策
+
+1. 风险：WinTab 设备时间与 host 时间抖动大，导致错配。  
+   对策：统一以 `host_time_us` 匹配，`device_time_us` 仅用于诊断。  
+2. 风险：高频输入下队列积压。  
+   对策：`lossless` + dropped 硬门禁 + p95 延迟监控。  
+3. 风险：删除旧路径后回归面扩大。  
+   对策：先补输入层单测与门禁，再切主并同日全量检查。
+
+---
+
+## 11. Thought（关键判断依据）
+
+1. 现有问题是融合层时序与配对错误，不是单个公式错误。  
+2. 继续 patch 会继续放大隐式状态机复杂度，时间成本更高。  
+3. “几何主权/传感器主权/phase 主权”先契约化，才能稳定落地。  
+4. 单一路径、无 fallback 才能真正终止回归反复。
+
