@@ -658,7 +658,7 @@ threshold_metric = max(
 38. [x] 生成 `docs/testing/krita-pressure-thresholds.v1.json` 并附阈值审计记录（30 轮审计已完成：`kp_threshold_audit_mlrxtgs9`，输出 `docs/testing/krita-pressure-thresholds.v1-audit.md`）。
 39. [x] 执行影子模式 100 次回放稳定性验证（`kp_shadow_mlrxtmao`，`replayed=100`，`passed=true`）。
 40. [x] 一次切换到新链路并观察一个迭代周期（运行时已固定 `pressurePipelineV2Primary=true`；通过 `kp_shadow_mlrxtmao` 的连续回放窗口观测无崩溃/无阻塞失败）。
-41. [x] 删除旧压感核心路径与死代码（含不可达 legacy 分支）（primary 主路径已不再使用旧链路；legacy primary 仅保留 shadow 对比，dual brush secondary 仍使用 `BrushStamper`）。
+41. [x] 删除旧压感核心路径与死代码（含不可达 legacy 分支）（primary 主路径已不再使用旧链路；legacy primary 仅保留 shadow 对比，dual brush secondary 已迁移到 `DualBrushSecondaryPipeline` 并移除 `BrushStamper` 运行时依赖）。
 42. [x] 执行 `cargo check --manifest-path src-tauri/Cargo.toml --lib`。
 43. [x] 执行 `pnpm check:all`。
 44. [x] 输出最终结论：`是否达标：是`（当前自动 gate 达标） + 差距（见 17 节） + 下一步（见 38/39/40/41）。
@@ -786,11 +786,11 @@ flowchart TD
 | 动态传感器与组合 | `plugins/paintops/libpaintop/sensors/KisDynamicSensor.cpp:42`（LUT256） + `plugins/paintops/libpaintop/KisCurveOption.cpp:128`（add/max/min/difference/multiply） | 内核已实现：`src/engine/kritaParityInput/core/dynamicSensor.ts:74`、`src/engine/kritaParityInput/core/curveOptionCombiner.ts:45`；主渲染当前仅接 pressure 传感器：`src/components/Canvas/useBrushRenderer.ts:238`、`src/components/Canvas/useBrushRenderer.ts:715`；speed/time 主要在 gate 矩阵：`src/engine/kritaParityInput/testing/gateRunner.ts:205`、`src/engine/kritaParityInput/testing/gateRunner.ts:225` | 部分一致 |
 | DisablePressure 运行态语义 | `libs/ui/tool/kis_painting_information_builder.cpp:66`（读取 `DisablePressure`） + `libs/ui/tool/kis_painting_information_builder.cpp:131`（`!m_pressureDisabled ? 1.0 : pressureToCurve(...)`） | 桥接和测试已实现：`src/engine/kritaParityInput/bridge/disablePressureBridge.ts:6`、`src/engine/kritaParityInput/__tests__/disablePressureBridge.test.ts:8`；但主路径固定 `pressure_enabled=true`：`src/components/Canvas/useBrushRenderer.ts:1058` | 部分一致 |
 | Tool 平滑分支 | `libs/ui/tool/kis_tool_freehand_helper.cpp:499`（weighted） + `libs/ui/tool/kis_tool_freehand_helper.cpp:568`（smoothPressure） + `libs/ui/tool/kis_tool_freehand_helper.cpp:623`（NO_SMOOTHING 分支） | 当前实现固定无 Tool 级平滑分支（`src/components/Canvas/useBrushRenderer.ts:231`、`src/components/Canvas/useBrushRenderer.ts:1060`），与 `NO_SMOOTHING` 口径一致，但未覆盖 weighted/smoothPressure | 部分一致 |
-| 切主后 legacy 覆盖范围 | Krita 主路径统一经过 `paintLine`/PaintOp 动态链 | Sutu primary 已切到 pipeline（`src/components/Canvas/useBrushRenderer.ts:1067`），但 dual brush secondary 仍使用 legacy `BrushStamper`（`src/components/Canvas/useBrushRenderer.ts:1154`） | 部分一致 |
+| 切主后 legacy 覆盖范围 | Krita 主路径统一经过 `paintLine`/PaintOp 动态链 | Sutu primary/dual secondary 均已切到 pipeline（`useBrushRenderer` 已接入 `KritaPressurePipeline + DualBrushSecondaryPipeline`，并删除 `BrushStamper` 运行时依赖） | 主链路一致（仍保留少量 backlog） |
 
 结论：
 1. 以当前 primary 单笔刷主路径为口径，Sutu 已与 Krita 在“全局压感 -> 速度估计 -> spacing/timing 采样 -> mix 插值 -> dab 生成”主干语义对齐。
-2. 仍有 4 个未完全一致点：`speed/time` 传感器未接入运行态主渲染、`DisablePressure` 未做运行态切换、Tool 级 smoothing 分支缺失、dual brush secondary 仍走 legacy stamper。
+2. 当前仍有 3 个未完全一致点：`speed/time` 传感器未接入运行态主渲染、`DisablePressure` 未做运行态切换、Tool 级 smoothing 分支缺失（dual brush secondary 已完成 pipeline 化并删除 legacy stamper）。
 3. 因此当前状态应定义为“主链路对齐并达标（可用于当前生产手感目标）”，不是“与 Krita 全链路完全一致”。
 
 ---
@@ -802,10 +802,10 @@ flowchart TD
 | `speed/time` 传感器未接入运行态主渲染 | 含 speed/time 传感器的真实笔刷预设，在运行态可能与 gate/基线结果不完全一致 | 否（当前主用 pressure 传感器已达标） | 作为 `P1` 保留，计划上线 speed/time 动态预设前完成 |
 | `DisablePressure` 未做运行态切换 | 导入或复现 Krita 中“关闭压感”的预设时，可能无法得到恒定 pressure=1.0 语义 | 否（当前产品默认压感开启） | 若近期要做 Krita 预设强兼容，升为 `P1`；否则标记为非目标并冻结 |
 | Tool 级 smoothing 分支缺失（weighted/smoothPressure） | 开启 Tool 平滑相关特性后，手感与 Krita 会有系统性差异 | 否（当前固定 `NO_SMOOTHING` 口径） | 作为 `P2`，在引入 Tool 平滑功能时再做等价实现 |
-| dual brush secondary 仍走 legacy stamper | Dual Brush 场景下，次级路径的 spacing/timing/尾段行为与主链不完全一致，后续维护成本更高 | 对单笔刷主路径否；对 dual brush 功能是 | 已立项 `P1`：`docs/plans/2026-02-19-dual-brush-secondary-no-legacy-plan.md`（策略：迁移完成后物理删除 `BrushStamper`） |
+| dual brush secondary legacy 去除 | 已完成：Dual Brush 场景次级路径改为 `DualBrushSecondaryPipeline`，收笔 finalize 语义与主链统一 | 否（问题已关闭） | 已完成 `P1`：`docs/plans/2026-02-19-dual-brush-secondary-no-legacy-plan.md`（`BrushStamper` 已从 `src/components/src/engine/src/utils` 运行时代码删除） |
 
 执行建议（基于当前目标）：
 1. 你已确认“实测手感达到预期”，可将本计划按“主链路完成”收口。
-2. 上述 4 项建议转入单独 backlog，不再阻塞当前版本交付。
+2. 上述剩余 3 项建议转入单独 backlog，不再阻塞当前版本交付。
 3. 若后续目标升级为“与 Krita 全链路完全一致”，再按 `P1 -> P2` 顺序继续推进。
 

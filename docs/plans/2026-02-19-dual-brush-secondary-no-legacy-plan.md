@@ -1,7 +1,7 @@
 # Dual Brush Secondary 去 Legacy 实施计划（KritaParityInput 化）
 
 **日期**：2026-02-19  
-**状态**：Draft（待实施）  
+**状态**：Done（已完成，2026-02-19）  
 **删除策略**：已确认“如果不用就删”，本计划包含 `BrushStamper` 物理删除
 **范围**：仅处理 Dual Brush secondary 出点链路；其它“部分一致”项暂不纳入本计划  
 **目标**：secondary 路径彻底移除 `BrushStamper` 运行时依赖，统一到现有 `KritaPressurePipeline` 语义
@@ -10,10 +10,10 @@
 
 ## 0. 直接结论
 
-1. 当前主笔刷（primary）已走 `KritaPressurePipeline`，但 Dual Brush secondary 仍在 `src/components/Canvas/useBrushRenderer.ts:1154` 调用 `BrushStamper.processPoint(...)`，属于遗留链路。
-2. 推荐方案是“**双 pipeline 并行**”：primary/secondary 各自维护 `KritaPressurePipeline` 状态，输入样本共享，spacing 与 finalize 分开配置与结算。
-3. 该方案可以在不改 GPU/CPU dual mask 合成接口的前提下完成替换，风险最低、改动可审阅、回归边界清晰。
-4. 迁移完成后执行物理删除：`BrushStamper` 类与其专属 legacy 测试一并清理。
+1. 已完成“**双 pipeline 并行**”：primary/secondary 各自维护 `KritaPressurePipeline` 状态，输入样本共享，spacing 与 finalize 分开配置与结算。
+2. `useBrushRenderer` 运行时路径已移除 secondary `BrushStamper` 调用，secondary dabs 改由 `DualBrushSecondaryPipeline` 产出。
+3. 在不改 GPU/CPU dual mask 合成接口的前提下完成替换，`stampSecondaryDab` 接口保持不变。
+4. 已执行物理删除：`BrushStamper` 类与其专属 legacy 测试已从 `src` 运行时代码中清理。
 
 ---
 
@@ -202,18 +202,25 @@
 
 ## 9. Task List（中文）
 
-1. [ ] 新建 `dualBrushSecondaryPipeline.ts`，封装 secondary pipeline 状态与输入输出。
-2. [ ] 新增 `dualBrushSecondaryPipeline.test.ts`，覆盖 spacing/timing/carry/finalize。
-3. [ ] `useBrushRenderer.ts` 删除 `secondaryStamperRef`，接入 `secondaryPipelineRef`。
-4. [ ] `processPoint` 中 secondary 改为 pipeline 出点并提交 `stampSecondaryDab`。
-5. [ ] `finalizeStrokeOnce` 接入 secondary finalize 出点。
-6. [ ] 清理 `legacyPrimaryStamperRef` / `secondaryStamperRef` / `BrushStamper` 相关无效逻辑。
-7. [ ] 删除 `src/utils/strokeBuffer.ts` 中 `BrushStamper`（及无引用附属类型）。
-8. [ ] 删除或改造 `src/utils/__tests__/brushStamper.*.test.ts`。
-9. [ ] 更新 `useBrushRenderer.strokeEnd.test.ts`，改为 pipeline 语义断言。
-10. [ ] 增加 Dual Brush 回归测试（parametric + texture 至少各 1 例）。
-11. [ ] 执行专项测试与 `pnpm check:all`。
-12. [ ] 更新 `2026-02-18` 主计划文档第 18 节状态。
+1. [x] 新建 `dualBrushSecondaryPipeline.ts`，封装 secondary pipeline 状态与输入输出。
+2. [x] 新增 `dualBrushSecondaryPipeline.test.ts`，覆盖 spacing/timing/carry/finalize。
+3. [x] `useBrushRenderer.ts` 删除 `secondaryStamperRef`，接入 `secondaryPipelineRef`。
+4. [x] `processPoint` 中 secondary 改为 pipeline 出点并提交 `stampSecondaryDab`。
+5. [x] `finalizeStrokeOnce` 接入 secondary finalize 出点。
+6. [x] 清理 `legacyPrimaryStamperRef` / `secondaryStamperRef` / `BrushStamper` 相关无效逻辑。
+7. [x] 删除 `src/utils/strokeBuffer.ts` 中 `BrushStamper`（及无引用附属类型）。
+8. [x] 删除或改造 `src/utils/__tests__/brushStamper.*.test.ts`。
+9. [x] 更新 `useBrushRenderer.strokeEnd.test.ts`，改为 pipeline 语义断言。
+10. [x] 增加 Dual Brush 回归测试（parametric + texture 至少各 1 例）。
+11. [x] 执行专项测试与 `pnpm check:all`。
+12. [x] 更新 `2026-02-18` 主计划文档第 18 节状态。
+
+回归结论（2026-02-19）：
+1. `pnpm -s vitest run src/engine/kritaParityInput/__tests__/dualBrushSecondaryPipeline.test.ts`：通过（5 tests）。
+2. `pnpm -s vitest run src/components/Canvas/__tests__/useBrushRenderer.strokeEnd.test.ts`：通过（5 tests）。
+3. `pnpm -s vitest run src/components/Canvas/__tests__/useBrushRendererOpacity.test.ts`：通过（3 tests）。
+4. `pnpm check:all`：通过（typecheck + lint + lint:rust + vitest）。
+5. `rg -n "BrushStamper" src/components src/engine src/utils`：无命中。
 
 ---
 

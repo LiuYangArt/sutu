@@ -17,4 +17,5 @@ export * from './core/segmentSampler';
 export * from './core/speedSmoother';
 export * from './core/types';
 export * from './pipeline/kritaPressurePipeline';
+export * from './pipeline/dualBrushSecondaryPipeline';
 export * from './testing/gateRunner';
