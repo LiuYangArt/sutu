@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { usePointerHandlers } from '../usePointerHandlers';
 import type { ToolType } from '@/stores/tool';
+import { useUiInteractionStore } from '@/stores/uiInteraction';
 
 interface HookContext {
   container: HTMLDivElement;
@@ -133,7 +134,25 @@ function createHookParams(ctx: HookContext, tool: ToolType = 'brush') {
   };
 }
 
+function dispatchWindowPointerEvent(
+  target: EventTarget,
+  type: 'pointerdown' | 'pointerup' | 'pointercancel',
+  pointerId: number
+): void {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperty(event, 'pointerId', { value: pointerId });
+  Object.defineProperty(event, 'button', { value: 0 });
+  Object.defineProperty(event, 'buttons', { value: type === 'pointerdown' ? 1 : 0 });
+  Object.defineProperty(event, 'clientX', { value: 40 });
+  Object.defineProperty(event, 'clientY', { value: 40 });
+  target.dispatchEvent(event);
+}
+
 describe('usePointerHandlers', () => {
+  beforeEach(() => {
+    useUiInteractionStore.getState().resetCanvasInputLock();
+  });
+
   it('captures pointer on canvas container for stroke start', () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');
@@ -223,5 +242,42 @@ describe('usePointerHandlers', () => {
 
     expect((ctx.container as any).releasePointerCapture).toHaveBeenCalledWith(33);
     expect(params.finishCurrentStroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores pointerdown when canvas input is locked by toolbar interaction', async () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+    const down = createReactPointerEvent(createNativePointerEvent({ pointerId: 9 }));
+
+    useUiInteractionStore.getState().acquireCanvasInputLock();
+
+    await act(async () => {
+      result.current.handlePointerDown(down);
+      await Promise.resolve();
+    });
+
+    expect((ctx.container as any).setPointerCapture).not.toHaveBeenCalled();
+    expect(params.onBeforeCanvasMutation).not.toHaveBeenCalled();
+    expect(params.captureBeforeImage).not.toHaveBeenCalled();
+    expect(params.initializeBrushStroke).not.toHaveBeenCalled();
+  });
+
+  it('locks canvas input for non-canvas pointerdown and unlocks on pointerup', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    renderHook(() => usePointerHandlers(params as any));
+
+    expect(useUiInteractionStore.getState().isCanvasInputLocked).toBe(false);
+
+    act(() => {
+      dispatchWindowPointerEvent(document.body, 'pointerdown', 77);
+    });
+    expect(useUiInteractionStore.getState().isCanvasInputLocked).toBe(true);
+
+    act(() => {
+      dispatchWindowPointerEvent(document.body, 'pointerup', 77);
+    });
+    expect(useUiInteractionStore.getState().isCanvasInputLocked).toBe(false);
   });
 });

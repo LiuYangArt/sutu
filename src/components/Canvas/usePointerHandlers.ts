@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject }
 import { readPointBufferSince, useTabletStore, type TabletInputPoint } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
+import { useUiInteractionStore } from '@/stores/uiInteraction';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import {
@@ -188,6 +189,7 @@ export function usePointerHandlers({
   const DOM_POINTER_ACTIVITY_TIMEOUT_MS = 24;
   const nativeSeqCursorRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
+  const nonCanvasPointerIdsRef = useRef<Set<number>>(new Set());
   const isPanningRef = useRef(isPanning);
   const finishingStrokePromiseRef = useRef<Promise<void> | null>(null);
   const nativeMissingInputStreakRef = useRef(0);
@@ -286,6 +288,11 @@ export function usePointerHandlers({
     lastDomPointerActivityMsRef.current = getNowMs();
   }, [getNowMs]);
 
+  const flushNativePointBuffer = useCallback(() => {
+    const { nextSeq } = readPointBufferSince(nativeSeqCursorRef.current);
+    nativeSeqCursorRef.current = nextSeq;
+  }, []);
+
   const pickColorAt = useCallback(
     async (canvasX: number, canvasY: number) => {
       const x = Math.floor(canvasX);
@@ -323,6 +330,9 @@ export function usePointerHandlers({
 
   const processPointerMoveNative = useCallback(
     (nativeEvent: PointerEvent) => {
+      if (useUiInteractionStore.getState().isCanvasInputLocked && !isDrawingRef.current) {
+        return;
+      }
       const activePointerId = activePointerIdRef.current;
       if (activePointerId !== null && nativeEvent.pointerId !== activePointerId) {
         return;
@@ -650,6 +660,9 @@ export function usePointerHandlers({
 
   const processPointerUpNative = useCallback(
     (nativeEvent: PointerEvent) => {
+      if (useUiInteractionStore.getState().isCanvasInputLocked && !isDrawingRef.current) {
+        return;
+      }
       markDomPointerActivity();
       const activePointerId = activePointerIdRef.current;
       if (activePointerId !== null && nativeEvent.pointerId !== activePointerId) {
@@ -919,9 +932,88 @@ export function usePointerHandlers({
     };
   }, [containerRef, processPointerMoveNative, processPointerUpNative, resetPointerSessionOnBlur]);
 
+  useEffect(() => {
+    const isInsideCanvasContainer = (target: EventTarget | null): boolean => {
+      const container = containerRef.current;
+      if (!container) return false;
+      return target instanceof Node ? container.contains(target) : false;
+    };
+
+    const acquireNonCanvasLock = (pointerId: number): void => {
+      if (nonCanvasPointerIdsRef.current.has(pointerId)) return;
+      nonCanvasPointerIdsRef.current.add(pointerId);
+      useUiInteractionStore.getState().acquireCanvasInputLock();
+    };
+
+    const releaseNonCanvasLock = (pointerId: number): void => {
+      if (!nonCanvasPointerIdsRef.current.delete(pointerId)) return;
+      useUiInteractionStore.getState().releaseCanvasInputLock();
+    };
+
+    const releaseAllNonCanvasLocks = (): void => {
+      const lockCount = nonCanvasPointerIdsRef.current.size;
+      if (lockCount <= 0) return;
+      nonCanvasPointerIdsRef.current.clear();
+      const store = useUiInteractionStore.getState();
+      for (let i = 0; i < lockCount; i += 1) {
+        store.releaseCanvasInputLock();
+      }
+    };
+
+    const handleGlobalPointerDownCapture = (event: PointerEvent): void => {
+      if (isInsideCanvasContainer(event.target)) return;
+      acquireNonCanvasLock(event.pointerId);
+      markDomPointerActivity();
+      flushNativePointBuffer();
+    };
+
+    const handleGlobalPointerEndCapture = (event: PointerEvent): void => {
+      releaseNonCanvasLock(event.pointerId);
+      markDomPointerActivity();
+      flushNativePointBuffer();
+    };
+
+    const handleWindowBlur = (): void => {
+      releaseAllNonCanvasLocks();
+      markDomPointerActivity();
+      flushNativePointBuffer();
+    };
+
+    window.addEventListener('pointerdown', handleGlobalPointerDownCapture, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('pointerup', handleGlobalPointerEndCapture, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('pointercancel', handleGlobalPointerEndCapture, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      window.removeEventListener('pointerdown', handleGlobalPointerDownCapture, {
+        capture: true,
+      });
+      window.removeEventListener('pointerup', handleGlobalPointerEndCapture, {
+        capture: true,
+      });
+      window.removeEventListener('pointercancel', handleGlobalPointerEndCapture, {
+        capture: true,
+      });
+      window.removeEventListener('blur', handleWindowBlur);
+      releaseAllNonCanvasLocks();
+    };
+  }, [containerRef, markDomPointerActivity, flushNativePointBuffer]);
+
   const processPointerDownNative = useCallback(
     async (pe: PointerEvent) => {
       markDomPointerActivity();
+      if (useUiInteractionStore.getState().isCanvasInputLocked) {
+        return;
+      }
       nativeMissingInputStreakRef.current = 0;
       const wantsStrokeInput = isStrokeTool(currentTool);
       const tabletStateSnapshot = useTabletStore.getState();
@@ -1250,6 +1342,13 @@ export function usePointerHandlers({
     const tick = () => {
       if (cancelled) return;
 
+      const canvasInputLocked = useUiInteractionStore.getState().isCanvasInputLocked;
+      if (canvasInputLocked && !isDrawingRef.current) {
+        flushNativePointBuffer();
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
+
       const tabletState = useTabletStore.getState();
       const nativeBackendActive =
         isStrokeTool(currentTool) && isNativeTabletStreamingState(tabletState);
@@ -1427,6 +1526,7 @@ export function usePointerHandlers({
     requestFinishCurrentStroke,
     captureBeforeImage,
     initializeBrushStroke,
+    flushNativePointBuffer,
   ]);
 
   const handlePointerDown = useCallback(
