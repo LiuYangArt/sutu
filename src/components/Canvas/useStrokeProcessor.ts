@@ -716,13 +716,7 @@ export function useStrokeProcessor({
           out.push(p);
           last = p;
         }
-
-        // In Build-up mode we emit a dab for the first processed point.
-        // PointerDown pressure is sometimes less reliable than the first move/raw sample,
-        // which can create an overly heavy "starting dab" (especially at very light pressure).
-        // If we have at least one follow-up point, start from it and keep tap/hold behavior
-        // (single-point strokes) unchanged.
-        replayPoints = out.length > 1 ? out.slice(1) : out;
+        replayPoints = out;
       }
 
       for (const p of replayPoints) {

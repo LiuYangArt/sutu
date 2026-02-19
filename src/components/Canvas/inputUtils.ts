@@ -1,47 +1,31 @@
-import { RawInputPoint } from '@/stores/tablet';
+import type { TabletInputPoint } from '@/stores/tablet';
 
 type StrictInputSource = 'wintab' | 'macnative' | 'pointerevent';
 
-function clampUnit(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
+export interface PointerInputSample {
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+  timestampMs: number;
+  source: 'pointerevent';
+  hostTimeUs: number;
+  deviceTimeUs: number;
+  phase: 'hover' | 'down' | 'move' | 'up';
 }
 
-function resolvePointerTimestampMs(evt: PointerEvent): number {
-  if (Number.isFinite(evt.timeStamp) && evt.timeStamp >= 0) {
-    return evt.timeStamp;
-  }
-  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-    return performance.now();
-  }
-  return Date.now();
-}
-
-function resolveNativeTimestampMs(
-  point: RawInputPoint | null | undefined,
-  fallbackTimestampMs: number
-): number {
-  if (point && Number.isFinite(point.timestamp_ms) && point.timestamp_ms >= 0) {
-    return point.timestamp_ms;
-  }
-  return fallbackTimestampMs;
-}
-
-function isPointerReleaseEvent(evt: PointerEvent): boolean {
-  return evt.type === 'pointerup' || evt.type === 'pointercancel';
-}
-
-function resolvePointerPressure(evt: PointerEvent): number {
-  if (isPointerReleaseEvent(evt)) {
-    return 0;
-  }
-  return clampUnit(evt.pressure);
-}
-
-export function isNativeTabletStreamingBackend(activeBackend: string | null | undefined): boolean {
-  if (typeof activeBackend !== 'string') return false;
-  const normalized = activeBackend.toLowerCase();
-  return normalized === 'wintab' || normalized === 'macnative';
+export interface NativeInputSample {
+  xPx: number;
+  yPx: number;
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+  timestampMs: number;
+  source: StrictInputSource;
+  hostTimeUs: number;
+  deviceTimeUs: number;
+  phase: 'hover' | 'down' | 'move' | 'up';
 }
 
 export interface TabletStreamingBackendStateLike {
@@ -50,23 +34,9 @@ export interface TabletStreamingBackendStateLike {
   isStreaming: boolean;
 }
 
-export function resolveStreamingBackendName(
-  activeBackend: string | null | undefined,
-  backend: string | null | undefined
-): string | null {
-  if (typeof activeBackend === 'string' && activeBackend.length > 0) {
-    return activeBackend;
-  }
-  if (typeof backend === 'string' && backend.length > 0) {
-    return backend;
-  }
-  return null;
-}
-
-export function isNativeTabletStreamingState(state: TabletStreamingBackendStateLike): boolean {
-  if (!state.isStreaming) return false;
-  const backendName = resolveStreamingBackendName(state.activeBackend, state.backend);
-  return isNativeTabletStreamingBackend(backendName);
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
 
 function clampSignedUnit(value: number): number {
@@ -82,6 +52,33 @@ function normalizeTiltComponent(value: number): number {
 function normalizeRotationDegrees(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return ((value % 360) + 360) % 360;
+}
+
+function resolvePointerTimestampMs(evt: PointerEvent): number {
+  if (Number.isFinite(evt.timeStamp) && evt.timeStamp >= 0) {
+    return evt.timeStamp;
+  }
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function resolveNativeSource(source: string): StrictInputSource {
+  if (source === 'wintab' || source === 'win_tab') return 'wintab';
+  if (source === 'macnative' || source === 'mac_native') return 'macnative';
+  if (source === 'pointerevent' || source === 'pointer_event') return 'pointerevent';
+  return 'pointerevent';
+}
+
+function resolveHostTimeUs(value: number, fallbackTimestampMs: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  return Math.max(0, Math.round(fallbackTimestampMs * 1000));
+}
+
+function resolveDeviceTimeUs(value: number | null | undefined, hostTimeUs: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  return hostTimeUs;
 }
 
 type PointerEventWithAngles = PointerEvent & {
@@ -119,155 +116,103 @@ function getRotationFromPointerEvent(evt: PointerEvent): number {
   return normalizeRotationDegrees(twist!);
 }
 
-function resolveTabletRotation(
-  point: RawInputPoint | null | undefined,
-  fallbackRotation: number
-): number {
-  if (!point || !Number.isFinite(point.rotation)) return fallbackRotation;
-  return normalizeRotationDegrees(point.rotation!);
+function toPointerPhase(evtType: string): PointerInputSample['phase'] {
+  if (evtType === 'pointerdown') return 'down';
+  if (evtType === 'pointerup' || evtType === 'pointercancel') return 'up';
+  return 'move';
 }
 
-function resolvePointerOrientation(evt: PointerEvent): {
-  tiltX: number;
-  tiltY: number;
-  rotation: number;
-} {
-  const primaryTilt = getNormalizedTiltFromPointerEvent(evt);
-  const primaryRotation = getRotationFromPointerEvent(evt);
-  return { tiltX: primaryTilt.tiltX, tiltY: primaryTilt.tiltY, rotation: primaryRotation };
+export function isNativeTabletStreamingBackend(activeBackend: string | null | undefined): boolean {
+  if (typeof activeBackend !== 'string') return false;
+  const normalized = activeBackend.toLowerCase();
+  return normalized === 'wintab' || normalized === 'macnative';
 }
 
-function resolveSource(
-  isNativeBackendActive: boolean,
-  preferredNativePoint?: RawInputPoint | null
-): StrictInputSource {
-  if (!isNativeBackendActive) return 'pointerevent';
-  const source = (preferredNativePoint as { source?: string } | undefined)?.source;
-  if (source === 'wintab' || source === 'macnative' || source === 'pointerevent') {
-    return source;
+export function resolveStreamingBackendName(
+  activeBackend: string | null | undefined,
+  backend: string | null | undefined
+): string | null {
+  if (typeof activeBackend === 'string' && activeBackend.length > 0) {
+    return activeBackend;
   }
-  return 'pointerevent';
+  if (typeof backend === 'string' && backend.length > 0) {
+    return backend;
+  }
+  return null;
 }
 
-/**
- * Strict input resolution path without synthetic fallback pressure.
- */
-export function getEffectiveInputData(
-  evt: PointerEvent,
-  isNativeBackendActive: boolean,
-  bufferedPoints: RawInputPoint[],
-  currentPoint: RawInputPoint | null,
-  _fallbackEvent?: PointerEvent,
-  preferredNativePoint?: RawInputPoint | null
-): {
-  pressure: number;
-  tiltX: number;
-  tiltY: number;
-  rotation: number;
-  timestampMs: number;
-  source: StrictInputSource;
-  hostTimeUs: number;
-  deviceTimeUs: number;
-} {
-  const isReleaseEvent = isPointerReleaseEvent(evt);
-  const pointerOrientation = resolvePointerOrientation(evt);
-  const pointerPressure = resolvePointerPressure(evt);
-  const pointerTimestampMs = resolvePointerTimestampMs(evt);
-  const pointerHostTimeUs = Math.max(0, Math.round(pointerTimestampMs * 1000));
+export function isNativeTabletStreamingState(state: TabletStreamingBackendStateLike): boolean {
+  if (!state.isStreaming) return false;
+  const backendName = resolveStreamingBackendName(state.activeBackend, state.backend);
+  return isNativeTabletStreamingBackend(backendName);
+}
 
-  if (!isNativeBackendActive) {
-    return {
-      pressure: pointerPressure,
-      tiltX: pointerOrientation.tiltX,
-      tiltY: pointerOrientation.tiltY,
-      rotation: pointerOrientation.rotation,
-      timestampMs: pointerTimestampMs,
-      source: 'pointerevent',
-      hostTimeUs: pointerHostTimeUs,
-      deviceTimeUs: 0,
-    };
-  }
-
-  if (preferredNativePoint) {
-    const pointWithTimes = preferredNativePoint as RawInputPoint & {
-      host_time_us?: number;
-      device_time_us?: number;
-    };
-    const hostTimeUs = Number.isFinite(pointWithTimes.host_time_us)
-      ? Math.max(0, Math.round(pointWithTimes.host_time_us!))
-      : pointerHostTimeUs;
-    const deviceTimeUs = Number.isFinite(pointWithTimes.device_time_us)
-      ? Math.max(0, Math.round(pointWithTimes.device_time_us!))
-      : hostTimeUs;
-
-    return {
-      pressure: isReleaseEvent ? 0 : clampUnit(preferredNativePoint.pressure),
-      tiltX: normalizeTiltComponent(preferredNativePoint.tilt_x),
-      tiltY: normalizeTiltComponent(preferredNativePoint.tilt_y),
-      rotation: resolveTabletRotation(preferredNativePoint, pointerOrientation.rotation),
-      timestampMs: resolveNativeTimestampMs(preferredNativePoint, pointerTimestampMs),
-      source: resolveSource(true, preferredNativePoint),
-      hostTimeUs,
-      deviceTimeUs,
-    };
-  }
-
-  if (bufferedPoints.length > 0) {
-    const pt = bufferedPoints[bufferedPoints.length - 1]! as RawInputPoint & {
-      host_time_us?: number;
-      device_time_us?: number;
-    };
-    const hostTimeUs = Number.isFinite(pt.host_time_us)
-      ? Math.max(0, Math.round(pt.host_time_us!))
-      : pointerHostTimeUs;
-    const deviceTimeUs = Number.isFinite(pt.device_time_us)
-      ? Math.max(0, Math.round(pt.device_time_us!))
-      : hostTimeUs;
-
-    return {
-      pressure: isReleaseEvent ? 0 : clampUnit(pt.pressure),
-      tiltX: normalizeTiltComponent(pt.tilt_x),
-      tiltY: normalizeTiltComponent(pt.tilt_y),
-      rotation: resolveTabletRotation(pt, pointerOrientation.rotation),
-      timestampMs: resolveNativeTimestampMs(pt, pointerTimestampMs),
-      source: resolveSource(true, pt),
-      hostTimeUs,
-      deviceTimeUs,
-    };
-  }
-
-  if (currentPoint) {
-    const pointWithTimes = currentPoint as RawInputPoint & {
-      host_time_us?: number;
-      device_time_us?: number;
-    };
-    const hostTimeUs = Number.isFinite(pointWithTimes.host_time_us)
-      ? Math.max(0, Math.round(pointWithTimes.host_time_us!))
-      : pointerHostTimeUs;
-    const deviceTimeUs = Number.isFinite(pointWithTimes.device_time_us)
-      ? Math.max(0, Math.round(pointWithTimes.device_time_us!))
-      : hostTimeUs;
-
-    return {
-      pressure: isReleaseEvent ? 0 : clampUnit(currentPoint.pressure),
-      tiltX: normalizeTiltComponent(currentPoint.tilt_x),
-      tiltY: normalizeTiltComponent(currentPoint.tilt_y),
-      rotation: resolveTabletRotation(currentPoint, pointerOrientation.rotation),
-      timestampMs: resolveNativeTimestampMs(currentPoint, pointerTimestampMs),
-      source: resolveSource(true, currentPoint),
-      hostTimeUs,
-      deviceTimeUs,
-    };
-  }
-
+export function parsePointerEventSample(evt: PointerEvent): PointerInputSample {
+  const timestampMs = resolvePointerTimestampMs(evt);
+  const { tiltX, tiltY } = getNormalizedTiltFromPointerEvent(evt);
+  const phase = toPointerPhase(evt.type);
   return {
-    pressure: pointerPressure,
-    tiltX: pointerOrientation.tiltX,
-    tiltY: pointerOrientation.tiltY,
-    rotation: pointerOrientation.rotation,
-    timestampMs: pointerTimestampMs,
+    pressure: phase === 'up' ? 0 : clampUnit(evt.pressure),
+    tiltX,
+    tiltY,
+    rotation: getRotationFromPointerEvent(evt),
+    timestampMs,
     source: 'pointerevent',
-    hostTimeUs: pointerHostTimeUs,
+    hostTimeUs: Math.max(0, Math.round(timestampMs * 1000)),
     deviceTimeUs: 0,
+    phase,
   };
+}
+
+export function parseNativeTabletSample(point: TabletInputPoint): NativeInputSample {
+  const hostTimeUs = resolveHostTimeUs(point.host_time_us, point.timestamp_ms);
+  const deviceTimeUs = resolveDeviceTimeUs(point.device_time_us, hostTimeUs);
+  const phase =
+    point.phase === 'hover' || point.phase === 'down' || point.phase === 'up'
+      ? point.phase
+      : 'move';
+  return {
+    xPx: Number.isFinite(point.x_px) ? point.x_px : 0,
+    yPx: Number.isFinite(point.y_px) ? point.y_px : 0,
+    pressure: phase === 'up' ? 0 : clampUnit(point.pressure_0_1),
+    tiltX: normalizeTiltComponent(point.tilt_x_deg),
+    tiltY: normalizeTiltComponent(point.tilt_y_deg),
+    rotation: normalizeRotationDegrees(point.rotation_deg),
+    timestampMs: hostTimeUs / 1000,
+    source: resolveNativeSource(point.source),
+    hostTimeUs,
+    deviceTimeUs,
+    phase,
+  };
+}
+
+export function mapNativeWindowPxToCanvasPoint(
+  canvas: HTMLCanvasElement,
+  rect: { left: number; top: number; width: number; height: number },
+  xPx: number,
+  yPx: number
+): { x: number; y: number } {
+  const rectWidth =
+    Number.isFinite(rect.width) && rect.width > 0 ? rect.width : Math.max(1, canvas.width);
+  const rectHeight =
+    Number.isFinite(rect.height) && rect.height > 0 ? rect.height : Math.max(1, canvas.height);
+  const scaleX = canvas.width / rectWidth;
+  const scaleY = canvas.height / rectHeight;
+  return {
+    x: (xPx - rect.left) * scaleX,
+    y: (yPx - rect.top) * scaleY,
+  };
+}
+
+export function resolveNativeStrokePoints(
+  bufferedPoints: TabletInputPoint[],
+  currentPoint: TabletInputPoint | null
+): TabletInputPoint[] {
+  if (bufferedPoints.length > 0) {
+    return bufferedPoints;
+  }
+  if (currentPoint) {
+    return [currentPoint];
+  }
+  return [];
 }

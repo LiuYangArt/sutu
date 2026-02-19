@@ -15,7 +15,6 @@ import { useI18n } from '@/i18n';
 import { useI18nStore } from '@/stores/i18n';
 import { useTabletStore, BackendType, InputBackpressureMode, TabletStatus } from '@/stores/tablet';
 import { detectPlatformKind } from '@/utils/platform';
-import { formatTabletFallbackReason } from '@/utils/tabletFallback';
 import { PressureCurveEditor } from './PressureCurveEditor';
 import { getPressureCurvePresetPoints } from '@/utils/pressureCurve';
 import './SettingsPanel.css';
@@ -87,11 +86,14 @@ function getPollingRateLabel(
   return t('settings.tablet.configuration.pollingRateHz', { rate });
 }
 
-function normalizeBackendType(value: string | null | undefined): BackendType {
+function normalizeBackendType(
+  value: string | null | undefined,
+  preferredBackend: BackendType
+): BackendType {
   if (value === 'wintab') return 'wintab';
   if (value === 'macnative') return 'macnative';
   if (value === 'pointerevent') return 'pointerevent';
-  return 'auto';
+  return preferredBackend;
 }
 
 interface PointerEventDiagnosticsSnapshot {
@@ -449,7 +451,6 @@ function TabletSettings() {
     backend,
     requestedBackend,
     activeBackend,
-    fallbackReason,
     backpressureMode,
     queueMetrics,
     info,
@@ -475,8 +476,10 @@ function TabletSettings() {
   const showBackendToggle = platformKind === 'windows' || platformKind === 'macos';
   const activeBackendLower =
     typeof activeBackend === 'string' ? activeBackend.toLowerCase() : 'none';
-  const fallbackDisplayReason = formatTabletFallbackReason(fallbackReason, platformKind);
-  const requestedBackendType = normalizeBackendType(requestedBackend || tablet.backend);
+  const requestedBackendType = normalizeBackendType(
+    requestedBackend || tablet.backend,
+    preferredNativeBackend
+  );
   const isNativeBackendActive =
     activeBackendLower === 'wintab' || activeBackendLower === 'macnative';
   const toggleTargetBackend: BackendType = isNativeBackendActive
@@ -489,12 +492,6 @@ function TabletSettings() {
       : platformKind === 'windows'
         ? t('settings.tablet.backendSwitch.useWinTab')
         : t('settings.tablet.backendSwitch.usePointerEvent');
-  const autoBackendLabel =
-    platformKind === 'macos'
-      ? t('settings.tablet.backend.autoPreferMacNative')
-      : platformKind === 'windows'
-        ? t('settings.tablet.backend.autoPreferWinTab')
-        : t('settings.tablet.backend.autoPreferPointerEvent');
   const backendSwitchOptions = {
     pollingRate: tablet.pollingRate,
     pressureCurve: tablet.pressureCurve,
@@ -748,12 +745,6 @@ function TabletSettings() {
               </div>
             </>
           )}
-          {fallbackDisplayReason && (
-            <div className="status-row status-row-warning">
-              <span>{t('settings.tablet.status.fallback')}</span>
-              <span>{fallbackDisplayReason}</span>
-            </div>
-          )}
         </div>
       </div>
 
@@ -837,7 +828,7 @@ function TabletSettings() {
                 <div className="status-row">
                   <span>{t('settings.tablet.live.sampleSeqStream')}</span>
                   <span>
-                    {currentPoint.seq} / {currentPoint.stream_id}
+                    {currentPoint.seq} / {currentPoint.stroke_id}
                   </span>
                 </div>
                 <div className="status-row">
@@ -875,7 +866,8 @@ function TabletSettings() {
                   <span>{t('settings.tablet.live.hostDeviceTime')}</span>
                   <span>
                     {toFixed(currentPoint.host_time_us / 1000, 3)} ms /{' '}
-                    {toFixed(currentPoint.device_time_us / 1000, 3)} ms
+                    {toFixed((currentPoint.device_time_us ?? currentPoint.host_time_us) / 1000, 3)}{' '}
+                    ms
                   </span>
                 </div>
               </>
@@ -967,8 +959,7 @@ function TabletSettings() {
               value={tablet.backend}
               onChange={(e) => setTabletBackend(e.target.value as BackendType)}
             >
-              <option value="auto">{autoBackendLabel}</option>
-              {platformKind !== 'macos' && (
+              {platformKind === 'windows' && (
                 <option value="wintab">{t('settings.tablet.configuration.winTabOnly')}</option>
               )}
               {platformKind === 'macos' && (

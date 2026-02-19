@@ -3,8 +3,8 @@
 use crate::brush::{BrushEngine, StrokeSegment};
 use crate::input::wintab_spike::SpikeResult;
 use crate::input::{
-    InputBackpressureMode, InputPhase, InputQueueMetrics, PressureCurve, PressureSmoother,
-    RawInputPoint, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+    InputBackpressureMode, InputPhase, InputQueueMetrics, PressureCurve, RawInputPoint,
+    TabletBackend, TabletConfig, TabletInfo, TabletStatus,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -123,7 +123,6 @@ pub enum BackendType {
     WinTab,
     MacNative,
     PointerEvent,
-    Auto,
 }
 
 /// Tablet state holding the active backend
@@ -136,13 +135,6 @@ struct TabletState {
     config: TabletConfig,
     app_handle: Option<AppHandle>,
     emitter_running: bool,
-    /// Pressure smoother for first-stroke issue (shared with emitter thread)
-    pressure_smoother: Arc<Mutex<PressureSmoother>>,
-    /// Track if pen is currently drawing (pressure > 0)
-    is_drawing: Arc<std::sync::atomic::AtomicBool>,
-    /// Pressure curve for mapping (applied after smoothing)
-    pressure_curve: Arc<std::sync::atomic::AtomicU8>,
-    fallback_reason: Option<String>,
 }
 
 impl TabletState {
@@ -157,40 +149,14 @@ impl TabletState {
             config: TabletConfig::default(),
             app_handle: None,
             emitter_running: false,
-            pressure_smoother: Arc::new(Mutex::new(PressureSmoother::new(3))),
-            is_drawing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            pressure_curve: Arc::new(std::sync::atomic::AtomicU8::new(0)), // 0=Linear
-            fallback_reason: None,
-        }
-    }
-
-    fn has_backend(&self, backend: BackendType) -> bool {
-        match backend {
-            BackendType::WinTab => self.wintab.is_some(),
-            BackendType::MacNative => self.macnative.is_some(),
-            BackendType::PointerEvent => self.pointer.is_some(),
-            BackendType::Auto => false,
-        }
-    }
-
-    fn active_backend_type(&self) -> Option<BackendType> {
-        match self.backend_type {
-            BackendType::WinTab => self.wintab.as_ref().map(|_| BackendType::WinTab),
-            BackendType::MacNative => self.macnative.as_ref().map(|_| BackendType::MacNative),
-            BackendType::PointerEvent => self.pointer.as_ref().map(|_| BackendType::PointerEvent),
-            BackendType::Auto => auto_backend_priority_for_platform()
-                .iter()
-                .copied()
-                .find(|candidate| self.has_backend(*candidate)),
         }
     }
 
     fn active_backend(&mut self) -> Option<&mut dyn TabletBackend> {
-        match self.active_backend_type()? {
+        match self.backend_type {
             BackendType::WinTab => self.wintab.as_mut().map(|b| b as &mut dyn TabletBackend),
             BackendType::MacNative => self.macnative.as_mut().map(|b| b as &mut dyn TabletBackend),
             BackendType::PointerEvent => self.pointer.as_mut().map(|b| b as &mut dyn TabletBackend),
-            BackendType::Auto => None,
         }
     }
 }
@@ -210,15 +176,6 @@ fn parse_pressure_curve(curve: Option<&str>) -> PressureCurve {
     }
 }
 
-fn pressure_curve_id(curve: PressureCurve) -> u8 {
-    match curve {
-        PressureCurve::Linear => 0u8,
-        PressureCurve::Soft => 1u8,
-        PressureCurve::Hard => 2u8,
-        PressureCurve::SCurve => 3u8,
-    }
-}
-
 fn parse_backpressure_mode(mode: Option<&str>) -> InputBackpressureMode {
     match mode {
         Some("latency_capped") => InputBackpressureMode::LatencyCapped,
@@ -231,7 +188,6 @@ fn backend_type_name(backend: BackendType) -> &'static str {
         BackendType::WinTab => "wintab",
         BackendType::MacNative => "macnative",
         BackendType::PointerEvent => "pointerevent",
-        BackendType::Auto => "auto",
     }
 }
 
@@ -267,49 +223,9 @@ fn normalize_requested_backend_for_platform(requested_backend: BackendType) -> B
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
+        let _ = requested_backend;
         BackendType::PointerEvent
     }
-}
-
-fn auto_backend_priority_for_platform() -> &'static [BackendType] {
-    #[cfg(target_os = "windows")]
-    {
-        const PRIORITY: &[BackendType] = &[BackendType::WinTab, BackendType::PointerEvent];
-        PRIORITY
-    }
-    #[cfg(target_os = "macos")]
-    {
-        const PRIORITY: &[BackendType] = &[BackendType::MacNative, BackendType::PointerEvent];
-        PRIORITY
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        const PRIORITY: &[BackendType] = &[BackendType::PointerEvent];
-        PRIORITY
-    }
-}
-
-fn is_native_streaming_backend(backend: BackendType) -> bool {
-    matches!(backend, BackendType::WinTab | BackendType::MacNative)
-}
-
-fn combine_normalization_reason(normalization_reason: &Option<String>, detail: String) -> String {
-    if let Some(reason) = normalization_reason {
-        format!("{}; {}", reason, detail)
-    } else {
-        detail
-    }
-}
-
-fn remember_first_error(slot: &mut Option<String>, err: String) {
-    if slot.is_none() {
-        *slot = Some(err);
-    }
-}
-
-fn backend_error_or_unknown(err: &Option<String>, backend_name: &str) -> String {
-    err.clone()
-        .unwrap_or_else(|| format!("unknown {} error", backend_name))
 }
 
 fn apply_tablet_runtime_config(
@@ -321,20 +237,13 @@ fn apply_tablet_runtime_config(
     if let Some(rate) = polling_rate {
         state.config.polling_rate_hz = rate;
     }
-    let curve = parse_pressure_curve(pressure_curve);
-    state.config.pressure_curve = curve;
-    state.pressure_curve.store(
-        pressure_curve_id(curve),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    state.config.pressure_curve = parse_pressure_curve(pressure_curve);
     state.config.backpressure_mode = parse_backpressure_mode(backpressure_mode);
 }
 
 fn current_tablet_status_response(state: &mut TabletState) -> TabletStatusResponse {
     let requested_backend = backend_type_name(state.requested_backend).to_string();
-    let fallback_reason = state.fallback_reason.clone();
     let backpressure_mode = state.config.backpressure_mode;
-    let active_backend_type = state.active_backend_type();
 
     if let Some(backend) = state.active_backend() {
         let backend_name = backend.name().to_string();
@@ -345,11 +254,7 @@ fn current_tablet_status_response(state: &mut TabletState) -> TabletStatusRespon
             status,
             backend: backend_name,
             requested_backend,
-            active_backend: active_backend_type
-                .map(backend_type_name)
-                .unwrap_or("none")
-                .to_string(),
-            fallback_reason,
+            active_backend: backend_type_name(state.backend_type).to_string(),
             backpressure_mode,
             queue_metrics,
             info,
@@ -360,7 +265,6 @@ fn current_tablet_status_response(state: &mut TabletState) -> TabletStatusRespon
             backend: "none".to_string(),
             requested_backend,
             active_backend: "none".to_string(),
-            fallback_reason,
             backpressure_mode,
             queue_metrics: InputQueueMetrics::default(),
             info: None,
@@ -432,14 +336,6 @@ fn build_mac_native_backend(
     Ok(macnative)
 }
 
-fn select_auto_backend(state: &TabletState) -> Result<BackendType, String> {
-    auto_backend_priority_for_platform()
-        .iter()
-        .copied()
-        .find(|candidate| state.has_backend(*candidate))
-        .ok_or_else(|| "No tablet backend is available".to_string())
-}
-
 fn start_backend(state: &mut TabletState, backend: BackendType) -> Result<(), String> {
     match backend {
         BackendType::WinTab => state
@@ -457,7 +353,6 @@ fn start_backend(state: &mut TabletState, backend: BackendType) -> Result<(), St
             .as_mut()
             .ok_or_else(|| "PointerEvent backend is not initialized".to_string())?
             .start(),
-        BackendType::Auto => Err("No tablet backend is available".to_string()),
     }
 }
 
@@ -471,16 +366,6 @@ fn select_backend(
     let _ = main_hwnd;
 
     let normalized_backend = normalize_requested_backend_for_platform(requested_backend);
-    let normalization_reason = if normalized_backend != requested_backend {
-        Some(format!(
-            "Requested backend '{}' is not supported on this platform, using '{}'",
-            backend_type_name(requested_backend),
-            backend_type_name(normalized_backend)
-        ))
-    } else {
-        None
-    };
-
     if normalized_backend != requested_backend {
         tracing::info!(
             "[Tablet] Requested backend '{}' is not supported on this platform, using '{}'",
@@ -490,171 +375,24 @@ fn select_backend(
     }
 
     state.requested_backend = normalized_backend;
-    state.fallback_reason = normalization_reason.clone();
-
-    let mut wintab_error: Option<String> = None;
-    let mut macnative_error: Option<String> = None;
-    let mut pointer_error: Option<String> = None;
+    state.backend_type = normalized_backend;
+    state.wintab = None;
+    state.macnative = None;
+    state.pointer = None;
 
     match normalized_backend {
         BackendType::WinTab => {
-            match build_wintab_backend(&state.config, main_hwnd) {
-                Ok(wintab) => {
-                    state.wintab = Some(wintab);
-                    state.backend_type = BackendType::WinTab;
-                    return Ok(());
-                }
-                Err(err) => {
-                    remember_first_error(&mut wintab_error, err);
-                }
-            }
-
-            match build_pointer_backend(&state.config) {
-                Ok(pointer) => {
-                    state.pointer = Some(pointer);
-                    state.backend_type = BackendType::PointerEvent;
-                    state.fallback_reason = Some(combine_normalization_reason(
-                        &normalization_reason,
-                        format!(
-                            "WinTab initialization failed, switched to PointerEvent: {}",
-                            backend_error_or_unknown(&wintab_error, "WinTab")
-                        ),
-                    ));
-                    return Ok(());
-                }
-                Err(err) => {
-                    remember_first_error(&mut pointer_error, err);
-                }
-            }
+            state.wintab = Some(build_wintab_backend(&state.config, main_hwnd)?);
         }
         BackendType::MacNative => {
-            match build_mac_native_backend(&state.config, app_handle) {
-                Ok(macnative) => {
-                    state.macnative = Some(macnative);
-                    state.backend_type = BackendType::MacNative;
-                    return Ok(());
-                }
-                Err(err) => {
-                    remember_first_error(&mut macnative_error, err);
-                }
-            }
-
-            match build_pointer_backend(&state.config) {
-                Ok(pointer) => {
-                    state.pointer = Some(pointer);
-                    state.backend_type = BackendType::PointerEvent;
-                    state.fallback_reason = Some(combine_normalization_reason(
-                        &normalization_reason,
-                        format!(
-                            "MacNative initialization failed, switched to PointerEvent: {}",
-                            backend_error_or_unknown(&macnative_error, "MacNative")
-                        ),
-                    ));
-                    return Ok(());
-                }
-                Err(err) => {
-                    remember_first_error(&mut pointer_error, err);
-                }
-            }
+            state.macnative = Some(build_mac_native_backend(&state.config, app_handle)?);
         }
-        BackendType::PointerEvent => match build_pointer_backend(&state.config) {
-            Ok(pointer) => {
-                state.pointer = Some(pointer);
-                state.backend_type = BackendType::PointerEvent;
-                return Ok(());
-            }
-            Err(err) => {
-                remember_first_error(&mut pointer_error, err);
-            }
-        },
-        BackendType::Auto => {
-            #[cfg(target_os = "windows")]
-            {
-                match build_wintab_backend(&state.config, main_hwnd) {
-                    Ok(wintab) => {
-                        state.wintab = Some(wintab);
-                        state.backend_type = BackendType::WinTab;
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        remember_first_error(&mut wintab_error, err);
-                    }
-                }
-
-                match build_pointer_backend(&state.config) {
-                    Ok(pointer) => {
-                        state.pointer = Some(pointer);
-                        state.backend_type = BackendType::PointerEvent;
-                        state.fallback_reason = Some(combine_normalization_reason(
-                            &normalization_reason,
-                            format!(
-                                "Auto fallback to PointerEvent after WinTab init failure: {}",
-                                backend_error_or_unknown(&wintab_error, "WinTab")
-                            ),
-                        ));
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        remember_first_error(&mut pointer_error, err);
-                    }
-                }
-            }
-
-            #[cfg(target_os = "macos")]
-            {
-                match build_mac_native_backend(&state.config, app_handle) {
-                    Ok(macnative) => {
-                        state.macnative = Some(macnative);
-                        state.backend_type = BackendType::MacNative;
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        remember_first_error(&mut macnative_error, err);
-                    }
-                }
-
-                match build_pointer_backend(&state.config) {
-                    Ok(pointer) => {
-                        state.pointer = Some(pointer);
-                        state.backend_type = BackendType::PointerEvent;
-                        state.fallback_reason = Some(combine_normalization_reason(
-                            &normalization_reason,
-                            format!(
-                                "Auto fallback to PointerEvent after MacNative init failure: {}",
-                                backend_error_or_unknown(&macnative_error, "MacNative")
-                            ),
-                        ));
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        remember_first_error(&mut pointer_error, err);
-                    }
-                }
-            }
-
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            {
-                match build_pointer_backend(&state.config) {
-                    Ok(pointer) => {
-                        state.pointer = Some(pointer);
-                        state.backend_type = BackendType::PointerEvent;
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        remember_first_error(&mut pointer_error, err);
-                    }
-                }
-            }
+        BackendType::PointerEvent => {
+            state.pointer = Some(build_pointer_backend(&state.config)?);
         }
     }
 
-    Err(format!(
-        "No tablet backend available (requested={}, wintab_error={}, macnative_error={}, pointer_error={})",
-        backend_type_name(normalized_backend),
-        wintab_error.unwrap_or_else(|| "n/a".to_string()),
-        macnative_error.unwrap_or_else(|| "n/a".to_string()),
-        pointer_error.unwrap_or_else(|| "n/a".to_string())
-    ))
+    Ok(())
 }
 
 /// Tablet status response for frontend
@@ -664,7 +402,6 @@ pub struct TabletStatusResponse {
     pub backend: String,
     pub requested_backend: String,
     pub active_backend: String,
-    pub fallback_reason: Option<String>,
     pub backpressure_mode: InputBackpressureMode,
     pub queue_metrics: InputQueueMetrics,
     pub info: Option<TabletInfo>,
@@ -682,19 +419,14 @@ pub fn init_tablet(
     let state = get_tablet_state();
     let mut state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    // Store app handle for event emission
     state.app_handle = Some(app.clone());
 
-    // If already initialized with a working backend, return current status (idempotent)
     if state.wintab.is_some() || state.macnative.is_some() || state.pointer.is_some() {
         tracing::info!("[Tablet] Already initialized, returning current status");
         return Ok(current_tablet_status_response(&mut state));
     }
 
-    // Get HWND from main window (Windows only)
     let main_hwnd = resolve_main_hwnd(&app);
-
-    // Configure
     state.config.polling_rate_hz = polling_rate.unwrap_or(200);
     apply_tablet_runtime_config(
         &mut state,
@@ -720,10 +452,8 @@ pub fn switch_tablet_backend(
     let state = get_tablet_state();
     let mut state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    // Store app handle for event emission
     state.app_handle = Some(app.clone());
 
-    // Update runtime config before switching.
     apply_tablet_runtime_config(
         &mut state,
         polling_rate,
@@ -732,52 +462,16 @@ pub fn switch_tablet_backend(
     );
 
     let was_streaming = state.emitter_running;
-    let previous_backend = state.backend_type;
-
     if let Some(active) = state.active_backend() {
         active.stop();
     }
 
     let main_hwnd = resolve_main_hwnd(&app);
-    let switch_result: Result<(), String> = select_backend(&mut state, backend, main_hwnd, &app);
-
-    if let Err(err) = switch_result {
-        state.backend_type = previous_backend;
-        if was_streaming {
-            if let Some(active) = state.active_backend() {
-                let _ = active.start();
-            }
-        }
-        return Err(err);
-    }
+    select_backend(&mut state, backend, main_hwnd, &app)?;
 
     if was_streaming {
-        if let Some(active) = state.active_backend() {
-            if let Err(start_err) = active.start() {
-                if is_native_streaming_backend(state.backend_type) {
-                    let failed_backend_name = backend_type_name(state.backend_type);
-                    match build_pointer_backend(&state.config) {
-                        Ok(mut pointer) => {
-                            pointer.start()?;
-                            state.pointer = Some(pointer);
-                            state.backend_type = BackendType::PointerEvent;
-                            state.fallback_reason = Some(format!(
-                                "{} failed to start, switched to PointerEvent: {}",
-                                failed_backend_name, start_err
-                            ));
-                        }
-                        Err(pointer_err) => {
-                            return Err(format!(
-                                "{} start failed ({}) and PointerEvent fallback failed ({})",
-                                failed_backend_name, start_err, pointer_err
-                            ));
-                        }
-                    }
-                } else {
-                    return Err(start_err);
-                }
-            }
-        }
+        let backend_to_start = state.backend_type;
+        start_backend(&mut state, backend_to_start)?;
     }
 
     Ok(current_tablet_status_response(&mut state))
@@ -789,127 +483,43 @@ pub fn start_tablet() -> Result<(), String> {
     let state = get_tablet_state();
     let mut state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-    let backend_to_start = if state.backend_type == BackendType::Auto {
-        let selected_backend = select_auto_backend(&state)?;
-        state.backend_type = selected_backend;
-        selected_backend
-    } else {
-        state.backend_type
-    };
-    let start_result = start_backend(&mut state, backend_to_start);
+    let backend_to_start = state.backend_type;
+    start_backend(&mut state, backend_to_start)?;
 
-    if let Err(start_err) = start_result {
-        if is_native_streaming_backend(state.backend_type) {
-            let failed_backend_name = backend_type_name(state.backend_type);
-            match build_pointer_backend(&state.config) {
-                Ok(mut pointer) => {
-                    pointer.start()?;
-                    state.pointer = Some(pointer);
-                    state.backend_type = BackendType::PointerEvent;
-                    state.fallback_reason = Some(format!(
-                        "{} failed to start, switched to PointerEvent: {}",
-                        failed_backend_name, start_err
-                    ));
-                    tracing::warn!(
-                        "[Tablet] {}",
-                        state.fallback_reason.as_deref().unwrap_or("")
-                    );
-                }
-                Err(pointer_err) => {
-                    return Err(format!(
-                        "{} start failed ({}) and PointerEvent fallback failed ({})",
-                        failed_backend_name, start_err, pointer_err
-                    ));
-                }
-            }
-        } else {
-            return Err(start_err);
-        }
-    }
-
-    // Start event emitter thread if not running
     if !state.emitter_running {
         if let Some(app) = state.app_handle.clone() {
             state.emitter_running = true;
             let state_clone = get_tablet_state();
-            // Clone Arc handles for the emitter thread
-            let pressure_smoother = state.pressure_smoother.clone();
-            let is_drawing = state.is_drawing.clone();
 
             std::thread::spawn(move || {
                 tracing::info!("[Tablet] Event emitter thread started");
                 let mut events = Vec::with_capacity(64);
-                let mut events_to_emit = Vec::with_capacity(64);
 
                 loop {
-                    // Step 1: Quickly poll events while holding the lock (minimize lock time)
                     let should_continue = {
                         let Ok(mut state) = state_clone.try_lock() else {
-                            // Lock is held by another thread, skip this iteration
                             std::thread::sleep(std::time::Duration::from_millis(1));
                             continue;
                         };
 
                         if !state.emitter_running {
-                            break;
+                            false
+                        } else {
+                            if let Some(backend) = state.active_backend() {
+                                backend.poll(&mut events);
+                            }
+                            true
                         }
-
-                        if let Some(backend) = state.active_backend() {
-                            backend.poll(&mut events);
-                        }
-                        true
                     };
-                    // Lock is released here
 
                     if !should_continue {
                         break;
                     }
 
-                    // Step 2: Process and emit events OUTSIDE the lock
                     if !events.is_empty() {
-                        // Process events with pressure smoothing
                         for event in events.drain(..) {
-                            let processed_event = match event {
-                                TabletEventV2::Input(mut sample) => {
-                                    let was_drawing =
-                                        is_drawing.load(std::sync::atomic::Ordering::Relaxed);
-                                    let now_drawing = sample.pressure > 0.0;
-
-                                    // Apply pressure smoothing when drawing
-                                    // Note: Pressure curve is applied in frontend, not here
-                                    if now_drawing {
-                                        if let Ok(mut smoother) = pressure_smoother.lock() {
-                                            if !was_drawing {
-                                                smoother.reset();
-                                            }
-                                            sample.pressure = smoother.smooth(sample.pressure);
-                                        }
-                                    }
-
-                                    is_drawing
-                                        .store(now_drawing, std::sync::atomic::Ordering::Relaxed);
-                                    TabletEventV2::Input(sample)
-                                }
-                                TabletEventV2::ProximityLeave => {
-                                    // Reset smoother when pen leaves
-                                    is_drawing.store(false, std::sync::atomic::Ordering::Relaxed);
-                                    if let Ok(mut smoother) = pressure_smoother.lock() {
-                                        smoother.reset();
-                                    }
-                                    TabletEventV2::ProximityLeave
-                                }
-                                other => other,
-                            };
-                            events_to_emit.push(processed_event);
-                        }
-
-                        // Emit processed events
-                        for event in events_to_emit.drain(..) {
-                            if let Err(e) = app.emit("tablet-event-v2", &event) {
-                                tracing::error!("[Tablet] Failed to emit V2 event: {}", e);
-                            }
-                            if let Err(e) = app.emit("tablet-event", &event) {
-                                tracing::error!("[Tablet] Failed to emit event: {}", e);
+                            if let Err(e) = app.emit("tablet-event-v3", &event) {
+                                tracing::error!("[Tablet] Failed to emit V3 event: {}", e);
                             }
                         }
                     }
@@ -949,6 +559,19 @@ pub fn get_tablet_status() -> Result<TabletStatusResponse, String> {
     Ok(current_tablet_status_response(&mut state))
 }
 
+/// Toggle WinTab backend trace logs in Rust terminal output.
+#[tauri::command]
+pub fn set_wintab_trace_enabled(enabled: bool) -> Result<bool, String> {
+    crate::input::wintab_backend::set_wintab_trace_enabled(enabled);
+    Ok(crate::input::wintab_backend::is_wintab_trace_enabled())
+}
+
+/// Query current WinTab backend trace toggle state.
+#[tauri::command]
+pub fn get_wintab_trace_enabled() -> Result<bool, String> {
+    Ok(crate::input::wintab_backend::is_wintab_trace_enabled())
+}
+
 /// Push pointer event from frontend (for PointerEvent backend)
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -985,7 +608,6 @@ pub fn push_pointer_event(payload: PointerEventPayload) -> Result<(), String> {
 
     Ok(())
 }
-
 // ============================================================================
 // Soft Brush SIMD Rendering
 // ============================================================================
@@ -1737,10 +1359,6 @@ mod tests {
                 normalize_requested_backend_for_platform(BackendType::PointerEvent),
                 BackendType::PointerEvent
             );
-            assert_eq!(
-                normalize_requested_backend_for_platform(BackendType::Auto),
-                BackendType::Auto
-            );
         }
 
         #[cfg(target_os = "macos")]
@@ -1753,10 +1371,6 @@ mod tests {
                 normalize_requested_backend_for_platform(BackendType::PointerEvent),
                 BackendType::PointerEvent
             );
-            assert_eq!(
-                normalize_requested_backend_for_platform(BackendType::Auto),
-                BackendType::Auto
-            );
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -1767,10 +1381,6 @@ mod tests {
             );
             assert_eq!(
                 normalize_requested_backend_for_platform(BackendType::MacNative),
-                BackendType::PointerEvent
-            );
-            assert_eq!(
-                normalize_requested_backend_for_platform(BackendType::Auto),
                 BackendType::PointerEvent
             );
             assert_eq!(

@@ -29,14 +29,12 @@ export interface DiagnosticAPI {
   onPointBuffered: () => void;
   onPointDropped: () => void;
   onStrokeEnd: () => void;
-  onStartPressureFallback: () => void;
 }
 
 export interface DiagnosticHooks extends DiagnosticAPI {
   strokes: StrokeTelemetry[];
   currentStroke: StrokeTelemetry | null;
   anomalies: Anomaly[];
-  startPressureFallbackCount: number;
   cleanup: () => void;
   reset: () => void;
 }
@@ -54,7 +52,6 @@ export function installDiagnosticHooks(): DiagnosticHooks {
     strokes: [],
     currentStroke: null,
     anomalies: [],
-    startPressureFallbackCount: 0,
 
     onStrokeStart() {
       const stroke: StrokeTelemetry = {
@@ -125,10 +122,6 @@ export function installDiagnosticHooks(): DiagnosticHooks {
       }
     },
 
-    onStartPressureFallback() {
-      hooks.startPressureFallbackCount += 1;
-    },
-
     cleanup() {
       const win = window as Window & { __strokeDiagnostics?: DiagnosticHooks };
       delete win.__strokeDiagnostics;
@@ -138,7 +131,6 @@ export function installDiagnosticHooks(): DiagnosticHooks {
       hooks.strokes = [];
       hooks.currentStroke = null;
       hooks.anomalies = [];
-      hooks.startPressureFallbackCount = 0;
       strokeCounter = 0;
     },
   };
@@ -183,7 +175,6 @@ export function getTestReport(hooks: DiagnosticHooks): string {
     `Total Dropped Points: ${totalDropped}`,
     `Avg Starting Duration: ${avgStarting.toFixed(1)}ms`,
     `Max Starting Duration: ${maxStarting.toFixed(1)}ms`,
-    `Start Pressure Fallbacks: ${hooks.startPressureFallbackCount}`,
     `Anomalies: ${hooks.anomalies.length}`,
   ];
 

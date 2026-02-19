@@ -27,17 +27,7 @@ import {
   type M4ParityGateOptions,
   type M4ParityGateResult,
 } from '@/test/m4FeatureParityGate';
-import type { KritaPressureGateResult } from '@/engine/kritaPressure/testing/gateRunner';
-import type {
-  KritaPressurePipelineMode,
-  KritaPressureShadowDiffSnapshot,
-} from '@/engine/kritaPressure/runtime/pipelineRuntime';
-import {
-  getKritaPressurePipelineMode,
-  updateKritaPressurePipelineMode,
-  getKritaPressureShadowDiffSnapshot,
-  resetKritaPressureShadowDiff,
-} from '@/engine/kritaPressure/runtime/pipelineRuntime';
+import type { KritaPressureGateResult } from '@/engine/kritaParityInput/testing/gateRunner';
 import type {
   FixedCaptureSource,
   FixedStrokeCaptureLoadResult,
@@ -46,6 +36,11 @@ import type {
 import type { StrokeCaptureData, StrokeReplayOptions } from '@/test/StrokeCapture';
 import { appDotStorageKey, appHyphenStorageKey } from '@/constants/appMeta';
 import type { StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
+import {
+  isTabletInputTraceEnabled,
+  logTabletTrace,
+  setTabletInputTraceEnabled,
+} from '@/utils/tabletTrace';
 import {
   GPUContext,
   type GpuBrushCommitReadbackMode,
@@ -319,14 +314,11 @@ export function useGlobalExports({
         baselineVersion?: string;
         thresholdVersion?: string;
       }) => Promise<KritaPressureGateResult>;
-      __kritaPressurePipelineModeGet?: () => KritaPressurePipelineMode;
-      __kritaPressurePipelineModeSet?: (
-        patch?: Partial<KritaPressurePipelineMode>
-      ) => KritaPressurePipelineMode;
-      __kritaPressureShadowDiffGet?: (options?: {
-        recentLimit?: number;
-      }) => KritaPressureShadowDiffSnapshot;
-      __kritaPressureShadowDiffReset?: () => void;
+      __tabletInputTraceGet?: () => boolean;
+      __tabletInputTraceSet?: (
+        enabled: boolean
+      ) => Promise<{ frontendEnabled: boolean; backendEnabled: boolean }>;
+      __tabletInputTraceEnabled?: boolean;
     };
 
     const isTauriRuntime = '__TAURI_INTERNALS__' in window;
@@ -364,6 +356,30 @@ export function useGlobalExports({
       win.__canvasMergeAllLayers = handleMergeAllLayers;
     }
     win.__canvasResize = handleResizeCanvas;
+    win.__tabletInputTraceGet = () => isTabletInputTraceEnabled();
+    win.__tabletInputTraceSet = async (enabled) => {
+      const requestedEnabled = !!enabled;
+      setTabletInputTraceEnabled(requestedEnabled);
+      let backendEnabled = false;
+      try {
+        backendEnabled = await invoke<boolean>('set_wintab_trace_enabled', {
+          enabled: requestedEnabled,
+        });
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[TabletTrace] failed to toggle backend trace:', error);
+      }
+      const frontendEnabled = isTabletInputTraceEnabled();
+      const result = { frontendEnabled, backendEnabled };
+      logTabletTrace('frontend.trace_toggle', {
+        requested_enabled: requestedEnabled,
+        frontend_enabled: frontendEnabled,
+        backend_enabled: backendEnabled,
+      });
+      // eslint-disable-next-line no-console
+      console.info('[TabletTrace] toggle result', result);
+      return result;
+    };
     win.__gpuM0Baseline = async () => {
       const device = GPUContext.getInstance().device;
       if (!device) {
@@ -884,19 +900,11 @@ export function useGlobalExports({
         missingCaptureError: 'Missing capture input for krita pressure full gate',
       });
 
-      const { runKritaPressureGate } = await import('@/engine/kritaPressure/testing/gateRunner');
+      const { runKritaPressureGate } = await import('@/engine/kritaParityInput/testing/gateRunner');
       return runKritaPressureGate(resolvedCapture.capture, {
         baseline_version: resolvedOptions.baselineVersion ?? 'krita-5.2-default-wintab',
         threshold_version: resolvedOptions.thresholdVersion ?? 'krita-pressure-thresholds.v1',
       });
-    };
-
-    win.__kritaPressurePipelineModeGet = () => getKritaPressurePipelineMode();
-    win.__kritaPressurePipelineModeSet = (patch) => updateKritaPressurePipelineMode(patch ?? {});
-    win.__kritaPressureShadowDiffGet = (options) =>
-      getKritaPressureShadowDiffSnapshot({ recentLimit: options?.recentLimit });
-    win.__kritaPressureShadowDiffReset = () => {
-      resetKritaPressureShadowDiff();
     };
 
     async function tryGpuLayerExportDataUrl(layerId: string): Promise<string | undefined> {
@@ -1249,10 +1257,8 @@ export function useGlobalExports({
       delete win.__strokeCaptureLoadFixed;
       delete win.__gpuM4ParityGate;
       delete win.__kritaPressureFullGate;
-      delete win.__kritaPressurePipelineModeGet;
-      delete win.__kritaPressurePipelineModeSet;
-      delete win.__kritaPressureShadowDiffGet;
-      delete win.__kritaPressureShadowDiffReset;
+      delete win.__tabletInputTraceGet;
+      delete win.__tabletInputTraceSet;
     };
   }, [
     layerRendererRef,

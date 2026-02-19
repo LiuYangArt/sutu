@@ -72,7 +72,7 @@ export interface AppearanceSettings {
 }
 
 export interface TabletSettings {
-  backend: 'auto' | 'wintab' | 'macnative' | 'pointerevent';
+  backend: 'wintab' | 'macnative' | 'pointerevent';
   backendMigratedToMacNativeAt: string | null;
   pollingRate: number;
   pressureCurve: 'linear' | 'soft' | 'hard' | 'scurve';
@@ -242,11 +242,14 @@ function resolveDefaultTabletBackend(): TabletSettings['backend'] {
 }
 
 function parseTabletBackend(value: unknown): TabletSettings['backend'] | null {
-  if (value === 'auto') return 'auto';
   if (value === 'wintab') return 'wintab';
   if (value === 'macnative') return 'macnative';
   if (value === 'pointerevent') return 'pointerevent';
   return null;
+}
+
+function isLegacyAutoTabletBackend(value: unknown): boolean {
+  return value === 'auto';
 }
 
 function normalizeTabletBackend(value: unknown): TabletSettings['backend'] {
@@ -867,6 +870,7 @@ export const useSettingsStore = create<SettingsState>()(
         if (fileExists) {
           const content = await readTextFile(SETTINGS_FILE, { baseDir: BaseDirectory.AppConfig });
           const loaded = JSON.parse(content) as Partial<PersistedSettings>;
+          let needsSaveAfterMigration = false;
 
           set((state) => {
             // Merge with defaults to handle missing fields
@@ -875,6 +879,8 @@ export const useSettingsStore = create<SettingsState>()(
             }
             if (loaded.tablet) {
               const mergedTablet = { ...defaultSettings.tablet, ...loaded.tablet };
+              const rawBackend = (loaded.tablet as Partial<Record<'backend', unknown>>).backend;
+              const hasLegacyAutoBackend = isLegacyAutoTabletBackend(rawBackend);
               const shouldMigrateToMacNative = shouldAutoMigrateMacBackend(loaded.tablet);
               const backendMigratedToMacNativeAt = shouldMigrateToMacNative
                 ? new Date().toISOString()
@@ -882,6 +888,9 @@ export const useSettingsStore = create<SettingsState>()(
               const normalizedBackend = shouldMigrateToMacNative
                 ? 'macnative'
                 : normalizeTabletBackend(mergedTablet.backend);
+              if (hasLegacyAutoBackend || shouldMigrateToMacNative) {
+                needsSaveAfterMigration = true;
+              }
               const normalizedPressureCurve = normalizeTabletPressureCurve(
                 mergedTablet.pressureCurve
               );
@@ -947,6 +956,10 @@ export const useSettingsStore = create<SettingsState>()(
             );
             state.isLoaded = true;
           });
+
+          if (needsSaveAfterMigration) {
+            await get()._saveSettings();
+          }
         } else {
           // No settings file, use defaults and save
           set({ isLoaded: true });

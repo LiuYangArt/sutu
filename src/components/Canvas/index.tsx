@@ -221,25 +221,11 @@ declare global {
       blocking_failures: string[];
       run_meta: { run_id: string };
     }>;
-    __kritaPressurePipelineModeGet?: () => {
-      pressurePipelineV2Primary: boolean;
-      pressurePipelineV2Shadow: boolean;
-      stageDiffLogEnabled: boolean;
-      maxRecentEntries: number;
-    };
-    __kritaPressurePipelineModeSet?: (patch?: {
-      pressurePipelineV2Primary?: boolean;
-      pressurePipelineV2Shadow?: boolean;
-      stageDiffLogEnabled?: boolean;
-      maxRecentEntries?: number;
-    }) => {
-      pressurePipelineV2Primary: boolean;
-      pressurePipelineV2Shadow: boolean;
-      stageDiffLogEnabled: boolean;
-      maxRecentEntries: number;
-    };
-    __kritaPressureShadowDiffGet?: (options?: { recentLimit?: number }) => unknown;
-    __kritaPressureShadowDiffReset?: () => void;
+    __tabletInputTraceGet?: () => boolean;
+    __tabletInputTraceSet?: (
+      enabled: boolean
+    ) => Promise<{ frontendEnabled: boolean; backendEnabled: boolean }>;
+    __tabletInputTraceEnabled?: boolean;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
     __brushTailTaperDebug?: () => StrokeFinalizeDebugSnapshot | null;
@@ -260,8 +246,6 @@ declare global {
       onStrokeStart: () => void;
       onStrokeEnd: () => void;
       onStateChange: (state: string) => void;
-      onStartPressureFallback: () => void;
-      startPressureFallbackCount?: number;
     };
   }
 }

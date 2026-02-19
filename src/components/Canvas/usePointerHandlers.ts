@@ -4,8 +4,15 @@ import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
-import { getEffectiveInputData, isNativeTabletStreamingState } from './inputUtils';
+import {
+  isNativeTabletStreamingState,
+  mapNativeWindowPxToCanvasPoint,
+  parseNativeTabletSample,
+  parsePointerEventSample,
+  resolveNativeStrokePoints,
+} from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
+import { logTabletTrace } from '@/utils/tabletTrace';
 
 function pointerEventToCanvasPoint(
   canvas: HTMLCanvasElement,
@@ -29,11 +36,6 @@ interface QueuedPoint {
   deviceTimeUs: number;
   pointIndex: number;
 }
-
-type QueuedPointPhase = QueuedPoint['phase'];
-const MAX_NATIVE_RECENT_POINTS = 64;
-const MAX_NATIVE_RECENT_WINDOW_US = 120_000;
-const MAX_NATIVE_CONSECUTIVE_GAP_US = 40_000;
 
 interface UsePointerHandlersParams {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -126,60 +128,13 @@ function isEventInsideContainer(container: HTMLDivElement | null, event: Pointer
   return target instanceof Node ? container.contains(target) : false;
 }
 
-function normalizeQueuedPhase(phase: unknown): QueuedPointPhase {
-  if (phase === 'down' || phase === 'move' || phase === 'up' || phase === 'hover') {
-    return phase;
-  }
-  return 'move';
-}
-
-function resolveNativePointTimeUs(point: TabletInputPoint): number {
-  if (Number.isFinite(point.host_time_us)) {
-    return Math.max(0, Math.round(point.host_time_us));
-  }
-  if (Number.isFinite(point.timestamp_ms)) {
-    return Math.max(0, Math.round(point.timestamp_ms * 1000));
-  }
-  return 0;
-}
-
-function selectRecentNativeStrokePoints(points: TabletInputPoint[]): TabletInputPoint[] {
-  if (points.length === 0) return [];
-
-  let contactStart = 0;
-  for (let i = points.length - 1; i >= 0; i -= 1) {
-    const phase = normalizeQueuedPhase((points[i] as { phase?: unknown }).phase);
-    if (phase === 'hover' || phase === 'up') {
-      contactStart = i + 1;
-      break;
-    }
-  }
-
-  const contactSlice = points.slice(contactStart);
-  const source = contactSlice.length > 0 ? contactSlice : points;
-  if (source.length === 0) return [];
-
-  const tailTimeUs = resolveNativePointTimeUs(source[source.length - 1]!);
-  let start = source.length - 1;
-  for (let i = source.length - 2; i >= 0; i -= 1) {
-    const current = source[i]!;
-    const next = source[i + 1]!;
-    const currentTimeUs = resolveNativePointTimeUs(current);
-    const nextTimeUs = resolveNativePointTimeUs(next);
-    if (tailTimeUs - currentTimeUs > MAX_NATIVE_RECENT_WINDOW_US) {
-      break;
-    }
-    if (nextTimeUs > currentTimeUs && nextTimeUs - currentTimeUs > MAX_NATIVE_CONSECUTIVE_GAP_US) {
-      break;
-    }
-    start = i;
-  }
-
-  const recent = source.slice(start);
-  if (recent.length <= MAX_NATIVE_RECENT_POINTS) {
-    return recent;
-  }
-  return recent.slice(recent.length - MAX_NATIVE_RECENT_POINTS);
+function filterNativePointsByPointerId(
+  points: TabletInputPoint[],
+  pointerId: number | null
+): TabletInputPoint[] {
+  if (pointerId === null) return points;
+  const filtered = points.filter((point) => point.pointer_id === pointerId);
+  return filtered.length > 0 ? filtered : points;
 }
 
 export function usePointerHandlers({
@@ -337,6 +292,21 @@ export function usePointerHandlers({
         return;
       }
 
+      if (activePointerId !== null || isDrawingRef.current) {
+        logTabletTrace('frontend.pointermove.dom', {
+          pointer_id: nativeEvent.pointerId,
+          active_pointer_id: activePointerId,
+          client_x: nativeEvent.clientX,
+          client_y: nativeEvent.clientY,
+          pressure: nativeEvent.pressure,
+          tilt_x_deg: nativeEvent.tiltX,
+          tilt_y_deg: nativeEvent.tiltY,
+          twist_deg: nativeEvent.twist,
+          event_type: nativeEvent.type,
+          is_trusted: nativeEvent.isTrusted,
+        });
+      }
+
       const sampledEvents = nativeEvent.getCoalescedEvents?.();
       const coalescedEvents =
         sampledEvents && sampledEvents.length > 0 ? sampledEvents : [nativeEvent];
@@ -411,71 +381,119 @@ export function usePointerHandlers({
       const tabletState = useTabletStore.getState();
       const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
       const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
-      const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
-        ? readPointBufferSince(nativeSeqCursorRef.current)
-        : { points: [], nextSeq: nativeSeqCursorRef.current };
       if (shouldUseNativeBackend) {
+        const { points: bufferedPointsRaw, nextSeq } = readPointBufferSince(
+          nativeSeqCursorRef.current
+        );
         nativeSeqCursorRef.current = nextSeq;
+        const resolvedNativePoints = filterNativePointsByPointerId(
+          bufferedPointsRaw,
+          activePointerId
+        );
+        if (resolvedNativePoints.length === 0) {
+          logTabletTrace('frontend.pointermove.native_empty', {
+            pointer_id: nativeEvent.pointerId,
+            active_pointer_id: activePointerId,
+            read_cursor_seq: nativeSeqCursorRef.current,
+          });
+          return;
+        }
+
+        for (const nativePoint of resolvedNativePoints) {
+          const normalized = parseNativeTabletSample(nativePoint);
+          if (normalized.phase === 'hover') continue;
+
+          const mapped = mapNativeWindowPxToCanvasPoint(
+            canvas,
+            rect,
+            normalized.xPx,
+            normalized.yPx
+          );
+          const idx = pointIndexRef.current++;
+          latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
+          const queuedPoint: QueuedPoint = {
+            x: mapped.x,
+            y: mapped.y,
+            pressure: normalized.pressure,
+            tiltX: normalized.tiltX,
+            tiltY: normalized.tiltY,
+            rotation: normalized.rotation,
+            timestampMs: normalized.timestampMs,
+            source: normalized.source,
+            phase: normalized.phase,
+            hostTimeUs: normalized.hostTimeUs,
+            deviceTimeUs: normalized.deviceTimeUs,
+            pointIndex: idx,
+          };
+
+          logTabletTrace('frontend.pointermove.native_consume', {
+            pointer_id: nativeEvent.pointerId,
+            native_pointer_id: nativePoint.pointer_id,
+            seq: nativePoint.seq,
+            stroke_id: nativePoint.stroke_id,
+            phase: normalized.phase,
+            source: normalized.source,
+            x_px: normalized.xPx,
+            y_px: normalized.yPx,
+            mapped_canvas_x: mapped.x,
+            mapped_canvas_y: mapped.y,
+            pressure_0_1: normalized.pressure,
+            host_time_us: normalized.hostTimeUs,
+            device_time_us: normalized.deviceTimeUs,
+          });
+
+          const state = strokeStateRef.current;
+          if (state === 'starting') {
+            pendingPointsRef.current.push(queuedPoint);
+            window.__strokeDiagnostics?.onPointBuffered();
+          } else if (state === 'active') {
+            inputQueueRef.current.push(queuedPoint);
+            window.__strokeDiagnostics?.onPointBuffered();
+          }
+        }
+        return;
       }
-      const bufferedPoints = shouldUseNativeBackend
-        ? selectRecentNativeStrokePoints(bufferedPointsRaw)
-        : bufferedPointsRaw;
-      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
 
       for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
         const evt = coalescedEvents[eventIndex]!;
-        const nativePoint =
-          shouldUseNativeBackend && bufferedPoints.length > 0
-            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
-              bufferedPoints[bufferedPoints.length - 1] ??
-              null)
-            : null;
         const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
-        const { pressure, tiltX, tiltY, rotation, timestampMs, source, hostTimeUs, deviceTimeUs } =
-          getEffectiveInputData(
-            evt,
-            shouldUseNativeBackend,
-            bufferedPoints,
-            tabletState.currentPoint,
-            nativeEvent,
-            nativePoint
-          );
-
+        const normalized = parsePointerEventSample(evt);
         const idx = pointIndexRef.current++;
         latencyProfilerRef.current.markInputReceived(idx, evt);
+        const queuedPoint: QueuedPoint = {
+          x: canvasX,
+          y: canvasY,
+          pressure: normalized.pressure,
+          tiltX: normalized.tiltX,
+          tiltY: normalized.tiltY,
+          rotation: normalized.rotation,
+          timestampMs: normalized.timestampMs,
+          source: normalized.source,
+          phase: normalized.phase,
+          hostTimeUs: normalized.hostTimeUs,
+          deviceTimeUs: normalized.deviceTimeUs,
+          pointIndex: idx,
+        };
+
+        logTabletTrace('frontend.pointermove.pointerevent_consume', {
+          pointer_id: evt.pointerId,
+          phase: normalized.phase,
+          source: normalized.source,
+          client_x: evt.clientX,
+          client_y: evt.clientY,
+          mapped_canvas_x: canvasX,
+          mapped_canvas_y: canvasY,
+          pressure_0_1: normalized.pressure,
+          host_time_us: normalized.hostTimeUs,
+          device_time_us: normalized.deviceTimeUs,
+        });
 
         const state = strokeStateRef.current;
         if (state === 'starting') {
-          pendingPointsRef.current.push({
-            x: canvasX,
-            y: canvasY,
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            source,
-            phase: 'move',
-            hostTimeUs,
-            deviceTimeUs,
-            pointIndex: idx,
-          });
+          pendingPointsRef.current.push(queuedPoint);
           window.__strokeDiagnostics?.onPointBuffered();
         } else if (state === 'active') {
-          inputQueueRef.current.push({
-            x: canvasX,
-            y: canvasY,
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            source,
-            phase: 'move',
-            hostTimeUs,
-            deviceTimeUs,
-            pointIndex: idx,
-          });
+          inputQueueRef.current.push(queuedPoint);
           window.__strokeDiagnostics?.onPointBuffered();
         }
       }
@@ -510,6 +528,19 @@ export function usePointerHandlers({
       if (activePointerId !== null && nativeEvent.pointerId !== activePointerId) {
         return;
       }
+
+      logTabletTrace('frontend.pointerup.dom', {
+        pointer_id: nativeEvent.pointerId,
+        active_pointer_id: activePointerId,
+        client_x: nativeEvent.clientX,
+        client_y: nativeEvent.clientY,
+        pressure: nativeEvent.pressure,
+        tilt_x_deg: nativeEvent.tiltX,
+        tilt_y_deg: nativeEvent.tiltY,
+        twist_deg: nativeEvent.twist,
+        event_type: nativeEvent.type,
+        is_trusted: nativeEvent.isTrusted,
+      });
 
       const withCanvasPoint = (handler: (canvasX: number, canvasY: number) => void): void => {
         const canvas = canvasRef.current;
@@ -559,51 +590,89 @@ export function usePointerHandlers({
           const tabletState = useTabletStore.getState();
           const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
           const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
-          const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
-            ? readPointBufferSince(nativeSeqCursorRef.current)
-            : { points: [], nextSeq: nativeSeqCursorRef.current };
-          if (shouldUseNativeBackend) {
-            nativeSeqCursorRef.current = nextSeq;
-          }
-          const bufferedPoints = shouldUseNativeBackend
-            ? selectRecentNativeStrokePoints(bufferedPointsRaw)
-            : bufferedPointsRaw;
           const queuedTailPoints: QueuedPoint[] = [];
-          const nativePoint = bufferedPoints[bufferedPoints.length - 1] ?? null;
-          const {
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            source,
-            hostTimeUs,
-            deviceTimeUs,
-          } = getEffectiveInputData(
-            nativeEvent,
-            shouldUseNativeBackend,
-            bufferedPoints,
-            tabletState.currentPoint,
-            nativeEvent,
-            nativePoint
-          );
-          const fallbackCanvasPoint = pointerEventToCanvasPoint(canvas, nativeEvent, rect);
-          const idx = pointIndexRef.current++;
-          latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
-          queuedTailPoints.push({
-            x: fallbackCanvasPoint.x,
-            y: fallbackCanvasPoint.y,
-            pressure,
-            tiltX,
-            tiltY,
-            rotation,
-            timestampMs,
-            source,
-            phase: 'up',
-            hostTimeUs,
-            deviceTimeUs,
-            pointIndex: idx,
-          });
+          if (shouldUseNativeBackend) {
+            const { points: bufferedPointsRaw, nextSeq } = readPointBufferSince(
+              nativeSeqCursorRef.current
+            );
+            nativeSeqCursorRef.current = nextSeq;
+            const resolvedNativePoints = filterNativePointsByPointerId(
+              bufferedPointsRaw,
+              activePointerId
+            );
+            for (const nativePoint of resolvedNativePoints) {
+              const normalized = parseNativeTabletSample(nativePoint);
+              if (normalized.phase === 'hover') continue;
+              const mapped = mapNativeWindowPxToCanvasPoint(
+                canvas,
+                rect,
+                normalized.xPx,
+                normalized.yPx
+              );
+              const idx = pointIndexRef.current++;
+              latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
+              queuedTailPoints.push({
+                x: mapped.x,
+                y: mapped.y,
+                pressure: normalized.pressure,
+                tiltX: normalized.tiltX,
+                tiltY: normalized.tiltY,
+                rotation: normalized.rotation,
+                timestampMs: normalized.timestampMs,
+                source: normalized.source,
+                phase: normalized.phase,
+                hostTimeUs: normalized.hostTimeUs,
+                deviceTimeUs: normalized.deviceTimeUs,
+                pointIndex: idx,
+              });
+              logTabletTrace('frontend.pointerup.native_consume', {
+                pointer_id: nativeEvent.pointerId,
+                native_pointer_id: nativePoint.pointer_id,
+                seq: nativePoint.seq,
+                stroke_id: nativePoint.stroke_id,
+                phase: normalized.phase,
+                source: normalized.source,
+                x_px: normalized.xPx,
+                y_px: normalized.yPx,
+                mapped_canvas_x: mapped.x,
+                mapped_canvas_y: mapped.y,
+                pressure_0_1: normalized.pressure,
+                host_time_us: normalized.hostTimeUs,
+                device_time_us: normalized.deviceTimeUs,
+              });
+            }
+          } else {
+            const normalized = parsePointerEventSample(nativeEvent);
+            const mapped = pointerEventToCanvasPoint(canvas, nativeEvent, rect);
+            const idx = pointIndexRef.current++;
+            latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
+            queuedTailPoints.push({
+              x: mapped.x,
+              y: mapped.y,
+              pressure: normalized.pressure,
+              tiltX: normalized.tiltX,
+              tiltY: normalized.tiltY,
+              rotation: normalized.rotation,
+              timestampMs: normalized.timestampMs,
+              source: normalized.source,
+              phase: 'up',
+              hostTimeUs: normalized.hostTimeUs,
+              deviceTimeUs: normalized.deviceTimeUs,
+              pointIndex: idx,
+            });
+            logTabletTrace('frontend.pointerup.pointerevent_consume', {
+              pointer_id: nativeEvent.pointerId,
+              phase: 'up',
+              source: normalized.source,
+              client_x: nativeEvent.clientX,
+              client_y: nativeEvent.clientY,
+              mapped_canvas_x: mapped.x,
+              mapped_canvas_y: mapped.y,
+              pressure_0_1: normalized.pressure,
+              host_time_us: normalized.hostTimeUs,
+              device_time_us: normalized.deviceTimeUs,
+            });
+          }
 
           const state = strokeStateRef.current;
           if (state === 'starting') {
@@ -756,60 +825,29 @@ export function usePointerHandlers({
       }
 
       const pe = e.nativeEvent as PointerEvent;
-      let pressure = 0.5;
-      let tiltX = 0;
-      let tiltY = 0;
-      let rotation = 0;
-      let timestampMs = Number.isFinite(pe.timeStamp) ? pe.timeStamp : performance.now();
-      let source: 'wintab' | 'macnative' | 'pointerevent' = 'pointerevent';
-      let hostTimeUs = Math.round(timestampMs * 1000);
-      let deviceTimeUs = 0;
-      if (pe.pointerType === 'pen') {
-        pressure = pe.pressure > 0 ? pe.pressure : 0;
-      } else if (pe.pressure > 0) {
-        pressure = pe.pressure;
-      }
-      if (isStrokeTool(currentTool)) {
-        const tabletState = useTabletStore.getState();
-        const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
-        const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
-        const { points: bufferedPointsRaw, nextSeq } = shouldUseNativeBackend
-          ? readPointBufferSince(nativeSeqCursorRef.current)
-          : { points: [], nextSeq: nativeSeqCursorRef.current };
-        if (shouldUseNativeBackend) {
-          nativeSeqCursorRef.current = nextSeq;
-        }
-        const bufferedPoints = shouldUseNativeBackend
-          ? selectRecentNativeStrokePoints(bufferedPointsRaw)
-          : bufferedPointsRaw;
-        const preferredStartPoint =
-          bufferedPoints.find(
-            (point) => normalizeQueuedPhase((point as { phase?: unknown }).phase) !== 'hover'
-          ) ??
-          bufferedPoints[bufferedPoints.length - 1] ??
-          null;
-        const effectiveInput = getEffectiveInputData(
-          pe,
-          shouldUseNativeBackend,
-          bufferedPoints,
-          tabletState.currentPoint,
-          pe,
-          preferredStartPoint
-        );
-        pressure = effectiveInput.pressure;
-        tiltX = effectiveInput.tiltX;
-        tiltY = effectiveInput.tiltY;
-        rotation = effectiveInput.rotation;
-        timestampMs = effectiveInput.timestampMs;
-        source = effectiveInput.source;
-        hostTimeUs = effectiveInput.hostTimeUs;
-        deviceTimeUs = effectiveInput.deviceTimeUs;
-      }
-
       const canvas = canvasRef.current;
       if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const pointerCanvasPoint = pointerEventToCanvasPoint(canvas, pe, rect);
 
-      const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, e);
+      const { x: canvasX, y: canvasY } = pointerCanvasPoint;
+      const tabletStateSnapshot = useTabletStore.getState();
+      logTabletTrace('frontend.pointerdown.dom', {
+        pointer_id: pe.pointerId,
+        client_x: pe.clientX,
+        client_y: pe.clientY,
+        mapped_canvas_x: canvasX,
+        mapped_canvas_y: canvasY,
+        pressure: pe.pressure,
+        tilt_x_deg: pe.tiltX,
+        tilt_y_deg: pe.tiltY,
+        twist_deg: pe.twist,
+        event_type: pe.type,
+        is_trusted: pe.isTrusted,
+        backend: tabletStateSnapshot.backend,
+        active_backend: tabletStateSnapshot.activeBackend,
+        is_streaming: tabletStateSnapshot.isStreaming,
+      });
 
       updateShiftLineCursor(canvasX, canvasY);
 
@@ -845,10 +883,105 @@ export function usePointerHandlers({
       const activeLayer = layers.find((l) => l.id === activeLayerId);
       if (!activeLayerId || !activeLayer?.visible) return;
 
+      const tabletState = tabletStateSnapshot;
+      const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
+      const shouldUseNativeBackend =
+        isStrokeTool(currentTool) && isNativeBackendActive && pe.isTrusted;
+      const strokeSeedPoints: Array<Omit<QueuedPoint, 'pointIndex'>> = [];
+      if (isStrokeTool(currentTool)) {
+        if (shouldUseNativeBackend) {
+          const { points: bufferedPointsRaw, nextSeq } = readPointBufferSince(
+            nativeSeqCursorRef.current
+          );
+          nativeSeqCursorRef.current = nextSeq;
+          const resolvedNativePoints = filterNativePointsByPointerId(
+            resolveNativeStrokePoints(bufferedPointsRaw, tabletState.currentPoint),
+            pe.pointerId
+          );
+          for (const nativePoint of resolvedNativePoints) {
+            const normalized = parseNativeTabletSample(nativePoint);
+            if (normalized.phase === 'hover') continue;
+            const mapped = mapNativeWindowPxToCanvasPoint(
+              canvas,
+              rect,
+              normalized.xPx,
+              normalized.yPx
+            );
+            strokeSeedPoints.push({
+              x: mapped.x,
+              y: mapped.y,
+              pressure: normalized.pressure,
+              tiltX: normalized.tiltX,
+              tiltY: normalized.tiltY,
+              rotation: normalized.rotation,
+              timestampMs: normalized.timestampMs,
+              source: normalized.source,
+              phase: normalized.phase,
+              hostTimeUs: normalized.hostTimeUs,
+              deviceTimeUs: normalized.deviceTimeUs,
+            });
+            logTabletTrace('frontend.pointerdown.native_seed', {
+              pointer_id: pe.pointerId,
+              native_pointer_id: nativePoint.pointer_id,
+              seq: nativePoint.seq,
+              stroke_id: nativePoint.stroke_id,
+              phase: normalized.phase,
+              source: normalized.source,
+              x_px: normalized.xPx,
+              y_px: normalized.yPx,
+              mapped_canvas_x: mapped.x,
+              mapped_canvas_y: mapped.y,
+              pressure_0_1: normalized.pressure,
+              host_time_us: normalized.hostTimeUs,
+              device_time_us: normalized.deviceTimeUs,
+            });
+          }
+          if (strokeSeedPoints.length === 0) {
+            logTabletTrace('frontend.pointerdown.native_seed_empty', {
+              pointer_id: pe.pointerId,
+              read_cursor_seq: nativeSeqCursorRef.current,
+              buffered_native_points: bufferedPointsRaw.length,
+              has_current_point: !!tabletState.currentPoint,
+            });
+          }
+        } else {
+          const normalized = parsePointerEventSample(pe);
+          strokeSeedPoints.push({
+            x: pointerCanvasPoint.x,
+            y: pointerCanvasPoint.y,
+            pressure: normalized.pressure,
+            tiltX: normalized.tiltX,
+            tiltY: normalized.tiltY,
+            rotation: normalized.rotation,
+            timestampMs: normalized.timestampMs,
+            source: normalized.source,
+            phase: 'down',
+            hostTimeUs: normalized.hostTimeUs,
+            deviceTimeUs: normalized.deviceTimeUs,
+          });
+          logTabletTrace('frontend.pointerdown.pointerevent_seed', {
+            pointer_id: pe.pointerId,
+            phase: 'down',
+            source: normalized.source,
+            client_x: pe.clientX,
+            client_y: pe.clientY,
+            mapped_canvas_x: pointerCanvasPoint.x,
+            mapped_canvas_y: pointerCanvasPoint.y,
+            pressure_0_1: normalized.pressure,
+            host_time_us: normalized.hostTimeUs,
+            device_time_us: normalized.deviceTimeUs,
+          });
+        }
+      }
+
       let constrainedDown = { x: canvasX, y: canvasY };
       if (isStrokeTool(currentTool)) {
-        lockShiftLine({ x: canvasX, y: canvasY });
-        constrainedDown = constrainShiftLinePoint(canvasX, canvasY);
+        const preferredDownPoint =
+          strokeSeedPoints.find((point) => point.phase === 'down') ?? strokeSeedPoints[0];
+        const downX = preferredDownPoint?.x ?? canvasX;
+        const downY = preferredDownPoint?.y ?? canvasY;
+        lockShiftLine({ x: downX, y: downY });
+        constrainedDown = constrainShiftLinePoint(downX, downY);
         lastInputPosRef.current = { x: constrainedDown.x, y: constrainedDown.y };
       }
 
@@ -862,29 +995,44 @@ export function usePointerHandlers({
       onBeforeCanvasMutation?.();
 
       isDrawingRef.current = true;
-      const strokeSeedPoints: Array<Omit<QueuedPoint, 'pointIndex'>> = [
-        {
-          x: constrainedDown.x,
-          y: constrainedDown.y,
-          pressure,
-          tiltX,
-          tiltY,
-          rotation,
-          timestampMs,
-          source,
-          phase: 'down',
-          hostTimeUs,
-          deviceTimeUs,
-        },
-      ];
+      const fallbackTimestampMs = Number.isFinite(pe.timeStamp) ? pe.timeStamp : performance.now();
+      const constrainedSeedPoints =
+        strokeSeedPoints.length > 0
+          ? strokeSeedPoints.map((point, index) => {
+              if (index === 0) {
+                return { ...point, x: constrainedDown.x, y: constrainedDown.y };
+              }
+              const constrained = constrainShiftLinePoint(point.x, point.y);
+              return {
+                ...point,
+                x: constrained.x,
+                y: constrained.y,
+              };
+            })
+          : shouldUseNativeBackend
+            ? []
+            : [
+                {
+                  x: constrainedDown.x,
+                  y: constrainedDown.y,
+                  pressure: 0,
+                  tiltX: 0,
+                  tiltY: 0,
+                  rotation: 0,
+                  timestampMs: fallbackTimestampMs,
+                  source: 'pointerevent' as const,
+                  phase: 'down' as const,
+                  hostTimeUs: Math.max(0, Math.round(fallbackTimestampMs * 1000)),
+                  deviceTimeUs: 0,
+                },
+              ];
 
       strokeStateRef.current = 'starting';
-      pendingPointsRef.current = strokeSeedPoints.map((point, index) => {
+      pendingPointsRef.current = constrainedSeedPoints.map((point) => {
         const idx = pointIndexRef.current++;
         latencyProfilerRef.current.markInputReceived(idx, pe);
         return {
           ...point,
-          phase: index === 0 ? 'down' : point.phase,
           pointIndex: idx,
         };
       });

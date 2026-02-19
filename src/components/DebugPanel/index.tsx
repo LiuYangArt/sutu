@@ -36,7 +36,7 @@ import {
   type LagometerMonitor,
 } from '@/benchmark';
 import type { GpuBrushCommitMetricsSnapshot, GpuBrushCommitReadbackMode } from '@/gpu';
-import type { KritaPressureGateResult } from '@/engine/kritaPressure/testing/gateRunner';
+import type { KritaPressureGateResult } from '@/engine/kritaParityInput/testing/gateRunner';
 import { runLatencyBenchmark } from '@/utils/LatencyTest';
 import './DebugPanel.css';
 
@@ -1132,7 +1132,6 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         ? finalSnapshot.uncapturedErrors
         : [];
       const deviceLost = Boolean(finalSnapshot.deviceLost);
-      const startPressureFallbackCount = diagnosticsRef.current?.startPressureFallbackCount ?? 0;
 
       const passed = didReset && clearPerRound && uncapturedErrors.length === 0 && !deviceLost;
       const report = [
@@ -1145,7 +1144,6 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         `Session after replay x3: ${sessionId}`,
         `Uncaptured errors: ${uncapturedErrors.length}`,
         `Device lost: ${deviceLost ? 'YES' : 'NO'}`,
-        `startPressureFallbackCount: ${startPressureFallbackCount}`,
         `Auto Gate: ${passed ? 'PASS' : 'FAIL'}`,
         '',
         'Next: run 20 pressure strokes manually, then click "Record 20-Stroke Manual Gate".',
@@ -1887,14 +1885,12 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       manualChecklist.noThinStart &&
       manualChecklist.noMissingOrDisappear &&
       manualChecklist.noTailDab;
-    const startPressureFallbackCount = diagnosticsRef.current?.startPressureFallbackCount ?? 0;
     const passed = checklistPass && uncapturedErrors.length === 0 && !deviceLost;
     const report = [
       `Capture used: ${phase6GateCaptureName || 'N/A'}`,
       `Session: ${snapshot.diagnosticsSessionId ?? '?'}`,
       `Uncaptured errors: ${uncapturedErrors.length}`,
       `Device lost: ${deviceLost ? 'YES' : 'NO'}`,
-      `startPressureFallbackCount: ${startPressureFallbackCount}`,
       `manualChecklist: ${JSON.stringify(manualChecklist)}`,
       `Manual Gate: ${passed ? 'PASS' : 'FAIL'}`,
     ].join('\n');

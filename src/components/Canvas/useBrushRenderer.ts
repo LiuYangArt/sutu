@@ -67,13 +67,11 @@ import {
   createLinearSensorLut,
   createDefaultGlobalPressureLut,
   evaluateDynamicSensor,
-  getKritaPressurePipelineMode,
-  recordKritaPressureShadowDiff,
   sampleGlobalPressureCurve,
   normalizeInputPhase,
   normalizeInputSource,
   type PaintInfo,
-} from '@/engine/kritaPressure';
+} from '@/engine/kritaParityInput';
 
 const MIN_ROUNDNESS = 0.01;
 const STROKE_PROGRESS_DISTANCE_PX = 1200;
@@ -901,8 +899,6 @@ export function useBrushRenderer({
         return;
       }
 
-      const runtimeMode = getKritaPressurePipelineMode();
-      const shouldRunLegacyShadow = runtimeMode.pressurePipelineV2Shadow;
       const finalizeInfos = primaryPipelineRef.current.finalize();
       const finalizeDabs = finalizeInfos.map((info) => ({
         x: info.x_px,
@@ -912,73 +908,10 @@ export function useBrushRenderer({
         normalizedSpeed: info.drawing_speed_01,
         timeUs: info.time_us,
       }));
-      const legacyFinalize = shouldRunLegacyShadow
-        ? legacyPrimaryStamperRef.current.finishStroke(lastSpacingPxRef.current, {
-            ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
-          })
-        : [];
-      const legacySpeed = legacyPrimaryStamperRef.current.getLastNormalizedSpeed();
-      const legacyFinalizeDabs = legacyFinalize.map((dab) => ({
-        x: dab.x,
-        y: dab.y,
-        pressure: dab.pressure,
-        timestampMs: dab.timestampMs,
-        normalizedSpeed: legacySpeed,
-        timeUs:
-          typeof dab.timestampMs === 'number' && Number.isFinite(dab.timestampMs)
-            ? Math.max(0, Math.round(dab.timestampMs * 1000))
-            : undefined,
-      }));
+      legacyPrimaryStamperRef.current.finishStroke(0);
       secondaryStamperRef.current.finishStroke(0);
       if (finalizeDabs.length > 0) {
         renderPrimaryDabs(finalizeDabs, config, lastPointerDynamicsRef.current);
-      }
-
-      if (runtimeMode.pressurePipelineV2Shadow) {
-        const pairingCount = Math.min(finalizeDabs.length, legacyFinalizeDabs.length);
-        const mixDelta =
-          pairingCount > 0
-            ? (() => {
-                let total = 0;
-                for (let i = 0; i < pairingCount; i += 1) {
-                  const p = finalizeDabs[i];
-                  const l = legacyFinalizeDabs[i];
-                  if (!p || !l) continue;
-                  total +=
-                    Math.abs(p.pressure - l.pressure) +
-                    Math.abs((p.timeUs ?? 0) - (l.timeUs ?? 0)) * 0.001;
-                }
-                return total / pairingCount;
-              })()
-            : Math.abs(finalizeDabs.length - legacyFinalizeDabs.length);
-        const finalDelta =
-          pairingCount > 0
-            ? (() => {
-                let total = 0;
-                for (let i = 0; i < pairingCount; i += 1) {
-                  const p = finalizeDabs[i];
-                  const l = legacyFinalizeDabs[i];
-                  if (!p || !l) continue;
-                  total +=
-                    Math.abs(p.x - l.x) + Math.abs(p.y - l.y) + Math.abs(p.pressure - l.pressure);
-                }
-                return total / pairingCount;
-              })()
-            : Math.abs(finalizeDabs.length - legacyFinalizeDabs.length);
-        const finalizeTimestamp =
-          finalizeDabs[finalizeDabs.length - 1]?.timestampMs ??
-          legacyFinalizeDabs[legacyFinalizeDabs.length - 1]?.timestampMs ??
-          (typeof performance !== 'undefined' ? performance.now() : Date.now());
-        recordKritaPressureShadowDiff({
-          timestamp_ms: finalizeTimestamp,
-          source: 'pointerevent',
-          phase: 'up',
-          stage: {
-            sampling: Math.abs(finalizeDabs.length - legacyFinalizeDabs.length),
-            mix: mixDelta,
-            final_dab: finalDelta,
-          },
-        });
       }
 
       lastConfigRef.current = null;
@@ -1020,7 +953,6 @@ export function useBrushRenderer({
         strokeCompositeModeLockedRef.current = true;
       }
 
-      const stamper = legacyPrimaryStamperRef.current;
       const stamperOptions = {
         timestampMs: inputMeta?.timestampMs,
         ...PRESSURE_TAIL_PARITY_STAMPER_OPTIONS,
@@ -1153,20 +1085,6 @@ export function useBrushRenderer({
         timeUs: info.time_us,
       }));
 
-      // Legacy stamper is shadow-only or debug primary when V2 primary is disabled.
-      const legacyMode = getKritaPressurePipelineMode();
-      const enableLegacyPrimaryShadow = legacyMode.pressurePipelineV2Shadow;
-      const legacyDabs = enableLegacyPrimaryShadow
-        ? stamper.processPoint(
-            x,
-            y,
-            globalPressure,
-            lastSpacingPxRef.current,
-            config.buildupEnabled,
-            stamperOptions
-          )
-        : [];
-
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush
       const dualBrush = config.dualBrush ?? null;
@@ -1244,126 +1162,8 @@ export function useBrushRenderer({
       }
 
       lastPointerDynamicsRef.current = { tiltX, tiltY, rotation };
-      const legacySpeed = stamper.getLastNormalizedSpeed();
-      const legacyRenderDabs = legacyDabs.map((dab) => ({
-        x: dab.x,
-        y: dab.y,
-        pressure: dab.pressure,
-        timestampMs: dab.timestampMs,
-        normalizedSpeed: legacySpeed,
-        timeUs:
-          typeof dab.timestampMs === 'number' && Number.isFinite(dab.timestampMs)
-            ? Math.max(0, Math.round(dab.timestampMs * 1000))
-            : undefined,
-      }));
 
       renderPrimaryDabs(dabs, config, lastPointerDynamicsRef.current);
-
-      if (legacyMode.pressurePipelineV2Shadow) {
-        const pairingCount = Math.min(dabs.length, legacyRenderDabs.length);
-        const pressureMixDelta =
-          pairingCount > 0
-            ? (() => {
-                let total = 0;
-                for (let i = 0; i < pairingCount; i += 1) {
-                  total += Math.abs(
-                    (dabs[i]?.pressure ?? 0) - (legacyRenderDabs[i]?.pressure ?? 0)
-                  );
-                }
-                return total / pairingCount;
-              })()
-            : Math.abs(dabs.length - legacyRenderDabs.length);
-        const timeMixDelta =
-          pairingCount > 0
-            ? (() => {
-                let total = 0;
-                for (let i = 0; i < pairingCount; i += 1) {
-                  const pipelineTime = dabs[i]?.timeUs ?? 0;
-                  const legacyTime = legacyRenderDabs[i]?.timeUs ?? 0;
-                  total += Math.abs(pipelineTime - legacyTime) / 1000;
-                }
-                return total / pairingCount;
-              })()
-            : 0;
-        const finalDabDelta =
-          pairingCount > 0
-            ? (() => {
-                let total = 0;
-                for (let i = 0; i < pairingCount; i += 1) {
-                  const pipeline = dabs[i];
-                  const legacy = legacyRenderDabs[i];
-                  if (!pipeline || !legacy) continue;
-                  total +=
-                    Math.abs(pipeline.x - legacy.x) +
-                    Math.abs(pipeline.y - legacy.y) +
-                    Math.abs(pipeline.pressure - legacy.pressure);
-                }
-                return total / pairingCount;
-              })()
-            : Math.abs(dabs.length - legacyRenderDabs.length);
-        recordKritaPressureShadowDiff({
-          timestamp_ms: timestampMs,
-          source: normalizedSource,
-          phase: normalizedPhase,
-          stage: {
-            input: Math.abs(Math.max(0, Math.min(1, pressure)) - pressure),
-            global_curve: Math.abs(globalPressure - adjustedPressure),
-            speed: Math.abs(pipelineResult.current_info.drawing_speed_01 - legacySpeed),
-            sampling: Math.abs(dabs.length - legacyRenderDabs.length),
-            mix: pressureMixDelta + timeMixDelta * 0.001,
-            sensor:
-              pairingCount > 0
-                ? (() => {
-                    let total = 0;
-                    for (let i = 0; i < pairingCount; i += 1) {
-                      const pipelineDab = dabs[i];
-                      const legacyDab = legacyRenderDabs[i];
-                      if (!pipelineDab || !legacyDab) continue;
-                      const pipelineSensor = combineCurveOption({
-                        constant: 1,
-                        values: [
-                          evaluateDynamicSensor(
-                            {
-                              x_px: pipelineDab.x,
-                              y_px: pipelineDab.y,
-                              pressure_01: pipelineDab.pressure,
-                              drawing_speed_01: pipelineDab.normalizedSpeed ?? 0,
-                              time_us: pipelineDab.timeUs ?? 0,
-                            },
-                            LINEAR_PRESSURE_SENSOR_CONFIG
-                          ),
-                        ],
-                        mode: 'multiply',
-                        min: 0,
-                        max: 1,
-                      });
-                      const legacySensor = combineCurveOption({
-                        constant: 1,
-                        values: [
-                          evaluateDynamicSensor(
-                            {
-                              x_px: legacyDab.x,
-                              y_px: legacyDab.y,
-                              pressure_01: legacyDab.pressure,
-                              drawing_speed_01: legacyDab.normalizedSpeed ?? 0,
-                              time_us: legacyDab.timeUs ?? 0,
-                            },
-                            LINEAR_PRESSURE_SENSOR_CONFIG
-                          ),
-                        ],
-                        mode: 'multiply',
-                        min: 0,
-                        max: 1,
-                      });
-                      total += Math.abs(pipelineSensor - legacySensor);
-                    }
-                    return total / pairingCount;
-                  })()
-                : 0,
-            final_dab: finalDabDelta,
-          },
-        });
-      }
 
       // End CPU encode timing and trigger GPU sample if needed
       // NOTE: Disabled during active painting to avoid breaking batch processing
