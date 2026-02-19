@@ -284,7 +284,7 @@ impl TabletBackend for WinTabBackend {
         let events = self.events.clone();
         let polling_interval_ms = 1000 / self.config.polling_rate_hz as u64;
         let pressure_max = self.pressure_max;
-        // Note: pressure_curve is now applied in commands.rs AFTER smoothing
+        // Pressure curve shaping is handled by shared runtime config paths.
         let hwnd_value = self.hwnd; // Copy the stored HWND
 
         let handle = thread::spawn(move || {

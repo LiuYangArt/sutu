@@ -1,7 +1,7 @@
 # PaintBoard WinTab 全量重构对齐 Krita 方案（无止血 / 无运行时 fallback）
 
 **日期**：2026-02-19
-**适用范围**：Windows 桌面数位板主链（WinTab/WinInk）
+**适用范围**：Windows 桌面数位板主链（WinTab），PointerEvent 作为独立手动后端
 **目标读者**：美术、产品、测试、前端、Rust 后端
 参考：
 
@@ -10,11 +10,24 @@
 
 ---
 
+## 执行状态（2026-02-19 更新）
+
+1. 计划内核心重构项已完成，当前状态为“已切主并稳定运行”。
+2. WinTab 串线与丢笔问题已通过后续修复关闭，PointerEvent 路径保持正常。
+3. 与原文档相比的设计修正：
+   1. 本轮未实现 `WinInk` 适配器；Windows 运行时后端为手动 `wintab` / `pointerevent`。
+   2. `NativeTabletEventV3.source` 实际为 `wintab | pointerevent | macnative`。
+4. 验证结果（本次更新时已执行）：
+   1. `cargo check --manifest-path src-tauri/Cargo.toml --lib` 通过。
+   2. `pnpm check:all` 通过（存在仓库既有 lint warning，不阻断）。
+
+---
+
 ## 0. 直接结论
 
 这次不做“在现有链路上修补”，改为**完整重建 Krita 等价输入链**，并一次性切主：
 
-1. **单笔单输入源**：一笔只来自一个原生后端（WinTab 或 WinInk），不再把 PointerEvent 和 Native 混在同一笔里。
+1. **单笔单输入源**：一笔只来自一个后端（WinTab 或 PointerEvent），不再把 PointerEvent 和 Native 混在同一笔里。
 2. **单一统一事件对象**：先把底层输入统一成 `KoPointerEvent` 等价语义，再进入笔刷算法。
 3. **算法链按 Krita 分层重建**：`Builder -> SpeedSmoother -> paintLine+mix -> DynamicSensor`。
 4. **无运行时 fallback**：新链路上线后，旧链路只保留 Git 回退能力，不保留运行时自动降级。
@@ -23,7 +36,7 @@
 
 ## 1. 硬约束（本方案必须满足）
 
-1. Windows 绘画主链不消费浏览器 `PointerEvent` 几何数据（UI 光标事件除外）。
+1. Windows 处于 WinTab 模式时，绘画主链不消费浏览器 `PointerEvent` 几何数据（UI 光标事件除外）。
 2. 不允许“native 只给 pressure，geometry 用 pointer”的拼接模式。
 3. 不允许在 Rust emitter 或其他旁路偷偷改写 pressure。
 4. V3 主链固定启用压感，不实现运行时“关闭压感”模式。
@@ -60,7 +73,7 @@
 
 ```mermaid
 flowchart TD
-    A[Wacom Hardware] --> B[WinTab/WinInk Native Packets]
+    A[Wacom Hardware] --> B[WinTab/PointerEvent Native Packets]
     B --> C[Rust Native Adapter V3
     相位推导/坐标归一/时间统一]
     C --> D[NativeTabletEventV3 IPC]
@@ -95,7 +108,7 @@ NativeTabletEventV3 {
   stroke_id: u64
   pointer_id: u32
   device_id: String
-  source: "wintab" | "winink"
+  source: "wintab" | "pointerevent" | "macnative"
   phase: "hover" | "down" | "move" | "up"
   x_px: f32
   y_px: f32
@@ -225,7 +238,6 @@ sequenceDiagram
 4. `src-tauri/src/input/krita_v3/coordinate_mapper.rs`
 5. `src-tauri/src/input/krita_v3/timebase.rs`
 6. `src-tauri/src/input/krita_v3/wintab_adapter.rs`
-7. `src-tauri/src/input/krita_v3/winink_adapter.rs`（可与 WinTab 同期或次期）
 
 替换：
 
@@ -236,7 +248,7 @@ sequenceDiagram
 删除（切主后）：
 
 1. `src-tauri/src/input/processor.rs`（含 `PressureSmoother` 旧逻辑）。
-2. Windows 桌面绘画路径中的 `pointer_backend` 入口绑定。
+2. `tablet-event-v2` 与 `InputSampleV2` 相关兼容路径。
 
 ## 6.2 Frontend（`src/engine` + `src/components/Canvas`）
 
@@ -318,7 +330,7 @@ flowchart TD
 1. 笔刷 preset
 2. 动作类型
 3. 失败截图/录屏时间点
-4. 输入源（WinTab/WinInk）
+4. 输入源（WinTab/PointerEvent）
 5. 指标快照
 
 ---
@@ -350,8 +362,9 @@ flowchart TD
 1. `cargo check --manifest-path src-tauri/Cargo.toml --lib`
 2. `pnpm check:all`
 3. `pnpm test -- src/components/Canvas/__tests__/usePointerHandlers.test.ts`
-4. `pnpm test -- src/components/Canvas/__tests__/useRawPointerInput.test.ts`
-5. `pnpm test -- src/engine/kritaPressure/__tests__/pipeline.test.ts`
+4. `pnpm test -- src/components/Canvas/__tests__/usePointerHandlers.nativeOffset.test.ts`
+5. `pnpm test -- src/components/Canvas/__tests__/useRawPointerInput.test.ts`
+6. `pnpm test -- src/engine/kritaParityInput/__tests__/pipeline.test.ts`
 
 ---
 
@@ -364,26 +377,26 @@ flowchart TD
 
 ## Task List（中文）
 
-1. [ ] 冻结 V3 契约：字段、单位、相位、时间域。
-2. [ ] 新建 `src-tauri/src/input/krita_v3/types.rs`。
-3. [ ] 新建 `src-tauri/src/input/krita_v3/phase_machine.rs`。
-4. [ ] 新建 `src-tauri/src/input/krita_v3/coordinate_mapper.rs`。
-5. [ ] 新建 `src-tauri/src/input/krita_v3/timebase.rs`。
-6. [ ] 新建 `src-tauri/src/input/krita_v3/wintab_adapter.rs`。
-7. [ ] 改 `src-tauri/src/input/backend.rs` 升级到 V3 事件。
-8. [ ] 改 `src-tauri/src/commands.rs` 移除 pressure smoothing 与旧发射分支。
-9. [ ] 新建 `src/engine/kritaParityInput/contracts.ts`。
-10. [ ] 新建 `src/engine/kritaParityInput/paintingInfoBuilderV3.ts`。
-11. [ ] 新建 `src/engine/kritaParityInput/speedSmootherV3.ts`。
-12. [ ] 新建 `src/engine/kritaParityInput/segmentSamplerV3.ts`。
-13. [ ] 新建 `src/engine/kritaParityInput/paintInfoMixV3.ts`。
-14. [ ] 新建 `src/engine/kritaParityInput/dynamicSensorEngineV3.ts`。
-15. [ ] 改 `src/components/Canvas/usePointerHandlers.ts` 仅接 V3 主链。
-16. [ ] 改 `src/components/Canvas/useRawPointerInput.ts` 从绘画主链剥离。
-17. [ ] 改 `src/components/Canvas/useStrokeProcessor.ts` 接入 V3 采样链。
-18. [ ] 新增 V3 门禁测试与回放测试。
-19. [ ] 删除旧融合与旧平滑逻辑（切主后）。
-20. [ ] 跑 `cargo check` 与 `pnpm check:all` 并出验收报告。
+1. [x] 冻结 V3 契约：字段、单位、相位、时间域。
+2. [x] 新建 `src-tauri/src/input/krita_v3/types.rs`。
+3. [x] 新建 `src-tauri/src/input/krita_v3/phase_machine.rs`。
+4. [x] 新建 `src-tauri/src/input/krita_v3/coordinate_mapper.rs`。
+5. [x] 新建 `src-tauri/src/input/krita_v3/timebase.rs`。
+6. [x] 新建 `src-tauri/src/input/krita_v3/wintab_adapter.rs`。
+7. [x] 改 `src-tauri/src/input/backend.rs` 升级到 V3 事件。
+8. [x] 改 `src-tauri/src/commands.rs` 移除 pressure smoothing 与旧发射分支。
+9. [x] 新建 `src/engine/kritaParityInput/contracts.ts`。
+10. [x] 新建 `src/engine/kritaParityInput/paintingInfoBuilderV3.ts`。
+11. [x] 新建 `src/engine/kritaParityInput/speedSmootherV3.ts`。
+12. [x] 新建 `src/engine/kritaParityInput/segmentSamplerV3.ts`。
+13. [x] 新建 `src/engine/kritaParityInput/paintInfoMixV3.ts`。
+14. [x] 新建 `src/engine/kritaParityInput/dynamicSensorEngineV3.ts`。
+15. [x] 改 `src/components/Canvas/usePointerHandlers.ts` 仅接 V3 主链。
+16. [x] 改 `src/components/Canvas/useRawPointerInput.ts` 从绘画主链剥离。
+17. [x] 改 `src/components/Canvas/useStrokeProcessor.ts` 接入 V3 采样链。
+18. [x] 新增 V3 门禁测试与回放测试。
+19. [x] 删除旧融合与旧平滑逻辑（切主后）。
+20. [x] 跑 `cargo check` 与 `pnpm check:all` 并出验收报告。
 
 ## Thought（中文）
 

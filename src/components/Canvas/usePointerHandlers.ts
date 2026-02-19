@@ -924,12 +924,13 @@ export function usePointerHandlers({
       markDomPointerActivity();
       nativeMissingInputStreakRef.current = 0;
       const wantsStrokeInput = isStrokeTool(currentTool);
+      const tabletStateSnapshot = useTabletStore.getState();
       if (
         wantsStrokeInput &&
         pe.isTrusted &&
         isDrawingRef.current &&
         activePointerIdRef.current === pe.pointerId &&
-        isNativeTabletStreamingState(useTabletStore.getState())
+        isNativeTabletStreamingState(tabletStateSnapshot)
       ) {
         logTabletTrace('frontend.pointerdown.duplicate_ignored', {
           pointer_id: pe.pointerId,
@@ -985,7 +986,6 @@ export function usePointerHandlers({
       const pointerCanvasPoint = pointerEventToCanvasPoint(canvas, pe, rect);
 
       const { x: canvasX, y: canvasY } = pointerCanvasPoint;
-      const tabletStateSnapshot = useTabletStore.getState();
       logTabletTrace('frontend.pointerdown.dom', {
         pointer_id: pe.pointerId,
         client_x: pe.clientX,
@@ -1283,7 +1283,6 @@ export function usePointerHandlers({
               );
 
               if (!isDrawingRef.current) {
-                if (!isStrokeTool(currentTool)) continue;
                 if (normalized.phase !== 'down') {
                   continue;
                 }
