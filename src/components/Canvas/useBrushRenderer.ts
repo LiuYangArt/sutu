@@ -61,6 +61,7 @@ import { computeDabTransfer, isTransferActive } from '@/utils/transferDynamics';
 import { computeTextureDepth } from '@/utils/textureDynamics';
 import { useSelectionStore } from '@/stores/selection';
 import { useToastStore } from '@/stores/toast';
+import { logTabletTrace } from '@/utils/tabletTrace';
 import {
   KritaPressurePipeline,
   combineCurveOption,
@@ -1084,6 +1085,41 @@ export function useBrushRenderer({
         normalizedSpeed: info.drawing_speed_01,
         timeUs: info.time_us,
       }));
+      const firstDab = dabs[0] ?? null;
+      const lastDab = dabs[dabs.length - 1] ?? null;
+      logTabletTrace('frontend.canvas.dab_emit', {
+        point_index: typeof pointIndex === 'number' ? pointIndex : null,
+        source: normalizedSource,
+        phase: normalizedPhase,
+        input_x_canvas: x,
+        input_y_canvas: y,
+        input_pressure_0_1: pressure,
+        host_time_us: hostTimeUs,
+        device_time_us: deviceTimeUs,
+        dabs_count: dabs.length,
+        first_dab_x: firstDab?.x ?? null,
+        first_dab_y: firstDab?.y ?? null,
+        first_dab_pressure_0_1: firstDab?.pressure ?? null,
+        last_dab_x: lastDab?.x ?? null,
+        last_dab_y: lastDab?.y ?? null,
+        last_dab_pressure_0_1: lastDab?.pressure ?? null,
+      });
+      if (
+        dabs.length === 0 &&
+        (normalizedPhase === 'down' || normalizedPhase === 'move') &&
+        pressure > 0.001
+      ) {
+        logTabletTrace('frontend.anomaly.input_without_dabs', {
+          point_index: typeof pointIndex === 'number' ? pointIndex : null,
+          source: normalizedSource,
+          phase: normalizedPhase,
+          input_x_canvas: x,
+          input_y_canvas: y,
+          input_pressure_0_1: pressure,
+          host_time_us: hostTimeUs,
+          device_time_us: deviceTimeUs,
+        });
+      }
 
       // ===== Dual Brush: Generate secondary dabs independently =====
       // Secondary brush has its own spacing and path, separate from primary brush

@@ -8,6 +8,7 @@ import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import type { GpuStrokeCommitResult, RenderBackend, StrokeCompositeMode } from '@/gpu';
 import { isNativeTabletStreamingState } from './inputUtils';
+import { logTabletTrace } from '@/utils/tabletTrace';
 
 const MAX_POINTS_PER_FRAME = 80;
 // Photoshop Build-up (Airbrush) rate tuning:
@@ -408,6 +409,13 @@ export function useStrokeProcessor({
           strokeStateRef.current === 'active' || strokeStateRef.current === 'finishing';
         if (!canConsumeQueue) {
           // Drop stale points captured around stroke end to prevent late tail dabs.
+          logTabletTrace('frontend.canvas.queue_drop', {
+            reason: 'stroke_state_not_consumable',
+            stroke_state: strokeStateRef.current,
+            dropped_count: queue.length,
+            first_point_index: queue[0]?.pointIndex ?? null,
+            last_point_index: queue[queue.length - 1]?.pointIndex ?? null,
+          });
           inputQueueRef.current = [];
         } else {
           processedAnyPoints = true;
@@ -424,6 +432,18 @@ export function useStrokeProcessor({
           // Drain and process points
           for (let i = 0; i < count; i++) {
             const p = queue[i]!;
+            logTabletTrace('frontend.canvas.consume_point', {
+              point_index: p.pointIndex,
+              source: p.source,
+              phase: p.phase,
+              x_canvas: p.x,
+              y_canvas: p.y,
+              pressure_0_1: p.pressure,
+              host_time_us: p.hostTimeUs,
+              device_time_us: p.deviceTimeUs,
+              stroke_state: strokeStateRef.current,
+              queue_depth: queue.length,
+            });
             processSinglePoint(
               p.x,
               p.y,
@@ -559,6 +579,17 @@ export function useStrokeProcessor({
       let processedTailQueue = false;
       if (remainingQueue.length > 0) {
         for (const p of remainingQueue) {
+          logTabletTrace('frontend.canvas.consume_tail_point', {
+            point_index: p.pointIndex,
+            source: p.source,
+            phase: p.phase,
+            x_canvas: p.x,
+            y_canvas: p.y,
+            pressure_0_1: p.pressure,
+            host_time_us: p.hostTimeUs,
+            device_time_us: p.deviceTimeUs,
+            stroke_state: strokeStateRef.current,
+          });
           processSinglePoint(
             p.x,
             p.y,

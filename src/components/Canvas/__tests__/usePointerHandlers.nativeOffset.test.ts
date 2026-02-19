@@ -351,6 +351,58 @@ describe('usePointerHandlers native geometry path', () => {
     expect(params.lockShiftLine).toHaveBeenCalledWith({ x: 120, y: 140 });
   });
 
+  it('ignores late duplicate pointerdown when native stroke is already active', async () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock
+      .mockReturnValueOnce({
+        points: [createNativePoint({ seq: 1, stroke_id: 1, phase: 'down', x_px: 180, y_px: 200 })],
+        nextSeq: 1,
+      })
+      .mockReturnValue({
+        points: [],
+        nextSeq: 1,
+      });
+
+    await act(async () => {
+      result.current.handlePointerDown(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 100,
+            clientY: 120,
+            type: 'pointerdown',
+          })
+        )
+      );
+      await Promise.resolve();
+    });
+
+    params.isDrawingRef.current = true;
+    params.strokeStateRef.current = 'active';
+    vi.mocked(params.finishCurrentStroke).mockClear();
+    readPointBufferSinceMock.mockClear();
+
+    await act(async () => {
+      result.current.handlePointerDown(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 101,
+            clientY: 121,
+            type: 'pointerdown',
+          })
+        )
+      );
+      await Promise.resolve();
+    });
+
+    expect(params.finishCurrentStroke).not.toHaveBeenCalled();
+    expect(readPointBufferSinceMock).not.toHaveBeenCalled();
+  });
+
   it('waits previous stroke finish before starting new stroke', async () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');
