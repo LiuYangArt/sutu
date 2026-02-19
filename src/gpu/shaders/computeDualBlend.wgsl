@@ -48,15 +48,20 @@ fn blend_dual(primary: f32, secondary: f32, mode: u32) -> f32 {
       return max(0.0, p + s - 1.0);
     }
     case 6u: { // Hard Mix
-      return select(0.0, 1.0, p + s >= 1.0);
+      return clamp(3.0 * p - 2.0 * (1.0 - s), 0.0, 1.0);
     }
     case 7u: { // Linear Height
-      return p * (0.5 + s * 0.5);
+      let m = 10.0 * p;
+      return clamp(max((1.0 - s) * m, m - s), 0.0, 1.0);
     }
     default: { // Multiply
       return p * s;
     }
   }
+}
+
+fn dual_mode_allows_alpha_lift(mode: u32) -> bool {
+  return mode == 2u || mode == 3u || mode == 6u || mode == 7u;
 }
 
 @compute @workgroup_size(8, 8)
@@ -86,8 +91,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   if (primary.a > 0.001) {
     let blended = blend_dual(primary.a, secondary, uniforms.blend_mode);
-    let scale = clamp(blended / primary.a, 0.0, 1.0);
-    let new_alpha = clamp(primary.a * scale, 0.0, 1.0);
+    let ratio = blended / primary.a;
+    let allow_lift = dual_mode_allows_alpha_lift(uniforms.blend_mode);
+    let clamped_alpha = primary.a * clamp(ratio, 0.0, 1.0);
+    let lifted_alpha = blended;
+    let new_alpha = clamp(
+      select(clamped_alpha, lifted_alpha, allow_lift),
+      0.0,
+      1.0
+    );
     textureStore(output_tex, coord, vec4<f32>(primary.rgb, new_alpha));
     return;
   }
