@@ -11,6 +11,7 @@ function createPipeline(): DualBrushSecondaryPipeline {
     speed_smoothing_samples: 3,
     spacing_px: 2,
     max_interval_us: 16_000,
+    timed_spacing_enabled: true,
   });
 }
 
@@ -48,11 +49,12 @@ describe('DualBrushSecondaryPipeline', () => {
     expect(result.paint_infos[0]?.timeUs).toBeGreaterThan(0);
   });
 
-  it('emits dabs by max interval when distance is zero', () => {
+  it('emits dabs by max interval when timed spacing is enabled and distance is zero', () => {
     const pipeline = createPipeline();
     pipeline.updateConfig({
       spacing_px: 10_000,
       max_interval_us: 4_000,
+      timed_spacing_enabled: true,
     });
 
     pipeline.processSample({
@@ -82,6 +84,43 @@ describe('DualBrushSecondaryPipeline', () => {
     });
 
     expect(result.paint_infos.length).toBeGreaterThan(0);
+  });
+
+  it('does not emit stationary move dabs when timed spacing is disabled', () => {
+    const pipeline = createPipeline();
+    pipeline.updateConfig({
+      spacing_px: 10_000,
+      max_interval_us: 4_000,
+      timed_spacing_enabled: false,
+    });
+
+    pipeline.processSample({
+      x_px: 20,
+      y_px: 20,
+      pressure_01: 0.6,
+      tilt_x_deg: 0,
+      tilt_y_deg: 0,
+      rotation_deg: 0,
+      host_time_us: 1_000,
+      device_time_us: 1_000,
+      source: 'pointerevent',
+      phase: 'down',
+    });
+
+    const result = pipeline.processSample({
+      x_px: 20,
+      y_px: 20,
+      pressure_01: 0.6,
+      tilt_x_deg: 0,
+      tilt_y_deg: 0,
+      rotation_deg: 0,
+      host_time_us: 21_000,
+      device_time_us: 21_000,
+      source: 'pointerevent',
+      phase: 'move',
+    });
+
+    expect(result.paint_infos.length).toBe(0);
   });
 
   it('keeps carry across segments', () => {

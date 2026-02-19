@@ -3,6 +3,7 @@ export interface SegmentSamplerRequest {
   duration_us: number;
   spacing_px: number;
   max_interval_us: number;
+  timed_spacing_enabled?: boolean;
 }
 
 const EPSILON = 1e-6;
@@ -44,6 +45,8 @@ export class KritaSegmentSampler {
     const durationUs = Math.max(0, input.duration_us);
     const spacingPx = clampPositive(input.spacing_px, 1);
     const maxIntervalUs = clampPositive(input.max_interval_us, 16_000);
+    // Keep backward compatibility: timed spacing is enabled unless explicitly disabled.
+    const timedSpacingEnabled = input.timed_spacing_enabled !== false;
 
     if (distancePx <= EPSILON && durationUs <= EPSILON) {
       return [];
@@ -68,7 +71,7 @@ export class KritaSegmentSampler {
       }
     }
 
-    if (durationUs > EPSILON) {
+    if (timedSpacingEnabled && durationUs > EPSILON) {
       const firstT = (maxIntervalUs - this.timeCarryUs) / durationUs;
       const stepT = maxIntervalUs / durationUs;
       if (Number.isFinite(firstT) && Number.isFinite(stepT) && stepT > EPSILON) {
@@ -86,7 +89,9 @@ export class KritaSegmentSampler {
     }
 
     this.distanceCarryPx = normalizeCarry(this.distanceCarryPx + distancePx, spacingPx);
-    this.timeCarryUs = normalizeCarry(this.timeCarryUs + durationUs, maxIntervalUs);
+    this.timeCarryUs = timedSpacingEnabled
+      ? normalizeCarry(this.timeCarryUs + durationUs, maxIntervalUs)
+      : 0;
 
     if (samples.length <= 1) return samples;
 

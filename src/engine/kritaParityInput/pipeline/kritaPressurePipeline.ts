@@ -8,6 +8,7 @@ const EPSILON = 1e-6;
 export interface KritaPressurePipelineConfig extends PaintInfoBuilderConfig {
   spacing_px: number;
   max_interval_us: number;
+  timed_spacing_enabled?: boolean;
 }
 
 export interface PipelineStepResult {
@@ -24,11 +25,13 @@ export class KritaPressurePipeline {
   private emittedDabCount = 0;
   private spacingPx: number;
   private maxIntervalUs: number;
+  private timedSpacingEnabled: boolean;
 
   constructor(config: KritaPressurePipelineConfig) {
     this.builder = new PaintInfoBuilder(config);
     this.spacingPx = Math.max(0.5, config.spacing_px);
     this.maxIntervalUs = Math.max(1_000, config.max_interval_us);
+    this.timedSpacingEnabled = config.timed_spacing_enabled !== false;
   }
 
   reset(): void {
@@ -47,6 +50,9 @@ export class KritaPressurePipeline {
     }
     if (typeof config.max_interval_us === 'number') {
       this.maxIntervalUs = Math.max(1_000, config.max_interval_us);
+    }
+    if (typeof config.timed_spacing_enabled === 'boolean') {
+      this.timedSpacingEnabled = config.timed_spacing_enabled;
     }
   }
 
@@ -83,6 +89,7 @@ export class KritaPressurePipeline {
       duration_us: durationUs,
       spacing_px: this.spacingPx,
       max_interval_us: this.maxIntervalUs,
+      timed_spacing_enabled: this.timedSpacingEnabled,
     });
 
     const mixed: PaintInfo[] = [];

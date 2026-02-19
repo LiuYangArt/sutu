@@ -186,6 +186,8 @@ function createPipelineConfig(params: {
   speedPxPerMs: number;
   smoothingSamples: number;
   spacingPx: number;
+  timedSpacingEnabled: boolean;
+  maxIntervalMs: number;
 }): KritaPressurePipelineConfig {
   return {
     pressure_enabled: true,
@@ -194,7 +196,8 @@ function createPipelineConfig(params: {
     max_allowed_speed_px_per_ms: params.speedPxPerMs,
     speed_smoothing_samples: params.smoothingSamples,
     spacing_px: params.spacingPx,
-    max_interval_us: Math.max(1_000, Math.round(PIPELINE_MAX_INTERVAL_MS * 1000)),
+    max_interval_us: Math.max(1_000, Math.round(params.maxIntervalMs * 1000)),
+    timed_spacing_enabled: params.timedSpacingEnabled,
   };
 }
 
@@ -204,6 +207,8 @@ function createInitialPipelineConfig(): KritaPressurePipelineConfig {
     speedPxPerMs: 30,
     smoothingSamples: 3,
     spacingPx: 1,
+    timedSpacingEnabled: false,
+    maxIntervalMs: PIPELINE_BUILDUP_INTERVAL_MS,
   });
 }
 
@@ -269,7 +274,8 @@ function resolveRenderableDabSizeAndOpacity(
   };
 }
 
-const PIPELINE_MAX_INTERVAL_MS = 16;
+const PIPELINE_DISTANCE_INTERVAL_MS = 16;
+const PIPELINE_BUILDUP_INTERVAL_MS = 200;
 
 const LINEAR_PRESSURE_SENSOR_LUT = createLinearSensorLut();
 const LINEAR_PRESSURE_SENSOR_CONFIG = Object.freeze({
@@ -1192,12 +1198,18 @@ export function useBrushRenderer({
       );
       const spacingPx = spacingBase * effectiveConfig.spacing;
       lastSpacingPxRef.current = Math.max(0.5, spacingPx);
+      const timedSpacingEnabled = effectiveConfig.buildupEnabled;
+      const timedSpacingIntervalMs = timedSpacingEnabled
+        ? PIPELINE_BUILDUP_INTERVAL_MS
+        : PIPELINE_DISTANCE_INTERVAL_MS;
       primaryPipelineRef.current.updateConfig(
         createPipelineConfig({
           pressureLut,
           speedPxPerMs: effectiveConfig.maxBrushSpeedPxPerMs ?? 30,
           smoothingSamples: effectiveConfig.brushSpeedSmoothingSamples ?? 3,
           spacingPx: lastSpacingPxRef.current,
+          timedSpacingEnabled,
+          maxIntervalMs: timedSpacingIntervalMs,
         })
       );
 
@@ -1291,6 +1303,8 @@ export function useBrushRenderer({
             speedPxPerMs: effectiveConfig.maxBrushSpeedPxPerMs ?? 30,
             smoothingSamples: effectiveConfig.brushSpeedSmoothingSamples ?? 3,
             spacingPx: Math.max(0.5, secondarySpacingPx),
+            timedSpacingEnabled,
+            maxIntervalMs: timedSpacingIntervalMs,
           })
         );
 

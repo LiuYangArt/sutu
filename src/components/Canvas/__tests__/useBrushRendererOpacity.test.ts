@@ -165,6 +165,71 @@ describe('useBrushRenderer opacity pipeline', () => {
     expect(maxFlow).toBeGreaterThan(0.15);
   });
 
+  it('does not emit stationary dabs when buildup is disabled', async () => {
+    const config: BrushRenderConfig = {
+      size: 40,
+      flow: 1,
+      opacity: 1,
+      hardness: 100,
+      maskType: 'gaussian',
+      spacing: 0.2,
+      roundness: 100,
+      angle: 0,
+      color: '#000000',
+      backgroundColor: '#ffffff',
+      pressureSizeEnabled: false,
+      pressureFlowEnabled: false,
+      pressureOpacityEnabled: false,
+      pressureCurve: 'linear',
+      texture: null,
+      shapeDynamicsEnabled: false,
+      scatterEnabled: false,
+      colorDynamicsEnabled: false,
+      wetEdgeEnabled: false,
+      wetEdge: 0,
+      buildupEnabled: false,
+      transferEnabled: false,
+      textureEnabled: false,
+      noiseEnabled: false,
+      dualBrushEnabled: false,
+      strokeCompositeMode: 'paint',
+    };
+
+    const { result } = renderHook(() =>
+      useBrushRenderer({ width: 160, height: 120, renderMode: 'cpu' })
+    );
+
+    await act(async () => {
+      await result.current.beginStroke(100, 0);
+    });
+
+    act(() => {
+      result.current.processPoint(32, 24, 0.8, config, 0, undefined, {
+        timestampMs: 0,
+        source: 'pointerevent',
+        phase: 'down',
+        hostTimeUs: 0,
+        deviceTimeUs: 0,
+      });
+      result.current.processPoint(32, 24, 0.8, config, 1, undefined, {
+        timestampMs: 250,
+        source: 'pointerevent',
+        phase: 'move',
+        hostTimeUs: 250_000,
+        deviceTimeUs: 250_000,
+      });
+      result.current.processPoint(32, 24, 0.8, config, 2, undefined, {
+        timestampMs: 500,
+        source: 'pointerevent',
+        phase: 'move',
+        hostTimeUs: 500_000,
+        deviceTimeUs: 500_000,
+      });
+    });
+
+    expect(stampSpy).not.toHaveBeenCalled();
+  });
+
   it('keeps sub-pixel pressure-size continuity by converting tiny size to alpha coverage', async () => {
     const config: BrushRenderConfig = {
       size: 2,
