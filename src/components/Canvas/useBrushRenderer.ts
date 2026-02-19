@@ -64,6 +64,7 @@ import { logTabletTrace } from '@/utils/tabletTrace';
 import {
   DualBrushSecondaryPipeline,
   KritaPressurePipeline,
+  type KritaPressurePipelineConfig,
   combineCurveOption,
   createLinearSensorLut,
   createDefaultGlobalPressureLut,
@@ -185,15 +186,7 @@ function createPipelineConfig(params: {
   speedPxPerMs: number;
   smoothingSamples: number;
   spacingPx: number;
-}): {
-  pressure_enabled: boolean;
-  global_pressure_lut: Float32Array;
-  use_device_time_for_speed: boolean;
-  max_allowed_speed_px_per_ms: number;
-  speed_smoothing_samples: number;
-  spacing_px: number;
-  max_interval_us: number;
-} {
+}): KritaPressurePipelineConfig {
   return {
     pressure_enabled: true,
     global_pressure_lut: params.pressureLut,
@@ -203,6 +196,15 @@ function createPipelineConfig(params: {
     spacing_px: params.spacingPx,
     max_interval_us: Math.max(1_000, Math.round(PIPELINE_MAX_INTERVAL_MS * 1000)),
   };
+}
+
+function createInitialPipelineConfig(): KritaPressurePipelineConfig {
+  return createPipelineConfig({
+    pressureLut: createDefaultGlobalPressureLut(),
+    speedPxPerMs: 30,
+    smoothingSamples: 3,
+    spacingPx: 1,
+  });
 }
 
 interface EffectiveDynamicsConfig {
@@ -414,26 +416,10 @@ export function useBrushRenderer({
   const gpuBufferRef = useRef<GPUStrokeAccumulator | null>(null);
 
   const primaryPipelineRef = useRef<KritaPressurePipeline>(
-    new KritaPressurePipeline({
-      pressure_enabled: true,
-      global_pressure_lut: createDefaultGlobalPressureLut(),
-      use_device_time_for_speed: false,
-      max_allowed_speed_px_per_ms: 30,
-      speed_smoothing_samples: 3,
-      spacing_px: 1,
-      max_interval_us: 16_000,
-    })
+    new KritaPressurePipeline(createInitialPipelineConfig())
   );
   const secondaryPipelineRef = useRef<DualBrushSecondaryPipeline>(
-    new DualBrushSecondaryPipeline({
-      pressure_enabled: true,
-      global_pressure_lut: createDefaultGlobalPressureLut(),
-      use_device_time_for_speed: false,
-      max_allowed_speed_px_per_ms: 30,
-      speed_smoothing_samples: 3,
-      spacing_px: 1,
-      max_interval_us: 16_000,
-    })
+    new DualBrushSecondaryPipeline(createInitialPipelineConfig())
   );
 
   // Optimization 7: Finishing lock to prevent "tailgating" race condition
@@ -1021,11 +1007,14 @@ export function useBrushRenderer({
         finalized: true,
         trigger,
       };
-
-      if (strokeCancelledRef.current) {
+      const finalizeWithoutActiveStroke = (): void => {
         primaryPipelineRef.current.finalize();
         secondaryPipelineRef.current.finalize();
         setFinalizeDebugSnapshot('no_active_stroke', 0);
+      };
+
+      if (strokeCancelledRef.current) {
+        finalizeWithoutActiveStroke();
         lastConfigRef.current = null;
         strokeCancelledRef.current = false;
         return;
@@ -1033,9 +1022,7 @@ export function useBrushRenderer({
 
       const config = lastConfigRef.current;
       if (!config) {
-        primaryPipelineRef.current.finalize();
-        secondaryPipelineRef.current.finalize();
-        setFinalizeDebugSnapshot('no_active_stroke', 0);
+        finalizeWithoutActiveStroke();
         return;
       }
 
