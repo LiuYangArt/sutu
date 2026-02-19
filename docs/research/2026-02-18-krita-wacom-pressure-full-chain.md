@@ -53,6 +53,8 @@ flowchart TD
 
 这段的作用：把“硬件事件”变成 Krita 内部统一指针事件 `KoPointerEvent`。
 
+详细可看 @docs\research\2026-02-18-krita-wacom-pressure-full-chain.md
+
 ## 2.2 画笔输入构建（压感和速度在哪处理）
 
 ```mermaid
