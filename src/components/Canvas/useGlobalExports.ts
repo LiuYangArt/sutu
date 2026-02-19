@@ -37,6 +37,7 @@ import type { StrokeCaptureData, StrokeReplayOptions } from '@/test/StrokeCaptur
 import { appDotStorageKey, appHyphenStorageKey } from '@/constants/appMeta';
 import type { StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
 import {
+  getTabletInputTraceFileHint,
   isTabletInputTraceEnabled,
   logTabletTrace,
   setTabletInputTraceEnabled,
@@ -315,9 +316,11 @@ export function useGlobalExports({
         thresholdVersion?: string;
       }) => Promise<KritaPressureGateResult>;
       __tabletInputTraceGet?: () => boolean;
-      __tabletInputTraceSet?: (
-        enabled: boolean
-      ) => Promise<{ frontendEnabled: boolean; backendEnabled: boolean }>;
+      __tabletInputTraceSet?: (enabled: boolean) => Promise<{
+        frontendEnabled: boolean;
+        backendEnabled: boolean;
+        traceFile: { baseDir: 'AppConfig'; relativePath: string };
+      }>;
       __tabletInputTraceEnabled?: boolean;
     };
 
@@ -370,11 +373,14 @@ export function useGlobalExports({
         console.error('[TabletTrace] failed to toggle backend trace:', error);
       }
       const frontendEnabled = isTabletInputTraceEnabled();
-      const result = { frontendEnabled, backendEnabled };
+      const traceFile = getTabletInputTraceFileHint();
+      const result = { frontendEnabled, backendEnabled, traceFile };
       logTabletTrace('frontend.trace_toggle', {
         requested_enabled: requestedEnabled,
         frontend_enabled: frontendEnabled,
         backend_enabled: backendEnabled,
+        trace_file_base_dir: traceFile.baseDir,
+        trace_file_relative_path: traceFile.relativePath,
       });
       // eslint-disable-next-line no-console
       console.info('[TabletTrace] toggle result', result);

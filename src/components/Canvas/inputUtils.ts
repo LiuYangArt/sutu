@@ -208,11 +208,32 @@ export function resolveNativeStrokePoints(
   bufferedPoints: TabletInputPoint[],
   currentPoint: TabletInputPoint | null
 ): TabletInputPoint[] {
-  if (bufferedPoints.length > 0) {
-    return bufferedPoints;
+  const sourcePoints =
+    bufferedPoints.length > 0 ? bufferedPoints : currentPoint ? [currentPoint] : [];
+  if (sourcePoints.length === 0) return [];
+
+  const nonHoverPoints = sourcePoints.filter((point) => point.phase !== 'hover');
+  if (nonHoverPoints.length === 0) return [];
+
+  let latestStrokeId = -Infinity;
+  for (const point of nonHoverPoints) {
+    const strokeId = Number.isFinite(point.stroke_id) ? point.stroke_id : -Infinity;
+    if (strokeId > latestStrokeId) {
+      latestStrokeId = strokeId;
+    }
   }
-  if (currentPoint) {
-    return [currentPoint];
+  const latestStrokePoints = nonHoverPoints.filter((point) => point.stroke_id === latestStrokeId);
+  if (latestStrokePoints.length === 0) return [];
+
+  // PointerDown seed must start from the current stroke's explicit Down point.
+  // If Down has not arrived yet, return empty and wait for follow-up native samples.
+  const firstDownIndex = latestStrokePoints.findIndex((point) => point.phase === 'down');
+  if (firstDownIndex < 0) {
+    return [];
   }
-  return [];
+
+  const currentStrokeSeed = latestStrokePoints
+    .slice(firstDownIndex)
+    .filter((point) => point.phase === 'down' || point.phase === 'move');
+  return currentStrokeSeed;
 }

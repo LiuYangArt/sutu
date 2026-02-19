@@ -111,17 +111,29 @@ describe('inputUtils', () => {
     expect(sample.pressure).toBe(0);
   });
 
-  it('resolveNativeStrokePoints prefers buffered points over currentPoint', () => {
-    const buffered = [createNativePoint({ seq: 10 }), createNativePoint({ seq: 11 })];
-    const current = createNativePoint({ seq: 99 });
-    const resolved = resolveNativeStrokePoints(buffered, current);
+  it('resolveNativeStrokePoints keeps only latest stroke from explicit down', () => {
+    const buffered = [
+      createNativePoint({ seq: 26, stroke_id: 1, phase: 'up', x_px: 400, y_px: 300 }),
+      createNativePoint({ seq: 27, stroke_id: 2, phase: 'down', x_px: 510, y_px: 180 }),
+      createNativePoint({ seq: 28, stroke_id: 2, phase: 'move', x_px: 512, y_px: 182 }),
+      createNativePoint({ seq: 29, stroke_id: 2, phase: 'up', x_px: 512, y_px: 182 }),
+    ];
+    const resolved = resolveNativeStrokePoints(buffered, null);
     expect(resolved).toHaveLength(2);
-    expect(resolved[0]?.seq).toBe(10);
-    expect(resolved[1]?.seq).toBe(11);
+    expect(resolved[0]?.seq).toBe(27);
+    expect(resolved[0]?.phase).toBe('down');
+    expect(resolved[1]?.seq).toBe(28);
+    expect(resolved[1]?.phase).toBe('move');
   });
 
-  it('resolveNativeStrokePoints falls back to currentPoint when buffer is empty', () => {
-    const current = createNativePoint({ seq: 22 });
+  it('resolveNativeStrokePoints returns empty when no down arrived yet', () => {
+    const buffered = [createNativePoint({ seq: 33, stroke_id: 3, phase: 'up' })];
+    const resolved = resolveNativeStrokePoints(buffered, null);
+    expect(resolved).toHaveLength(0);
+  });
+
+  it('resolveNativeStrokePoints falls back to currentPoint only when it is down/move with down present', () => {
+    const current = createNativePoint({ seq: 22, phase: 'down' });
     const resolved = resolveNativeStrokePoints([], current);
     expect(resolved).toHaveLength(1);
     expect(resolved[0]?.seq).toBe(22);

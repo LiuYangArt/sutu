@@ -322,4 +322,80 @@ describe('usePointerHandlers native geometry path', () => {
     expect(queue[0]?.y).toBeCloseTo(260, 6);
     expect(queue[0]?.source).toBe('pointerevent');
   });
+
+  it('ignores stale native up-only seed on pointerdown', async () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock.mockReturnValueOnce({
+      points: [createNativePoint({ seq: 27, stroke_id: 1, phase: 'up', x_px: 480, y_px: 484 })],
+      nextSeq: 27,
+    });
+
+    await act(async () => {
+      result.current.handlePointerDown(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 120,
+            clientY: 140,
+            type: 'pointerdown',
+          })
+        )
+      );
+      await Promise.resolve();
+    });
+
+    expect(params.pendingPointsRef.current).toHaveLength(0);
+    expect(params.lockShiftLine).toHaveBeenCalledWith({ x: 120, y: 140 });
+  });
+
+  it('waits previous stroke finish before starting new stroke', async () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock.mockReturnValueOnce({
+      points: [
+        createNativePoint({ seq: 1, phase: 'down', x_px: 180, y_px: 200, pressure_0_1: 0.4 }),
+      ],
+      nextSeq: 1,
+    });
+
+    let resolveFinish: (() => void) | null = null;
+    vi.mocked(params.finishCurrentStroke).mockImplementation(
+      () =>
+        new Promise<undefined>((resolve) => {
+          resolveFinish = () => resolve(undefined);
+        })
+    );
+    params.strokeStateRef.current = 'active';
+    params.isDrawingRef.current = true;
+
+    await act(async () => {
+      result.current.handlePointerDown(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 100,
+            clientY: 120,
+            type: 'pointerdown',
+          })
+        )
+      );
+      await Promise.resolve();
+    });
+
+    expect(params.finishCurrentStroke).toHaveBeenCalledTimes(1);
+    expect(params.captureBeforeImage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveFinish?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(params.captureBeforeImage).toHaveBeenCalledTimes(1);
+  });
 });

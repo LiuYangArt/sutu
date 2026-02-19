@@ -222,9 +222,11 @@ declare global {
       run_meta: { run_id: string };
     }>;
     __tabletInputTraceGet?: () => boolean;
-    __tabletInputTraceSet?: (
-      enabled: boolean
-    ) => Promise<{ frontendEnabled: boolean; backendEnabled: boolean }>;
+    __tabletInputTraceSet?: (enabled: boolean) => Promise<{
+      frontendEnabled: boolean;
+      backendEnabled: boolean;
+      traceFile: { baseDir: 'AppConfig'; relativePath: string };
+    }>;
     __tabletInputTraceEnabled?: boolean;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;

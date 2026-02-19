@@ -188,6 +188,7 @@ export function usePointerHandlers({
   const nativeSeqCursorRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
   const isPanningRef = useRef(isPanning);
+  const finishingStrokePromiseRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     isPanningRef.current = isPanning;
@@ -249,6 +250,26 @@ export function usePointerHandlers({
     },
     [clearActivePointerId, tryReleasePointerCapture]
   );
+
+  const requestFinishCurrentStroke = useCallback((): Promise<void> => {
+    if (finishingStrokePromiseRef.current) {
+      return finishingStrokePromiseRef.current;
+    }
+    const pending = (async () => {
+      try {
+        await finishCurrentStroke();
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[Pointer] finishCurrentStroke failed', error);
+      }
+    })().finally(() => {
+      if (finishingStrokePromiseRef.current === pending) {
+        finishingStrokePromiseRef.current = null;
+      }
+    });
+    finishingStrokePromiseRef.current = pending;
+    return pending;
+  }, [finishCurrentStroke]);
 
   const pickColorAt = useCallback(
     async (canvasX: number, canvasY: number) => {
@@ -691,7 +712,7 @@ export function usePointerHandlers({
 
       usingRawInput.current = false;
       endPointerSession(nativeEvent.pointerId);
-      void finishCurrentStroke();
+      void requestFinishCurrentStroke();
     },
     [
       setIsPanning,
@@ -705,7 +726,7 @@ export function usePointerHandlers({
       handleMovePointerUp,
       handleGradientPointerUp,
       usingRawInput,
-      finishCurrentStroke,
+      requestFinishCurrentStroke,
       endPointerSession,
       isDrawingRef,
       strokeStateRef,
@@ -733,7 +754,7 @@ export function usePointerHandlers({
 
     usingRawInput.current = false;
     endPointerSession();
-    void finishCurrentStroke();
+    void requestFinishCurrentStroke();
   }, [
     setIsPanning,
     panStartRef,
@@ -741,7 +762,7 @@ export function usePointerHandlers({
     zoomStartRef,
     usingRawInput,
     endPointerSession,
-    finishCurrentStroke,
+    requestFinishCurrentStroke,
   ]);
 
   useEffect(() => {
@@ -789,13 +810,23 @@ export function usePointerHandlers({
     };
   }, [containerRef, processPointerMoveNative, processPointerUpNative, resetPointerSessionOnBlur]);
 
-  const handlePointerDown = useCallback(
-    (e: React.PointerEvent) => {
+  const processPointerDownNative = useCallback(
+    async (pe: PointerEvent) => {
+      const wantsStrokeInput = isStrokeTool(currentTool);
+      if (wantsStrokeInput) {
+        if (finishingStrokePromiseRef.current) {
+          await finishingStrokePromiseRef.current;
+        }
+        if (isDrawingRef.current || strokeStateRef.current === 'finishing') {
+          await requestFinishCurrentStroke();
+        }
+      }
+
       const container = containerRef.current;
       if (!container) return;
 
       const activePointerId = activePointerIdRef.current;
-      if (activePointerId !== null && activePointerId !== e.pointerId) {
+      if (activePointerId !== null && activePointerId !== pe.pointerId) {
         return;
       }
 
@@ -804,27 +835,26 @@ export function usePointerHandlers({
       }
 
       if (spacePressed) {
-        beginPointerSession(e.pointerId, (e.nativeEvent as PointerEvent).isTrusted);
+        beginPointerSession(pe.pointerId, pe.isTrusted);
         setIsPanning(true);
-        panStartRef.current = { x: e.clientX, y: e.clientY };
+        panStartRef.current = { x: pe.clientX, y: pe.clientY };
         return;
       }
 
       if (currentTool === 'zoom') {
         if (isDrawingRef.current) {
-          void finishCurrentStroke();
+          await requestFinishCurrentStroke();
         }
         isZoomingRef.current = true;
         zoomStartRef.current = {
-          x: e.clientX,
-          y: e.clientY,
+          x: pe.clientX,
+          y: pe.clientY,
           startScale: scale,
         };
-        beginPointerSession(e.pointerId, (e.nativeEvent as PointerEvent).isTrusted);
+        beginPointerSession(pe.pointerId, pe.isTrusted);
         return;
       }
 
-      const pe = e.nativeEvent as PointerEvent;
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
@@ -859,7 +889,7 @@ export function usePointerHandlers({
       if (isSelectionToolActive) {
         const handled = handleSelectionPointerDown(canvasX, canvasY, pe);
         if (handled) {
-          beginPointerSession(e.pointerId, pe.isTrusted);
+          beginPointerSession(pe.pointerId, pe.isTrusted);
           return;
         }
       }
@@ -867,7 +897,7 @@ export function usePointerHandlers({
       if (currentTool === 'move') {
         const handled = handleMovePointerDown(canvasX, canvasY, pe);
         if (handled) {
-          beginPointerSession(e.pointerId, pe.isTrusted);
+          beginPointerSession(pe.pointerId, pe.isTrusted);
           return;
         }
       }
@@ -875,7 +905,7 @@ export function usePointerHandlers({
       if (currentTool === 'gradient') {
         const handled = handleGradientPointerDown?.(canvasX, canvasY, pe) ?? false;
         if (handled) {
-          beginPointerSession(e.pointerId, pe.isTrusted);
+          beginPointerSession(pe.pointerId, pe.isTrusted);
         }
         return;
       }
@@ -894,9 +924,16 @@ export function usePointerHandlers({
             nativeSeqCursorRef.current
           );
           nativeSeqCursorRef.current = nextSeq;
-          const resolvedNativePoints = filterNativePointsByPointerId(
-            resolveNativeStrokePoints(bufferedPointsRaw, tabletState.currentPoint),
-            pe.pointerId
+          const pointerScopedBufferedPoints = bufferedPointsRaw.filter(
+            (point) => point.pointer_id === pe.pointerId
+          );
+          const pointerScopedCurrentPoint =
+            tabletState.currentPoint && tabletState.currentPoint.pointer_id === pe.pointerId
+              ? tabletState.currentPoint
+              : null;
+          const resolvedNativePoints = resolveNativeStrokePoints(
+            pointerScopedBufferedPoints,
+            pointerScopedCurrentPoint
           );
           for (const nativePoint of resolvedNativePoints) {
             const normalized = parseNativeTabletSample(nativePoint);
@@ -985,7 +1022,7 @@ export function usePointerHandlers({
         lastInputPosRef.current = { x: constrainedDown.x, y: constrainedDown.y };
       }
 
-      beginPointerSession(e.pointerId, pe.isTrusted);
+      beginPointerSession(pe.pointerId, pe.isTrusted);
       usingRawInput.current = false;
 
       if (!isStrokeTool(currentTool)) {
@@ -1042,10 +1079,8 @@ export function usePointerHandlers({
       }
 
       window.__strokeDiagnostics?.onStrokeStart();
-      void (async () => {
-        await captureBeforeImage();
-        await initializeBrushStroke();
-      })();
+      await captureBeforeImage();
+      await initializeBrushStroke();
     },
     [
       containerRef,
@@ -1054,7 +1089,8 @@ export function usePointerHandlers({
       panStartRef,
       currentTool,
       isDrawingRef,
-      finishCurrentStroke,
+      strokeStateRef,
+      requestFinishCurrentStroke,
       isZoomingRef,
       zoomStartRef,
       scale,
@@ -1075,12 +1111,21 @@ export function usePointerHandlers({
       onBeforeCanvasMutation,
       pointIndexRef,
       latencyProfilerRef,
-      strokeStateRef,
       pendingPointsRef,
       pendingEndRef,
       captureBeforeImage,
       initializeBrushStroke,
     ]
+  );
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      void processPointerDownNative(e.nativeEvent as PointerEvent).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.error('[Pointer] pointerdown processing failed', error);
+      });
+    },
+    [processPointerDownNative]
   );
 
   const handlePointerMove = useCallback(
