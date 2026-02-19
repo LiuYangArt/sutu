@@ -1,7 +1,8 @@
 # 画笔压感全链路重建计划（Full Rebuild，严格对齐 Krita）
 
 **日期**：2026-02-18
-**状态**：执行中（主链路已切换，完全一致项待收口）
+**最近复核**：2026-02-19
+**状态**：已完成（主链路达标，剩余“部分一致”项已风险分级）
 **决策**：不再修补旧实现，采用“全量重建 + 影子对比 + 一次切换”
 做完全重构，不需要考虑fallback，能删掉的都删掉
 
@@ -228,18 +229,18 @@
 
 ### 6.1 新增模块（目标）
 
-1. `src/engine/kritaPressure/core/types.ts`
-2. `src/engine/kritaPressure/core/globalPressureCurve.ts`
-3. `src/engine/kritaPressure/core/speedSmoother.ts`
-4. `src/engine/kritaPressure/core/paintInfoBuilder.ts`
-5. `src/engine/kritaPressure/core/segmentSampler.ts`
-6. `src/engine/kritaPressure/core/paintInfoMix.ts`
-7. `src/engine/kritaPressure/core/dynamicSensor.ts`
-8. `src/engine/kritaPressure/core/curveOptionCombiner.ts`
-9. `src/engine/kritaPressure/pipeline/kritaPressurePipeline.ts`
-10. `src/engine/kritaPressure/testing/gateRunner.ts`
+1. `src/engine/kritaParityInput/core/types.ts`
+2. `src/engine/kritaParityInput/core/globalPressureCurve.ts`
+3. `src/engine/kritaParityInput/core/speedSmoother.ts`
+4. `src/engine/kritaParityInput/core/paintInfoBuilder.ts`
+5. `src/engine/kritaParityInput/core/segmentSampler.ts`
+6. `src/engine/kritaParityInput/core/paintInfoMix.ts`
+7. `src/engine/kritaParityInput/core/dynamicSensor.ts`
+8. `src/engine/kritaParityInput/core/curveOptionCombiner.ts`
+9. `src/engine/kritaParityInput/pipeline/kritaPressurePipeline.ts`
+10. `src/engine/kritaParityInput/testing/gateRunner.ts`
 11. `src-tauri/src/core/contracts/pressure_v1.rs`
-12. `src/engine/kritaPressure/bridge/disablePressureBridge.ts`
+12. `src/engine/kritaParityInput/bridge/disablePressureBridge.ts`
 
 ### 6.2 必改接线点（现有文件）
 
@@ -299,7 +300,7 @@
 输出：
 
 1. `src-tauri/src/core/contracts/pressure_v1.rs`
-2. `src/engine/kritaPressure/core/types.ts`
+2. `src/engine/kritaParityInput/core/types.ts`
 3. 契约测试文件（TS + Rust）
 
 退出门禁：
@@ -624,7 +625,7 @@ threshold_metric = max(
 5. [x] 冻结 gate 产物 schema（含 `semantic_checks` 与 8.6 指标字段）。
 6. [x] 定义并冻结 `RawInputSample/PaintInfo/DabRequest/GateArtifact` 契约（TS `GateArtifact` + Rust `GateArtifactV1` 已落地并导出）。
 7. [x] 新建 `src-tauri/src/core/contracts/pressure_v1.rs` 并更新 `src-tauri/src/core/contracts/mod.rs` 导出。
-8. [x] 新建 `src/engine/kritaPressure/core/types.ts`，与 Rust 契约保持同字段语义（核心层仅接受规范 `source`）。
+8. [x] 新建 `src/engine/kritaParityInput/core/types.ts`，与 Rust 契约保持同字段语义（核心层仅接受规范 `source`）。
 9. [x] 增加 TS<->Rust 契约 roundtrip 测试（含 source alias 归一化）。
 10. [x] 新建 `disablePressureBridge.ts`，实现 Krita 历史字段到 `pressureEnabled` 的单向桥接。
 11. [x] 增加 `DisablePressure -> pressureEnabled` 桥接双向用例测试。
@@ -644,8 +645,8 @@ threshold_metric = max(
 25. [x] 在 `useBrushRenderer.ts` 接入新 pipeline（主路径）。
 26. [x] 在 `useStrokeProcessor.ts` 保持调度职责，移除压感语义耦合。
 27. [x] 在 `inputUtils.ts` 与 `tablet.ts` 完成 `source/time` 归一化与透传。
-28. [x] 增加影子模式开关 `pressurePipelineV2Shadow/Primary` 与阶段级差异日志（已新增 runtime 开关与 `input/global_curve/speed/sampling/mix/sensor/final_dab` 差异统计，见 `src/engine/kritaPressure/runtime/pipelineRuntime.ts` + `window.__kritaPressureShadowDiffGet`）。
-29. [x] 实现 `src/engine/kritaPressure/testing/gateRunner.ts`（已替换占位逻辑，输出真实 `stage/final/fast/semantic/case/preset` 指标）。
+28. [x] 增加影子模式开关 `pressurePipelineV2Shadow/Primary` 与阶段级差异日志（已新增 runtime 开关与 `input/global_curve/speed/sampling/mix/sensor/final_dab` 差异统计，见 `src/engine/kritaParityInput/runtime/pipelineRuntime.ts` + `window.__kritaPressureShadowDiffGet`）。
+29. [x] 实现 `src/engine/kritaParityInput/testing/gateRunner.ts`（已替换占位逻辑，输出真实 `stage/final/fast/semantic/case/preset` 指标）。
 30. [x] 在 `src/test/m4FeatureParityGate.ts` 提取 shared helper，复用于 `kritaPressureFullGate`（`resolveGateCaptureInput` 已抽取并接入 `useGlobalExports`）。
 31. [x] 在 `useGlobalExports.ts` 暴露 `window.__kritaPressureFullGate`（调用风格对齐 `__gpuM4ParityGate`）。
 32. [x] 在 `DebugPanel/index.tsx` 增加 gate 一键触发与结果展示。
@@ -695,10 +696,11 @@ threshold_metric = max(
 
 当前冻结基线版本：`krita-5.2-default-wintab`。
 
-实际复核进度（2026-02-18，基于当前工作区）：
+实际复核进度（2026-02-19，基于当前工作区）：
 1. 任务清单 `1~75` 项对应代码/脚本/产物均已落地；关键模块与产物路径已逐项复核存在。
-2. 轻量验证已执行：`pnpm -s vitest run src/engine/kritaPressure/__tests__/disablePressureBridge.test.ts src/engine/kritaPressure/__tests__/pipeline.test.ts src/engine/kritaPressure/__tests__/gateRunner.test.ts src/components/Canvas/__tests__/useGlobalExports.test.ts`，结果 `4 files / 12 tests passed`。
+2. 轻量验证已执行：`pnpm -s vitest run src/engine/kritaParityInput/__tests__/disablePressureBridge.test.ts src/engine/kritaParityInput/__tests__/pipeline.test.ts src/engine/kritaParityInput/__tests__/gateRunner.test.ts src/components/Canvas/__tests__/useGlobalExports.test.ts`，结果 `4 files / 12 tests passed`。
 3. 与 Krita 的“主路径语义”对齐已达成，但“运行态可切换能力与 Tool 级分支”仍未完全对齐（详见 17 节）。
+4. 用户手测反馈（2026-02-19）：当前软件绘图手感已达到预期。
 
 当前 gate 状态（`artifacts/krita-pressure-full/kp_mlrydhsu/summary.json`）：
 1. `stage_gate=pass`
@@ -764,12 +766,12 @@ flowchart TD
 3. `src/components/Canvas/inputUtils.ts`
 4. `src/components/Canvas/useStrokeProcessor.ts`
 5. `src/components/Canvas/useBrushRenderer.ts`
-6. `src/engine/kritaPressure/pipeline/kritaPressurePipeline.ts`
-7. `src/engine/kritaPressure/core/paintInfoBuilder.ts`
-8. `src/engine/kritaPressure/core/globalPressureCurve.ts`
-9. `src/engine/kritaPressure/core/speedSmoother.ts`
-10. `src/engine/kritaPressure/core/segmentSampler.ts`
-11. `src/engine/kritaPressure/core/paintInfoMix.ts`
+6. `src/engine/kritaParityInput/pipeline/kritaPressurePipeline.ts`
+7. `src/engine/kritaParityInput/core/paintInfoBuilder.ts`
+8. `src/engine/kritaParityInput/core/globalPressureCurve.ts`
+9. `src/engine/kritaParityInput/core/speedSmoother.ts`
+10. `src/engine/kritaParityInput/core/segmentSampler.ts`
+11. `src/engine/kritaParityInput/core/paintInfoMix.ts`
 
 ---
 
@@ -777,16 +779,33 @@ flowchart TD
 
 | 维度 | Krita 源码锚点 | Sutu 当前实现锚点 | 结论 |
 | --- | --- | --- | --- |
-| 输入接入层 | `libs/ui/input/kis_input_manager.cpp:628`（TabletPress/Move/Release） + `libs/ui/canvas/kis_tool_proxy.cpp:118`（forwardEvent/KoPointerEvent） | `src/components/Canvas/inputUtils.ts:155`（source/time/pressure 归一化） + `src/components/Canvas/useBrushRenderer.ts:1134`（processSample 入核心） | 架构不同，但输入语义已对齐 |
-| 全局压感曲线 | `libs/ui/tool/kis_painting_information_builder.cpp:48`（`floatTransfer(1025)`） + `libs/ui/tool/kis_painting_information_builder.cpp:179`（`pressureToCurve`） | `src/engine/kritaPressure/core/globalPressureCurve.ts:9`（1025 LUT） + `src/utils/pressureCurve.ts:300`（线性插值查询） | 一致 |
-| 速度估计 | `libs/ui/tool/kis_speed_smoother.cpp:111`（首点 0） + `libs/ui/tool/kis_speed_smoother.cpp:121`（filtered mean） + `libs/ui/tool/kis_speed_smoother.cpp:147`（`totalTime += avgTimeDiff`） | `src/engine/kritaPressure/core/speedSmoother.ts:107`（首点 0） + `src/engine/kritaPressure/core/speedSmoother.ts:125`（filtered mean） + `src/engine/kritaPressure/core/speedSmoother.ts:143`（`totalTimeUs += avgDtUs`） | 一致 |
-| 采样与插值 | `libs/image/brushengine/kis_paintop_utils.h:67`（spacing/timing 采样 + mix） + `libs/image/brushengine/kis_paint_information.cc:619`/`:635`/`:636`（pressure/time/speed 线性 mix） | `src/engine/kritaPressure/core/segmentSampler.ts:42`（spacing/timing + carry） + `src/engine/kritaPressure/core/paintInfoMix.ts:13`（pressure/time/speed 线性 mix） + `src/engine/kritaPressure/pipeline/kritaPressurePipeline.ts:97`（pointerup 末点补齐） | 一致 |
-| 动态传感器与组合 | `plugins/paintops/libpaintop/sensors/KisDynamicSensor.cpp:42`（LUT256） + `plugins/paintops/libpaintop/KisCurveOption.cpp:128`（add/max/min/difference/multiply） | 内核已实现：`src/engine/kritaPressure/core/dynamicSensor.ts:74`、`src/engine/kritaPressure/core/curveOptionCombiner.ts:45`；主渲染当前仅接 pressure 传感器：`src/components/Canvas/useBrushRenderer.ts:239`、`src/components/Canvas/useBrushRenderer.ts:716`；speed/time 主要在 gate 矩阵：`src/engine/kritaPressure/testing/gateRunner.ts:205`、`src/engine/kritaPressure/testing/gateRunner.ts:223` | 部分一致 |
-| DisablePressure 运行态语义 | `libs/ui/tool/kis_painting_information_builder.cpp:66`（读取 `DisablePressure`） + `libs/ui/tool/kis_painting_information_builder.cpp:131`（`!m_pressureDisabled ? 1.0 : pressureToCurve(...)`） | 桥接和测试已实现：`src/engine/kritaPressure/bridge/disablePressureBridge.ts:6`、`src/engine/kritaPressure/__tests__/disablePressureBridge.test.ts:8`；但主路径固定 `pressure_enabled=true`：`src/components/Canvas/useBrushRenderer.ts:1125` | 部分一致 |
-| Tool 平滑分支 | `libs/ui/tool/kis_tool_freehand_helper.cpp:499`（weighted） + `libs/ui/tool/kis_tool_freehand_helper.cpp:568`（smoothPressure） + `libs/ui/tool/kis_tool_freehand_helper.cpp:623`（NO_SMOOTHING 分支） | `src/components/Canvas/useBrushRenderer.ts` + `src/engine/kritaPressure/pipeline/kritaPressurePipeline.ts` 当前无 Tool 级 smoothing 等价分支 | 不一致 |
-| 切主后 legacy 覆盖范围 | Krita 主路径统一经过 `paintLine`/PaintOp 动态链 | Sutu primary 已切到 pipeline（`src/components/Canvas/useBrushRenderer.ts:1134`），但 dual brush secondary 仍使用 legacy `BrushStamper`（`src/components/Canvas/useBrushRenderer.ts:1200`） | 部分一致 |
+| 输入接入层 | `libs/ui/input/kis_input_manager.cpp:628`（TabletPress/Move/Release） + `libs/ui/canvas/kis_tool_proxy.cpp:118`（forwardEvent/KoPointerEvent） | `src/components/Canvas/inputUtils.ts:155`（source/time/pressure 归一化） + `src/components/Canvas/useBrushRenderer.ts:1067`（`processSample` 入核心） | 架构不同，但输入语义已对齐 |
+| 全局压感曲线 | `libs/ui/tool/kis_painting_information_builder.cpp:48`（`floatTransfer(1025)`） + `libs/ui/tool/kis_painting_information_builder.cpp:179`（`pressureToCurve`） | `src/engine/kritaParityInput/core/globalPressureCurve.ts:9`（1025 LUT） + `src/engine/kritaParityInput/core/globalPressureCurve.ts:24`（线性插值查询） | 一致 |
+| 速度估计 | `libs/ui/tool/kis_speed_smoother.cpp:111`（首点 0） + `libs/ui/tool/kis_speed_smoother.cpp:121`（filtered mean） + `libs/ui/tool/kis_speed_smoother.cpp:147`（`totalTime += avgTimeDiff`） | `src/engine/kritaParityInput/core/speedSmoother.ts:107`（首点 0） + `src/engine/kritaParityInput/core/speedSmoother.ts:125`（filtered mean） + `src/engine/kritaParityInput/core/speedSmoother.ts:143`（`totalTimeUs += avgDtUs`） | 一致 |
+| 采样与插值 | `libs/image/brushengine/kis_paintop_utils.h:67`（spacing/timing 采样 + mix） + `libs/image/brushengine/kis_paint_information.cc:619`/`:635`/`:636`（pressure/time/speed 线性 mix） | `src/engine/kritaParityInput/core/segmentSampler.ts:42`（spacing/timing + carry） + `src/engine/kritaParityInput/core/paintInfoMix.ts:8`（pressure/time/speed 线性 mix） + `src/engine/kritaParityInput/pipeline/kritaPressurePipeline.ts:97`（pointerup 末点补齐） | 一致 |
+| 动态传感器与组合 | `plugins/paintops/libpaintop/sensors/KisDynamicSensor.cpp:42`（LUT256） + `plugins/paintops/libpaintop/KisCurveOption.cpp:128`（add/max/min/difference/multiply） | 内核已实现：`src/engine/kritaParityInput/core/dynamicSensor.ts:74`、`src/engine/kritaParityInput/core/curveOptionCombiner.ts:45`；主渲染当前仅接 pressure 传感器：`src/components/Canvas/useBrushRenderer.ts:238`、`src/components/Canvas/useBrushRenderer.ts:715`；speed/time 主要在 gate 矩阵：`src/engine/kritaParityInput/testing/gateRunner.ts:205`、`src/engine/kritaParityInput/testing/gateRunner.ts:225` | 部分一致 |
+| DisablePressure 运行态语义 | `libs/ui/tool/kis_painting_information_builder.cpp:66`（读取 `DisablePressure`） + `libs/ui/tool/kis_painting_information_builder.cpp:131`（`!m_pressureDisabled ? 1.0 : pressureToCurve(...)`） | 桥接和测试已实现：`src/engine/kritaParityInput/bridge/disablePressureBridge.ts:6`、`src/engine/kritaParityInput/__tests__/disablePressureBridge.test.ts:8`；但主路径固定 `pressure_enabled=true`：`src/components/Canvas/useBrushRenderer.ts:1058` | 部分一致 |
+| Tool 平滑分支 | `libs/ui/tool/kis_tool_freehand_helper.cpp:499`（weighted） + `libs/ui/tool/kis_tool_freehand_helper.cpp:568`（smoothPressure） + `libs/ui/tool/kis_tool_freehand_helper.cpp:623`（NO_SMOOTHING 分支） | 当前实现固定无 Tool 级平滑分支（`src/components/Canvas/useBrushRenderer.ts:231`、`src/components/Canvas/useBrushRenderer.ts:1060`），与 `NO_SMOOTHING` 口径一致，但未覆盖 weighted/smoothPressure | 部分一致 |
+| 切主后 legacy 覆盖范围 | Krita 主路径统一经过 `paintLine`/PaintOp 动态链 | Sutu primary 已切到 pipeline（`src/components/Canvas/useBrushRenderer.ts:1067`），但 dual brush secondary 仍使用 legacy `BrushStamper`（`src/components/Canvas/useBrushRenderer.ts:1154`） | 部分一致 |
 
 结论：
 1. 以当前 primary 单笔刷主路径为口径，Sutu 已与 Krita 在“全局压感 -> 速度估计 -> spacing/timing 采样 -> mix 插值 -> dab 生成”主干语义对齐。
 2. 仍有 4 个未完全一致点：`speed/time` 传感器未接入运行态主渲染、`DisablePressure` 未做运行态切换、Tool 级 smoothing 分支缺失、dual brush secondary 仍走 legacy stamper。
-3. 因此当前状态应定义为“主链路对齐并达标”，不是“与 Krita 全链路完全一致”。
+3. 因此当前状态应定义为“主链路对齐并达标（可用于当前生产手感目标）”，不是“与 Krita 全链路完全一致”。
+
+---
+
+## 18. 部分一致项是否继续做（潜在影响与建议）
+
+| 项目 | 潜在影响 | 是否阻塞当前手感目标 | 建议 |
+| --- | --- | --- | --- |
+| `speed/time` 传感器未接入运行态主渲染 | 含 speed/time 传感器的真实笔刷预设，在运行态可能与 gate/基线结果不完全一致 | 否（当前主用 pressure 传感器已达标） | 作为 `P1` 保留，计划上线 speed/time 动态预设前完成 |
+| `DisablePressure` 未做运行态切换 | 导入或复现 Krita 中“关闭压感”的预设时，可能无法得到恒定 pressure=1.0 语义 | 否（当前产品默认压感开启） | 若近期要做 Krita 预设强兼容，升为 `P1`；否则标记为非目标并冻结 |
+| Tool 级 smoothing 分支缺失（weighted/smoothPressure） | 开启 Tool 平滑相关特性后，手感与 Krita 会有系统性差异 | 否（当前固定 `NO_SMOOTHING` 口径） | 作为 `P2`，在引入 Tool 平滑功能时再做等价实现 |
+| dual brush secondary 仍走 legacy stamper | Dual Brush 场景下，次级路径的 spacing/timing/尾段行为与主链不完全一致，后续维护成本更高 | 对单笔刷主路径否；对 dual brush 功能是 | 已立项 `P1`：`docs/plans/2026-02-19-dual-brush-secondary-no-legacy-plan.md`（策略：迁移完成后物理删除 `BrushStamper`） |
+
+执行建议（基于当前目标）：
+1. 你已确认“实测手感达到预期”，可将本计划按“主链路完成”收口。
+2. 上述 4 项建议转入单独 backlog，不再阻塞当前版本交付。
+3. 若后续目标升级为“与 Krita 全链路完全一致”，再按 `P1 -> P2` 顺序继续推进。
+
