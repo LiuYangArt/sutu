@@ -1,7 +1,7 @@
 # Krita WinTab/压感链路深度分析（给美术可读版）
 
-**日期**：2026-02-19  
-**适用对象**：美术、产品、测试、工程协作成员（不要求编程背景）  
+**日期**：2026-02-19
+**适用对象**：美术、产品、测试、工程协作成员（不要求编程背景）
 **阅读目标**：看懂 3 件事
 
 1. Krita 为什么 WinTab 和 Pointer 体感能比较接近。
@@ -136,17 +136,18 @@ KoPointerEvent 会从底层事件里统一拿这些字段：
 Krita 在 Builder 里会：
 
 1. 先把曲线预采样成 LUT（1025 个点）。
-2. 每次来一个 pressure，都做线性插值查询。
+2. 在“Use Pen Pressure”开启时，对 pressure 做 LUT 线性插值；关闭时 pressure 固定为 `1.0`（等价忽略压感）。
 
 源码锚点：
 
 - 预采样：`F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:48`
+- 分支条件（Use Pen Pressure 开关）：`F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:131`
 - 查询入口：`F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:179`
 
 ### 3.2 算法伪代码（易读版）
 
 ```text
-输入：pressure p (0..1), 查找表 LUT[0..N-1]
+输入：pressure p (0..1), 查找表 LUT[0..N-1]（仅在启用压感时）
 步骤：
 1) pos = p * (N-1)
 2) lo = floor(pos), hi = ceil(pos)
@@ -181,7 +182,7 @@ flowchart TD
 ### 4.1 Krita 的核心做法
 
 1. 首点速度固定 0。
-2. 可选择时间源（驱动时间戳或本地计时）。
+2. 可选择时间源（Qt 事件 `timestamp` 或本地计时）。
 3. 用 `filtered mean` 平滑时间差。
 4. 用累计距离 / 累计时间估算速度。
 
@@ -288,13 +289,13 @@ Krita 不是只有 pressure->size 一条线。
 
 ### 7.1 差异总表（美术视角）
 
-| 维度 | WinTab Native 常见情况 | PointerEvent 常见情况 | 体感风险 |
-| --- | --- | --- | --- |
-| 坐标单位 | 可能是设备/屏幕映射域，受驱动和映射配置影响 | 浏览器 CSS 像素域 | 起笔位置偏、轨迹外射 |
-| 时间戳 | 设备时钟域 | 浏览器事件时钟域 | 配对错位、首点错压 |
-| 相位 | 可能弱化为 move/hover（实现相关） | down/move/up 明确 | 尾段漏样、收笔发钝 |
-| 压力噪声 | 受驱动采样/包时序影响 | 相对平稳（但频率可能较低） | 起笔锯齿、台阶感 |
-| 采样频率 | 可能更高、更抖 | 浏览器合并/coalesced | “看似点多，实际错配” |
+| 维度     | WinTab Native 常见情况                      | PointerEvent 常见情况      | 体感风险             |
+| -------- | ------------------------------------------- | -------------------------- | -------------------- |
+| 坐标单位 | 可能是设备/屏幕映射域，受驱动和映射配置影响 | 浏览器 CSS 像素域          | 起笔位置偏、轨迹外射 |
+| 时间戳   | 设备时钟域                                  | 浏览器事件时钟域           | 配对错位、首点错压   |
+| 相位     | 可能弱化为 move/hover（实现相关）           | down/move/up 明确          | 尾段漏样、收笔发钝   |
+| 压力噪声 | 受驱动采样/包时序影响                       | 相对平稳（但频率可能较低） | 起笔锯齿、台阶感     |
+| 采样频率 | 可能更高、更抖                              | 浏览器合并/coalesced       | “看似点多，实际错配” |
 
 ### 7.2 Mermaid（问题形成图）
 
@@ -321,7 +322,7 @@ flowchart TD
 
 1. **输入入口统一**：Qt 统一事件对象（QTabletEvent）。
 2. **内部事件统一**：KoPointerEvent 统一字段。
-3. **构建阶段统一**：Builder 固定做全局压感曲线 + 速度归一。
+3. **构建阶段统一**：Builder 固定做速度归一；全局压感曲线在启用 “Use Pen Pressure” 时生效，关闭时 pressure 固定为 `1.0`。
 4. **采样阶段统一**：paintLine 统一 spacing/timing 与 mix。
 5. **参数阶段统一**：动态传感器和组合策略统一。
 6. **最终才进 paintop**：前面每层都“把差异消耗掉一部分”。
@@ -346,12 +347,12 @@ flowchart TD
 
 ## 10. 给美术的“现象 -> 技术原因”速查卡
 
-| 你看到的现象 | 通常对应哪里有问题 |
-| --- | --- |
-| 起笔第一颗特别大 | 首点压力错配、首点相位不稳、首点时间错配 |
-| 收笔不尖、像被剪断 | up 阶段样本没进入同一主链，或 finalize 没吃到尾段 |
-| 线条边缘有锯齿节拍感 | 压力采样有跳变，或压力和几何不是同一时间窗口 |
-| WinTab 与 PointerEvent 同笔刷差很多 | 输入统一层语义不一致（不是先查笔刷参数） |
+| 你看到的现象                        | 通常对应哪里有问题                                |
+| ----------------------------------- | ------------------------------------------------- |
+| 起笔第一颗特别大                    | 首点压力错配、首点相位不稳、首点时间错配          |
+| 收笔不尖、像被剪断                  | up 阶段样本没进入同一主链，或 finalize 没吃到尾段 |
+| 线条边缘有锯齿节拍感                | 压力采样有跳变，或压力和几何不是同一时间窗口      |
+| WinTab 与 PointerEvent 同笔刷差很多 | 输入统一层语义不一致（不是先查笔刷参数）          |
 
 ---
 
@@ -381,10 +382,11 @@ flowchart TD
 8. KoPointerEvent pressure：`F:\CodeProjects\krita\libs\flake\KoPointerEvent.cpp:306`
 9. KoPointerEvent timestamp：`F:\CodeProjects\krita\libs\flake\KoPointerEvent.cpp:405`
 10. Builder 构建：`F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:121`
-11. 全局压感曲线：`F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:179`
-12. 速度平滑：`F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:81`
-13. paintLine 采样：`F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:67`
-14. mix 线性插值：`F:\CodeProjects\krita\libs\image\brushengine\kis_paint_information.cc:619`
+11. Builder 压感分支条件：`F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:131`
+12. 全局压感曲线：`F:\CodeProjects\krita\libs\ui\tool\kis_painting_information_builder.cpp:179`
+13. 速度平滑：`F:\CodeProjects\krita\libs\ui\tool\kis_speed_smoother.cpp:81`
+14. paintLine 采样：`F:\CodeProjects\krita\libs\image\brushengine\kis_paintop_utils.h:67`
+15. mix 线性插值：`F:\CodeProjects\krita\libs\image\brushengine\kis_paint_information.cc:619`
 
 ### PaintBoard（当前）
 

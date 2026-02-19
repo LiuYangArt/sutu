@@ -1,8 +1,12 @@
 # PaintBoard WinTab 全量重构对齐 Krita 方案（无止血 / 无运行时 fallback）
 
-**日期**：2026-02-19  
-**适用范围**：Windows 桌面数位板主链（WinTab/WinInk）  
+**日期**：2026-02-19
+**适用范围**：Windows 桌面数位板主链（WinTab/WinInk）
 **目标读者**：美术、产品、测试、前端、Rust 后端
+参考：
+
+1.  krita详细分析： docs\research\2026-02-19-krita-wintab-input-deep-dive-for-artists.md
+2.  krita源码： F:\CodeProjects
 
 ---
 
@@ -22,9 +26,10 @@
 1. Windows 绘画主链不消费浏览器 `PointerEvent` 几何数据（UI 光标事件除外）。
 2. 不允许“native 只给 pressure，geometry 用 pointer”的拼接模式。
 3. 不允许在 Rust emitter 或其他旁路偷偷改写 pressure。
-4. 每个输入样本必须带完整相位：`hover/down/move/up`。
-5. 每个输入样本必须有单调 `host_time_us`，用于全链路时序一致性。
-6. 旧实现不做“局部复活”，而是作为整体可回退版本存在（Git 级别）。
+4. V3 主链固定启用压感，不实现运行时“关闭压感”模式。
+5. 每个输入样本必须带完整相位：`hover/down/move/up`。
+6. 每个输入样本必须有单调 `host_time_us`，用于全链路时序一致性。
+7. 旧实现不做“局部复活”，而是作为整体可回退版本存在（Git 级别）。
 
 ---
 
@@ -32,16 +37,16 @@
 
 ## 2.1 等价目标
 
-| Krita 层 | Krita 行为 | PaintBoard 重构目标 |
-| --- | --- | --- |
-| 输入入口 | Qt 抽象 `QTabletEvent` | Rust 统一 `NativeTabletEventV3` |
-| 统一事件 | `KoPointerEvent` | `UnifiedPointerEventV3`（字段语义对齐） |
-| 信息构建 | `KisPaintingInformationBuilder` | `PaintingInfoBuilderV3` |
-| 压力归一 | 全局压感曲线 LUT + 插值 | `GlobalPressureCurveLutV3` |
-| 速度平滑 | filtered mean + 历史距离窗口 | `SpeedSmootherV3` |
-| 采样发射 | `paintLine` spacing/timing | `SegmentSamplerV3` |
-| 参数插值 | `mix(t)` 对 pressure/speed/time | `PaintInfoMixV3` |
-| 动态组合 | sensor curve + combiner | `DynamicSensorEngineV3` |
+| Krita 层 | Krita 行为                      | PaintBoard 重构目标                     |
+| -------- | ------------------------------- | --------------------------------------- |
+| 输入入口 | Qt 抽象 `QTabletEvent`          | Rust 统一 `NativeTabletEventV3`         |
+| 统一事件 | `KoPointerEvent`                | `UnifiedPointerEventV3`（字段语义对齐） |
+| 信息构建 | `KisPaintingInformationBuilder` | `PaintingInfoBuilderV3`                 |
+| 压力归一 | Krita: 启用压感时走全局曲线 LUT + 插值；关闭压感时 pressure 固定 1.0 | `GlobalPressureCurveLutV3`（仅实现启用压感路径） |
+| 速度平滑 | filtered mean + 历史距离窗口    | `SpeedSmootherV3`                       |
+| 采样发射 | `paintLine` spacing/timing      | `SegmentSamplerV3`                      |
+| 参数插值 | `mix(t)` 对 pressure/speed/time | `PaintInfoMixV3`                        |
+| 动态组合 | sensor curve + combiner         | `DynamicSensorEngineV3`                 |
 
 ## 2.2 非目标
 
@@ -160,7 +165,8 @@ y_px = (raw_y - tablet_min_y) / (tablet_max_y - tablet_min_y) * canvas_height_px
 
 ## 5.3 全局压感曲线 LUT（Builder）
 
-与 Krita 一致：预采样 LUT（建议 1025），运行时线性插值。
+与 Krita 对齐的实现范围：预采样 LUT（建议 1025）+ 运行时线性插值（启用压感主路径）。
+说明：Krita 还存在“关闭压感时 pressure = `1.0`”分支，但 PaintBoard V3 不实现该模式。
 
 ```text
 pos = clamp(p,0,1) * (N-1)
@@ -174,9 +180,11 @@ out = LUT[lo] + t * (LUT[hi] - LUT[lo])
 核心逻辑：
 
 1. 首点速度固定 0。
-2. `timeDiff` 走 filtered mean。
-3. 用累计距离 / 累计时间估算局部速度。
-4. 速度归一化输出 `0..1` 给动态传感器。
+2. 时间源语义与 Krita 一致：使用统一输入事件时间戳；在 PaintBoard 中对应 `device_time_us`（可用时）+ `host_time_us` 单调时间基，缺失时退回 `host_time_us`。
+3. `timeDiff` 走 filtered mean。
+4. 不盲信逐包设备时间戳，速度估计以“平滑后的采样间隔 + 历史距离窗口”为主。
+5. 用累计距离 / 累计时间估算局部速度。
+6. 速度归一化输出 `0..1` 给动态传感器。
 
 ## 5.5 `paintLine + mix` 采样链
 
@@ -349,36 +357,36 @@ flowchart TD
 
 ## Implementation Plan（中文）
 
-1. 以 Krita 分层为模板，新建 V3 输入与笔刷信息链，不复用旧融合逻辑。  
-2. 在 Rust 端先完成相位、坐标、时间统一，再把完整样本送到前端。  
-3. 前端仅消费 `UnifiedPointerEventV3`，按 `Builder -> Smoother -> Sampler -> Mix` 产出 dabs。  
-4. 完成门禁后一次性切主，删除旧链，不保留运行时 fallback。  
+1. 以 Krita 分层为模板，新建 V3 输入与笔刷信息链，不复用旧融合逻辑。
+2. 在 Rust 端先完成相位、坐标、时间统一，再把完整样本送到前端。
+3. 前端仅消费 `UnifiedPointerEventV3`，按 `Builder -> Smoother -> Sampler -> Mix` 产出 dabs。
+4. 完成门禁后一次性切主，删除旧链，不保留运行时 fallback。
 
 ## Task List（中文）
 
-1. [ ] 冻结 V3 契约：字段、单位、相位、时间域。  
-2. [ ] 新建 `src-tauri/src/input/krita_v3/types.rs`。  
-3. [ ] 新建 `src-tauri/src/input/krita_v3/phase_machine.rs`。  
-4. [ ] 新建 `src-tauri/src/input/krita_v3/coordinate_mapper.rs`。  
-5. [ ] 新建 `src-tauri/src/input/krita_v3/timebase.rs`。  
-6. [ ] 新建 `src-tauri/src/input/krita_v3/wintab_adapter.rs`。  
-7. [ ] 改 `src-tauri/src/input/backend.rs` 升级到 V3 事件。  
-8. [ ] 改 `src-tauri/src/commands.rs` 移除 pressure smoothing 与旧发射分支。  
-9. [ ] 新建 `src/engine/kritaParityInput/contracts.ts`。  
-10. [ ] 新建 `src/engine/kritaParityInput/paintingInfoBuilderV3.ts`。  
-11. [ ] 新建 `src/engine/kritaParityInput/speedSmootherV3.ts`。  
-12. [ ] 新建 `src/engine/kritaParityInput/segmentSamplerV3.ts`。  
-13. [ ] 新建 `src/engine/kritaParityInput/paintInfoMixV3.ts`。  
-14. [ ] 新建 `src/engine/kritaParityInput/dynamicSensorEngineV3.ts`。  
-15. [ ] 改 `src/components/Canvas/usePointerHandlers.ts` 仅接 V3 主链。  
-16. [ ] 改 `src/components/Canvas/useRawPointerInput.ts` 从绘画主链剥离。  
-17. [ ] 改 `src/components/Canvas/useStrokeProcessor.ts` 接入 V3 采样链。  
-18. [ ] 新增 V3 门禁测试与回放测试。  
-19. [ ] 删除旧融合与旧平滑逻辑（切主后）。  
-20. [ ] 跑 `cargo check` 与 `pnpm check:all` 并出验收报告。  
+1. [ ] 冻结 V3 契约：字段、单位、相位、时间域。
+2. [ ] 新建 `src-tauri/src/input/krita_v3/types.rs`。
+3. [ ] 新建 `src-tauri/src/input/krita_v3/phase_machine.rs`。
+4. [ ] 新建 `src-tauri/src/input/krita_v3/coordinate_mapper.rs`。
+5. [ ] 新建 `src-tauri/src/input/krita_v3/timebase.rs`。
+6. [ ] 新建 `src-tauri/src/input/krita_v3/wintab_adapter.rs`。
+7. [ ] 改 `src-tauri/src/input/backend.rs` 升级到 V3 事件。
+8. [ ] 改 `src-tauri/src/commands.rs` 移除 pressure smoothing 与旧发射分支。
+9. [ ] 新建 `src/engine/kritaParityInput/contracts.ts`。
+10. [ ] 新建 `src/engine/kritaParityInput/paintingInfoBuilderV3.ts`。
+11. [ ] 新建 `src/engine/kritaParityInput/speedSmootherV3.ts`。
+12. [ ] 新建 `src/engine/kritaParityInput/segmentSamplerV3.ts`。
+13. [ ] 新建 `src/engine/kritaParityInput/paintInfoMixV3.ts`。
+14. [ ] 新建 `src/engine/kritaParityInput/dynamicSensorEngineV3.ts`。
+15. [ ] 改 `src/components/Canvas/usePointerHandlers.ts` 仅接 V3 主链。
+16. [ ] 改 `src/components/Canvas/useRawPointerInput.ts` 从绘画主链剥离。
+17. [ ] 改 `src/components/Canvas/useStrokeProcessor.ts` 接入 V3 采样链。
+18. [ ] 新增 V3 门禁测试与回放测试。
+19. [ ] 删除旧融合与旧平滑逻辑（切主后）。
+20. [ ] 跑 `cargo check` 与 `pnpm check:all` 并出验收报告。
 
 ## Thought（中文）
 
-1. 你的目标本质是“输入语义完全一致”，不是“在现有偏差上调参”。  
-2. 只要保留混源与旁路改写，WinTab 与 Pointer 的体验差会反复出现。  
-3. 一次性重构成本更高，但能避免持续返工，长期总成本更低。  
+1. 你的目标本质是“输入语义完全一致”，不是“在现有偏差上调参”。
+2. 只要保留混源与旁路改写，WinTab 与 Pointer 的体验差会反复出现。
+3. 一次性重构成本更高，但能避免持续返工，长期总成本更低。
