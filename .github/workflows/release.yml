@@ -14,52 +14,10 @@ permissions:
 
 jobs:
   # ============================================
-  # Fast preflight (fail early before full build)
-  # ============================================
-  preflight:
-    name: Preflight checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Validate Cargo target dependency scopes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cargo tree --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin > mac-tree.txt
-
-          if grep -E "wintab_lite v|libloading v" mac-tree.txt; then
-            echo "Found Windows-only dependencies in macOS dependency tree."
-            exit 1
-          fi
-
-          required=(base64 quick-xml image byteorder zip tiff dirs sha2 hex)
-          missing=()
-
-          for dep in "${required[@]}"; do
-            if ! grep -q "${dep} v" mac-tree.txt; then
-              missing+=("$dep")
-            fi
-          done
-
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "Missing common dependencies in macOS dependency tree: ${missing[*]}"
-            exit 1
-          fi
-
-          echo "Cargo dependency scope preflight passed."
-
-  # ============================================
   # Build per platform
   # ============================================
   build:
     name: Build ${{ matrix.platform_name }}
-    needs: preflight
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -69,10 +27,6 @@ jobs:
             platform: windows
             platform_name: Windows
             bundle_targets: msi,nsis
-          - os: macos-latest
-            platform: macos
-            platform_name: macOS
-            bundle_targets: app,dmg
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -111,99 +65,8 @@ jobs:
           app_name=$(node -e "const fs=require('fs'); const conf=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')); process.stdout.write(conf.productName);")
           echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve macOS signing identity
-        if: matrix.platform == 'macos'
-        id: mac_sign
-        shell: bash
-        env:
-          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          if [ -n "${APPLE_SIGNING_IDENTITY_SECRET}" ]; then
-            echo "identity=${APPLE_SIGNING_IDENTITY_SECRET}" >> "$GITHUB_OUTPUT"
-            echo "mode=developer-id" >> "$GITHUB_OUTPUT"
-          else
-            echo "identity=-" >> "$GITHUB_OUTPUT"
-            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Print macOS signing mode
-        if: matrix.platform == 'macos'
-        shell: bash
-        run: |
-          echo "Using macOS signing mode: ${{ steps.mac_sign.outputs.mode }}"
-
-      - name: Build Tauri app (macOS developer-id)
-        if: matrix.platform == 'macos' && steps.mac_sign.outputs.mode == 'developer-id'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ steps.mac_sign.outputs.identity }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Build Tauri app
         run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
-
-      - name: Build Tauri app (macOS adhoc)
-        if: matrix.platform == 'macos' && steps.mac_sign.outputs.mode == 'adhoc'
-        env:
-          APPLE_SIGNING_IDENTITY: '-'
-        run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
-
-      - name: Build Tauri app (non-macOS)
-        if: matrix.platform != 'macos'
-        run: pnpm tauri build --bundles ${{ matrix.bundle_targets }}
-
-      - name: Verify macOS bundle signatures
-        if: matrix.platform == 'macos'
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-
-          apps=(src-tauri/target/release/bundle/macos/*.app)
-          if [ ${#apps[@]} -eq 0 ]; then
-            echo "No .app bundle found to verify." >&2
-            exit 1
-          fi
-
-          for app in "${apps[@]}"; do
-            echo "Verifying app bundle: ${app}"
-            codesign --verify --deep --strict --verbose=2 "$app"
-            signature_info="$(codesign -dv --verbose=4 "$app" 2>&1 || true)"
-            if echo "$signature_info" | grep -q "Sealed Resources=none"; then
-              echo "Invalid app signature (Sealed Resources=none): ${app}" >&2
-              echo "$signature_info"
-              exit 1
-            fi
-          done
-
-          dmgs=(src-tauri/target/release/bundle/dmg/*.dmg)
-          if [ ${#dmgs[@]} -eq 0 ]; then
-            echo "No .dmg bundle found to verify." >&2
-            exit 1
-          fi
-
-          for dmg in "${dmgs[@]}"; do
-            echo "Verifying dmg payload app signature: ${dmg}"
-            attach_output="$(hdiutil attach "$dmg" -nobrowse -readonly)"
-            mount_point="$(echo "$attach_output" | awk '/\/Volumes\// {sub(/^.*Apple_HFS[[:space:]]+/, "", $0); print $0; exit}')"
-            if [ -z "$mount_point" ] || [ ! -d "$mount_point" ]; then
-              mount_point="$(echo "$attach_output" | awk '/\/Volumes\// {sub(/^.*\t/, "", $0); print $0; exit}')"
-            fi
-            if [ -z "$mount_point" ] || [ ! -d "$mount_point" ]; then
-              echo "Failed to locate mounted dmg volume for ${dmg}" >&2
-              echo "$attach_output"
-              exit 1
-            fi
-            mounted_app="$(find "$mount_point" -maxdepth 1 -type d -name '*.app' | head -n1)"
-            if [ -z "$mounted_app" ]; then
-              echo "No .app found inside ${dmg}" >&2
-              hdiutil detach "$mount_point" -quiet || true
-              exit 1
-            fi
-            codesign --verify --deep --strict --verbose=2 "$mounted_app"
-            hdiutil detach "$mount_point" -quiet
-          done
 
       - name: Create Portable ZIP
         if: matrix.platform == 'windows'
@@ -261,45 +124,6 @@ jobs:
           $copied | ForEach-Object {
             Write-Host "Collected Windows asset: $($_.Name)"
           }
-
-      - name: Collect macOS release assets
-        if: matrix.platform == 'macos'
-        shell: bash
-        run: |
-          mkdir -p release-assets/macos
-          shopt -s nullglob
-          files=(
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
-          )
-
-          app_dirs=(src-tauri/target/release/bundle/macos/*.app)
-          if [ ${#app_dirs[@]} -gt 0 ]; then
-            for app_dir in "${app_dirs[@]}"; do
-              app_name="$(basename "$app_dir")"
-              archive_name="${app_name}.tar.gz"
-              tar -czf "release-assets/macos/${archive_name}" -C "$(dirname "$app_dir")" "$app_name"
-              files+=("release-assets/macos/${archive_name}")
-            done
-          fi
-
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No macOS release assets were collected." >&2
-            echo "Bundle directory snapshot:" >&2
-            find src-tauri/target/release/bundle -maxdepth 3 -print || true
-            exit 1
-          fi
-
-          for file in "${files[@]}"; do
-            if [[ "$file" == release-assets/macos/* ]]; then
-              continue
-            fi
-            cp "$file" release-assets/macos/
-          done
-          for file in "${files[@]}"; do
-            echo "Collected macOS asset: $(basename "$file")"
-          done
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
