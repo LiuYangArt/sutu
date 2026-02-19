@@ -53,6 +53,16 @@ function overlayAlpha(base: number, blend: number): number {
   return 1 - 2 * (1 - base) * (1 - blend);
 }
 
+function expectRgbCloseTo(
+  actual: readonly [number, number, number],
+  expected: readonly [number, number, number],
+  precision = 8
+): void {
+  expect(actual[0]).toBeCloseTo(expected[0], precision);
+  expect(actual[1]).toBeCloseTo(expected[1], precision);
+  expect(actual[2]).toBeCloseTo(expected[2], precision);
+}
+
 describe('layerBlendMath', () => {
   it('blendRgb 支持全部 27 种模式并且结果在合法范围', () => {
     const dst: readonly [number, number, number] = [0.82, 0.17, 0.36];
@@ -66,6 +76,18 @@ describe('layerBlendMath', () => {
         expect(c).toBeLessThanOrEqual(1);
       }
     }
+  });
+
+  it('color-burn: 纯黑 source 叠加纯白 backdrop 时应保持白色（PS 对齐）', () => {
+    const out = blendRgb('color-burn', [1, 1, 1], [0, 0, 0]);
+
+    expectRgbCloseTo(out, [1, 1, 1]);
+  });
+
+  it('color-burn: 纯黑 source 在近白通道上应仅影响非纯白通道（PS 对齐）', () => {
+    const out = blendRgb('color-burn', [254 / 255, 1, 1], [0, 0, 0]);
+
+    expectRgbCloseTo(out, [0, 1, 1]);
   });
 
   it('dissolve 在同一像素坐标下应保持确定性', () => {

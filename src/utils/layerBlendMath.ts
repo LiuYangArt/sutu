@@ -14,6 +14,8 @@ function channelColorDodge(dst: number, src: number): number {
 }
 
 function channelColorBurn(dst: number, src: number): number {
+  // Photoshop compatibility: fully white backdrop channel stays unchanged.
+  if (dst >= 0.9999) return 1;
   if (src <= 0.0001) return 0;
   return Math.max(0, 1 - (1 - dst) / src);
 }
