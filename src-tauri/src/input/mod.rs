@@ -1,21 +1,24 @@
 //! Input module - handles tablet/pen input processing
 
 mod backend;
+pub mod krita_v3;
 mod macos_backend;
 mod pointer_backend;
-mod processor;
 mod tablet;
 pub mod wintab_backend;
 pub mod wintab_spike;
 
 pub use backend::{
-    InputBackpressureMode, InputEventQueue, InputPhase, InputQueueMetrics, InputSampleV2,
-    InputSource, PressureCurve, TabletBackend, TabletConfig, TabletEventV2, TabletInfo,
+    InputBackpressureMode, InputEventQueue, InputPhase, InputQueueMetrics, InputSource,
+    NativeTabletEventV3, PressureCurve, TabletBackend, TabletConfig, TabletEventV3, TabletInfo,
     TabletStatus,
+};
+pub use krita_v3::{
+    CoordinateMapper, InputPhaseV3, InputSourceV3, MonotonicTimebase, PhaseMachine, PhaseOutput,
+    WinTabAdapter,
 };
 pub use macos_backend::MacNativeBackend;
 pub use pointer_backend::PointerEventBackend;
-pub use processor::{InputProcessor, PressureSmoother};
 pub use tablet::TabletManager;
 pub use wintab_backend::WinTabBackend;
 

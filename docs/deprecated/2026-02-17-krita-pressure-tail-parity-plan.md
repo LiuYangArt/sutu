@@ -1,4 +1,31 @@
-# Krita 压感处理一致性执行计划（当前 issue 范围）
+# Krita 压感处理一致性执行计划（当前 issue 范围，已废弃）
+
+## 0. 文档状态（强约束）
+
+本文件已废弃，仅用于历史复盘，不作为当前实现或验收依据。  
+若与任何“非 deprecated 目录”文档冲突，以非 deprecated 文档为准。
+
+生效日期：2026-02-18  
+状态：`deprecated / do-not-execute`
+
+## 0.1 新会话唯一执行入口
+
+新会话开始执行 Krita 压感相关任务时，只允许使用以下文档作为 Source of Truth：
+
+1. `docs/plans/2026-02-18-krita-pressure-full-rebuild-plan.md`
+2. `docs/research/2026-02-18-krita-wacom-pressure-full-chain.md`
+3. `docs/testing/krita-pressure-full-gate-spec.md`
+4. `docs/testing/krita-pressure-full-test-cases.md`
+
+本文件中的命令、阈值、阶段定义、case 集合，不得直接用于当前实现。
+
+## 0.2 旧口径到新口径映射（防误读）
+
+1. `tail parity plan`（旧） -> `full rebuild plan`（新）
+2. `trace schema: krita-tail-trace-v1`（旧） -> `GateArtifact + stage/final/fast + semantic_checks`（新）
+3. `pnpm -s run gate:krita-tail`（旧） -> `window.__kritaPressureFullGate / scripts/pressure/run-gate.mjs`（新）
+4. 核心 case 4 项（旧） -> A~H 全量场景（新）
+5. 旧文档中的分支名、绝对路径与行号锚点仅表示当时上下文，不代表当前仓库状态。
 
 **日期**：2026-02-17  
 **当前分支**：`perf/146-krita-photoshop`  
@@ -7,7 +34,7 @@
 
 > 2026-02-17 Phase0 执行补充：所有 gate/校准脚本、默认配置与文档示例统一固定使用 `http://localhost:1420/`，不再使用 `127.0.0.1` 作为默认地址。
 
-## 0. 范围与固定口径
+## 1. 历史范围与固定口径（仅供复盘）
 
 ### 0.0 最高优先级（不可让步）
 
@@ -52,7 +79,7 @@
 
 ---
 
-## 1. Krita 侧源码锚点（执行顺序）
+## 2. 历史 Krita 侧源码锚点（仅供复盘）
 
 ### 1.1 输入压感与速度
 
@@ -100,7 +127,7 @@
 
 ---
 
-## 2. Sutu 当前差异（本 issue 相关）
+## 3. 历史 Sutu 差异（仅供复盘）
 
 ### 2.1 压感与采样启发式
 
@@ -131,7 +158,7 @@
 
 ---
 
-## 3. Phase 0 阻塞项：Trace 契约与 Gate（必须先落地）
+## 4. 历史 Phase 0 阻塞项（仅供复盘）
 
 ### 3.1 Trace 文件结构（`krita-tail-trace-v1`）
 
@@ -222,7 +249,7 @@
 
 ---
 
-## 4. 实施阶段（按顺序执行）
+## 5. 历史实施阶段（仅供复盘）
 
 ### Phase 0（P0）：对比基建与阈值校准
 

@@ -36,6 +36,7 @@ import {
   type LagometerMonitor,
 } from '@/benchmark';
 import type { GpuBrushCommitMetricsSnapshot, GpuBrushCommitReadbackMode } from '@/gpu';
+import type { KritaPressureGateResult } from '@/engine/kritaParityInput/testing/gateRunner';
 import { runLatencyBenchmark } from '@/utils/LatencyTest';
 import './DebugPanel.css';
 
@@ -217,6 +218,13 @@ function asM4ParityGateResult(value: unknown): M4ParityGateResult | null {
     return null;
   }
   return value as M4ParityGateResult;
+}
+
+function asKritaPressureGateResult(value: unknown): KritaPressureGateResult | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return value as KritaPressureGateResult;
 }
 
 function isGpuBrushCommitReadbackMode(value: unknown): value is GpuBrushCommitReadbackMode {
@@ -1124,7 +1132,6 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         ? finalSnapshot.uncapturedErrors
         : [];
       const deviceLost = Boolean(finalSnapshot.deviceLost);
-      const startPressureFallbackCount = diagnosticsRef.current?.startPressureFallbackCount ?? 0;
 
       const passed = didReset && clearPerRound && uncapturedErrors.length === 0 && !deviceLost;
       const report = [
@@ -1137,7 +1144,6 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
         `Session after replay x3: ${sessionId}`,
         `Uncaptured errors: ${uncapturedErrors.length}`,
         `Device lost: ${deviceLost ? 'YES' : 'NO'}`,
-        `startPressureFallbackCount: ${startPressureFallbackCount}`,
         `Auto Gate: ${passed ? 'PASS' : 'FAIL'}`,
         '',
         'Next: run 20 pressure strokes manually, then click "Record 20-Stroke Manual Gate".',
@@ -1206,6 +1212,76 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       addResult('M4 Feature Parity Gate', result.passed ? 'passed' : 'failed', report);
     } catch (error) {
       addResult('M4 Feature Parity Gate', 'failed', String(error));
+    } finally {
+      setRunningTest(null);
+      setProgress(0);
+    }
+  }, [runningTest, addResult]);
+
+  const runKritaPressureFullGate = useCallback(async () => {
+    if (runningTest) return;
+    setRunningTest('krita-pressure:full-gate');
+    setProgress(0);
+    addResult('Krita Pressure Full Gate', 'running');
+
+    try {
+      const gate = (
+        window as Window & {
+          __kritaPressureFullGate?: () => Promise<unknown>;
+        }
+      ).__kritaPressureFullGate;
+      if (typeof gate !== 'function') {
+        throw new Error('Missing API: window.__kritaPressureFullGate');
+      }
+
+      setProgress(0.2);
+      const rawResult = await gate();
+      const result = asKritaPressureGateResult(rawResult);
+      if (!result) {
+        throw new Error('Invalid result from window.__kritaPressureFullGate');
+      }
+
+      const semanticLines = Object.entries(result.semantic_checks ?? {}).map(
+        ([key, status]) => `${key}: ${status}`
+      );
+      const caseLines = (result.case_results ?? []).map(
+        (item) =>
+          `${item.case_id}-${item.case_name}: ${item.overall.toUpperCase()} (stage=${item.stage_gate}, final=${item.final_gate}, fast=${item.fast_gate})`
+      );
+      const presetLines = (result.preset_results ?? []).map(
+        (item) =>
+          `${item.preset_id}: ${item.overall.toUpperCase()} (sensor_mae=${item.sensor_map_mae.toFixed(4)}, combiner_mae=${item.combiner_output_mae.toFixed(4)})`
+      );
+      const report = [
+        `run_id: ${result.run_meta?.run_id ?? 'unknown'}`,
+        `baseline: ${result.baseline_version}`,
+        `threshold: ${result.threshold_version}`,
+        `input_hash: ${result.input_hash}`,
+        `overall=${result.overall}`,
+        `stage_gate=${result.stage_gate}`,
+        `final_gate=${result.final_gate}`,
+        `fast_gate=${result.fast_gate}`,
+        '',
+        'semantic_checks:',
+        ...semanticLines,
+        '',
+        'case_results:',
+        ...caseLines,
+        '',
+        'preset_results:',
+        ...presetLines,
+        '',
+        `blocking_failures: ${(result.blocking_failures ?? []).join(', ') || 'none'}`,
+      ].join('\n');
+
+      setProgress(1);
+      addResult(
+        'Krita Pressure Full Gate',
+        result.overall === 'pass' ? 'passed' : 'failed',
+        report
+      );
+    } catch (error) {
+      addResult('Krita Pressure Full Gate', 'failed', String(error));
     } finally {
       setRunningTest(null);
       setProgress(0);
@@ -1809,14 +1885,12 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
       manualChecklist.noThinStart &&
       manualChecklist.noMissingOrDisappear &&
       manualChecklist.noTailDab;
-    const startPressureFallbackCount = diagnosticsRef.current?.startPressureFallbackCount ?? 0;
     const passed = checklistPass && uncapturedErrors.length === 0 && !deviceLost;
     const report = [
       `Capture used: ${phase6GateCaptureName || 'N/A'}`,
       `Session: ${snapshot.diagnosticsSessionId ?? '?'}`,
       `Uncaptured errors: ${uncapturedErrors.length}`,
       `Device lost: ${deviceLost ? 'YES' : 'NO'}`,
-      `startPressureFallbackCount: ${startPressureFallbackCount}`,
       `manualChecklist: ${JSON.stringify(manualChecklist)}`,
       `Manual Gate: ${passed ? 'PASS' : 'FAIL'}`,
     ].join('\n');
@@ -2125,6 +2199,16 @@ export function DebugPanel({ canvas, onClose }: DebugPanelProps) {
                 title={`Run M4 feature parity gate with fixed capture ${DEBUG_CAPTURE_FILE_NAME}`}
               >
                 <span>Run M4 Feature Parity Gate</span>
+              </button>
+            </div>
+            <div className="debug-button-row" style={{ marginTop: '8px' }}>
+              <button
+                className="debug-btn secondary"
+                onClick={runKritaPressureFullGate}
+                disabled={!!runningTest}
+                title={`Run Krita pressure full gate with fixed capture ${DEBUG_CAPTURE_FILE_NAME}`}
+              >
+                <span>Run Krita Pressure Full Gate</span>
               </button>
             </div>
             <div className="debug-button-row" style={{ marginTop: '8px' }}>

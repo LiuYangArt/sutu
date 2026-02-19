@@ -24,12 +24,9 @@ import { ToastLayer } from './components/UI/ToastLayer';
 import { usePanelStore } from './stores/panel';
 import { useHistoryStore } from './stores/history';
 import { useViewportStore } from './stores/viewport';
-import { useToastStore } from './stores/toast';
 import { initializeGradientStore } from './stores/gradient';
 import { APP_DISPLAY_NAME } from './constants/appMeta';
 import { useI18n } from './i18n';
-import { detectPlatformKind } from './utils/platform';
-import { formatTabletFallbackReason } from './utils/tabletFallback';
 
 // Lazy load DebugPanel (only used in dev mode)
 const DebugPanel = lazy(() => import('./components/DebugPanel'));
@@ -110,14 +107,11 @@ function App() {
   const tabletInitializedRef = useRef(false);
   const startupRestoreTriggeredRef = useRef(false);
   const appExitInProgressRef = useRef(false);
-  const lastTabletFallbackRef = useRef<string | null>(null);
 
   // Get tablet store actions (stable references)
   const initTablet = useTabletStore((s) => s.init);
   const startTablet = useTabletStore((s) => s.start);
   const cleanupTablet = useTabletStore((s) => s.cleanup);
-  const tabletFallbackReason = useTabletStore((s) => s.fallbackReason);
-  const pushToast = useToastStore((s) => s.pushToast);
 
   // Toggle debug panel with Shift+Ctrl+D
   const handleDebugShortcut = useCallback((e: KeyboardEvent) => {
@@ -390,29 +384,6 @@ function App() {
       }
     };
   }, [initTablet, startTablet, cleanupTablet]); // Run once on mount (deps are stable)
-
-  useEffect(() => {
-    if (!tabletFallbackReason) {
-      return;
-    }
-    if (lastTabletFallbackRef.current === tabletFallbackReason) {
-      return;
-    }
-
-    lastTabletFallbackRef.current = tabletFallbackReason;
-    const fallbackMessage = formatTabletFallbackReason(
-      tabletFallbackReason,
-      detectPlatformKind(),
-      'toast'
-    );
-    if (!fallbackMessage) {
-      return;
-    }
-    pushToast(fallbackMessage, {
-      variant: 'info',
-      durationMs: 7000,
-    });
-  }, [tabletFallbackReason, pushToast]);
 
   useEffect(() => {
     // 初始化默认文档

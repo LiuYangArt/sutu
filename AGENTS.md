@@ -150,6 +150,7 @@ pnpm format           # 格式化代码
 - `useToolStore` - 当前工具、笔刷设置、颜色
 
 ### 持久化设置：
+
 - Windows: `C:\Users\<用户名>\AppData\Roaming\com.paintboard\settings.json`
 - macOS: `~/Library/Application Support/com.paintboard/settings.json`
 
@@ -177,3 +178,4 @@ pnpm format           # 格式化代码
 
 - 提出计划时检查计划的置信度，如果不够高，尝试通过修改计划提高。
 - 当置信度无法再提高时，把疑虑明确告知用户。
+- 禁止引用deprecated下的任何内容

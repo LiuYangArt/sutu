@@ -1,0 +1,181 @@
+{
+  "run_id": "kp_threshold_audit_mlrxtgs9",
+  "generated_at": "2026-02-18T11:17:08.025Z",
+  "runs": 30,
+  "baseline_version": "krita-5.2-default-wintab",
+  "threshold_version": "krita-pressure-thresholds.v1",
+  "threshold_file": "docs/testing/krita-pressure-thresholds.v1.json",
+  "input_hash": "9d17bed1",
+  "audit_passed": true,
+  "metric_rows": [
+    {
+      "metric": "fast.fast_speed_mae",
+      "p99": 0,
+      "threshold": 0.04,
+      "margin": 0.04,
+      "status": "pass"
+    },
+    {
+      "metric": "fast.fast_speed_p95",
+      "p99": 0.7912155749524649,
+      "threshold": 1,
+      "margin": 0.20878442504753514,
+      "status": "pass"
+    },
+    {
+      "metric": "fast.fast_window_min_required",
+      "p99": 1,
+      "threshold": 1,
+      "margin": 0,
+      "status": "pass"
+    },
+    {
+      "metric": "final.pixel_roi_delta",
+      "p99": 0,
+      "threshold": 0.12,
+      "margin": 0.12,
+      "status": "pass"
+    },
+    {
+      "metric": "final.tail_decay_delta",
+      "p99": 0,
+      "threshold": 0.07,
+      "margin": 0.07,
+      "status": "pass"
+    },
+    {
+      "metric": "final.width_profile_delta",
+      "p99": 0,
+      "threshold": 0.05,
+      "margin": 0.05,
+      "status": "pass"
+    },
+    {
+      "metric": "preset.combiner_output_mae",
+      "p99": 0,
+      "threshold": 0.03,
+      "margin": 0.03,
+      "status": "pass"
+    },
+    {
+      "metric": "preset.combiner_output_p95",
+      "p99": 0,
+      "threshold": 0.06,
+      "margin": 0.06,
+      "status": "pass"
+    },
+    {
+      "metric": "preset.sensor_map_mae",
+      "p99": 0,
+      "threshold": 0.02,
+      "margin": 0.02,
+      "status": "pass"
+    },
+    {
+      "metric": "preset.sensor_map_p95",
+      "p99": 0,
+      "threshold": 0.04,
+      "margin": 0.04,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.carry_distance_error_px",
+      "p99": 0.8739898880630976,
+      "threshold": 1.5,
+      "margin": 0.6260101119369024,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.carry_time_error_ms",
+      "p99": 0.2,
+      "threshold": 2,
+      "margin": 1.8,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.combiner_output_mae",
+      "p99": 0,
+      "threshold": 0.03,
+      "margin": 0.03,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.combiner_output_p95",
+      "p99": 0,
+      "threshold": 0.06,
+      "margin": 0.06,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.dab_count_delta",
+      "p99": 0,
+      "threshold": 2,
+      "margin": 2,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.pressure_curve_mae",
+      "p99": 0,
+      "threshold": 0.02,
+      "margin": 0.02,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.pressure_curve_p95",
+      "p99": 0,
+      "threshold": 0.04,
+      "margin": 0.04,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.pressure_mix_mae",
+      "p99": 0,
+      "threshold": 0.02,
+      "margin": 0.02,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.sensor_value_mae",
+      "p99": 0,
+      "threshold": 0.02,
+      "margin": 0.02,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.sensor_value_p95",
+      "p99": 0,
+      "threshold": 0.04,
+      "margin": 0.04,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.speed_mae",
+      "p99": 0,
+      "threshold": 0.03,
+      "margin": 0.03,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.speed_mix_mae",
+      "p99": 0,
+      "threshold": 0.03,
+      "margin": 0.03,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.speed_p95",
+      "p99": 0,
+      "threshold": 0.06,
+      "margin": 0.06,
+      "status": "pass"
+    },
+    {
+      "metric": "stage.time_mix_mae_us",
+      "p99": 0,
+      "threshold": 1500,
+      "margin": 1500,
+      "status": "pass"
+    }
+  ],
+  "violations": []
+}

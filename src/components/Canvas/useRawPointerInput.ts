@@ -1,16 +1,7 @@
-import { useEffect, useRef, MutableRefObject } from 'react';
-import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
-import { getEffectiveInputData, isNativeTabletStreamingState } from './inputUtils';
+import { useEffect, useRef, MutableRefObject, RefObject } from 'react';
+import { useTabletStore } from '@/stores/tablet';
+import { isNativeTabletStreamingState, parsePointerEventSample } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
-
-/**
- * Q1 Optimization: Use pointerrawupdate event for lower-latency input.
- *
- * pointerrawupdate fires at the hardware polling rate (up to 1000Hz for gaming mice/tablets)
- * before the browser coalesces events into pointermove. This reduces input latency by 1-3ms.
- *
- * @see https://w3c.github.io/pointerevents/#the-pointerrawupdate-event
- */
 
 // Check if pointerrawupdate is supported (non-standard, mainly Chromium)
 export const supportsPointerRawUpdate =
@@ -24,12 +15,16 @@ type QueuedPoint = {
   tiltY: number;
   rotation: number;
   timestampMs: number;
+  source: 'wintab' | 'macnative' | 'pointerevent';
+  phase: 'down' | 'move' | 'up' | 'hover';
+  hostTimeUs: number;
+  deviceTimeUs: number;
   pointIndex: number;
 };
 
 interface RawPointerInputConfig {
-  containerRef: React.RefObject<HTMLDivElement | null>;
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  containerRef: RefObject<HTMLDivElement | null>;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
   isDrawingRef: MutableRefObject<boolean>;
   currentTool: string;
   strokeStateRef: MutableRefObject<string>;
@@ -40,9 +35,18 @@ interface RawPointerInputConfig {
   onPointBuffered?: () => void;
 }
 
+function isPointerEventMode(): boolean {
+  const tabletState = useTabletStore.getState();
+  const nativeStreaming = isNativeTabletStreamingState(tabletState);
+  if (nativeStreaming) return false;
+  const activeBackend = (tabletState.activeBackend ?? '').toLowerCase();
+  const backend = (tabletState.backend ?? '').toLowerCase();
+  return activeBackend === 'pointerevent' || backend === 'pointerevent';
+}
+
 /**
- * Hook to handle pointerrawupdate events for drawing input.
- * Falls back gracefully when not supported - the existing pointermove handler continues to work.
+ * Hook to handle pointerrawupdate events for lower-latency PointerEvent mode.
+ * WinTab/MacNative modes are intentionally disabled to avoid mixed-source sampling.
  */
 export function useRawPointerInput({
   containerRef,
@@ -56,88 +60,63 @@ export function useRawPointerInput({
   latencyProfiler,
   onPointBuffered,
 }: RawPointerInputConfig) {
-  // Track if we're using raw input (for diagnostics)
   const usingRawInputRef = useRef(false);
-  const nativeSeqCursorRef = useRef(0);
 
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
 
-    // Only enable when pointerrawupdate is supported
     if (!container || !canvas || !supportsPointerRawUpdate) {
       usingRawInputRef.current = false;
       return;
     }
 
     const handleRawUpdate = (e: Event) => {
-      // Cast to PointerEvent (pointerrawupdate is a PointerEvent)
       const pe = e as PointerEvent;
-
-      // Only process during active drawing with brush-like tools
-      if (!isDrawingRef.current || (currentTool !== 'brush' && currentTool !== 'eraser')) return;
+      if (!isPointerEventMode()) {
+        usingRawInputRef.current = false;
+        return;
+      }
+      if (!isDrawingRef.current || (currentTool !== 'brush' && currentTool !== 'eraser')) {
+        usingRawInputRef.current = false;
+        return;
+      }
 
       const state = strokeStateRef.current;
-      if (state !== 'starting' && state !== 'active') return;
+      if (state !== 'starting' && state !== 'active') {
+        usingRawInputRef.current = false;
+        return;
+      }
 
-      // Mark that raw input is being used
       usingRawInputRef.current = true;
-
-      // Get canvas coordinates
       const rect = canvas.getBoundingClientRect();
-
-      // Process all coalesced events from raw update
       const sampledEvents = pe.getCoalescedEvents?.();
       const coalescedEvents = sampledEvents && sampledEvents.length > 0 ? sampledEvents : [pe];
 
-      // Get tablet state for pressure resolution
-      const tabletState = useTabletStore.getState();
-      const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
-      const shouldUseNativeBackend = isNativeBackendActive && pe.isTrusted;
-      const { points: bufferedPoints, nextSeq } = shouldUseNativeBackend
-        ? readPointBufferSince(nativeSeqCursorRef.current)
-        : { points: [], nextSeq: nativeSeqCursorRef.current };
-      if (shouldUseNativeBackend) {
-        nativeSeqCursorRef.current = nextSeq;
-      }
-      const nativeStartIndex = Math.max(0, bufferedPoints.length - coalescedEvents.length);
-
       for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
         const evt = coalescedEvents[eventIndex]!;
-        const nativePoint =
-          shouldUseNativeBackend && bufferedPoints.length > 0
-            ? (bufferedPoints[nativeStartIndex + eventIndex] ??
-              bufferedPoints[bufferedPoints.length - 1] ??
-              null)
-            : null;
         const { x: canvasX, y: canvasY } = clientToCanvasPoint(
           canvas,
           evt.clientX,
           evt.clientY,
           rect
         );
-
-        // Resolve pressure/tilt from native backend or PointerEvent
-        const { pressure, tiltX, tiltY, rotation, timestampMs } = getEffectiveInputData(
-          evt,
-          shouldUseNativeBackend,
-          bufferedPoints,
-          tabletState.currentPoint,
-          pe,
-          nativePoint
-        );
-
+        const normalized = parsePointerEventSample(evt);
         const idx = pointIndexRef.current++;
         latencyProfiler.markInputReceived(idx, evt);
 
-        const point = {
+        const point: QueuedPoint = {
           x: canvasX,
           y: canvasY,
-          pressure,
-          tiltX,
-          tiltY,
-          rotation,
-          timestampMs,
+          pressure: normalized.pressure,
+          tiltX: normalized.tiltX,
+          tiltY: normalized.tiltY,
+          rotation: normalized.rotation,
+          timestampMs: normalized.timestampMs,
+          source: normalized.source,
+          phase: normalized.phase,
+          hostTimeUs: normalized.hostTimeUs,
+          deviceTimeUs: normalized.deviceTimeUs,
           pointIndex: idx,
         };
 
@@ -146,14 +125,11 @@ export function useRawPointerInput({
         } else if (state === 'active') {
           inputQueueRef.current.push(point);
         }
-
         onPointBuffered?.();
       }
     };
 
-    // Register using string type to avoid TypeScript issues with non-standard event
     container.addEventListener('pointerrawupdate', handleRawUpdate, { passive: true });
-
     return () => {
       container.removeEventListener('pointerrawupdate', handleRawUpdate);
       usingRawInputRef.current = false;

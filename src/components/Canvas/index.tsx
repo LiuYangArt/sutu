@@ -209,6 +209,25 @@ declare global {
         mismatchRatio: number;
       }>;
     }>;
+    __kritaPressureFullGate?: (options?: {
+      capture?: StrokeCaptureData | string;
+      baselineVersion?: string;
+      thresholdVersion?: string;
+    }) => Promise<{
+      overall: 'pass' | 'fail';
+      stage_gate: 'pass' | 'fail';
+      final_gate: 'pass' | 'fail';
+      fast_gate: 'pass' | 'fail';
+      blocking_failures: string[];
+      run_meta: { run_id: string };
+    }>;
+    __tabletInputTraceGet?: () => boolean;
+    __tabletInputTraceSet?: (enabled: boolean) => Promise<{
+      frontendEnabled: boolean;
+      backendEnabled: boolean;
+      traceFile: { baseDir: 'AppConfig'; relativePath: string };
+    }>;
+    __tabletInputTraceEnabled?: boolean;
     __gpuSelectionPipelineV2?: () => boolean;
     __gpuSelectionPipelineV2Set?: (enabled: boolean) => boolean;
     __brushTailTaperDebug?: () => StrokeFinalizeDebugSnapshot | null;
@@ -229,8 +248,6 @@ declare global {
       onStrokeStart: () => void;
       onStrokeEnd: () => void;
       onStateChange: (state: string) => void;
-      onStartPressureFallback: () => void;
-      startPressureFallbackCount?: number;
     };
   }
 }
@@ -243,6 +260,10 @@ type QueuedPoint = {
   tiltY: number;
   rotation: number;
   timestampMs: number;
+  source: 'wintab' | 'macnative' | 'pointerevent';
+  phase: 'down' | 'move' | 'up' | 'hover';
+  hostTimeUs: number;
+  deviceTimeUs: number;
   pointIndex: number;
 };
 

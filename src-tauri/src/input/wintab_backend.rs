@@ -5,10 +5,12 @@
 
 use super::backend::{
     default_event_queue_capacity, InputEventQueue, InputQueueMetrics, TabletBackend, TabletConfig,
-    TabletEventV2, TabletInfo, TabletStatus,
+    TabletEventV3, TabletInfo, TabletStatus,
 };
 #[cfg(target_os = "windows")]
-use super::backend::{InputPhase, InputSampleV2, InputSource};
+use super::krita_v3::{CoordinateMapper, WinTabAdapter};
+#[cfg(target_os = "windows")]
+use std::collections::HashMap;
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,9 +22,16 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 #[cfg(target_os = "windows")]
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 #[cfg(target_os = "windows")]
-use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+use windows::Win32::Graphics::Gdi::ScreenToClient;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetClientRect, GetForegroundWindow, GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+};
 #[cfg(target_os = "windows")]
 use wintab_lite::{cast_void, Packet, AXIS, CXO, DVC, HCTX, INT, LOGCONTEXT, LPVOID, WTI, WTPKT};
 
@@ -41,41 +50,30 @@ type WTEnableFn = unsafe extern "C" fn(*mut HCTX, i32) -> i32;
 type WTOverlapFn = unsafe extern "C" fn(*mut HCTX, i32) -> i32;
 
 #[cfg(target_os = "windows")]
-const WINTAB_ANGLE_TENTHS_PER_DEGREE: f32 = 10.0;
-#[cfg(target_os = "windows")]
 const CONTEXT_REENABLE_INTERVAL_LOOPS: u64 = 100;
+#[cfg(target_os = "windows")]
+static WINTAB_TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "windows")]
-fn normalize_rotation_degrees(value: f32) -> f32 {
-    if !value.is_finite() {
-        return 0.0;
-    }
-    value.rem_euclid(360.0)
+pub fn set_wintab_trace_enabled(enabled: bool) {
+    WINTAB_TRACE_ENABLED.store(enabled, Ordering::Relaxed);
+    tracing::info!(
+        "[WinTabTrace] backend trace {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
 }
 
-/// Convert WinTab orientation (azimuth/altitude in 0.1 degree units) into
-/// PointerEvent-compatible tilt angles (degrees, -90..90).
+#[cfg(not(target_os = "windows"))]
+pub fn set_wintab_trace_enabled(_enabled: bool) {}
+
 #[cfg(target_os = "windows")]
-fn orientation_to_tilt_degrees(azimuth_tenths: i32, altitude_tenths: i32) -> (f32, f32) {
-    let azimuth_rad = (azimuth_tenths as f32 / WINTAB_ANGLE_TENTHS_PER_DEGREE).to_radians();
-    let altitude_rad = (altitude_tenths as f32 / WINTAB_ANGLE_TENTHS_PER_DEGREE).to_radians();
-
-    // Pen axis in tablet coordinates.
-    let axis_xy = altitude_rad.cos();
-    let axis_z = altitude_rad.sin();
-    let axis_x = azimuth_rad.cos() * axis_xy;
-    let axis_y = azimuth_rad.sin() * axis_xy;
-
-    let tilt_x = axis_x.atan2(axis_z).to_degrees().clamp(-90.0, 90.0);
-    let tilt_y = axis_y.atan2(axis_z).to_degrees().clamp(-90.0, 90.0);
-    (tilt_x, tilt_y)
+pub fn is_wintab_trace_enabled() -> bool {
+    WINTAB_TRACE_ENABLED.load(Ordering::Relaxed)
 }
 
-#[cfg(target_os = "windows")]
-fn packet_rotation_degrees(packet: &Packet) -> f32 {
-    // WinTab Orientation::orTwist is typically reported in 0.1 degree units.
-    // Keep a normalized 0..360 range to match PointerEvent.twist semantics.
-    normalize_rotation_degrees(packet.pkOrientation.orTwist as f32 / WINTAB_ANGLE_TENTHS_PER_DEGREE)
+#[cfg(not(target_os = "windows"))]
+pub fn is_wintab_trace_enabled() -> bool {
+    false
 }
 
 /// WinTab backend for Windows tablet input
@@ -89,8 +87,6 @@ pub struct WinTabBackend {
     poll_thread: Option<JoinHandle<()>>,
     #[cfg(target_os = "windows")]
     pressure_max: f32,
-    #[cfg(target_os = "windows")]
-    stream_id: u64,
     #[cfg(target_os = "windows")]
     hwnd: Option<isize>, // Window handle for WinTab context
 }
@@ -111,8 +107,6 @@ impl WinTabBackend {
             poll_thread: None,
             #[cfg(target_os = "windows")]
             pressure_max: 32767.0,
-            #[cfg(target_os = "windows")]
-            stream_id: 1,
             #[cfg(target_os = "windows")]
             hwnd: None,
         }
@@ -290,8 +284,7 @@ impl TabletBackend for WinTabBackend {
         let events = self.events.clone();
         let polling_interval_ms = 1000 / self.config.polling_rate_hz as u64;
         let pressure_max = self.pressure_max;
-        let stream_id = self.stream_id;
-        // Note: pressure_curve is now applied in commands.rs AFTER smoothing
+        // Pressure curve shaping is handled by shared runtime config paths.
         let hwnd_value = self.hwnd; // Copy the stored HWND
 
         let handle = thread::spawn(move || {
@@ -368,19 +361,110 @@ impl TabletBackend for WinTabBackend {
                 1000 / polling_interval_ms
             );
 
-            let screen_width = log_context.lcOutExtXYZ.x.abs() as f32;
-            let screen_height = log_context.lcOutExtXYZ.y.abs() as f32;
+            let mut client_rect = RECT::default();
+            let (window_width, window_height) =
+                if unsafe { GetClientRect(hwnd_val, &mut client_rect) }.is_ok() {
+                    let width = (client_rect.right - client_rect.left).max(1) as f32;
+                    let height = (client_rect.bottom - client_rect.top).max(1) as f32;
+                    (width, height)
+                } else {
+                    let fallback_width = log_context.lcOutExtXYZ.x.abs().max(1) as f32;
+                    let fallback_height = log_context.lcOutExtXYZ.y.abs().max(1) as f32;
+                    tracing::warn!(
+                        "[WinTab] GetClientRect failed, fallback to context extents {}x{}",
+                        fallback_width,
+                        fallback_height
+                    );
+                    (fallback_width, fallback_height)
+                };
             tracing::info!(
-                "[WinTab] Output extents: {}x{}",
-                screen_width,
-                screen_height
+                "[WinTab] Client extents: {}x{}",
+                window_width,
+                window_height
             );
+            let mut dpi = unsafe { GetDpiForWindow(hwnd_val) };
+            if dpi == 0 {
+                dpi = 96;
+            }
+            let mut dpi_scale = (dpi as f32 / 96.0).max(0.25);
+            tracing::info!("[WinTab] Window DPI: {}, scale={:.4}", dpi, dpi_scale);
+
+            let context_in_x_min = log_context.lcInOrgXYZ.x;
+            let context_in_x_max = context_in_x_min.saturating_add(log_context.lcInExtXYZ.x);
+            let context_in_y_min = log_context.lcInOrgXYZ.y;
+            let context_in_y_max = context_in_y_min.saturating_add(log_context.lcInExtXYZ.y);
+
+            let has_context_x_range = context_in_x_min != context_in_x_max;
+            let has_context_y_range = context_in_y_min != context_in_y_max;
+            let (map_x_min, map_x_max) = if has_context_x_range {
+                (context_in_x_min, context_in_x_max)
+            } else {
+                (tablet_x.axMin, tablet_x.axMax)
+            };
+            let (map_y_min, map_y_max) = if has_context_y_range {
+                (context_in_y_min, context_in_y_max)
+            } else {
+                (tablet_y.axMin, tablet_y.axMax)
+            };
+
+            let virtual_left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+            let virtual_top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+            let virtual_width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }.max(1) as f32;
+            let virtual_height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) }.max(1) as f32;
+            tracing::info!(
+                "[WinTab] Virtual screen: origin=({}, {}), size={}x{}",
+                virtual_left,
+                virtual_top,
+                virtual_width,
+                virtual_height
+            );
+
+            let mapper = CoordinateMapper::with_axis_range(
+                virtual_width,
+                virtual_height,
+                map_x_min,
+                map_x_max,
+                map_y_min,
+                map_y_max,
+                false,
+            );
+            tracing::info!(
+                "[WinTab] Context map in_org=({}, {}), in_ext=({}, {}), out_org=({}, {}), out_ext=({}, {})",
+                log_context.lcInOrgXYZ.x,
+                log_context.lcInOrgXYZ.y,
+                log_context.lcInExtXYZ.x,
+                log_context.lcInExtXYZ.y,
+                log_context.lcOutOrgXYZ.x,
+                log_context.lcOutOrgXYZ.y,
+                log_context.lcOutExtXYZ.x,
+                log_context.lcOutExtXYZ.y
+            );
+            tracing::info!(
+                "[WinTab] Coordinate mapping range: x=[{}..{}], y=[{}..{}], source={}",
+                map_x_min,
+                map_x_max,
+                map_y_min,
+                map_y_max,
+                if has_context_x_range && has_context_y_range {
+                    "context_input"
+                } else {
+                    "device_axis_fallback"
+                }
+            );
+            let mut adapters: HashMap<u32, WinTabAdapter> = HashMap::new();
 
             let mut was_in_proximity = false;
             let mut loop_count: u64 = 0;
 
             while running.load(Ordering::SeqCst) {
                 loop_count += 1;
+                if loop_count % 20 == 0 {
+                    let current_dpi = unsafe { GetDpiForWindow(hwnd_val) };
+                    if current_dpi != 0 {
+                        dpi = current_dpi;
+                        dpi_scale = (dpi as f32 / 96.0).max(0.25);
+                    }
+                }
 
                 // Periodically re-enable context to prevent it from being disabled
                 // This is a workaround for WinTab context being disabled by other apps
@@ -408,52 +492,69 @@ impl TabletBackend for WinTabBackend {
                     for packet in packets.iter().take(count as usize) {
                         // Check proximity from pkStatus (TPS::PROXIMITY = 0x01)
                         let proximity_bit = packet.pkStatus.bits() & 0x01 != 0;
-                        let in_proximity = proximity_bit || packet.pkNormalPressure > 0;
+                        let contact_bit = packet.pkButtons.0 & 0x01 != 0;
+                        let in_proximity =
+                            proximity_bit || contact_bit || packet.pkNormalPressure > 0;
 
                         if in_proximity && !was_in_proximity {
-                            let _ = events.enqueue_event(TabletEventV2::ProximityEnter);
+                            let _ = events.enqueue_event(TabletEventV3::ProximityEnter);
                         } else if !in_proximity && was_in_proximity {
-                            let _ = events.enqueue_event(TabletEventV2::ProximityLeave);
+                            let _ = events.enqueue_event(TabletEventV3::ProximityLeave);
                         }
                         was_in_proximity = in_proximity;
-
-                        // Convert to normalized pressure (raw value, curve applied later after smoothing)
-                        let pressure = packet.pkNormalPressure as f32 / pressure_max;
-
-                        // Convert tablet coordinates to screen coordinates
-                        // pkXYZ contains output coordinates (already scaled by context)
-                        let x = packet.pkXYZ.x as f32;
-                        let y = packet.pkXYZ.y as f32;
-
-                        let (tilt_x, tilt_y) = orientation_to_tilt_degrees(
-                            packet.pkOrientation.orAzimuth,
-                            packet.pkOrientation.orAltitude,
-                        );
-                        let rotation = packet_rotation_degrees(packet);
-
-                        let host_time_us = super::current_time_us();
-                        let device_time_us = (packet.pkTime as u64).saturating_mul(1000);
-                        let sample = InputSampleV2 {
-                            seq: 0,
-                            stream_id,
-                            source: InputSource::WinTab,
-                            pointer_id: 0,
-                            phase: if pressure > 0.0 {
-                                InputPhase::Move
+                        let pointer_id = packet.pkCursor;
+                        let adapter = adapters.entry(pointer_id).or_insert_with(|| {
+                            WinTabAdapter::new(
+                                pointer_id,
+                                format!("wintab_cursor_{}", pointer_id),
+                                pressure_max,
+                                mapper,
+                            )
+                        });
+                        if let Some(mut sample) =
+                            adapter.convert_packet(packet, super::current_time_us())
+                        {
+                            let screen_x = sample.x_px + virtual_left as f32;
+                            let screen_y = sample.y_px + virtual_top as f32;
+                            let mut client_point = POINT {
+                                x: screen_x.round() as i32,
+                                y: screen_y.round() as i32,
+                            };
+                            if unsafe { ScreenToClient(hwnd_val, &mut client_point) }.as_bool() {
+                                sample.x_px = client_point.x as f32 / dpi_scale;
+                                sample.y_px = client_point.y as f32 / dpi_scale;
                             } else {
-                                InputPhase::Hover
-                            },
-                            x,
-                            y,
-                            pressure,
-                            tilt_x,
-                            tilt_y,
-                            rotation,
-                            host_time_us,
-                            device_time_us,
-                            timestamp_ms: host_time_us / 1000,
-                        };
-                        let _ = events.enqueue_sample(sample);
+                                // Fallback: best-effort clamp into current client extents.
+                                sample.x_px =
+                                    (sample.x_px / dpi_scale).clamp(0.0, window_width / dpi_scale);
+                                sample.y_px =
+                                    (sample.y_px / dpi_scale).clamp(0.0, window_height / dpi_scale);
+                            }
+
+                            if is_wintab_trace_enabled() {
+                                tracing::info!(
+                                    "[WinTabTrace][Rust][packet] host_time_us={} device_time_us={} pointer_id={} stroke_id={} phase={:?} raw_x={} raw_y={} screen_x_px={:.2} screen_y_px={:.2} mapped_x_px={:.2} mapped_y_px={:.2} dpi={} dpi_scale={:.4} raw_pressure={} pressure_0_1={:.4} buttons=0x{:x} status_bits=0x{:x}",
+                                    sample.host_time_us,
+                                    sample.device_time_us.unwrap_or(sample.host_time_us),
+                                    sample.pointer_id,
+                                    sample.stroke_id,
+                                    sample.phase,
+                                    packet.pkXYZ.x,
+                                    packet.pkXYZ.y,
+                                    screen_x,
+                                    screen_y,
+                                    sample.x_px,
+                                    sample.y_px,
+                                    dpi,
+                                    dpi_scale,
+                                    packet.pkNormalPressure,
+                                    sample.pressure_0_1,
+                                    packet.pkButtons.0,
+                                    packet.pkStatus.bits()
+                                );
+                            }
+                            let _ = events.enqueue_sample(sample);
+                        }
                     }
                 }
 
@@ -497,7 +598,7 @@ impl TabletBackend for WinTabBackend {
         self.info.as_ref()
     }
 
-    fn poll(&mut self, events: &mut Vec<TabletEventV2>) -> usize {
+    fn poll(&mut self, events: &mut Vec<TabletEventV3>) -> usize {
         self.events.drain_into(events, super::current_time_us)
     }
 

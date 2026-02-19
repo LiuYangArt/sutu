@@ -22,7 +22,12 @@ import {
   parseScatterSettings,
   parseTextureSettings,
 } from './replayContextParsers';
-import type { M4ParityGateOptions, M4ParityGateResult } from '@/test/m4FeatureParityGate';
+import {
+  resolveGateCaptureInput,
+  type M4ParityGateOptions,
+  type M4ParityGateResult,
+} from '@/test/m4FeatureParityGate';
+import type { KritaPressureGateResult } from '@/engine/kritaParityInput/testing/gateRunner';
 import type {
   FixedCaptureSource,
   FixedStrokeCaptureLoadResult,
@@ -31,6 +36,12 @@ import type {
 import type { StrokeCaptureData, StrokeReplayOptions } from '@/test/StrokeCapture';
 import { appDotStorageKey, appHyphenStorageKey } from '@/constants/appMeta';
 import type { StrokeFinalizeDebugSnapshot } from '@/utils/strokeBuffer';
+import {
+  getTabletInputTraceFileHint,
+  isTabletInputTraceEnabled,
+  logTabletTrace,
+  setTabletInputTraceEnabled,
+} from '@/utils/tabletTrace';
 import {
   GPUContext,
   type GpuBrushCommitReadbackMode,
@@ -299,6 +310,18 @@ export function useGlobalExports({
       ) => Promise<FixedStrokeCaptureSaveResult>;
       __strokeCaptureLoadFixed?: () => Promise<FixedStrokeCaptureLoadResult | null>;
       __gpuM4ParityGate?: (options?: M4ParityGateOptions) => Promise<M4ParityGateResult>;
+      __kritaPressureFullGate?: (options?: {
+        capture?: StrokeCaptureData | string;
+        baselineVersion?: string;
+        thresholdVersion?: string;
+      }) => Promise<KritaPressureGateResult>;
+      __tabletInputTraceGet?: () => boolean;
+      __tabletInputTraceSet?: (enabled: boolean) => Promise<{
+        frontendEnabled: boolean;
+        backendEnabled: boolean;
+        traceFile: { baseDir: 'AppConfig'; relativePath: string };
+      }>;
+      __tabletInputTraceEnabled?: boolean;
     };
 
     const isTauriRuntime = '__TAURI_INTERNALS__' in window;
@@ -336,6 +359,33 @@ export function useGlobalExports({
       win.__canvasMergeAllLayers = handleMergeAllLayers;
     }
     win.__canvasResize = handleResizeCanvas;
+    win.__tabletInputTraceGet = () => isTabletInputTraceEnabled();
+    win.__tabletInputTraceSet = async (enabled) => {
+      const requestedEnabled = !!enabled;
+      setTabletInputTraceEnabled(requestedEnabled);
+      let backendEnabled = false;
+      try {
+        backendEnabled = await invoke<boolean>('set_wintab_trace_enabled', {
+          enabled: requestedEnabled,
+        });
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[TabletTrace] failed to toggle backend trace:', error);
+      }
+      const frontendEnabled = isTabletInputTraceEnabled();
+      const traceFile = getTabletInputTraceFileHint();
+      const result = { frontendEnabled, backendEnabled, traceFile };
+      logTabletTrace('frontend.trace_toggle', {
+        requested_enabled: requestedEnabled,
+        frontend_enabled: frontendEnabled,
+        backend_enabled: backendEnabled,
+        trace_file_base_dir: traceFile.baseDir,
+        trace_file_relative_path: traceFile.relativePath,
+      });
+      // eslint-disable-next-line no-console
+      console.info('[TabletTrace] toggle result', result);
+      return result;
+    };
     win.__gpuM0Baseline = async () => {
       const device = GPUContext.getInstance().device;
       if (!device) {
@@ -841,6 +891,28 @@ export function useGlobalExports({
       return m4ParityGate(options);
     };
 
+    win.__kritaPressureFullGate = async (options): Promise<KritaPressureGateResult> => {
+      const resolvedOptions = options ?? {};
+      const fallbackCapture = getLastStrokeCapture?.() ?? null;
+      const resolvedCapture = await resolveGateCaptureInput({
+        capture: resolvedOptions.capture,
+        fallbackCapture,
+        parseStrokeCaptureInput,
+        loadFixedCapture: async () => {
+          const fixed = await win.__strokeCaptureLoadFixed?.();
+          return fixed ?? null;
+        },
+        invalidCaptureError: 'Invalid capture input for krita pressure full gate',
+        missingCaptureError: 'Missing capture input for krita pressure full gate',
+      });
+
+      const { runKritaPressureGate } = await import('@/engine/kritaParityInput/testing/gateRunner');
+      return runKritaPressureGate(resolvedCapture.capture, {
+        baseline_version: resolvedOptions.baselineVersion ?? 'krita-5.2-default-wintab',
+        threshold_version: resolvedOptions.thresholdVersion ?? 'krita-pressure-thresholds.v1',
+      });
+    };
+
     async function tryGpuLayerExportDataUrl(layerId: string): Promise<string | undefined> {
       if (!exportGpuLayerImageData) return undefined;
       try {
@@ -1190,6 +1262,9 @@ export function useGlobalExports({
       delete win.__strokeCaptureSaveFixed;
       delete win.__strokeCaptureLoadFixed;
       delete win.__gpuM4ParityGate;
+      delete win.__kritaPressureFullGate;
+      delete win.__tabletInputTraceGet;
+      delete win.__tabletInputTraceSet;
     };
   }, [
     layerRendererRef,
@@ -1201,6 +1276,8 @@ export function useGlobalExports({
     jumpToHistoryIndex,
     handleClearLayer,
     handleDuplicateLayer,
+    handleSetLayerOpacity,
+    handleSetLayerBlendMode,
     handleRemoveLayer,
     handleRemoveLayers,
     handleMergeSelectedLayers,

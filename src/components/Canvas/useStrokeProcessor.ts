@@ -8,6 +8,7 @@ import { BrushRenderConfig } from './useBrushRenderer';
 import { LayerRenderer } from '@/utils/layerRenderer';
 import type { GpuStrokeCommitResult, RenderBackend, StrokeCompositeMode } from '@/gpu';
 import { isNativeTabletStreamingState } from './inputUtils';
+import { logTabletTrace } from '@/utils/tabletTrace';
 
 const MAX_POINTS_PER_FRAME = 80;
 // Photoshop Build-up (Airbrush) rate tuning:
@@ -25,6 +26,10 @@ interface QueuedPoint {
   tiltY: number;
   rotation: number;
   timestampMs: number;
+  source: 'wintab' | 'macnative' | 'pointerevent';
+  phase: 'down' | 'move' | 'up' | 'hover';
+  hostTimeUs: number;
+  deviceTimeUs: number;
   pointIndex: number;
 }
 
@@ -83,7 +88,13 @@ interface UseStrokeProcessorParams {
     config: BrushRenderConfig,
     pointIndex?: number,
     dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-    inputMeta?: { timestampMs?: number }
+    inputMeta?: {
+      timestampMs?: number;
+      source?: 'wintab' | 'macnative' | 'pointerevent';
+      phase?: 'down' | 'move' | 'up' | 'hover';
+      hostTimeUs?: number;
+      deviceTimeUs?: number;
+    }
   ) => void;
   endBrushStroke: (ctx: CanvasRenderingContext2D) => Promise<void>;
   getPreviewCanvas: () => HTMLCanvasElement | null;
@@ -306,7 +317,13 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number }
+      inputMeta?: {
+        timestampMs?: number;
+        source?: 'wintab' | 'macnative' | 'pointerevent';
+        phase?: 'down' | 'move' | 'up' | 'hover';
+        hostTimeUs?: number;
+        deviceTimeUs?: number;
+      }
     ) => {
       const constrained = constrainShiftLinePoint(x, y);
       const config = getBrushConfig();
@@ -351,7 +368,13 @@ export function useStrokeProcessor({
       pressure: number,
       pointIndex?: number,
       dynamics?: { tiltX?: number; tiltY?: number; rotation?: number },
-      inputMeta?: { timestampMs?: number }
+      inputMeta?: {
+        timestampMs?: number;
+        source?: 'wintab' | 'macnative' | 'pointerevent';
+        phase?: 'down' | 'move' | 'up' | 'hover';
+        hostTimeUs?: number;
+        deviceTimeUs?: number;
+      }
     ) => {
       processSinglePoint(x, y, pressure, pointIndex, dynamics, inputMeta);
       // Mark that we need to render after processing
@@ -382,9 +405,17 @@ export function useStrokeProcessor({
       // Batch process all queued points (with soft limit)
       const queue = inputQueueRef.current;
       if (queue.length > 0) {
-        const canConsumeQueue = strokeStateRef.current === 'active';
+        const canConsumeQueue =
+          strokeStateRef.current === 'active' || strokeStateRef.current === 'finishing';
         if (!canConsumeQueue) {
           // Drop stale points captured around stroke end to prevent late tail dabs.
+          logTabletTrace('frontend.canvas.queue_drop', {
+            reason: 'stroke_state_not_consumable',
+            stroke_state: strokeStateRef.current,
+            dropped_count: queue.length,
+            first_point_index: queue[0]?.pointIndex ?? null,
+            last_point_index: queue[queue.length - 1]?.pointIndex ?? null,
+          });
           inputQueueRef.current = [];
         } else {
           processedAnyPoints = true;
@@ -401,6 +432,18 @@ export function useStrokeProcessor({
           // Drain and process points
           for (let i = 0; i < count; i++) {
             const p = queue[i]!;
+            logTabletTrace('frontend.canvas.consume_point', {
+              point_index: p.pointIndex,
+              source: p.source,
+              phase: p.phase,
+              x_canvas: p.x,
+              y_canvas: p.y,
+              pressure_0_1: p.pressure,
+              host_time_us: p.hostTimeUs,
+              device_time_us: p.deviceTimeUs,
+              stroke_state: strokeStateRef.current,
+              queue_depth: queue.length,
+            });
             processSinglePoint(
               p.x,
               p.y,
@@ -411,7 +454,13 @@ export function useStrokeProcessor({
                 tiltY: p.tiltY,
                 rotation: p.rotation,
               },
-              { timestampMs: p.timestampMs }
+              {
+                timestampMs: p.timestampMs,
+                source: p.source,
+                phase: p.phase,
+                hostTimeUs: p.hostTimeUs,
+                deviceTimeUs: p.deviceTimeUs,
+              }
             );
           }
 
@@ -459,7 +508,13 @@ export function useStrokeProcessor({
               pressure,
               undefined,
               lastDynamicsRef.current,
-              { timestampMs: time }
+              {
+                timestampMs: time,
+                source: 'pointerevent',
+                phase: 'move',
+                hostTimeUs: Math.round(time * 1000),
+                deviceTimeUs: 0,
+              }
             );
             steps++;
           }
@@ -524,6 +579,17 @@ export function useStrokeProcessor({
       let processedTailQueue = false;
       if (remainingQueue.length > 0) {
         for (const p of remainingQueue) {
+          logTabletTrace('frontend.canvas.consume_tail_point', {
+            point_index: p.pointIndex,
+            source: p.source,
+            phase: p.phase,
+            x_canvas: p.x,
+            y_canvas: p.y,
+            pressure_0_1: p.pressure,
+            host_time_us: p.hostTimeUs,
+            device_time_us: p.deviceTimeUs,
+            stroke_state: strokeStateRef.current,
+          });
           processSinglePoint(
             p.x,
             p.y,
@@ -534,7 +600,13 @@ export function useStrokeProcessor({
               tiltY: p.tiltY,
               rotation: p.rotation,
             },
-            { timestampMs: p.timestampMs }
+            {
+              timestampMs: p.timestampMs,
+              source: p.source,
+              phase: p.phase,
+              hostTimeUs: p.hostTimeUs,
+              deviceTimeUs: p.deviceTimeUs,
+            }
           );
         }
         inputQueueRef.current = [];
@@ -675,13 +747,7 @@ export function useStrokeProcessor({
           out.push(p);
           last = p;
         }
-
-        // In Build-up mode we emit a dab for the first processed point.
-        // PointerDown pressure is sometimes less reliable than the first move/raw sample,
-        // which can create an overly heavy "starting dab" (especially at very light pressure).
-        // If we have at least one follow-up point, start from it and keep tap/hold behavior
-        // (single-point strokes) unchanged.
-        replayPoints = out.length > 1 ? out.slice(1) : out;
+        replayPoints = out;
       }
 
       for (const p of replayPoints) {
@@ -695,7 +761,13 @@ export function useStrokeProcessor({
             tiltY: p.tiltY,
             rotation: p.rotation,
           },
-          { timestampMs: p.timestampMs }
+          {
+            timestampMs: p.timestampMs,
+            source: p.source,
+            phase: p.phase,
+            hostTimeUs: p.hostTimeUs,
+            deviceTimeUs: p.deviceTimeUs,
+          }
         );
         window.__strokeDiagnostics?.onPointBuffered();
       }

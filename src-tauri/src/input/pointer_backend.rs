@@ -5,10 +5,14 @@
 //! Input is received from the frontend via Tauri commands.
 
 use super::backend::{
-    default_event_queue_capacity, InputEventQueue, InputPhase, InputQueueMetrics, InputSampleV2,
-    InputSource, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+    default_event_queue_capacity, InputEventQueue, InputPhase, InputQueueMetrics,
+    NativeTabletEventV3, PressureCurve, TabletBackend, TabletConfig, TabletEventV3, TabletInfo,
+    TabletStatus,
 };
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 /// PointerEvent backend for cross-platform tablet input
 pub struct PointerEventBackend {
@@ -16,8 +20,9 @@ pub struct PointerEventBackend {
     info: Option<TabletInfo>,
     config: TabletConfig,
     events: Arc<InputEventQueue>,
-    pressure_curve: super::backend::PressureCurve,
-    stream_id: u64,
+    pressure_curve: PressureCurve,
+    next_stroke_id: AtomicU64,
+    active_strokes: Mutex<HashMap<u32, u64>>,
 }
 
 impl PointerEventBackend {
@@ -31,8 +36,34 @@ impl PointerEventBackend {
                 super::backend::InputBackpressureMode::Lossless,
                 default_event_queue_capacity(),
             )),
-            pressure_curve: super::backend::PressureCurve::Linear,
-            stream_id: 2,
+            pressure_curve: PressureCurve::Linear,
+            next_stroke_id: AtomicU64::new(1),
+            active_strokes: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn resolve_stroke_id(&self, pointer_id: u32, phase: InputPhase) -> u64 {
+        let mut active = match self.active_strokes.lock() {
+            Ok(lock) => lock,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        match phase {
+            InputPhase::Down => {
+                let stroke_id = self.next_stroke_id.fetch_add(1, Ordering::Relaxed);
+                active.insert(pointer_id, stroke_id);
+                stroke_id
+            }
+            InputPhase::Up => active
+                .remove(&pointer_id)
+                .unwrap_or_else(|| self.next_stroke_id.fetch_add(1, Ordering::Relaxed)),
+            InputPhase::Move | InputPhase::Hover => {
+                active.get(&pointer_id).copied().unwrap_or_else(|| {
+                    let stroke_id = self.next_stroke_id.fetch_add(1, Ordering::Relaxed);
+                    active.insert(pointer_id, stroke_id);
+                    stroke_id
+                })
+            }
         }
     }
 
@@ -53,22 +84,23 @@ impl PointerEventBackend {
     ) {
         let adjusted_pressure = self.pressure_curve.apply(pressure);
         let host_time_us = super::current_time_us();
+        let stroke_id = self.resolve_stroke_id(pointer_id, phase);
 
-        let sample = InputSampleV2 {
+        let sample = NativeTabletEventV3 {
             seq: 0,
-            stream_id: self.stream_id,
-            source: InputSource::PointerEvent,
+            stroke_id,
             pointer_id,
             phase,
-            x,
-            y,
-            pressure: adjusted_pressure,
-            tilt_x: tilt_x.clamp(-90.0, 90.0),
-            tilt_y: tilt_y.clamp(-90.0, 90.0),
-            rotation,
+            device_id: "pointerevent".to_string(),
+            source: super::backend::InputSource::PointerEvent,
+            x_px: x,
+            y_px: y,
+            pressure_0_1: adjusted_pressure,
+            tilt_x_deg: tilt_x.clamp(-90.0, 90.0),
+            tilt_y_deg: tilt_y.clamp(-90.0, 90.0),
+            rotation_deg: rotation.rem_euclid(360.0),
             host_time_us,
-            device_time_us: device_time_us.unwrap_or(host_time_us),
-            timestamp_ms: host_time_us / 1000,
+            device_time_us: Some(device_time_us.unwrap_or(host_time_us)),
         };
 
         let _ = self.events.enqueue_sample(sample);
@@ -76,12 +108,12 @@ impl PointerEventBackend {
 
     /// Push proximity enter event
     pub fn push_proximity_enter(&self) {
-        let _ = self.events.enqueue_event(TabletEventV2::ProximityEnter);
+        let _ = self.events.enqueue_event(TabletEventV3::ProximityEnter);
     }
 
     /// Push proximity leave event
     pub fn push_proximity_leave(&self) {
-        let _ = self.events.enqueue_event(TabletEventV2::ProximityLeave);
+        let _ = self.events.enqueue_event(TabletEventV3::ProximityLeave);
     }
 }
 
@@ -136,7 +168,7 @@ impl TabletBackend for PointerEventBackend {
         self.info.as_ref()
     }
 
-    fn poll(&mut self, events: &mut Vec<TabletEventV2>) -> usize {
+    fn poll(&mut self, events: &mut Vec<TabletEventV3>) -> usize {
         self.events.drain_into(events, super::current_time_us)
     }
 
@@ -198,10 +230,10 @@ mod tests {
         let count = backend.poll(&mut events);
 
         assert_eq!(count, 1);
-        if let TabletEventV2::Input(sample) = &events[0] {
-            assert_eq!(sample.x, 100.0);
-            assert_eq!(sample.y, 200.0);
-            assert_eq!(sample.pressure, 0.5);
+        if let TabletEventV3::Input(sample) = &events[0] {
+            assert_eq!(sample.x_px, 100.0);
+            assert_eq!(sample.y_px, 200.0);
+            assert_eq!(sample.pressure_0_1, 0.5);
             assert_eq!(sample.pointer_id, 1);
         } else {
             panic!("Expected Input event");

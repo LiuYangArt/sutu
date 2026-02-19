@@ -1,20 +1,20 @@
 //! macOS native tablet backend implementation.
 //!
 //! Uses AppKit `NSEvent` local monitors to capture tablet pressure/tilt/rotation/proximity
-//! and feeds them into the existing `tablet-event-v2` queue.
+//! and feeds them into the V3 tablet queue.
 
 #[cfg(target_os = "macos")]
 use super::backend::{
-    default_event_queue_capacity, InputEventQueue, InputPhase, InputSampleV2, InputSource,
+    default_event_queue_capacity, InputEventQueue, InputPhase, InputSource, NativeTabletEventV3,
 };
 use super::backend::{
-    InputQueueMetrics, TabletBackend, TabletConfig, TabletEventV2, TabletInfo, TabletStatus,
+    InputQueueMetrics, TabletBackend, TabletConfig, TabletEventV3, TabletInfo, TabletStatus,
 };
+#[cfg(target_os = "macos")]
+use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
 
-#[cfg(target_os = "macos")]
-const MAC_NATIVE_STREAM_ID: u64 = 3;
 #[cfg(target_os = "macos")]
 const MONITOR_SETUP_TIMEOUT_MS: u64 = 2_000;
 #[cfg(target_os = "macos")]
@@ -72,9 +72,13 @@ use objc2::runtime::AnyObject;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
 #[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicU64;
+#[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::mpsc;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 #[cfg(target_os = "macos")]
@@ -86,6 +90,8 @@ struct MonitorRuntime {
     events: Arc<InputEventQueue>,
     collecting: AtomicBool,
     pointer_down: AtomicBool,
+    active_strokes: Mutex<HashMap<u32, u64>>,
+    next_stroke_id: AtomicU64,
 }
 
 #[cfg(target_os = "macos")]
@@ -95,10 +101,37 @@ impl MonitorRuntime {
             events,
             collecting: AtomicBool::new(false),
             pointer_down: AtomicBool::new(false),
+            active_strokes: Mutex::new(HashMap::new()),
+            next_stroke_id: AtomicU64::new(1),
         }
     }
 
-    fn process_event(&self, event: &NSEvent, stream_id: u64) {
+    fn resolve_stroke_id(&self, pointer_id: u32, phase: InputPhase) -> u64 {
+        let mut active = match self.active_strokes.lock() {
+            Ok(lock) => lock,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        match phase {
+            InputPhase::Down => {
+                let stroke_id = self.next_stroke_id.fetch_add(1, Ordering::Relaxed);
+                active.insert(pointer_id, stroke_id);
+                stroke_id
+            }
+            InputPhase::Up => active
+                .remove(&pointer_id)
+                .unwrap_or_else(|| self.next_stroke_id.fetch_add(1, Ordering::Relaxed)),
+            InputPhase::Move | InputPhase::Hover => {
+                active.get(&pointer_id).copied().unwrap_or_else(|| {
+                    let stroke_id = self.next_stroke_id.fetch_add(1, Ordering::Relaxed);
+                    active.insert(pointer_id, stroke_id);
+                    stroke_id
+                })
+            }
+        }
+    }
+
+    fn process_event(&self, event: &NSEvent) {
         if !self.collecting.load(Ordering::Relaxed) {
             return;
         }
@@ -106,22 +139,22 @@ impl MonitorRuntime {
         match event.r#type() {
             NSEventType::TabletProximity => {
                 if event.isEnteringProximity() {
-                    let _ = self.events.enqueue_event(TabletEventV2::ProximityEnter);
+                    let _ = self.events.enqueue_event(TabletEventV3::ProximityEnter);
                 } else {
                     self.pointer_down.store(false, Ordering::Relaxed);
-                    let _ = self.events.enqueue_event(TabletEventV2::ProximityLeave);
+                    let _ = self.events.enqueue_event(TabletEventV3::ProximityLeave);
                 }
             }
             NSEventType::LeftMouseDown | NSEventType::OtherMouseDown => {
                 self.pointer_down.store(true, Ordering::Relaxed);
-                self.enqueue_sample(event, stream_id, InputPhase::Down, None);
+                self.enqueue_sample(event, InputPhase::Down, None);
             }
             NSEventType::LeftMouseDragged | NSEventType::OtherMouseDragged => {
-                self.enqueue_sample(event, stream_id, InputPhase::Move, None);
+                self.enqueue_sample(event, InputPhase::Move, None);
             }
             NSEventType::LeftMouseUp | NSEventType::OtherMouseUp | NSEventType::MouseCancelled => {
                 self.pointer_down.store(false, Ordering::Relaxed);
-                self.enqueue_sample(event, stream_id, InputPhase::Up, Some(0.0));
+                self.enqueue_sample(event, InputPhase::Up, Some(0.0));
             }
             NSEventType::TabletPoint => {
                 let pressure = normalize_pressure(event.pressure());
@@ -136,38 +169,37 @@ impl MonitorRuntime {
                 } else {
                     InputPhase::Hover
                 };
-                self.enqueue_sample(event, stream_id, phase, Some(pressure));
+                self.enqueue_sample(event, phase, Some(pressure));
             }
             _ => {}
         }
     }
 
-    fn enqueue_sample(
-        &self,
-        event: &NSEvent,
-        stream_id: u64,
-        phase: InputPhase,
-        pressure_override: Option<f32>,
-    ) {
+    fn enqueue_sample(&self, event: &NSEvent, phase: InputPhase, pressure_override: Option<f32>) {
         let location = event.locationInWindow();
         let tilt = event.tilt();
         let host_time_us = super::current_time_us();
         let pressure = pressure_override.unwrap_or_else(|| normalize_pressure(event.pressure()));
-        let sample = InputSampleV2 {
+        let pointer_id = normalize_pointer_id(event.pointingDeviceID() as u64);
+        let stroke_id = self.resolve_stroke_id(pointer_id, phase);
+        let sample = NativeTabletEventV3 {
             seq: 0,
-            stream_id,
+            stroke_id,
+            pointer_id,
+            device_id: "macnative".to_string(),
             source: InputSource::MacNative,
-            pointer_id: normalize_pointer_id(event.pointingDeviceID() as u64),
             phase,
-            x: location.x as f32,
-            y: location.y as f32,
-            pressure,
-            tilt_x: normalize_tilt_component(tilt.x),
-            tilt_y: normalize_tilt_component(tilt.y),
-            rotation: normalize_rotation_degrees(event.rotation()),
+            x_px: location.x as f32,
+            y_px: location.y as f32,
+            pressure_0_1: pressure,
+            tilt_x_deg: normalize_tilt_component(tilt.x),
+            tilt_y_deg: normalize_tilt_component(tilt.y),
+            rotation_deg: normalize_rotation_degrees(event.rotation()),
             host_time_us,
-            device_time_us: normalize_device_timestamp_us(event.timestamp(), host_time_us),
-            timestamp_ms: host_time_us / 1000,
+            device_time_us: Some(normalize_device_timestamp_us(
+                event.timestamp(),
+                host_time_us,
+            )),
         };
         let _ = self.events.enqueue_sample(sample);
     }
@@ -182,7 +214,6 @@ pub struct MacNativeBackend {
     app_handle: tauri::AppHandle,
     runtime: Arc<MonitorRuntime>,
     monitor_token_raw: Option<usize>,
-    stream_id: u64,
 }
 
 #[cfg(target_os = "macos")]
@@ -201,7 +232,6 @@ impl MacNativeBackend {
             app_handle,
             runtime,
             monitor_token_raw: None,
-            stream_id: MAC_NATIVE_STREAM_ID,
         }
     }
 
@@ -223,7 +253,6 @@ impl MacNativeBackend {
         };
 
         let runtime = self.runtime.clone();
-        let stream_id = self.stream_id;
         let (tx, rx) = mpsc::channel::<Result<usize, String>>();
 
         main_window
@@ -248,7 +277,7 @@ impl MacNativeBackend {
                     let handler =
                         RcBlock::new(move |event_ptr: NonNull<NSEvent>| -> *mut NSEvent {
                             let event = unsafe { event_ptr.as_ref() };
-                            runtime.process_event(event, stream_id);
+                            runtime.process_event(event);
                             event_ptr.as_ptr()
                         });
 
@@ -373,7 +402,7 @@ impl TabletBackend for MacNativeBackend {
         self.info.as_ref()
     }
 
-    fn poll(&mut self, events: &mut Vec<TabletEventV2>) -> usize {
+    fn poll(&mut self, events: &mut Vec<TabletEventV3>) -> usize {
         self.events.drain_into(events, super::current_time_us)
     }
 
@@ -426,7 +455,7 @@ impl TabletBackend for MacNativeBackend {
         self.info.as_ref()
     }
 
-    fn poll(&mut self, _events: &mut Vec<TabletEventV2>) -> usize {
+    fn poll(&mut self, _events: &mut Vec<TabletEventV3>) -> usize {
         0
     }
 

@@ -219,6 +219,8 @@ pub fn run() {
             commands::start_tablet,
             commands::stop_tablet,
             commands::get_tablet_status,
+            commands::set_wintab_trace_enabled,
+            commands::get_wintab_trace_enabled,
             commands::push_pointer_event,
             commands::stamp_soft_dab,
             commands::import_abr_file,

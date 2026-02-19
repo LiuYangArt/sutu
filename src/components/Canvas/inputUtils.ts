@@ -1,92 +1,31 @@
-import { RawInputPoint } from '@/stores/tablet';
+import type { TabletInputPoint } from '@/stores/tablet';
 
-type WebKitPointerEvent = PointerEvent & {
-  webkitForce?: number;
-  WEBKIT_FORCE_AT_MOUSE_DOWN?: number;
-  WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN?: number;
-};
+type StrictInputSource = 'wintab' | 'macnative' | 'pointerevent';
 
-function getNativeBackendPressureFallback(evt: PointerEvent): number {
-  if (evt.pointerType === 'pen') return 0;
-  if (evt.pressure > 0) return evt.pressure;
-  return 0.5;
+export interface PointerInputSample {
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+  timestampMs: number;
+  source: 'pointerevent';
+  hostTimeUs: number;
+  deviceTimeUs: number;
+  phase: 'hover' | 'down' | 'move' | 'up';
 }
 
-function clampUnit(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
-}
-
-function resolvePointerTimestampMs(evt: PointerEvent): number {
-  if (Number.isFinite(evt.timeStamp) && evt.timeStamp >= 0) {
-    return evt.timeStamp;
-  }
-  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-    return performance.now();
-  }
-  return Date.now();
-}
-
-function resolveNativeTimestampMs(
-  point: RawInputPoint | null | undefined,
-  fallbackTimestampMs: number
-): number {
-  if (point && Number.isFinite(point.timestamp_ms) && point.timestamp_ms >= 0) {
-    return point.timestamp_ms;
-  }
-  return fallbackTimestampMs;
-}
-
-function getWebKitPressure(evt: PointerEvent): number | null {
-  const webkitEvt = evt as WebKitPointerEvent;
-  const force = webkitEvt.webkitForce;
-  if (!Number.isFinite(force) || force! <= 0) return null;
-
-  const base = webkitEvt.WEBKIT_FORCE_AT_MOUSE_DOWN;
-  const max = webkitEvt.WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN;
-  if (Number.isFinite(base) && Number.isFinite(max) && max! > base!) {
-    return clampUnit((force! - base!) / (max! - base!));
-  }
-
-  // Fallback range normalization for WebKit variants.
-  return clampUnit(force! <= 1 ? force! : force! / 3);
-}
-
-function resolvePointerPressure(evt: PointerEvent, fallbackEvent?: PointerEvent): number {
-  const raw = evt.pressure;
-  const hasFinitePressure = Number.isFinite(raw);
-  const pressure = hasFinitePressure ? clampUnit(raw) : 0;
-  const likelySyntheticMousePressure =
-    evt.pointerType !== 'pen' && Math.abs(pressure - 0.5) <= 1e-6;
-  const needsFallback = !hasFinitePressure || pressure <= 0 || likelySyntheticMousePressure;
-
-  if (!needsFallback) {
-    return pressure;
-  }
-
-  const webkitPressure = getWebKitPressure(evt);
-  if (webkitPressure !== null) {
-    return webkitPressure;
-  }
-
-  if (fallbackEvent && fallbackEvent !== evt) {
-    const fallbackWebKitPressure = getWebKitPressure(fallbackEvent);
-    if (fallbackWebKitPressure !== null) {
-      return fallbackWebKitPressure;
-    }
-    const fallbackPressure = fallbackEvent.pressure;
-    if (Number.isFinite(fallbackPressure) && fallbackPressure > 0) {
-      return clampUnit(fallbackPressure);
-    }
-  }
-
-  return pressure;
-}
-
-export function isNativeTabletStreamingBackend(activeBackend: string | null | undefined): boolean {
-  if (typeof activeBackend !== 'string') return false;
-  const normalized = activeBackend.toLowerCase();
-  return normalized === 'wintab' || normalized === 'macnative';
+export interface NativeInputSample {
+  xPx: number;
+  yPx: number;
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  rotation: number;
+  timestampMs: number;
+  source: StrictInputSource;
+  hostTimeUs: number;
+  deviceTimeUs: number;
+  phase: 'hover' | 'down' | 'move' | 'up';
 }
 
 export interface TabletStreamingBackendStateLike {
@@ -95,23 +34,9 @@ export interface TabletStreamingBackendStateLike {
   isStreaming: boolean;
 }
 
-export function resolveStreamingBackendName(
-  activeBackend: string | null | undefined,
-  backend: string | null | undefined
-): string | null {
-  if (typeof activeBackend === 'string' && activeBackend.length > 0) {
-    return activeBackend;
-  }
-  if (typeof backend === 'string' && backend.length > 0) {
-    return backend;
-  }
-  return null;
-}
-
-export function isNativeTabletStreamingState(state: TabletStreamingBackendStateLike): boolean {
-  if (!state.isStreaming) return false;
-  const backendName = resolveStreamingBackendName(state.activeBackend, state.backend);
-  return isNativeTabletStreamingBackend(backendName);
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
 
 function clampSignedUnit(value: number): number {
@@ -127,6 +52,33 @@ function normalizeTiltComponent(value: number): number {
 function normalizeRotationDegrees(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return ((value % 360) + 360) % 360;
+}
+
+function resolvePointerTimestampMs(evt: PointerEvent): number {
+  if (Number.isFinite(evt.timeStamp) && evt.timeStamp >= 0) {
+    return evt.timeStamp;
+  }
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function resolveNativeSource(source: string): StrictInputSource {
+  if (source === 'wintab' || source === 'win_tab') return 'wintab';
+  if (source === 'macnative' || source === 'mac_native') return 'macnative';
+  if (source === 'pointerevent' || source === 'pointer_event') return 'pointerevent';
+  return 'pointerevent';
+}
+
+function resolveHostTimeUs(value: number, fallbackTimestampMs: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  return Math.max(0, Math.round(fallbackTimestampMs * 1000));
+}
+
+function resolveDeviceTimeUs(value: number | null | undefined, hostTimeUs: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  return hostTimeUs;
 }
 
 type PointerEventWithAngles = PointerEvent & {
@@ -164,107 +116,124 @@ function getRotationFromPointerEvent(evt: PointerEvent): number {
   return normalizeRotationDegrees(twist!);
 }
 
-function resolveTabletRotation(
-  point: RawInputPoint | null | undefined,
-  fallbackRotation: number
-): number {
-  if (!point || !Number.isFinite(point.rotation)) return fallbackRotation;
-  return normalizeRotationDegrees(point.rotation!);
+function toPointerPhase(evtType: string): PointerInputSample['phase'] {
+  if (evtType === 'pointerdown') return 'down';
+  if (evtType === 'pointerup' || evtType === 'pointercancel') return 'up';
+  return 'move';
 }
 
-function resolvePointerOrientation(
-  evt: PointerEvent,
-  fallbackEvent?: PointerEvent
-): { tiltX: number; tiltY: number; rotation: number } {
-  const primaryTilt = getNormalizedTiltFromPointerEvent(evt);
-  const primaryRotation = getRotationFromPointerEvent(evt);
-  const hasPrimaryTilt = Math.abs(primaryTilt.tiltX) > 1e-5 || Math.abs(primaryTilt.tiltY) > 1e-5;
-  const hasPrimaryRotation = Math.abs(primaryRotation) > 1e-5;
+export function isNativeTabletStreamingBackend(activeBackend: string | null | undefined): boolean {
+  if (typeof activeBackend !== 'string') return false;
+  const normalized = activeBackend.toLowerCase();
+  return normalized === 'wintab' || normalized === 'macnative';
+}
 
-  if (!fallbackEvent || (hasPrimaryTilt && hasPrimaryRotation)) {
-    return { tiltX: primaryTilt.tiltX, tiltY: primaryTilt.tiltY, rotation: primaryRotation };
+export function resolveStreamingBackendName(
+  activeBackend: string | null | undefined,
+  backend: string | null | undefined
+): string | null {
+  if (typeof activeBackend === 'string' && activeBackend.length > 0) {
+    return activeBackend;
   }
+  if (typeof backend === 'string' && backend.length > 0) {
+    return backend;
+  }
+  return null;
+}
 
-  const fallbackTilt = getNormalizedTiltFromPointerEvent(fallbackEvent);
-  const fallbackRotation = getRotationFromPointerEvent(fallbackEvent);
-  const resolvedTilt = hasPrimaryTilt ? primaryTilt : fallbackTilt;
-  const resolvedRotation = hasPrimaryRotation ? primaryRotation : fallbackRotation;
+export function isNativeTabletStreamingState(state: TabletStreamingBackendStateLike): boolean {
+  if (!state.isStreaming) return false;
+  const backendName = resolveStreamingBackendName(state.activeBackend, state.backend);
+  return isNativeTabletStreamingBackend(backendName);
+}
+
+export function parsePointerEventSample(evt: PointerEvent): PointerInputSample {
+  const timestampMs = resolvePointerTimestampMs(evt);
+  const { tiltX, tiltY } = getNormalizedTiltFromPointerEvent(evt);
+  const phase = toPointerPhase(evt.type);
   return {
-    tiltX: resolvedTilt.tiltX,
-    tiltY: resolvedTilt.tiltY,
-    rotation: resolvedRotation,
+    pressure: phase === 'up' ? 0 : clampUnit(evt.pressure),
+    tiltX,
+    tiltY,
+    rotation: getRotationFromPointerEvent(evt),
+    timestampMs,
+    source: 'pointerevent',
+    hostTimeUs: Math.max(0, Math.round(timestampMs * 1000)),
+    deviceTimeUs: 0,
+    phase,
   };
 }
 
-/**
- * Resolves pressure and tilt data, preferring native tablet backend buffer when active.
- * Respects pressure=0 from backend smoothing.
- */
-export function getEffectiveInputData(
-  evt: PointerEvent,
-  isNativeBackendActive: boolean,
-  bufferedPoints: RawInputPoint[],
-  currentPoint: RawInputPoint | null,
-  fallbackEvent?: PointerEvent,
-  preferredNativePoint?: RawInputPoint | null
-): { pressure: number; tiltX: number; tiltY: number; rotation: number; timestampMs: number } {
-  const pointerOrientation = resolvePointerOrientation(evt, fallbackEvent);
-  const pointerPressure = resolvePointerPressure(evt, fallbackEvent);
-  const pointerTimestampMs = resolvePointerTimestampMs(evt);
-
-  if (!isNativeBackendActive) {
-    return {
-      pressure: pointerPressure,
-      tiltX: pointerOrientation.tiltX,
-      tiltY: pointerOrientation.tiltY,
-      rotation: pointerOrientation.rotation,
-      timestampMs: pointerTimestampMs,
-    };
-  }
-
-  // Note: Native backend timestamps are not guaranteed to share a time origin with
-  // PointerEvent.timeStamp, so we avoid time-based matching here.
-  // Prefer the caller-provided sample for this event, then fallback to batch tail.
-  if (preferredNativePoint) {
-    return {
-      pressure: preferredNativePoint.pressure,
-      tiltX: normalizeTiltComponent(preferredNativePoint.tilt_x),
-      tiltY: normalizeTiltComponent(preferredNativePoint.tilt_y),
-      rotation: resolveTabletRotation(preferredNativePoint, pointerOrientation.rotation),
-      timestampMs: resolveNativeTimestampMs(preferredNativePoint, pointerTimestampMs),
-    };
-  }
-
-  if (bufferedPoints.length > 0) {
-    const pt = bufferedPoints[bufferedPoints.length - 1]!;
-    return {
-      pressure: pt.pressure,
-      tiltX: normalizeTiltComponent(pt.tilt_x),
-      tiltY: normalizeTiltComponent(pt.tilt_y),
-      rotation: resolveTabletRotation(pt, pointerOrientation.rotation),
-      timestampMs: resolveNativeTimestampMs(pt, pointerTimestampMs),
-    };
-  }
-
-  // 2. Fallback: Use currentPoint (last known input) if available
-  if (currentPoint) {
-    return {
-      pressure: currentPoint.pressure,
-      tiltX: normalizeTiltComponent(currentPoint.tilt_x),
-      tiltY: normalizeTiltComponent(currentPoint.tilt_y),
-      rotation: resolveTabletRotation(currentPoint, pointerOrientation.rotation),
-      timestampMs: resolveNativeTimestampMs(currentPoint, pointerTimestampMs),
-    };
-  }
-
-  // 3. Ultimate Fallback: Use PointerEvent data
+export function parseNativeTabletSample(point: TabletInputPoint): NativeInputSample {
+  const hostTimeUs = resolveHostTimeUs(point.host_time_us, point.timestamp_ms);
+  const deviceTimeUs = resolveDeviceTimeUs(point.device_time_us, hostTimeUs);
+  const phase =
+    point.phase === 'hover' || point.phase === 'down' || point.phase === 'up'
+      ? point.phase
+      : 'move';
   return {
-    // Mouse/touch often report pressure=0; use 0.5 as a reasonable default.
-    // In native streaming mode, treat pen pressure as unknown (0) when we can't match tablet samples.
-    pressure: getNativeBackendPressureFallback(evt),
-    tiltX: pointerOrientation.tiltX,
-    tiltY: pointerOrientation.tiltY,
-    rotation: pointerOrientation.rotation,
-    timestampMs: pointerTimestampMs,
+    xPx: Number.isFinite(point.x_px) ? point.x_px : 0,
+    yPx: Number.isFinite(point.y_px) ? point.y_px : 0,
+    pressure: phase === 'up' ? 0 : clampUnit(point.pressure_0_1),
+    tiltX: normalizeTiltComponent(point.tilt_x_deg),
+    tiltY: normalizeTiltComponent(point.tilt_y_deg),
+    rotation: normalizeRotationDegrees(point.rotation_deg),
+    timestampMs: hostTimeUs / 1000,
+    source: resolveNativeSource(point.source),
+    hostTimeUs,
+    deviceTimeUs,
+    phase,
   };
+}
+
+export function mapNativeWindowPxToCanvasPoint(
+  canvas: HTMLCanvasElement,
+  rect: { left: number; top: number; width: number; height: number },
+  xPx: number,
+  yPx: number
+): { x: number; y: number } {
+  const rectWidth =
+    Number.isFinite(rect.width) && rect.width > 0 ? rect.width : Math.max(1, canvas.width);
+  const rectHeight =
+    Number.isFinite(rect.height) && rect.height > 0 ? rect.height : Math.max(1, canvas.height);
+  const scaleX = canvas.width / rectWidth;
+  const scaleY = canvas.height / rectHeight;
+  return {
+    x: (xPx - rect.left) * scaleX,
+    y: (yPx - rect.top) * scaleY,
+  };
+}
+
+export function resolveNativeStrokePoints(
+  bufferedPoints: TabletInputPoint[],
+  currentPoint: TabletInputPoint | null
+): TabletInputPoint[] {
+  const sourcePoints =
+    bufferedPoints.length > 0 ? bufferedPoints : currentPoint ? [currentPoint] : [];
+  if (sourcePoints.length === 0) return [];
+
+  const nonHoverPoints = sourcePoints.filter((point) => point.phase !== 'hover');
+  if (nonHoverPoints.length === 0) return [];
+
+  let latestStrokeId = -Infinity;
+  for (const point of nonHoverPoints) {
+    const strokeId = Number.isFinite(point.stroke_id) ? point.stroke_id : -Infinity;
+    if (strokeId > latestStrokeId) {
+      latestStrokeId = strokeId;
+    }
+  }
+  const latestStrokePoints = nonHoverPoints.filter((point) => point.stroke_id === latestStrokeId);
+  if (latestStrokePoints.length === 0) return [];
+
+  // PointerDown seed must start from the current stroke's explicit Down point.
+  // If Down has not arrived yet, return empty and wait for follow-up native samples.
+  const firstDownIndex = latestStrokePoints.findIndex((point) => point.phase === 'down');
+  if (firstDownIndex < 0) {
+    return [];
+  }
+
+  const currentStrokeSeed = latestStrokePoints
+    .slice(firstDownIndex)
+    .filter((point) => point.phase === 'down' || point.phase === 'move');
+  return currentStrokeSeed;
 }

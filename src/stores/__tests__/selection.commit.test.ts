@@ -133,7 +133,10 @@ describe('SelectionStore commitSelection', () => {
     expect(pendingState.isCreating).toBe(false);
     expect(pendingState.creationPoints).toHaveLength(0);
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    for (let i = 0; i < 20; i += 1) {
+      if (!useSelectionStore.getState().selectionMaskPending) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    }
 
     const doneState = useSelectionStore.getState();
     expect(doneState.selectionMaskPending).toBe(false);

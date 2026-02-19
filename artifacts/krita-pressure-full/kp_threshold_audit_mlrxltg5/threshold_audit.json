@@ -1,0 +1,20 @@
+{
+  "run_id": "kp_threshold_audit_mlrxltg5",
+  "generated_at": "2026-02-18T11:11:11.189Z",
+  "runs": 30,
+  "baseline_version": "krita-5.2-default-wintab",
+  "threshold_version": "krita-pressure-thresholds.v1",
+  "threshold_file": "docs/testing/krita-pressure-thresholds.v1.json",
+  "input_hash": "9d17bed1",
+  "audit_passed": true,
+  "metric_rows": [
+    {
+      "metric": "fast.fast_window_min_required",
+      "p99": 1,
+      "threshold": 1,
+      "margin": 0,
+      "status": "pass"
+    }
+  ],
+  "violations": []
+}

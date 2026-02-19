@@ -1,0 +1,36 @@
+{
+  "version": "krita-pressure-thresholds.v1",
+  "source": "src/engine/kritaPressure/testing/gateRunner.ts:DEFAULT_THRESHOLDS",
+  "stage": {
+    "pressure_curve_mae_max": 0.02,
+    "pressure_curve_p95_max": 0.04,
+    "speed_mae_max": 0.03,
+    "speed_p95_max": 0.06,
+    "dab_count_delta_max": 2,
+    "carry_distance_error_px_max": 1.5,
+    "carry_time_error_ms_max": 2,
+    "pressure_mix_mae_max": 0.02,
+    "speed_mix_mae_max": 0.03,
+    "time_mix_mae_us_max": 1500,
+    "sensor_value_mae_max": 0.02,
+    "sensor_value_p95_max": 0.04,
+    "combiner_output_mae_max": 0.03,
+    "combiner_output_p95_max": 0.06
+  },
+  "final": {
+    "width_profile_delta_max": 0.05,
+    "tail_decay_delta_max": 0.07,
+    "pixel_roi_delta_max": 0.12
+  },
+  "fast": {
+    "fast_window_min_required": 1,
+    "fast_speed_p95_max": 1,
+    "fast_speed_mae_max": 0.04
+  },
+  "preset": {
+    "sensor_map_mae_max": 0.02,
+    "sensor_map_p95_max": 0.04,
+    "combiner_output_mae_max": 0.03,
+    "combiner_output_p95_max": 0.06
+  }
+}

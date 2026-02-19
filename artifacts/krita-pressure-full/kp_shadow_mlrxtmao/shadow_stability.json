@@ -1,0 +1,2748 @@
+{
+  "run_id": "kp_shadow_mlrxtmao",
+  "passed": true,
+  "replayed": 100,
+  "runs": 100,
+  "speed": 20,
+  "errors": [],
+  "shadow_snapshot": {
+    "mode": {
+      "pressurePipelineV2Primary": true,
+      "pressurePipelineV2Shadow": true,
+      "stageDiffLogEnabled": true,
+      "maxRecentEntries": 400
+    },
+    "total_samples": 8200,
+    "stage": {
+      "input": {
+        "count": 7100,
+        "abs_mae": 0,
+        "abs_max": 0
+      },
+      "global_curve": {
+        "count": 7100,
+        "abs_mae": 0,
+        "abs_max": 0
+      },
+      "speed": {
+        "count": 7100,
+        "abs_mae": 5.043878942739754e-11,
+        "abs_max": 1.2976588692481528e-9
+      },
+      "sampling": {
+        "count": 8200,
+        "abs_mae": 0.40158536585365856,
+        "abs_max": 1
+      },
+      "mix": {
+        "count": 8200,
+        "abs_mae": 0.35853658536853483,
+        "abs_max": 1
+      },
+      "sensor": {
+        "count": 7100,
+        "abs_mae": 3.100518389541446e-12,
+        "abs_max": 3.805113724109077e-10
+      },
+      "final_dab": {
+        "count": 8200,
+        "abs_mae": 0.3585365853995611,
+        "abs_max": 1
+      }
+    },
+    "recent": [
+      {
+        "timestamp_ms": 74996.5,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 7.483291764032174e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75000.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.828637489850962e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75009.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 5.70739011607202e-11,
+          "sampling": 0,
+          "mix": 2.586116974576219e-14,
+          "sensor": 2.586116974576219e-14,
+          "final_dab": 1.6932820827624317e-11
+        }
+      },
+      {
+        "timestamp_ms": 75014.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.623201986855065e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75026.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.699624188755138e-11,
+          "sampling": 0,
+          "mix": 4.320723072255687e-13,
+          "sensor": 4.320723072255687e-13,
+          "final_dab": 1.0964895027296897e-10
+        }
+      },
+      {
+        "timestamp_ms": 75031.89999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.733541336676694e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75031.89999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75047.59999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75056.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.3736778088110384e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75061.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75070.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.657691065115046e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75074.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75074.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75074.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75121.39999999851,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75127.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.439934448401516e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75137,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 9.562142744279356e-12,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75144.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.166575169797568e-11,
+          "sampling": 0,
+          "mix": 8.430921608147743e-14,
+          "sensor": 8.430921608147743e-14,
+          "final_dab": 9.759762977403082e-11
+        }
+      },
+      {
+        "timestamp_ms": 75152.5,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.330957731861872e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75161.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.3270384791042034e-11,
+          "sampling": 0,
+          "mix": 1.983486750107676e-14,
+          "sensor": 1.9834658025034378e-14,
+          "final_dab": 7.931232861244767e-11
+        }
+      },
+      {
+        "timestamp_ms": 75167.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.1707634861579663e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75174.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 7.837429316648326e-11,
+          "sensor": 7.837429316648326e-11,
+          "final_dab": 7.837429316648326e-11
+        }
+      },
+      {
+        "timestamp_ms": 75174.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75196,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75200.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.192464460508802e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75205.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.0540459050598656e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75211.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.878075886618262e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75216.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 3.2589042575636996e-13,
+          "sensor": 3.2589010854979146e-13,
+          "final_dab": 4.463469644682456e-10
+        }
+      },
+      {
+        "timestamp_ms": 75216.89999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 7.030859228152053e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75216.89999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75390.79999999702,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75399.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75411.5,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 8.414546837087755e-13,
+          "sensor": 8.414546837087755e-13,
+          "final_dab": 5.505870759314746e-11
+        }
+      },
+      {
+        "timestamp_ms": 75424.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 6.789648208739761e-13,
+          "sensor": 6.789648208739761e-13,
+          "final_dab": 3.1220121725945256e-11
+        }
+      },
+      {
+        "timestamp_ms": 75430.79999999702,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.790529530198981e-13,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75430.79999999702,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75459.19999999553,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75464.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.1180974469080525e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75465.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 9.108308551830646e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75465.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.3460332848325152e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75465.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.9447243815307047e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75465.09999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.80427339735445e-10,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75465.09999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75490.29999999702,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75495.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75507.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.2100751784215333e-11,
+          "sampling": 0,
+          "mix": 3.03378354184401e-14,
+          "sensor": 3.033750499492087e-14,
+          "final_dab": 1.4577855556294866e-10
+        }
+      },
+      {
+        "timestamp_ms": 75511.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.151595651118555e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75516.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75522.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.1167623209805697e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75529.89999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.234879114051182e-11,
+          "sampling": 1,
+          "mix": 3.3671815335978295e-11,
+          "sensor": 3.367178758040268e-11,
+          "final_dab": 3.3671815335978295e-11
+        }
+      },
+      {
+        "timestamp_ms": 75529.89999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75544,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75548.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.7227547166598356e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75553.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 5.307021488931696e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75558.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.564637722306088e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75567.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.256545033636371e-11,
+          "sampling": 0,
+          "mix": 2.0767622963677824e-13,
+          "sensor": 2.0767643447497467e-13,
+          "final_dab": 2.710852352352564e-10
+        }
+      },
+      {
+        "timestamp_ms": 75580.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.4947876270099414e-11,
+          "sampling": 0,
+          "mix": 6.144292064383473e-13,
+          "sensor": 6.144292064383473e-13,
+          "final_dab": 1.0636610902095287e-10
+        }
+      },
+      {
+        "timestamp_ms": 75585.39999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.1505685293400347e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75585.39999999851,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75601.09999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75611.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.71026167859057e-12,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75616.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.4477601329463425e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75624.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.67184060934278e-11,
+          "sampling": 0,
+          "mix": 5.020926071221985e-13,
+          "sensor": 5.020926071221985e-13,
+          "final_dab": 3.7696249974563594e-10
+        }
+      },
+      {
+        "timestamp_ms": 75628.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75641.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 1.2556673807724623e-13,
+          "sensor": 1.2556673807724623e-13,
+          "final_dab": 1.3031620689959075e-10
+        }
+      },
+      {
+        "timestamp_ms": 75648.09999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.217481753774564e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75648.09999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75664,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75673.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.907674597935511e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75679.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.135220275207189e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75684,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 9.634593123308832e-11,
+          "sampling": 0,
+          "mix": 6.970905334450587e-14,
+          "sensor": 6.970931768332125e-14,
+          "final_dab": 5.741799837176233e-10
+        }
+      },
+      {
+        "timestamp_ms": 75690.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.278068761934037e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75696.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.263617568005088e-11,
+          "sampling": 1,
+          "mix": 1.7040252542344092e-10,
+          "sensor": 1.7040251501510006e-10,
+          "final_dab": 1.7040252542344092e-10
+        }
+      },
+      {
+        "timestamp_ms": 75696.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75711.79999999702,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75721.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.1276729550147024e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75727.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.048392094306962e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75731.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.451639057378998e-11,
+          "sampling": 0,
+          "mix": 7.735348488037366e-13,
+          "sensor": 7.735346971339245e-13,
+          "final_dab": 4.069859246213937e-10
+        }
+      },
+      {
+        "timestamp_ms": 75740.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.813366289406872e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75745.79999999702,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.2873703759150885e-11,
+          "sampling": 1,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75745.79999999702,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75761.89999999851,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75771.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75778,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.3777479157539574e-11,
+          "sampling": 0,
+          "mix": 7.317294918133636e-14,
+          "sensor": 7.317294918133636e-14,
+          "final_dab": 1.400740022209022e-10
+        }
+      },
+      {
+        "timestamp_ms": 75789.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.481259724935626e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75795.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.381922354326548e-11,
+          "sampling": 0,
+          "mix": 3.284877774027117e-14,
+          "sensor": 3.284877774027117e-14,
+          "final_dab": 7.615260087028813e-11
+        }
+      },
+      {
+        "timestamp_ms": 75805.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.33519878381594e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75812,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 2.1249807469203574e-12,
+          "sensor": 2.1249807469203574e-12,
+          "final_dab": 2.1249807469203574e-12
+        }
+      },
+      {
+        "timestamp_ms": 75812,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75828.19999999553,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75836.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.0203991257794485e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75843.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.4900444473583434e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75852.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.495631975691254e-11,
+          "sampling": 0,
+          "mix": 2.0673838747126384e-13,
+          "sensor": 2.0673851028354533e-13,
+          "final_dab": 2.1153346638238672e-10
+        }
+      },
+      {
+        "timestamp_ms": 75862.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.8472223750620742e-11,
+          "sampling": 0,
+          "mix": 9.722037989471724e-14,
+          "sensor": 9.722017429786083e-14,
+          "final_dab": 1.1887343887018176e-10
+        }
+      },
+      {
+        "timestamp_ms": 75863,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.7508384459196122e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75863,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75908.09999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75914.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.0414559759606163e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75927.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 4.493586265938059e-14,
+          "sensor": 4.493586265938059e-14,
+          "final_dab": 3.885456798756687e-11
+        }
+      },
+      {
+        "timestamp_ms": 75937.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.640327177009908e-12,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75944.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 7.537331869755803e-12,
+          "sampling": 0,
+          "mix": 1.447991659641086e-13,
+          "sensor": 1.447991659641086e-13,
+          "final_dab": 2.0998758755926547e-10
+        }
+      },
+      {
+        "timestamp_ms": 75955,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.8541279622752427e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 75963.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 7.891187703279456e-12,
+          "sampling": 0,
+          "mix": 1.409742835288232e-12,
+          "sensor": 1.409742835288232e-12,
+          "final_dab": 3.8154179858264676e-10
+        }
+      },
+      {
+        "timestamp_ms": 75967.5,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.8011397928674455e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75967.5,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75987.69999999553,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 75995.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76007,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 5.092193333666728e-11,
+          "sampling": 0,
+          "mix": 2.273226051840993e-13,
+          "sensor": 2.273226051840993e-13,
+          "final_dab": 1.6760319576647474e-10
+        }
+      },
+      {
+        "timestamp_ms": 76012,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.581524214510637e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76016.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.318728873466739e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76016.5,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.859395970527089e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76016.5,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76190.59999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76196,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76211.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 1.54804502550121e-12,
+          "sensor": 1.54804502550121e-12,
+          "final_dab": 1.0132814032282056e-10
+        }
+      },
+      {
+        "timestamp_ms": 76220.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.994046826749091e-13,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76228,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 5.248113055245085e-11,
+          "sensor": 5.248113055245085e-11,
+          "final_dab": 5.248113055245085e-11
+        }
+      },
+      {
+        "timestamp_ms": 76228,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76257.69999999553,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76263,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.0443242104418715e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76263.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.0873124622889918e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76263.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.427354204419089e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76263.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 9.286127422569734e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76263.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.615458346739047e-10,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76263.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76282.39999999851,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76287.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 9.256445610006381e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76293.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76304.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 8.812183236204006e-14,
+          "sensor": 8.812183236204006e-14,
+          "final_dab": 7.088502103964117e-11
+        }
+      },
+      {
+        "timestamp_ms": 76311.5,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.883676796296754e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76319.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.0159486019698534e-11,
+          "sampling": 0,
+          "mix": 1.2546868754254633e-13,
+          "sensor": 1.2546900116486967e-13,
+          "final_dab": 6.487269196407568e-11
+        }
+      },
+      {
+        "timestamp_ms": 76328.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76328.19999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76341.59999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76346.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.7968426746506339e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76351.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 5.0989268363110796e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76359,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 7.978162575028591e-11,
+          "sampling": 0,
+          "mix": 3.2368829838702596e-13,
+          "sensor": 3.2368829838702596e-13,
+          "final_dab": 4.249377112531939e-10
+        }
+      },
+      {
+        "timestamp_ms": 76363.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.6192786000956971e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76367.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.0028267105610666e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76376.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.63447075055501e-11,
+          "sampling": 1,
+          "mix": 1.4326553832155753e-11,
+          "sensor": 1.4326546893261849e-11,
+          "final_dab": 1.4326553832155753e-11
+        }
+      },
+      {
+        "timestamp_ms": 76376.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76396.19999999553,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76400.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.589534308152565e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76413.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 9.47614209323433e-12,
+          "sampling": 0,
+          "mix": 4.589367294972873e-14,
+          "sensor": 4.589367294972873e-14,
+          "final_dab": 7.268774779609385e-11
+        }
+      },
+      {
+        "timestamp_ms": 76426.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 8.066158851960381e-12,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76431.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.1899065894004366e-11,
+          "sampling": 0,
+          "mix": 1.821013578024682e-14,
+          "sensor": 1.821013578024682e-14,
+          "final_dab": 6.320880574902813e-11
+        }
+      },
+      {
+        "timestamp_ms": 76435.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.479588673802823e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76441.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.393046871773663e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76441.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76460.5,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76466.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.135625341130435e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76477.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.207733995618355e-11,
+          "sampling": 0,
+          "mix": 5.955853824588244e-14,
+          "sensor": 5.955886671423291e-14,
+          "final_dab": 8.342261858296163e-11
+        }
+      },
+      {
+        "timestamp_ms": 76483.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.6146473874888443e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76487.5,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.930533676310688e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76493,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.774042107134278e-11,
+          "sampling": 1,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76493,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76508.59999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76517.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.7461047324983667e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76524.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.087347044683497e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76533.29999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.547212523713483e-11,
+          "sampling": 0,
+          "mix": 3.7903211231458584e-13,
+          "sensor": 3.7903211231458584e-13,
+          "final_dab": 1.9942325219837576e-10
+        }
+      },
+      {
+        "timestamp_ms": 76537.5,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.844302653988052e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76541.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.990613643509391e-11,
+          "sampling": 1,
+          "mix": 8.422364194959897e-11,
+          "sensor": 8.422364194959897e-11,
+          "final_dab": 8.422364194959897e-11
+        }
+      },
+      {
+        "timestamp_ms": 76541.69999999553,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76566.19999999553,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76570.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.179680047564858e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76580.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.5422192956602316e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76585.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.8631015880928885e-11,
+          "sampling": 0,
+          "mix": 2.4728443624704364e-13,
+          "sensor": 2.472853145880441e-13,
+          "final_dab": 1.6191536420349207e-10
+        }
+      },
+      {
+        "timestamp_ms": 76594.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76599.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.8306356430741744e-11,
+          "sampling": 0,
+          "mix": 1.21568327794991e-12,
+          "sensor": 1.21568327794991e-12,
+          "final_dab": 3.085077605837895e-10
+        }
+      },
+      {
+        "timestamp_ms": 76612.59999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.6975032490762487e-11,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76612.59999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76632.69999999553,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76638.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.560518794884729e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76648.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 4.4900444473583434e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76652.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.030242971633015e-11,
+          "sampling": 0,
+          "mix": 3.8343618539693676e-13,
+          "sensor": 3.8343630766819497e-13,
+          "final_dab": 3.9232970213252036e-10
+        }
+      },
+      {
+        "timestamp_ms": 76657.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 6.551648112917974e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76657.29999999702,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76657.29999999702,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76707.79999999702,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76728.19999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.6403683966714766e-12,
+          "sampling": 0,
+          "mix": 2.4277950681574264e-13,
+          "sensor": 2.427790111804638e-13,
+          "final_dab": 3.980072372868269e-11
+        }
+      },
+      {
+        "timestamp_ms": 76732.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 7.567113602391373e-12,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76741.69999999553,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 1.0781054947866311e-13,
+          "sensor": 1.078108041169715e-13,
+          "final_dab": 1.248029760576341e-10
+        }
+      },
+      {
+        "timestamp_ms": 76745.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 5.942302205852457e-12,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76757.59999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.8819918673761435e-11,
+          "sampling": 0,
+          "mix": 2.8853230077711146e-14,
+          "sensor": 2.8853230077711146e-14,
+          "final_dab": 1.1537423176162494e-10
+        }
+      },
+      {
+        "timestamp_ms": 76763.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.3892581529617587e-11,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76773.09999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.967229157351369e-11,
+          "sampling": 1,
+          "mix": 3.5086739069711825e-11,
+          "sensor": 3.5086739069711825e-11,
+          "final_dab": 3.5086739069711825e-11
+        }
+      },
+      {
+        "timestamp_ms": 76773.09999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76794.09999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76799.39999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.4671264203514056e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76803.79999999702,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.3439560575534415e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76808.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 3.0221292135479416e-10,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 76814.5,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 2.429130230297005e-10,
+          "sampling": 0,
+          "mix": 3.666264117693377e-13,
+          "sensor": 3.6662609456275927e-13,
+          "final_dab": 5.021403753120118e-10
+        }
+      },
+      {
+        "timestamp_ms": 76814.59999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.46185619165351e-10,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76814.59999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76991.59999999404,
+        "source": "pointerevent",
+        "phase": "down",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 76996.09999999404,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 77006.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 0,
+          "mix": 0,
+          "sensor": 0,
+          "final_dab": 0
+        }
+      },
+      {
+        "timestamp_ms": 77012.89999999851,
+        "source": "pointerevent",
+        "phase": "move",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 1.944154039146273e-12,
+          "sampling": 0,
+          "mix": 7.886861798565649e-12,
+          "sensor": 7.886861798565649e-12,
+          "final_dab": 3.6269130159511624e-10
+        }
+      },
+      {
+        "timestamp_ms": 77022.59999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "input": 0,
+          "global_curve": 0,
+          "speed": 0,
+          "sampling": 1,
+          "mix": 1,
+          "sensor": 0,
+          "final_dab": 1
+        }
+      },
+      {
+        "timestamp_ms": 77022.59999999404,
+        "source": "pointerevent",
+        "phase": "up",
+        "stage": {
+          "sampling": 1,
+          "mix": 1,
+          "final_dab": 1
+        }
+      }
+    ]
+  }
+}

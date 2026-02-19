@@ -75,12 +75,6 @@ export function TabletPanel() {
   };
 
   const statusColor = status === 'Connected' ? '#4f4' : status === 'Error' ? '#f44' : '#888';
-  const autoBackendLabel =
-    platformKind === 'macos'
-      ? 'Auto (prefer Mac Native)'
-      : platformKind === 'windows'
-        ? 'Auto (prefer WinTab)'
-        : 'Auto (prefer PointerEvent)';
 
   // Don't render anything if not visible
   if (!isVisible) return null;
@@ -160,8 +154,7 @@ export function TabletPanel() {
                     value={selectedBackend}
                     onChange={(e) => setSelectedBackend(e.target.value as BackendType)}
                   >
-                    <option value="auto">{autoBackendLabel}</option>
-                    {platformKind !== 'macos' && <option value="wintab">WinTab only</option>}
+                    {platformKind === 'windows' && <option value="wintab">WinTab only</option>}
                     {platformKind === 'macos' && <option value="macnative">Mac Native only</option>}
                     <option value="pointerevent">PointerEvent only</option>
                   </select>

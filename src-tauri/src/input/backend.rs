@@ -8,6 +8,10 @@ use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
+pub use super::krita_v3::types::{
+    InputPhaseV3 as InputPhase, InputSourceV3 as InputSource, NativeTabletEventV3,
+};
+
 /// Tablet device information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabletInfo {
@@ -34,53 +38,11 @@ pub enum TabletStatus {
     Error,
 }
 
-/// Input sample source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InputSource {
-    WinTab,
-    PointerEvent,
-    MacNative,
-}
-
-/// Input phase used by cross-backend matching.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InputPhase {
-    Unknown,
-    Hover,
-    Down,
-    Move,
-    Up,
-}
-
-/// Unified V2 input sample.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct InputSampleV2 {
-    pub seq: u64,
-    pub stream_id: u64,
-    pub source: InputSource,
-    pub pointer_id: u32,
-    pub phase: InputPhase,
-    pub x: f32,
-    pub y: f32,
-    pub pressure: f32,
-    pub tilt_x: f32,
-    pub tilt_y: f32,
-    pub rotation: f32,
-    /// Host receive timestamp (microseconds, monotonic domain).
-    pub host_time_us: u64,
-    /// Device timestamp if available (microseconds, device domain).
-    pub device_time_us: u64,
-    /// Backward-compat timestamp for legacy call-sites.
-    pub timestamp_ms: u64,
-}
-
-/// Events emitted by the tablet backend (V2 payloads).
+/// Events emitted by the tablet backend (V3 payloads).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TabletEventV2 {
+pub enum TabletEventV3 {
     /// Input point received
-    Input(InputSampleV2),
+    Input(NativeTabletEventV3),
     /// Pen entered proximity
     ProximityEnter,
     /// Pen left proximity
@@ -141,7 +103,7 @@ pub fn default_event_queue_capacity() -> usize {
 
 #[derive(Debug)]
 struct InputQueueState {
-    events: VecDeque<TabletEventV2>,
+    events: VecDeque<TabletEventV3>,
     next_seq: u64,
     closed: bool,
     enqueued: u64,
@@ -218,7 +180,7 @@ impl InputEventQueue {
         }
     }
 
-    pub fn enqueue_sample(&self, mut sample: InputSampleV2) -> bool {
+    pub fn enqueue_sample(&self, mut sample: NativeTabletEventV3) -> bool {
         let mut guard = match self.inner.lock() {
             Ok(lock) => lock,
             Err(poisoned) => poisoned.into_inner(),
@@ -255,18 +217,25 @@ impl InputEventQueue {
 
         sample.seq = guard.next_seq;
         guard.next_seq = guard.next_seq.saturating_add(1);
-        sample.pressure = sample.pressure.clamp(0.0, 1.0);
-        sample.tilt_x = sample.tilt_x.clamp(-90.0, 90.0);
-        sample.tilt_y = sample.tilt_y.clamp(-90.0, 90.0);
-        sample.timestamp_ms = sample.host_time_us / 1000;
+        sample.pressure_0_1 = sample.pressure_0_1.clamp(0.0, 1.0);
+        sample.tilt_x_deg = sample.tilt_x_deg.clamp(-90.0, 90.0);
+        sample.tilt_y_deg = sample.tilt_y_deg.clamp(-90.0, 90.0);
+        sample.rotation_deg = if sample.rotation_deg.is_finite() {
+            sample.rotation_deg.rem_euclid(360.0)
+        } else {
+            0.0
+        };
+        if sample.device_time_us.is_none() {
+            sample.device_time_us = Some(sample.host_time_us);
+        }
 
-        guard.events.push_back(TabletEventV2::Input(sample));
+        guard.events.push_back(TabletEventV3::Input(sample));
         guard.enqueued = guard.enqueued.saturating_add(1);
         guard.max_depth = guard.max_depth.max(guard.events.len());
         true
     }
 
-    pub fn enqueue_event(&self, event: TabletEventV2) -> bool {
+    pub fn enqueue_event(&self, event: TabletEventV3) -> bool {
         let mut guard = match self.inner.lock() {
             Ok(lock) => lock,
             Err(poisoned) => poisoned.into_inner(),
@@ -279,7 +248,7 @@ impl InputEventQueue {
         true
     }
 
-    pub fn drain_into<F>(&self, out: &mut Vec<TabletEventV2>, now_us: F) -> usize
+    pub fn drain_into<F>(&self, out: &mut Vec<TabletEventV3>, now_us: F) -> usize
     where
         F: Fn() -> u64,
     {
@@ -289,7 +258,7 @@ impl InputEventQueue {
         };
         let count = guard.events.len();
         while let Some(event) = guard.events.pop_front() {
-            if let TabletEventV2::Input(sample) = &event {
+            if let TabletEventV3::Input(sample) = &event {
                 let latency_us = now_us().saturating_sub(sample.host_time_us);
                 guard.push_latency(latency_us);
                 guard.dequeued = guard.dequeued.saturating_add(1);
@@ -410,7 +379,7 @@ pub trait TabletBackend: Send {
 
     /// Poll for new events (for polling-based backends)
     /// Returns the number of events retrieved
-    fn poll(&mut self, events: &mut Vec<TabletEventV2>) -> usize;
+    fn poll(&mut self, events: &mut Vec<TabletEventV3>) -> usize;
 
     /// Queue telemetry metrics for diagnostics/status response.
     fn queue_metrics(&self) -> InputQueueMetrics;
@@ -430,22 +399,22 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
-    fn make_sample(host_time_us: u64) -> InputSampleV2 {
-        InputSampleV2 {
+    fn make_sample(host_time_us: u64) -> NativeTabletEventV3 {
+        NativeTabletEventV3 {
             seq: 0,
-            stream_id: 1,
-            source: InputSource::WinTab,
+            stroke_id: 1,
             pointer_id: 0,
+            device_id: "test-device".to_string(),
+            source: InputSource::WinTab,
             phase: InputPhase::Move,
-            x: 100.0,
-            y: 200.0,
-            pressure: 0.5,
-            tilt_x: 0.0,
-            tilt_y: 0.0,
-            rotation: 0.0,
+            x_px: 100.0,
+            y_px: 200.0,
+            pressure_0_1: 0.5,
+            tilt_x_deg: 0.0,
+            tilt_y_deg: 0.0,
+            rotation_deg: 0.0,
             host_time_us,
-            device_time_us: host_time_us,
-            timestamp_ms: host_time_us / 1000,
+            device_time_us: Some(host_time_us),
         }
     }
 
@@ -542,7 +511,7 @@ mod tests {
         let _ = queue.drain_into(&mut drained, || 1_000_000);
         let mut prev_seq = 0u64;
         for event in drained {
-            if let TabletEventV2::Input(sample) = event {
+            if let TabletEventV3::Input(sample) = event {
                 assert!(sample.seq > prev_seq);
                 prev_seq = sample.seq;
             }

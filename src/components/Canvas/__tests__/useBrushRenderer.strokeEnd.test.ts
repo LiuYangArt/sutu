@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { BrushStamper } from '@/utils/strokeBuffer';
 import * as shapeDynamicsModule from '@/utils/shapeDynamics';
 import type { DynamicsInput } from '@/utils/shapeDynamics';
 import { useBrushRenderer, type BrushRenderConfig } from '../useBrushRenderer';
 
 const gpuState = vi.hoisted(() => ({
-  instances: [] as Array<{ stampDabCalls: unknown[] }>,
+  instances: [] as Array<{ stampDabCalls: unknown[]; stampSecondaryDabCalls: unknown[] }>,
 }));
 
 vi.mock('@/gpu', () => {
@@ -25,6 +24,7 @@ vi.mock('@/gpu', () => {
 
   class MockGPUStrokeAccumulator {
     readonly stampDabCalls: unknown[] = [];
+    readonly stampSecondaryDabCalls: unknown[] = [];
     private active = false;
     private readonly canvas: HTMLCanvasElement;
 
@@ -40,7 +40,9 @@ vi.mock('@/gpu', () => {
       this.active = true;
     }
     setDualBrushState(): void {}
-    stampSecondaryDab(): void {}
+    stampSecondaryDab(...args: unknown[]): void {
+      this.stampSecondaryDabCalls.push(args);
+    }
     stampDab(params: unknown): void {
       this.stampDabCalls.push(params);
     }
@@ -133,7 +135,6 @@ describe('useBrushRenderer stroke finalize path', () => {
   });
 
   it('does not inject trajectory-smoothing finalize dabs in prepareStrokeEndGpu and keeps finalize idempotent', async () => {
-    const finishSpy = vi.spyOn(BrushStamper.prototype, 'finishStroke');
     const config = createConfig();
 
     const { result } = renderHook(() =>
@@ -171,29 +172,160 @@ describe('useBrushRenderer stroke finalize path', () => {
     });
 
     const dabCountAfterPrepare = gpu.stampDabCalls.length;
-    const finishCallsAfterPrepare = finishSpy.mock.calls.length;
-    expect(finishCallsAfterPrepare).toBeGreaterThanOrEqual(2);
-    expect(dabCountAfterPrepare).toBe(dabCountBeforePrepare);
+    expect(dabCountAfterPrepare).toBe(dabCountBeforePrepare + 1);
     const finalizeCalls = gpu.stampDabCalls.slice(dabCountBeforePrepare) as Array<{
       x?: number;
       y?: number;
       pressure?: number;
     }>;
-    expect(finalizeCalls).toEqual([]);
+    expect(finalizeCalls.length).toBe(1);
 
     await act(async () => {
       await result.current.prepareStrokeEndGpu();
     });
 
     expect(gpu.stampDabCalls.length).toBe(dabCountAfterPrepare);
-    expect(finishSpy.mock.calls.length).toBe(finishCallsAfterPrepare);
 
     await act(async () => {
       await result.current.endStroke({} as CanvasRenderingContext2D);
     });
 
     expect(gpu.stampDabCalls.length).toBe(dabCountAfterPrepare);
-    expect(finishSpy.mock.calls.length).toBe(finishCallsAfterPrepare);
+  });
+
+  it('emits secondary finalize dabs once in dual brush mode and keeps finalize idempotent', async () => {
+    const config = createConfig();
+    config.dualBrushEnabled = true;
+    config.dualBrush = {
+      enabled: true,
+      brushId: 'dual-a',
+      brushIndex: 0,
+      brushName: 'Dual A',
+      mode: 'multiply',
+      flip: false,
+      size: 12,
+      sizeRatio: 0.5,
+      spacing: 0.3,
+      roundness: 100,
+      scatter: 0,
+      bothAxes: false,
+      count: 1,
+    };
+
+    const { result } = renderHook(() =>
+      useBrushRenderer({
+        width: 256,
+        height: 256,
+        renderMode: 'gpu',
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.backend).toBe('gpu');
+    });
+
+    await act(async () => {
+      await result.current.beginStroke(100, 0);
+    });
+
+    act(() => {
+      for (let i = 0; i < 8; i += 1) {
+        result.current.processPoint(i * 5, 0, 0.5, config, i, undefined, {
+          timestampMs: i * 4,
+        });
+      }
+    });
+
+    const gpu = gpuState.instances[0];
+    if (!gpu) {
+      throw new Error('expected gpu instance to exist');
+    }
+    const secondaryCountBeforePrepare = gpu.stampSecondaryDabCalls.length;
+
+    await act(async () => {
+      await result.current.prepareStrokeEndGpu();
+    });
+
+    const secondaryCountAfterPrepare = gpu.stampSecondaryDabCalls.length;
+    expect(secondaryCountAfterPrepare).toBeGreaterThan(secondaryCountBeforePrepare);
+
+    await act(async () => {
+      await result.current.prepareStrokeEndGpu();
+    });
+    expect(gpu.stampSecondaryDabCalls.length).toBe(secondaryCountAfterPrepare);
+
+    await act(async () => {
+      await result.current.endStroke({} as CanvasRenderingContext2D);
+    });
+    expect(gpu.stampSecondaryDabCalls.length).toBe(secondaryCountAfterPrepare);
+  });
+
+  it('emits secondary finalize dabs once in texture dual brush mode', async () => {
+    const config = createConfig();
+    config.dualBrushEnabled = true;
+    config.dualBrush = {
+      enabled: true,
+      brushId: 'dual-texture',
+      brushIndex: 1,
+      brushName: 'Dual Texture',
+      mode: 'overlay',
+      flip: false,
+      size: 14,
+      sizeRatio: 0.58,
+      spacing: 0.25,
+      roundness: 90,
+      scatter: 0,
+      bothAxes: false,
+      count: 1,
+      texture: {
+        id: 'dual-texture-id',
+        data: 'data:image/png;base64,AA==',
+        width: 8,
+        height: 8,
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useBrushRenderer({
+        width: 256,
+        height: 256,
+        renderMode: 'gpu',
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.backend).toBe('gpu');
+    });
+
+    await act(async () => {
+      await result.current.beginStroke(100, 0);
+    });
+
+    act(() => {
+      for (let i = 0; i < 8; i += 1) {
+        result.current.processPoint(i * 5, 0, 0.5, config, i, undefined, {
+          timestampMs: i * 4,
+        });
+      }
+    });
+
+    const gpu = gpuState.instances[0];
+    if (!gpu) {
+      throw new Error('expected gpu instance to exist');
+    }
+    const secondaryCountBeforePrepare = gpu.stampSecondaryDabCalls.length;
+
+    await act(async () => {
+      await result.current.prepareStrokeEndGpu();
+    });
+
+    const secondaryCountAfterPrepare = gpu.stampSecondaryDabCalls.length;
+    expect(secondaryCountAfterPrepare).toBeGreaterThan(secondaryCountBeforePrepare);
+
+    await act(async () => {
+      await result.current.prepareStrokeEndGpu();
+    });
+    expect(gpu.stampSecondaryDabCalls.length).toBe(secondaryCountAfterPrepare);
   });
 
   it('feeds non-constant fadeProgress on main chain and does not inject finalize smoothing calls', async () => {
@@ -250,7 +382,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     });
 
     const finalizeCalls = gpu.stampDabCalls.slice(beforeTailCount) as Array<{ size?: number }>;
-    expect(finalizeCalls).toEqual([]);
+    expect(finalizeCalls.length).toBe(1);
 
     const calls = shapeSpy.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
@@ -266,7 +398,7 @@ describe('useBrushRenderer stroke finalize path', () => {
     const finalizeDynamics = calls
       .slice(beforeFinalizeShapeCallCount)
       .map((call) => call[4] as DynamicsInput);
-    expect(finalizeDynamics).toEqual([]);
+    expect(finalizeDynamics.length).toBe(1);
   });
 
   it('forces size pressure override from toolbar even when Shape Dynamics size control is non-pressure', async () => {

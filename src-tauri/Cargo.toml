@@ -62,7 +62,7 @@ hex = "0.4"
 
 # Windows-only tablet/input dependencies
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.56", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.56", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
 raw-window-handle = "0.6"
 wintab_lite = { version = "1.0.1", features = ["libloading"] }
 libloading = "0.8"
