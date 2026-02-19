@@ -47,12 +47,9 @@ function blendDual(primary: number, secondary: number, mode: DualBlendMode): num
     case 'linearBurn':
       return Math.max(0, p + s - 1.0);
     case 'hardMix':
-      // Hard Mix: result is 0 or 1 based on linear light threshold
-      return p + s >= 1.0 ? 1.0 : 0.0;
+      return Math.max(0, Math.min(1, 3.0 * p - 2.0 * (1.0 - s)));
     case 'linearHeight':
-      // Linear Height: similar to height/emboss effect
-      // Treats secondary as height map, scales primary
-      return p * (0.5 + s * 0.5);
+      return Math.max(0, Math.min(1, Math.max((1.0 - s) * 10.0 * p, 10.0 * p - s)));
     default:
       return p * s;
   }
