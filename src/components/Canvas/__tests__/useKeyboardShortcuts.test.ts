@@ -43,6 +43,7 @@ describe('useKeyboardShortcuts', () => {
   beforeEach(() => {
     // Ensure selection store starts in a stable state
     useSelectionStore.setState({ isMoving: false });
+    useSelectionStore.getState().setSelectionShape('rect');
   });
 
   afterEach(() => {
@@ -426,6 +427,50 @@ describe('useKeyboardShortcuts', () => {
 
     expect(handleOpenCurvesPanel).toHaveBeenCalledTimes(1);
     expect(setTool).toHaveBeenCalledWith('select');
+  });
+
+  it('handles Shift+M: toggles marquee shape and switches to select tool', () => {
+    const setTool = vi.fn<[ToolType], void>();
+
+    renderHook(() =>
+      useKeyboardShortcuts({
+        currentTool: 'brush',
+        currentSize: 50,
+        setTool,
+        setCurrentSize: vi.fn(),
+        handleUndo: vi.fn(),
+        handleRedo: vi.fn(),
+        selectAll: vi.fn(),
+        deselectAll: vi.fn(),
+        cancelSelection: vi.fn(),
+        width: 100,
+        height: 100,
+        setIsPanning: vi.fn(),
+        panStartRef: { current: null },
+      })
+    );
+
+    const first = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'KeyM',
+      shiftKey: true,
+    });
+
+    act(() => {
+      window.dispatchEvent(first);
+    });
+
+    expect(first.defaultPrevented).toBe(true);
+    expect(useSelectionStore.getState().selectionShape).toBe('circle');
+    expect(setTool).toHaveBeenLastCalledWith('select');
+
+    act(() => {
+      dispatchWindowKeyDown({ code: 'KeyM', shiftKey: true });
+    });
+
+    expect(useSelectionStore.getState().selectionShape).toBe('rect');
+    expect(setTool).toHaveBeenCalledTimes(2);
   });
 
   it('handles Ctrl/Cmd+H to toggle history panel and ignores repeat keydown', () => {

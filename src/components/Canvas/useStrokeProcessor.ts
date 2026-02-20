@@ -106,6 +106,7 @@ interface UseStrokeProcessorParams {
   flushPending: () => void;
   compositeAndRender: () => void;
   saveStrokeToHistory: () => void;
+  discardCapturedStrokeHistory: () => void;
   updateThumbnail: (layerId: string) => void;
 }
 
@@ -189,6 +190,7 @@ export function useStrokeProcessor({
   flushPending,
   compositeAndRender,
   saveStrokeToHistory,
+  discardCapturedStrokeHistory,
   updateThumbnail,
 }: UseStrokeProcessorParams) {
   // Get the active layer's context for drawing
@@ -572,6 +574,7 @@ export function useStrokeProcessor({
     clearPointBuffer();
 
     const isBrushStroke = isBrushStrokeState(strokeStateRef.current) || isStrokeActive();
+    let persistHistoryEntry = true;
 
     if (isBrushStroke) {
       // Process any remaining points in queue before finalizing
@@ -622,7 +625,8 @@ export function useStrokeProcessor({
       }
 
       if (useGpuDisplay && commitStrokeGpu) {
-        await commitStrokeGpu();
+        const commitResult = await commitStrokeGpu();
+        persistHistoryEntry = commitResult.committed;
       } else {
         const layerCtx = getActiveLayerCtx();
         if (layerCtx) {
@@ -640,9 +644,14 @@ export function useStrokeProcessor({
     lastInputPosRef.current = null;
 
     // Save stroke to history (uses beforeImage captured at stroke start)
-    saveStrokeToHistory();
-    if (activeLayerId) {
-      updateThumbnail(activeLayerId);
+    if (persistHistoryEntry) {
+      saveStrokeToHistory();
+      if (activeLayerId) {
+        updateThumbnail(activeLayerId);
+      }
+    } else {
+      // GPU no-op commit should not create a history entry.
+      discardCapturedStrokeHistory();
     }
 
     isDrawingRef.current = false;
@@ -666,6 +675,7 @@ export function useStrokeProcessor({
     endBrushStroke,
     compositeAndRender,
     saveStrokeToHistory,
+    discardCapturedStrokeHistory,
     activeLayerId,
     updateThumbnail,
     getLastDabPosition,

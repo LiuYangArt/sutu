@@ -45,6 +45,23 @@
   gap: 4px;
 }
 
+.selection-shape-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 2px;
+  padding-right: 6px;
+  border-right: 1px solid var(--divider);
+}
+
+.selection-shape-btn {
+  width: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .selection-auto-fill-btn {
   width: 32px;
   padding: 0;

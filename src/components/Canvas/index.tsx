@@ -2308,6 +2308,7 @@ export function Canvas() {
     flushPending,
     compositeAndRender,
     saveStrokeToHistory,
+    discardCapturedStrokeHistory,
     updateThumbnail,
   });
 
