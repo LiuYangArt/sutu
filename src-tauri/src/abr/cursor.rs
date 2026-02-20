@@ -1256,8 +1256,8 @@ fn try_generate_lod2(
     }
 
     let mut best_budget_candidate: Option<LodCandidate> = None;
-    let max_contours = source.len().min(LOD2_CONTOUR_LIMIT).max(1);
-    let keep_levels = [max_contours, (max_contours + 1) / 2, 1];
+    let max_contours = source.len().clamp(1, LOD2_CONTOUR_LIMIT);
+    let keep_levels = [max_contours, max_contours.div_ceil(2), 1];
     let candidates: &[(f32, Option<f32>, SimplifyAlgorithm)] = &[
         (2.10, Some(1.20), SimplifyAlgorithm::Rdp),
         (3.20, Some(1.30), SimplifyAlgorithm::Rdp),
