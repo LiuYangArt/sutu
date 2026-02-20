@@ -10,6 +10,7 @@ import {
   mapNativeWindowPxToCanvasPoint,
   parseNativeTabletSample,
   parsePointerEventSample,
+  resolveStreamingBackendName,
   resolveNativeStrokePoints,
 } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
@@ -138,6 +139,13 @@ function filterNativePointsByPointerId(
   return filtered.length > 0 ? filtered : points;
 }
 
+function normalizeBackendSessionKey(backendName: string | null): string {
+  if (typeof backendName !== 'string' || backendName.length <= 0) {
+    return 'none';
+  }
+  return backendName.toLowerCase();
+}
+
 export function usePointerHandlers({
   containerRef,
   canvasRef,
@@ -187,8 +195,11 @@ export function usePointerHandlers({
   onBeforeCanvasMutation,
 }: UsePointerHandlersParams) {
   const DOM_POINTER_ACTIVITY_TIMEOUT_MS = 24;
+  const DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS = 120;
   const nativeSeqCursorRef = useRef(0);
   const activePointerIdRef = useRef<number | null>(null);
+  const activeSessionBackendRef = useRef<string | null>(null);
+  const lastTrustedPointerDownAtMsRef = useRef<number>(-Infinity);
   const nonCanvasPointerIdsRef = useRef<Set<number>>(new Set());
   const isPanningRef = useRef(isPanning);
   const finishingStrokePromiseRef = useRef<Promise<void> | null>(null);
@@ -241,6 +252,16 @@ export function usePointerHandlers({
 
   const beginPointerSession = useCallback(
     (pointerId: number, isTrusted: boolean) => {
+      const tabletState = useTabletStore.getState();
+      activeSessionBackendRef.current = normalizeBackendSessionKey(
+        resolveStreamingBackendName(tabletState.activeBackend, tabletState.backend)
+      );
+      if (isTrusted) {
+        lastTrustedPointerDownAtMsRef.current =
+          typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now();
+      }
       setActivePointerId(pointerId);
       trySetPointerCapture(pointerId, isTrusted);
     },
@@ -252,7 +273,10 @@ export function usePointerHandlers({
       const releaseId =
         typeof pointerId === 'number' ? pointerId : (activePointerIdRef.current ?? null);
       tryReleasePointerCapture(releaseId);
-      clearActivePointerId(pointerId);
+      const didClear = clearActivePointerId(pointerId);
+      if (didClear) {
+        activeSessionBackendRef.current = null;
+      }
     },
     [clearActivePointerId, tryReleasePointerCapture]
   );
@@ -1012,23 +1036,54 @@ export function usePointerHandlers({
     async (pe: PointerEvent) => {
       markDomPointerActivity();
       if (useUiInteractionStore.getState().isCanvasInputLocked) {
+        logTabletTrace('frontend.pointerdown.blocked_input_lock', {
+          pointer_id: pe.pointerId,
+          client_x: pe.clientX,
+          client_y: pe.clientY,
+          is_trusted: pe.isTrusted,
+          stroke_state: strokeStateRef.current,
+          is_drawing: isDrawingRef.current,
+        });
         return;
       }
       nativeMissingInputStreakRef.current = 0;
       const wantsStrokeInput = isStrokeTool(currentTool);
       const tabletStateSnapshot = useTabletStore.getState();
-      if (
+      const currentBackendSessionKey = normalizeBackendSessionKey(
+        resolveStreamingBackendName(tabletStateSnapshot.activeBackend, tabletStateSnapshot.backend)
+      );
+      const activeSessionBackend = activeSessionBackendRef.current;
+      const duplicatePointerDownAgeMs = getNowMs() - lastTrustedPointerDownAtMsRef.current;
+      const shouldIgnoreDuplicatePointerDown =
+        duplicatePointerDownAgeMs <= DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS &&
+        activeSessionBackend !== null &&
+        activeSessionBackend === currentBackendSessionKey;
+      const isActiveDuplicatePointerDown =
         wantsStrokeInput &&
         pe.isTrusted &&
         isDrawingRef.current &&
         activePointerIdRef.current === pe.pointerId &&
-        isNativeTabletStreamingState(tabletStateSnapshot)
-      ) {
-        logTabletTrace('frontend.pointerdown.duplicate_ignored', {
+        isNativeTabletStreamingState(tabletStateSnapshot);
+      if (isActiveDuplicatePointerDown) {
+        if (shouldIgnoreDuplicatePointerDown) {
+          logTabletTrace('frontend.pointerdown.duplicate_ignored', {
+            pointer_id: pe.pointerId,
+            stroke_state: strokeStateRef.current,
+            duplicate_age_ms: duplicatePointerDownAgeMs,
+            duplicate_ignore_window_ms: DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS,
+            session_backend: activeSessionBackend,
+            current_backend: currentBackendSessionKey,
+          });
+          return;
+        }
+        logTabletTrace('frontend.pointerdown.duplicate_force_restart', {
           pointer_id: pe.pointerId,
           stroke_state: strokeStateRef.current,
+          duplicate_age_ms: duplicatePointerDownAgeMs,
+          duplicate_ignore_window_ms: DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS,
+          session_backend: activeSessionBackend,
+          current_backend: currentBackendSessionKey,
         });
-        return;
       }
       if (wantsStrokeInput) {
         if (finishingStrokePromiseRef.current) {
@@ -1040,11 +1095,38 @@ export function usePointerHandlers({
       }
 
       const container = containerRef.current;
-      if (!container) return;
+      if (!container) {
+        logTabletTrace('frontend.pointerdown.blocked_no_container', {
+          pointer_id: pe.pointerId,
+          is_trusted: pe.isTrusted,
+        });
+        return;
+      }
 
       const activePointerId = activePointerIdRef.current;
       if (activePointerId !== null && activePointerId !== pe.pointerId) {
-        return;
+        const shouldResetSessionForBackendSwitch =
+          activeSessionBackend !== null && activeSessionBackend !== currentBackendSessionKey;
+        if (!shouldResetSessionForBackendSwitch) {
+          logTabletTrace('frontend.pointerdown.blocked_active_pointer_mismatch', {
+            pointer_id: pe.pointerId,
+            active_pointer_id: activePointerId,
+            previous_backend: activeSessionBackend,
+            current_backend: currentBackendSessionKey,
+            stroke_state: strokeStateRef.current,
+            is_drawing: isDrawingRef.current,
+          });
+          return;
+        }
+        logTabletTrace('frontend.pointerdown.backend_switch_session_reset', {
+          stale_pointer_id: activePointerId,
+          incoming_pointer_id: pe.pointerId,
+          previous_backend: activeSessionBackend,
+          current_backend: currentBackendSessionKey,
+        });
+        usingRawInput.current = false;
+        nativeMissingInputStreakRef.current = 0;
+        endPointerSession(activePointerId);
       }
 
       if (!container.contains(document.activeElement)) {
@@ -1073,7 +1155,14 @@ export function usePointerHandlers({
       }
 
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      if (!canvas) {
+        logTabletTrace('frontend.pointerdown.blocked_no_canvas', {
+          pointer_id: pe.pointerId,
+          is_trusted: pe.isTrusted,
+          stroke_state: strokeStateRef.current,
+        });
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       const pointerCanvasPoint = pointerEventToCanvasPoint(canvas, pe, rect);
 
@@ -1127,7 +1216,17 @@ export function usePointerHandlers({
       }
 
       const activeLayer = layers.find((l) => l.id === activeLayerId);
-      if (!activeLayerId || !activeLayer?.visible) return;
+      if (!activeLayerId || !activeLayer?.visible) {
+        logTabletTrace('frontend.pointerdown.blocked_inactive_layer', {
+          pointer_id: pe.pointerId,
+          active_layer_id: activeLayerId,
+          has_active_layer: !!activeLayer,
+          active_layer_visible: activeLayer?.visible ?? false,
+          current_tool: currentTool,
+          is_trusted: pe.isTrusted,
+        });
+        return;
+      }
 
       const tabletState = tabletStateSnapshot;
       const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
@@ -1332,6 +1431,7 @@ export function usePointerHandlers({
       pendingEndRef,
       captureBeforeImage,
       initializeBrushStroke,
+      endPointerSession,
     ]
   );
 

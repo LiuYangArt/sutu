@@ -128,10 +128,43 @@ const POINT_BUFFER_SIZE = 512;
 // Shared sample buffer (kept outside Zustand to avoid high-frequency re-rendering).
 let pointBuffer: TabletInputPoint[] = [];
 let nativeTraceStrokeActive = false;
+const SEQ_REWIND_RESET_THRESHOLD = 32;
+const SEQ_REWIND_LOW_SEQ_MAX = 8;
+
+function sliceTailPoints<T>(points: T[], limit: number): T[] {
+  return limit > 0 ? points.slice(-limit) : [];
+}
+
+function shouldResetBufferForSeqRewind(
+  latest: TabletInputPoint,
+  incoming: TabletInputPoint
+): boolean {
+  if (incoming.seq >= latest.seq) return false;
+  const seqDelta = latest.seq - incoming.seq;
+  if (seqDelta < SEQ_REWIND_RESET_THRESHOLD) return false;
+  // Stream restart after backend switch/restart usually begins with down and low seq.
+  return incoming.phase === 'down' || incoming.seq <= SEQ_REWIND_LOW_SEQ_MAX;
+}
 
 function addPointToBuffer(point: TabletInputPoint): void {
   const latest = pointBuffer[pointBuffer.length - 1];
-  if (latest && point.seq <= latest.seq) return;
+  if (latest && point.seq <= latest.seq) {
+    if (!shouldResetBufferForSeqRewind(latest, point)) {
+      return;
+    }
+    logTabletTrace('frontend.buffer.seq_rewind_reset', {
+      latest_seq: latest.seq,
+      latest_stroke_id: latest.stroke_id,
+      latest_pointer_id: latest.pointer_id,
+      latest_source: latest.source,
+      incoming_seq: point.seq,
+      incoming_stroke_id: point.stroke_id,
+      incoming_pointer_id: point.pointer_id,
+      incoming_source: point.source,
+      incoming_phase: point.phase,
+    });
+    pointBuffer = [];
+  }
 
   pointBuffer.push(point);
   if (pointBuffer.length > POINT_BUFFER_SIZE) {
@@ -151,13 +184,29 @@ export function readPointBufferSince(
     return { points: [], nextSeq: lastSeq };
   }
 
+  const latest = pointBuffer[pointBuffer.length - 1];
+  if (latest && latest.seq < lastSeq) {
+    const sliced = sliceTailPoints(pointBuffer, limit);
+    const tail = sliced[sliced.length - 1];
+    logTabletTrace('frontend.buffer.cursor_rewind_rebase', {
+      read_cursor_seq: lastSeq,
+      latest_buffer_seq: latest.seq,
+      returned_points: sliced.length,
+      buffer_size: pointBuffer.length,
+    });
+    return {
+      points: sliced,
+      nextSeq: tail ? tail.seq : latest.seq,
+    };
+  }
+
   const startIndex = pointBuffer.findIndex((point) => point.seq > lastSeq);
   if (startIndex < 0) {
     return { points: [], nextSeq: lastSeq };
   }
 
   const points = pointBuffer.slice(startIndex);
-  const sliced = points.length > limit ? points.slice(points.length - limit) : points;
+  const sliced = sliceTailPoints(points, limit);
   const tail = sliced[sliced.length - 1];
   return {
     points: sliced,
@@ -330,6 +379,19 @@ export const useTabletStore = create<TabletState>((set, get) => ({
   },
 
   switchBackend: async (backend, options = {}) => {
+    const before = get();
+    logTabletTrace('frontend.backend.switch.request', {
+      requested_backend: backend,
+      before_backend: before.backend,
+      before_requested_backend: before.requestedBackend,
+      before_active_backend: before.activeBackend,
+      before_status: before.status,
+      before_streaming: before.isStreaming,
+      before_in_proximity: before.inProximity,
+      has_current_point: !!before.currentPoint,
+      current_point_phase: before.currentPoint?.phase ?? null,
+      current_point_pointer_id: before.currentPoint?.pointer_id ?? null,
+    });
     try {
       const response = await invoke<TabletStatusResponse>('switch_tablet_backend', {
         backend,
@@ -341,10 +403,26 @@ export const useTabletStore = create<TabletState>((set, get) => ({
       set({
         ...toTabletStatusStatePatch(response),
         isInitialized: true,
+        currentPoint: null,
+        inProximity: false,
+      });
+      clearPointBuffer();
+      nativeTraceStrokeActive = false;
+      logTabletTrace('frontend.backend.switch.success', {
+        requested_backend: backend,
+        response_backend: response.backend,
+        response_requested_backend: response.requested_backend,
+        response_active_backend: response.active_backend,
+        response_status: response.status,
+        point_buffer_cleared: true,
       });
       return true;
     } catch (error) {
       console.error('[Tablet] Switch backend failed:', error);
+      logTabletTrace('frontend.backend.switch.failed', {
+        requested_backend: backend,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   },
