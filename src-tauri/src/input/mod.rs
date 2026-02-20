@@ -13,9 +13,10 @@ pub use backend::{
     NativeTabletEventV3, PressureCurve, TabletBackend, TabletConfig, TabletEventV3, TabletInfo,
     TabletStatus,
 };
+#[cfg(target_os = "windows")]
+pub use krita_v3::WinTabAdapter;
 pub use krita_v3::{
     CoordinateMapper, InputPhaseV3, InputSourceV3, MonotonicTimebase, PhaseMachine, PhaseOutput,
-    WinTabAdapter,
 };
 pub use macos_backend::MacNativeBackend;
 pub use pointer_backend::PointerEventBackend;
