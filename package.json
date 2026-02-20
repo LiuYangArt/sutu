@@ -1,6 +1,6 @@
 {
   "name": "sutu",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Professional painting software with low-latency pen input",
   "license": "GPL-3.0-only",
   "type": "module",
