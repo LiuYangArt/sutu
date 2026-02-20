@@ -59,6 +59,8 @@ interface UseGlobalExportsParams {
   jumpToHistoryIndex?: (targetIndex: number) => Promise<boolean>;
   handleClearLayer: () => void;
   handleDuplicateLayer: (from: string, to: string) => void;
+  handlePreviewLayerBlendMode?: (ids: string[], blendMode: BlendMode) => number;
+  handleClearLayerBlendModePreview?: () => number;
   handleSetLayerOpacity?: (ids: string[], opacity: number) => number;
   handleSetLayerBlendMode?: (ids: string[], blendMode: BlendMode) => number;
   handleRemoveLayer: (id: string) => void;
@@ -216,6 +218,8 @@ export function useGlobalExports({
   jumpToHistoryIndex,
   handleClearLayer,
   handleDuplicateLayer,
+  handlePreviewLayerBlendMode,
+  handleClearLayerBlendModePreview,
   handleSetLayerOpacity,
   handleSetLayerBlendMode,
   handleRemoveLayer,
@@ -263,6 +267,8 @@ export function useGlobalExports({
       __canvasHistoryJumpTo?: (targetIndex: number) => Promise<boolean>;
       __canvasClearLayer?: () => void;
       __canvasDuplicateLayer?: (from: string, to: string) => void;
+      __canvasPreviewLayerBlendMode?: (ids: string[], blendMode: BlendMode) => number;
+      __canvasClearLayerBlendModePreview?: () => number;
       __canvasSetLayerOpacity?: (ids: string[], opacity: number) => number;
       __canvasSetLayerBlendMode?: (ids: string[], blendMode: BlendMode) => number;
       __canvasRemoveLayer?: (id: string) => void;
@@ -342,6 +348,12 @@ export function useGlobalExports({
     };
     win.__canvasClearLayer = handleClearLayer;
     win.__canvasDuplicateLayer = handleDuplicateLayer;
+    if (handlePreviewLayerBlendMode) {
+      win.__canvasPreviewLayerBlendMode = handlePreviewLayerBlendMode;
+    }
+    if (handleClearLayerBlendModePreview) {
+      win.__canvasClearLayerBlendModePreview = handleClearLayerBlendModePreview;
+    }
     if (handleSetLayerOpacity) {
       win.__canvasSetLayerOpacity = handleSetLayerOpacity;
     }
@@ -1233,6 +1245,8 @@ export function useGlobalExports({
       delete win.__canvasHistoryJumpTo;
       delete win.__canvasClearLayer;
       delete win.__canvasDuplicateLayer;
+      delete win.__canvasPreviewLayerBlendMode;
+      delete win.__canvasClearLayerBlendModePreview;
       delete win.__canvasSetLayerOpacity;
       delete win.__canvasSetLayerBlendMode;
       delete win.__canvasRemoveLayer;
@@ -1276,6 +1290,8 @@ export function useGlobalExports({
     jumpToHistoryIndex,
     handleClearLayer,
     handleDuplicateLayer,
+    handlePreviewLayerBlendMode,
+    handleClearLayerBlendModePreview,
     handleSetLayerOpacity,
     handleSetLayerBlendMode,
     handleRemoveLayer,

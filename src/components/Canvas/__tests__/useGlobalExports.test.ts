@@ -28,6 +28,8 @@ function cleanupGlobals(): void {
   delete win.__canvasHistoryJumpTo;
   delete win.__canvasClearLayer;
   delete win.__canvasDuplicateLayer;
+  delete win.__canvasPreviewLayerBlendMode;
+  delete win.__canvasClearLayerBlendModePreview;
   delete win.__canvasSetLayerOpacity;
   delete win.__canvasSetLayerBlendMode;
   delete win.__canvasRemoveLayer;
@@ -149,6 +151,8 @@ describe('useGlobalExports', () => {
     const jumpToHistoryIndex = vi.fn(async () => true);
     const handleClearLayer = vi.fn();
     const handleDuplicateLayer = vi.fn();
+    const handlePreviewLayerBlendMode = vi.fn(() => 1);
+    const handleClearLayerBlendModePreview = vi.fn(() => 1);
     const handleSetLayerOpacity = vi.fn(() => 1);
     const handleSetLayerBlendMode = vi.fn(() => 1);
     const handleRemoveLayer = vi.fn();
@@ -207,6 +211,8 @@ describe('useGlobalExports', () => {
         jumpToHistoryIndex,
         handleClearLayer,
         handleDuplicateLayer,
+        handlePreviewLayerBlendMode,
+        handleClearLayerBlendModePreview,
         handleSetLayerOpacity,
         handleSetLayerBlendMode,
         handleRemoveLayer,
@@ -240,6 +246,8 @@ describe('useGlobalExports', () => {
     expect(typeof win.__canvasHistoryJumpTo).toBe('function');
     expect(typeof win.__canvasClearLayer).toBe('function');
     expect(typeof win.__canvasDuplicateLayer).toBe('function');
+    expect(typeof win.__canvasPreviewLayerBlendMode).toBe('function');
+    expect(typeof win.__canvasClearLayerBlendModePreview).toBe('function');
     expect(typeof win.__canvasSetLayerOpacity).toBe('function');
     expect(typeof win.__canvasSetLayerBlendMode).toBe('function');
     expect(typeof win.__canvasRemoveLayer).toBe('function');
@@ -278,6 +286,8 @@ describe('useGlobalExports', () => {
       win.__canvasRedo();
       win.__canvasClearLayer();
       win.__canvasDuplicateLayer('from', 'to');
+      win.__canvasPreviewLayerBlendMode(['id'], 'screen');
+      win.__canvasClearLayerBlendModePreview();
       win.__canvasSetLayerOpacity(['id'], 66);
       win.__canvasSetLayerBlendMode(['id'], 'multiply');
       win.__canvasRemoveLayer('id');
@@ -318,6 +328,8 @@ describe('useGlobalExports', () => {
     expect(jumpToHistoryIndex).toHaveBeenCalledWith(2);
     expect(handleClearLayer).toHaveBeenCalledTimes(1);
     expect(handleDuplicateLayer).toHaveBeenCalledWith('from', 'to');
+    expect(handlePreviewLayerBlendMode).toHaveBeenCalledWith(['id'], 'screen');
+    expect(handleClearLayerBlendModePreview).toHaveBeenCalledTimes(1);
     expect(handleSetLayerOpacity).toHaveBeenCalledWith(['id'], 66);
     expect(handleSetLayerBlendMode).toHaveBeenCalledWith(['id'], 'multiply');
     expect(handleRemoveLayer).toHaveBeenCalledWith('id');
@@ -379,6 +391,8 @@ describe('useGlobalExports', () => {
     expect(win.__canvasHistoryJumpTo).toBeUndefined();
     expect(win.__canvasClearLayer).toBeUndefined();
     expect(win.__canvasDuplicateLayer).toBeUndefined();
+    expect(win.__canvasPreviewLayerBlendMode).toBeUndefined();
+    expect(win.__canvasClearLayerBlendModePreview).toBeUndefined();
     expect(win.__canvasSetLayerOpacity).toBeUndefined();
     expect(win.__canvasSetLayerBlendMode).toBeUndefined();
     expect(win.__canvasRemoveLayer).toBeUndefined();

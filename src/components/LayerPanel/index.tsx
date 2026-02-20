@@ -129,6 +129,16 @@ export function LayerPanel(): JSX.Element {
   const closeContextMenu = useCallback(() => {
     setContextMenu((prev) => ({ ...prev, visible: false }));
   }, []);
+  const clearBlendModePreview = useCallback(() => {
+    const win = window as Window & {
+      __canvasClearLayerBlendModePreview?: () => number;
+    };
+    win.__canvasClearLayerBlendModePreview?.();
+  }, []);
+  const closeBlendModeMenu = useCallback(() => {
+    clearBlendModePreview();
+    setBlendMenuOpen(false);
+  }, [clearBlendModePreview]);
 
   const openContextMenuAt = useCallback((x: number, y: number, layerId: string | null) => {
     setContextMenu({
@@ -193,7 +203,7 @@ export function LayerPanel(): JSX.Element {
     });
 
     closeRenameDialog();
-  }, [closeRenameDialog, pushToast, renameDialog, renameLayer]);
+  }, [closeRenameDialog, pushToast, renameDialog, renameLayer, t]);
 
   // Close context menu when clicking outside
   useEffect(() => {
@@ -210,12 +220,12 @@ export function LayerPanel(): JSX.Element {
     if (!blendMenuOpen) return;
     function handlePointerDown(e: MouseEvent) {
       if (blendMenuRef.current && !blendMenuRef.current.contains(e.target as Node)) {
-        setBlendMenuOpen(false);
+        closeBlendModeMenu();
       }
     }
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
-        setBlendMenuOpen(false);
+        closeBlendModeMenu();
       }
     }
     document.addEventListener('mousedown', handlePointerDown);
@@ -224,7 +234,7 @@ export function LayerPanel(): JSX.Element {
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [blendMenuOpen]);
+  }, [blendMenuOpen, closeBlendModeMenu]);
 
   useEffect(() => {
     if (!renameDialog.visible) return;
@@ -234,6 +244,12 @@ export function LayerPanel(): JSX.Element {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [renameDialog.visible]);
+
+  useEffect(() => {
+    return () => {
+      clearBlendModePreview();
+    };
+  }, [clearBlendModePreview]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, layerId: string) => {
@@ -368,6 +384,18 @@ export function LayerPanel(): JSX.Element {
     [getUniqueLayerIds, setLayerBlendMode]
   );
 
+  const safePreviewLayerBlendMode = useCallback(
+    (ids: string[], blendMode: BlendMode) => {
+      const uniqueIds = getUniqueLayerIds(ids);
+      if (uniqueIds.length === 0) return;
+      const win = window as Window & {
+        __canvasPreviewLayerBlendMode?: (layerIds: string[], value: BlendMode) => number;
+      };
+      win.__canvasPreviewLayerBlendMode?.(uniqueIds, blendMode);
+    },
+    [getUniqueLayerIds]
+  );
+
   const getContextSelectionIds = useCallback((): string[] => {
     if (!contextMenu.layerId) return [];
     if (selectedLayerIds.length > 1 && selectedLayerIds.includes(contextMenu.layerId)) {
@@ -430,7 +458,10 @@ export function LayerPanel(): JSX.Element {
   }, [activeLayerId, selectedLayerIds]);
 
   const collectEditableBatchLayerIds = useCallback(
-    (targetIds: string[]): string[] => {
+    (
+      targetIds: string[],
+      options: { showSkippedToast?: boolean } = { showSkippedToast: true }
+    ): string[] => {
       let lockedSkipped = 0;
       let backgroundSkipped = 0;
       const editableLayerIds: string[] = [];
@@ -449,7 +480,11 @@ export function LayerPanel(): JSX.Element {
         editableLayerIds.push(layerId);
       }
 
-      if (editableLayerIds.length > 0 && (lockedSkipped > 0 || backgroundSkipped > 0)) {
+      if (
+        options.showSkippedToast !== false &&
+        editableLayerIds.length > 0 &&
+        (lockedSkipped > 0 || backgroundSkipped > 0)
+      ) {
         pushToast(
           t('layerPanel.toast.skippedLockedBackground', {
             locked: lockedSkipped,
@@ -463,7 +498,18 @@ export function LayerPanel(): JSX.Element {
 
       return editableLayerIds;
     },
-    [layers, pushToast]
+    [layers, pushToast, t]
+  );
+
+  const resolveBatchLayerTargetIds = useCallback(
+    (options: { showSkippedToast?: boolean } = { showSkippedToast: true }): string[] => {
+      const targetIds = getBatchTargetLayerIds();
+      if (targetIds.length <= 1) {
+        return targetIds;
+      }
+      return collectEditableBatchLayerIds(targetIds, options);
+    },
+    [collectEditableBatchLayerIds, getBatchTargetLayerIds]
   );
 
   function handleDragStart(e: React.DragEvent, layerId: string): void {
@@ -569,34 +615,31 @@ export function LayerPanel(): JSX.Element {
 
   const applyBatchLayerOpacity = useCallback(
     (opacity: number) => {
-      const targetIds = getBatchTargetLayerIds();
-      if (targetIds.length === 0) return;
-
-      if (targetIds.length === 1) {
-        safeSetLayerOpacity(targetIds, opacity);
-        return;
-      }
-
-      const editableLayerIds = collectEditableBatchLayerIds(targetIds);
+      const editableLayerIds = resolveBatchLayerTargetIds();
+      if (editableLayerIds.length === 0) return;
       safeSetLayerOpacity(editableLayerIds, opacity);
     },
-    [collectEditableBatchLayerIds, getBatchTargetLayerIds, safeSetLayerOpacity]
+    [resolveBatchLayerTargetIds, safeSetLayerOpacity]
   );
 
   const applyBatchLayerBlendMode = useCallback(
     (blendMode: BlendMode) => {
-      const targetIds = getBatchTargetLayerIds();
-      if (targetIds.length === 0) return;
-
-      if (targetIds.length === 1) {
-        safeSetLayerBlendMode(targetIds, blendMode);
-        return;
-      }
-
-      const editableLayerIds = collectEditableBatchLayerIds(targetIds);
+      const editableLayerIds = resolveBatchLayerTargetIds();
+      if (editableLayerIds.length === 0) return;
       safeSetLayerBlendMode(editableLayerIds, blendMode);
     },
-    [collectEditableBatchLayerIds, getBatchTargetLayerIds, safeSetLayerBlendMode]
+    [resolveBatchLayerTargetIds, safeSetLayerBlendMode]
+  );
+
+  const previewBatchLayerBlendMode = useCallback(
+    (blendMode: BlendMode) => {
+      const editableLayerIds = resolveBatchLayerTargetIds({
+        showSkippedToast: false,
+      });
+      if (editableLayerIds.length === 0) return;
+      safePreviewLayerBlendMode(editableLayerIds, blendMode);
+    },
+    [resolveBatchLayerTargetIds, safePreviewLayerBlendMode]
   );
 
   function handleClearLayer(): void {
@@ -733,7 +776,13 @@ export function LayerPanel(): JSX.Element {
             type="button"
             className="blend-mode-trigger"
             disabled={!activeLayer}
-            onClick={() => setBlendMenuOpen((open) => !open)}
+            onClick={() => {
+              if (blendMenuOpen) {
+                closeBlendModeMenu();
+                return;
+              }
+              setBlendMenuOpen(true);
+            }}
             aria-haspopup="listbox"
             aria-expanded={blendMenuOpen}
             title={activeBlendModeLabel}
@@ -749,6 +798,7 @@ export function LayerPanel(): JSX.Element {
               className="blend-mode-dropdown"
               role="listbox"
               aria-label={t('layerPanel.blendMode')}
+              onMouseLeave={clearBlendModePreview}
             >
               {BLEND_MODE_MENU_ITEMS.map((item) => {
                 if (item.kind === 'separator') {
@@ -762,7 +812,10 @@ export function LayerPanel(): JSX.Element {
                     role="option"
                     aria-selected={isActive}
                     className={`blend-mode-option ${isActive ? 'active' : ''}`}
+                    onMouseEnter={() => previewBatchLayerBlendMode(item.value)}
+                    onFocus={() => previewBatchLayerBlendMode(item.value)}
                     onClick={() => {
+                      clearBlendModePreview();
                       applyBatchLayerBlendMode(item.value);
                       setBlendMenuOpen(false);
                     }}

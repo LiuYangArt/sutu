@@ -116,6 +116,14 @@ interface PasteImageOptions extends ImportImageOptions {
   allowSystemClipboardRead?: boolean;
 }
 
+interface ApplyLayerPropsOptions {
+  pushHistory?: boolean;
+  markDirty?: boolean;
+  notifyBeforeCanvasMutation?: boolean;
+  render?: boolean;
+  markLayerDirty?: boolean;
+}
+
 interface DecodedImageSource {
   source: CanvasImageSource;
   width: number;
@@ -569,6 +577,7 @@ export function useLayerOperations({
   // Store beforeImage when stroke starts
   const beforeImageRef = useRef<PendingStrokeHistory | null>(null);
   const copiedImageBlobRef = useRef<Blob | null>(null);
+  const blendModePreviewBaselineRef = useRef<Map<string, Layer['blendMode']> | null>(null);
 
   const pushCpuStrokeHistory = useCallback(
     (layerId: string, beforeImage: ImageData, entryId: string = createHistoryEntryId()) => {
@@ -2164,16 +2173,25 @@ export function useLayerOperations({
   const applyLayerProps = useCallback(
     (
       layerIds: string[],
-      next: { opacity?: number; blendMode?: Layer['blendMode'] }
+      next: { opacity?: number; blendMode?: Layer['blendMode'] },
+      options: ApplyLayerPropsOptions = {}
     ): LayerPropsChange[] => {
+      const {
+        pushHistory = true,
+        markDirty = true,
+        notifyBeforeCanvasMutation = pushHistory || markDirty,
+        render = true,
+        markLayerDirty: shouldMarkLayerDirty = true,
+      } = options;
       const uniqueIds = Array.from(new Set(layerIds));
       if (uniqueIds.length === 0) return [];
 
       const changes: LayerPropsChange[] = [];
       const currentLayers = useDocumentStore.getState().layers;
+      const currentLayerMap = new Map(currentLayers.map((layer) => [layer.id, layer] as const));
 
       for (const layerId of uniqueIds) {
-        const layer = currentLayers.find((item) => item.id === layerId);
+        const layer = currentLayerMap.get(layerId);
         if (!layer) continue;
         const nextOpacity =
           next.opacity === undefined ? layer.opacity : clampNumber(next.opacity, 0, 100);
@@ -2192,7 +2210,9 @@ export function useLayerOperations({
 
       if (changes.length === 0) return [];
 
-      onBeforeCanvasMutation?.();
+      if (notifyBeforeCanvasMutation) {
+        onBeforeCanvasMutation?.();
+      }
 
       const changeMap = new Map(changes.map((change) => [change.layerId, change]));
       useDocumentStore.setState((state) => ({
@@ -2205,7 +2225,7 @@ export function useLayerOperations({
             blendMode: change.afterBlendMode,
           };
         }),
-        isDirty: true,
+        isDirty: markDirty ? true : state.isDirty,
       }));
 
       const renderer = layerRendererRef.current;
@@ -2218,26 +2238,123 @@ export function useLayerOperations({
         }
       }
 
-      pushLayerProps(changes);
-      compositeAndRender();
-      markLayerDirty(changes.map((change) => change.layerId));
+      if (pushHistory) {
+        pushLayerProps(changes);
+      }
+      if (render) {
+        compositeAndRender();
+      }
+      if (shouldMarkLayerDirty) {
+        markLayerDirty(changes.map((change) => change.layerId));
+      }
       return changes;
     },
     [compositeAndRender, layerRendererRef, markLayerDirty, onBeforeCanvasMutation, pushLayerProps]
   );
 
-  const handleSetLayerOpacity = useCallback(
-    (layerIds: string[], opacity: number): number => {
-      return applyLayerProps(layerIds, { opacity }).length;
+  const handleClearLayerBlendModePreview = useCallback(
+    (render = true): number => {
+      const baselineMap = blendModePreviewBaselineRef.current;
+      if (!baselineMap || baselineMap.size === 0) {
+        blendModePreviewBaselineRef.current = null;
+        return 0;
+      }
+
+      const currentLayers = useDocumentStore.getState().layers;
+      const currentLayerMap = new Map(currentLayers.map((layer) => [layer.id, layer] as const));
+      const changes: LayerPropsChange[] = [];
+      for (const [layerId, baselineBlendMode] of baselineMap.entries()) {
+        const layer = currentLayerMap.get(layerId);
+        if (!layer) continue;
+        if (layer.blendMode === baselineBlendMode) continue;
+        changes.push({
+          layerId,
+          beforeOpacity: layer.opacity,
+          beforeBlendMode: layer.blendMode,
+          afterOpacity: layer.opacity,
+          afterBlendMode: baselineBlendMode,
+        });
+      }
+
+      blendModePreviewBaselineRef.current = null;
+      if (changes.length === 0) return 0;
+
+      const changeMap = new Map(changes.map((change) => [change.layerId, change]));
+      useDocumentStore.setState((state) => ({
+        layers: state.layers.map((layer) => {
+          const change = changeMap.get(layer.id);
+          if (!change) return layer;
+          return {
+            ...layer,
+            blendMode: change.afterBlendMode,
+          };
+        }),
+        isDirty: state.isDirty,
+      }));
+
+      const renderer = layerRendererRef.current;
+      if (renderer) {
+        for (const change of changes) {
+          renderer.updateLayer(change.layerId, {
+            blendMode: change.afterBlendMode,
+          });
+        }
+      }
+
+      if (render) {
+        compositeAndRender();
+      }
+      markLayerDirty(changes.map((change) => change.layerId));
+      return changes.length;
+    },
+    [compositeAndRender, layerRendererRef, markLayerDirty]
+  );
+
+  const handlePreviewLayerBlendMode = useCallback(
+    (layerIds: string[], blendMode: Layer['blendMode']): number => {
+      const uniqueIds = Array.from(new Set(layerIds));
+      if (uniqueIds.length === 0) return 0;
+
+      const baselineMap =
+        blendModePreviewBaselineRef.current ?? new Map<string, Layer['blendMode']>();
+      const currentLayers = useDocumentStore.getState().layers;
+      const currentLayerMap = new Map(currentLayers.map((layer) => [layer.id, layer] as const));
+      for (const layerId of uniqueIds) {
+        const layer = currentLayerMap.get(layerId);
+        if (!layer) continue;
+        if (!baselineMap.has(layerId)) {
+          baselineMap.set(layerId, layer.blendMode);
+        }
+      }
+      blendModePreviewBaselineRef.current = baselineMap;
+
+      return applyLayerProps(
+        uniqueIds,
+        { blendMode },
+        {
+          pushHistory: false,
+          markDirty: false,
+          notifyBeforeCanvasMutation: false,
+        }
+      ).length;
     },
     [applyLayerProps]
   );
 
+  const handleSetLayerOpacity = useCallback(
+    (layerIds: string[], opacity: number): number => {
+      handleClearLayerBlendModePreview(false);
+      return applyLayerProps(layerIds, { opacity }).length;
+    },
+    [applyLayerProps, handleClearLayerBlendModePreview]
+  );
+
   const handleSetLayerBlendMode = useCallback(
     (layerIds: string[], blendMode: Layer['blendMode']): number => {
+      handleClearLayerBlendModePreview(false);
       return applyLayerProps(layerIds, { blendMode }).length;
     },
-    [applyLayerProps]
+    [applyLayerProps, handleClearLayerBlendModePreview]
   );
 
   return {
@@ -2258,6 +2375,8 @@ export function useLayerOperations({
     handleCopyActiveLayerImage,
     handlePasteImageAsNewLayer,
     handleImportImageFiles,
+    handlePreviewLayerBlendMode,
+    handleClearLayerBlendModePreview,
     handleSetLayerOpacity,
     handleSetLayerBlendMode,
     handleDuplicateActiveLayer,

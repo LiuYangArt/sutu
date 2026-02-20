@@ -21,6 +21,12 @@ describe('LayerPanel multi selection', () => {
   beforeEach(() => {
     useDocumentStore.getState().reset();
     useToastStore.setState({ toasts: [] });
+    const win = window as Window & {
+      __canvasPreviewLayerBlendMode?: (ids: string[], value: Layer['blendMode']) => number;
+      __canvasClearLayerBlendModePreview?: () => number;
+    };
+    delete win.__canvasPreviewLayerBlendMode;
+    delete win.__canvasClearLayerBlendModePreview;
 
     const layers: Layer[] = [
       createLayer('layer_a', 'A'),
@@ -145,5 +151,29 @@ describe('LayerPanel multi selection', () => {
     expect(state.layers.find((layer) => layer.id === 'layer_c')?.blendMode).toBe('normal');
     expect(state.layers.find((layer) => layer.id === 'layer_b')?.blendMode).toBe('normal');
     expect(useToastStore.getState().toasts.length).toBeGreaterThan(0);
+  });
+
+  it('previews blend mode on hover and clears preview when leaving dropdown', () => {
+    const previewSpy = vi.fn(() => 1);
+    const clearSpy = vi.fn(() => 1);
+    const win = window as Window & {
+      __canvasPreviewLayerBlendMode?: (ids: string[], value: Layer['blendMode']) => number;
+      __canvasClearLayerBlendModePreview?: () => number;
+    };
+    win.__canvasPreviewLayerBlendMode = previewSpy;
+    win.__canvasClearLayerBlendModePreview = clearSpy;
+
+    render(<LayerPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: /normal/i }));
+    fireEvent.mouseEnter(screen.getByRole('option', { name: /multiply/i }));
+    expect(previewSpy).toHaveBeenCalledWith(['layer_d'], 'multiply');
+
+    const dropdown = document.querySelector('.blend-mode-dropdown') as HTMLElement | null;
+    expect(dropdown).toBeTruthy();
+    if (!dropdown) return;
+
+    fireEvent.mouseLeave(dropdown);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 });
