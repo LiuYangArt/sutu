@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { confirm, open } from '@tauri-apps/plugin-dialog';
 import {
   ArrowRightLeft,
   ChevronDown,
@@ -64,6 +64,12 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
     }
   }, [isOpen, presetCount, loadLibrary]);
 
+  const confirmDelete = async (message: string): Promise<boolean> =>
+    confirm(message, {
+      title: t('brushLibrary.title'),
+      kind: 'warning',
+    });
+
   const handleImport = async () => {
     try {
       const selected = await open({
@@ -85,11 +91,20 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
   };
 
   const handleDelete = async () => {
-    if (!selectedPresetId) {
+    const presetId = selectedPresetId;
+    if (!presetId) {
+      return;
+    }
+    const confirmed = await confirmDelete(
+      t('brushLibrary.confirm.deletePreset', {
+        presetName: selectedPreset?.name ?? presetId,
+      })
+    );
+    if (!confirmed) {
       return;
     }
     try {
-      await deletePreset(selectedPresetId);
+      await deletePreset(presetId);
     } catch (err) {
       console.error('[BrushLibrary] delete failed', err);
     }
@@ -155,7 +170,7 @@ export function BrushLibraryPanel({ isOpen, onClose }: BrushLibraryPanelProps): 
   };
 
   const handleDeleteGroup = async (groupName: string, presetTotal: number) => {
-    const confirmed = window.confirm(
+    const confirmed = await confirmDelete(
       t('brushLibrary.confirm.deleteGroup', { groupName, presetTotal })
     );
     if (!confirmed) {

@@ -39,6 +39,7 @@
     "blendMode.vividLight": "亮光",
     "brushLibrary.collapse": "折叠",
     "brushLibrary.collapseGroup": "折叠分组",
+    "brushLibrary.confirm.deletePreset": "删除预设“{{presetName}}”？",
     "brushLibrary.confirm.deleteGroup": "删除分组“{{groupName}}”及其 {{presetTotal}} 个预设？",
     "brushLibrary.deleteGroup": "删除分组",
     "brushLibrary.deleteGroupAria": "删除分组 {{groupName}}",
