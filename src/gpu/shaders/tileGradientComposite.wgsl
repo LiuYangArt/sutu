@@ -71,6 +71,10 @@ fn channel_color_dodge(dst: f32, src: f32) -> f32 {
 }
 
 fn channel_color_burn(dst: f32, src: f32) -> f32 {
+  // Photoshop compatibility: fully white backdrop channel stays unchanged.
+  if (dst >= 0.9999) {
+    return 1.0;
+  }
   if (src <= 0.0001) {
     return 0.0;
   }
