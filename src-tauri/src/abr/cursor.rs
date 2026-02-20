@@ -12,10 +12,11 @@ pub const DEFAULT_LOD0_PATH_LEN_SOFT_LIMIT: usize = 160_000;
 pub const DEFAULT_LOD1_PATH_LEN_LIMIT: usize = 60_000;
 pub const DEFAULT_LOD2_PATH_LEN_LIMIT: usize = 8_000;
 
-const LOD1_SEGMENT_LIMIT: usize = 2_000;
-const LOD1_CONTOUR_LIMIT: usize = 8;
+const LOD1_SEGMENT_LIMIT: usize = 3_200;
+const LOD1_CONTOUR_LIMIT: usize = 128;
 const LOD2_SEGMENT_LIMIT: usize = 256;
-const LOD2_CONTOUR_LIMIT: usize = 1;
+const LOD2_CONTOUR_LIMIT: usize = 6;
+const LOD0_CONTOUR_LIMIT: usize = 192;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CursorLodPathLenLimits {
@@ -441,6 +442,19 @@ fn point_line_distance(p: (f32, f32), line_start: (f32, f32), line_end: (f32, f3
     cross.abs() / len_sq.sqrt()
 }
 
+#[derive(Debug, Clone, Copy)]
+enum SimplifyAlgorithm {
+    Rdp,
+}
+
+fn simplify_contour(
+    points: &[(f32, f32)],
+    epsilon: f32,
+    _algorithm: SimplifyAlgorithm,
+) -> Vec<(f32, f32)> {
+    rdp_simplify(points, epsilon)
+}
+
 #[inline]
 fn to_u32_saturating(value: usize) -> u32 {
     value.min(u32::MAX as usize) as u32
@@ -485,6 +499,23 @@ fn extract_raw_contours(img: &GrayscaleImage, threshold: u8) -> Vec<Vec<(f32, f3
 
     sort_contours_by_area_desc(&mut sanitized);
     sanitized
+}
+
+fn build_lod_base_contours(contours: &[Vec<(f32, f32)>]) -> Vec<Vec<(f32, f32)>> {
+    let mut prepared = Vec::new();
+    for contour in contours {
+        let simplified = sanitize_contour_points(&rdp_simplify(contour, 0.5), 0.05);
+        if simplified.len() < 3 {
+            continue;
+        }
+        let smoothed = sanitize_contour_points(&chaikin_smooth(&simplified, 2), 0.05);
+        if smoothed.len() < 3 {
+            continue;
+        }
+        prepared.push(smoothed);
+    }
+    sort_contours_by_area_desc(&mut prepared);
+    prepared
 }
 
 fn sanitize_contour_points(points: &[(f32, f32)], merge_epsilon: f32) -> Vec<(f32, f32)> {
@@ -615,6 +646,201 @@ fn quality_gate_passed(reference: &QualitySignature, candidate: &QualitySignatur
     true
 }
 
+fn quality_distance(reference: &QualitySignature, candidate: &QualitySignature) -> f32 {
+    let area_deviation = ((candidate.area - reference.area).abs() / reference.area).max(0.0);
+    let center_dx = candidate.center_x - reference.center_x;
+    let center_dy = candidate.center_y - reference.center_y;
+    let center_drift = (center_dx * center_dx + center_dy * center_dy).sqrt();
+    let aspect_ratio_deviation = (candidate.aspect_ratio - reference.aspect_ratio).abs();
+
+    (area_deviation / QUALITY_AREA_DEVIATION_LIMIT)
+        + (center_drift / QUALITY_CENTER_DRIFT_LIMIT_PX)
+        + (aspect_ratio_deviation / QUALITY_ASPECT_RATIO_DEVIATION_LIMIT)
+}
+
+fn should_replace_with_more_similar(
+    current: Option<&LodCandidate>,
+    candidate: &LodCandidate,
+    reference: &QualitySignature,
+    prefer_detail_on_tie: bool,
+) -> bool {
+    let Some(existing) = current else {
+        return true;
+    };
+
+    let existing_score = quality_distance(reference, &existing.signature);
+    let candidate_score = quality_distance(reference, &candidate.signature);
+
+    if candidate_score + 1e-4 < existing_score {
+        return true;
+    }
+    if existing_score + 1e-4 < candidate_score {
+        return false;
+    }
+
+    if prefer_detail_on_tie {
+        candidate.complexity.path_len > existing.complexity.path_len
+    } else {
+        candidate.complexity.path_len < existing.complexity.path_len
+    }
+}
+
+fn contour_perimeter(points: &[(f32, f32)]) -> f32 {
+    if points.len() < 2 {
+        return 0.0;
+    }
+
+    let mut perimeter = 0.0f32;
+    for i in 0..points.len() {
+        let p0 = points[i];
+        let p1 = points[(i + 1) % points.len()];
+        let dx = p1.0 - p0.0;
+        let dy = p1.1 - p0.1;
+        perimeter += (dx * dx + dy * dy).sqrt();
+    }
+    perimeter
+}
+
+fn contour_importance_score(points: &[(f32, f32)]) -> f32 {
+    let perimeter = contour_perimeter(points);
+    let area_term = contour_area_abs(points).sqrt();
+    perimeter + area_term * 0.5
+}
+
+fn select_contours_by_importance(
+    contours: &[Vec<(f32, f32)>],
+    max_contours: usize,
+    min_relative_score: f32,
+    min_coverage_ratio: f32,
+) -> Vec<Vec<(f32, f32)>> {
+    if contours.is_empty() {
+        return Vec::new();
+    }
+
+    let mut scored: Vec<(usize, f32)> = contours
+        .iter()
+        .enumerate()
+        .map(|(idx, contour)| (idx, contour_importance_score(contour)))
+        .collect();
+    scored.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let total_score: f32 = scored
+        .iter()
+        .map(|(_, score)| *score)
+        .sum::<f32>()
+        .max(1e-6);
+    let max_score = scored.first().map(|(_, score)| *score).unwrap_or(0.0);
+    let relative_threshold = max_score * min_relative_score.max(0.0);
+    let mut cumulative_score = 0.0f32;
+    let mut selected_indices = Vec::new();
+    let max_keep = max_contours.max(1);
+    let target_coverage = min_coverage_ratio.clamp(0.0, 1.0);
+
+    for (rank, (idx, score)) in scored.iter().enumerate() {
+        if rank >= max_keep {
+            break;
+        }
+
+        let keep_by_score = *score >= relative_threshold;
+        let coverage_ratio = cumulative_score / total_score;
+        let keep_for_coverage = coverage_ratio < target_coverage;
+        if rank == 0 || keep_by_score || keep_for_coverage {
+            selected_indices.push(*idx);
+            cumulative_score += *score;
+        }
+    }
+
+    if selected_indices.is_empty() {
+        selected_indices.push(scored[0].0);
+    }
+
+    let mut selected = selected_indices
+        .into_iter()
+        .map(|idx| contours[idx].clone())
+        .collect::<Vec<_>>();
+    sort_contours_by_area_desc(&mut selected);
+    selected
+}
+
+fn filter_tiny_contours_for_lod(
+    contours: &[Vec<(f32, f32)>],
+    min_area_ratio: f32,
+    min_score_ratio: f32,
+) -> Vec<Vec<(f32, f32)>> {
+    if contours.is_empty() {
+        return Vec::new();
+    }
+
+    let mut metrics: Vec<(usize, f32, f32)> = contours
+        .iter()
+        .enumerate()
+        .map(|(idx, contour)| {
+            (
+                idx,
+                contour_area_abs(contour),
+                contour_importance_score(contour),
+            )
+        })
+        .collect();
+    metrics.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let max_area = metrics.first().map(|(_, area, _)| *area).unwrap_or(0.0);
+    let max_score = metrics.first().map(|(_, _, score)| *score).unwrap_or(0.0);
+    let area_floor = (max_area * min_area_ratio.max(0.0)).max(0.35);
+    let score_floor = (max_score * min_score_ratio.max(0.0)).max(0.35);
+
+    let mut kept_indices = Vec::new();
+    for (rank, (idx, area, score)) in metrics.iter().enumerate() {
+        if rank == 0 || *area >= area_floor || *score >= score_floor {
+            kept_indices.push(*idx);
+        }
+    }
+
+    if kept_indices.is_empty() {
+        kept_indices.push(metrics[0].0);
+    }
+
+    let mut kept = kept_indices
+        .into_iter()
+        .map(|idx| contours[idx].clone())
+        .collect::<Vec<_>>();
+    sort_contours_by_area_desc(&mut kept);
+    kept
+}
+
+fn build_keep_levels(max_keep: usize, min_keep: usize) -> Vec<usize> {
+    let max_keep = max_keep.max(1);
+    let min_keep = min_keep.max(1).min(max_keep);
+    let mut levels = vec![max_keep];
+
+    let candidates = [
+        ((max_keep as f32) * 0.75).round() as usize,
+        max_keep / 2,
+        max_keep / 3,
+        min_keep,
+    ];
+
+    for keep in candidates {
+        let value = keep.clamp(min_keep, max_keep).max(1);
+        if !levels.contains(&value) {
+            levels.push(value);
+        }
+    }
+
+    levels.sort_by(|a, b| b.cmp(a));
+    levels
+}
+
 fn build_svg_path_from_contours(
     contours: &[Vec<(f32, f32)>],
     normalization: &NormalizationContext,
@@ -679,12 +905,16 @@ fn process_contours_for_lod(
     smooth_iterations: usize,
     post_simplify_multiplier: Option<f32>,
     max_contours: usize,
+    simplify_algorithm: SimplifyAlgorithm,
 ) -> Vec<Vec<(f32, f32)>> {
     let mut processed: Vec<Vec<(f32, f32)>> = Vec::new();
     let keep_contours = max_contours.max(1);
 
     for contour in source.iter().take(keep_contours) {
-        let mut current = sanitize_contour_points(&rdp_simplify(contour, epsilon), 0.05);
+        let mut current = sanitize_contour_points(
+            &simplify_contour(contour, epsilon, simplify_algorithm),
+            0.05,
+        );
         if current.len() < 3 {
             continue;
         }
@@ -697,7 +927,10 @@ fn process_contours_for_lod(
         }
 
         if let Some(multiplier) = post_simplify_multiplier {
-            current = sanitize_contour_points(&rdp_simplify(&current, epsilon * multiplier), 0.05);
+            current = sanitize_contour_points(
+                &simplify_contour(&current, epsilon * multiplier, simplify_algorithm),
+                0.05,
+            );
             if current.len() < 3 {
                 continue;
             }
@@ -777,28 +1010,117 @@ fn build_bbox_ellipse_contour(
     Some(vec![ellipse])
 }
 
+fn downsample_contour_uniform(points: &[(f32, f32)], target_points: usize) -> Vec<(f32, f32)> {
+    if points.len() <= target_points {
+        return points.to_vec();
+    }
+    let keep = target_points.max(3);
+    let n = points.len();
+    let mut sampled = Vec::with_capacity(keep);
+
+    for i in 0..keep {
+        let idx = ((i as f32) * (n as f32) / (keep as f32)).floor() as usize;
+        sampled.push(points[idx.min(n - 1)]);
+    }
+
+    sanitize_contour_points(&sampled, 0.05)
+}
+
+fn force_fit_contours_by_sampling(
+    source: &[Vec<(f32, f32)>],
+    normalization: &NormalizationContext,
+    path_len_limit: usize,
+    segment_limit: usize,
+    contour_limit: usize,
+) -> Option<LodCandidate> {
+    if source.is_empty() {
+        return None;
+    }
+
+    let mut selected: Vec<Vec<(f32, f32)>> = source
+        .iter()
+        .take(contour_limit.max(1))
+        .filter(|contour| contour.len() >= 3)
+        .cloned()
+        .collect();
+    if selected.is_empty() {
+        return None;
+    }
+
+    sort_contours_by_area_desc(&mut selected);
+    let keep_count = selected.len();
+    let min_segments_per_contour = 6usize;
+    let min_total_segments = (keep_count * min_segments_per_contour).max(24);
+    let importance: Vec<f32> = selected
+        .iter()
+        .map(|contour| contour_importance_score(contour).max(1e-3))
+        .collect();
+    let total_importance: f32 = importance.iter().sum::<f32>().max(1e-3);
+
+    for ratio in [1.0f32, 0.8, 0.65, 0.5, 0.4, 0.3, 0.22] {
+        let target_total_segments = ((segment_limit as f32) * ratio).round() as usize;
+        let target_total_segments = target_total_segments.max(min_total_segments);
+
+        let mut quotas = vec![min_segments_per_contour; keep_count];
+        let remaining = target_total_segments.saturating_sub(min_total_segments);
+        if remaining > 0 {
+            for (idx, score) in importance.iter().enumerate() {
+                let extra = ((remaining as f32) * (*score / total_importance)).round() as usize;
+                quotas[idx] = quotas[idx].saturating_add(extra);
+            }
+        }
+
+        let mut sampled_contours = Vec::with_capacity(keep_count);
+        for (contour, quota) in selected.iter().zip(quotas.iter()) {
+            let sampled = downsample_contour_uniform(contour, (*quota).max(3));
+            if sampled.len() >= 3 {
+                sampled_contours.push(sampled);
+            }
+        }
+        if sampled_contours.is_empty() {
+            continue;
+        }
+
+        if let Some(candidate) = build_lod_candidate(sampled_contours, normalization) {
+            if fits_lod_budget(
+                &candidate.complexity,
+                path_len_limit,
+                Some(segment_limit),
+                Some(contour_limit),
+            ) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 fn try_generate_lod0(
     contours: &[Vec<(f32, f32)>],
     normalization: &NormalizationContext,
     reference: &QualitySignature,
     path_len_soft_limit: usize,
 ) -> Option<LodCandidate> {
-    let mut best_quality_within_budget: Option<LodCandidate> = None;
+    let source = select_contours_by_importance(contours, LOD0_CONTOUR_LIMIT, 0.001, 0.995);
     let mut best_quality_any: Option<LodCandidate> = None;
     let mut best_fallback: Option<LodCandidate> = None;
 
-    for step in 0..24 {
-        let epsilon = 0.35 + step as f32 * 0.18;
-        let processed = process_contours_for_lod(contours, epsilon, 1, None, contours.len());
+    for step in 0..8 {
+        let epsilon = 0.25 + step as f32 * 0.20;
+        let processed = process_contours_for_lod(
+            &source,
+            epsilon,
+            0,
+            None,
+            source.len(),
+            SimplifyAlgorithm::Rdp,
+        );
         let Some(candidate) = build_lod_candidate(processed, normalization) else {
             continue;
         };
 
-        if best_fallback
-            .as_ref()
-            .map(|prev| candidate.complexity.path_len < prev.complexity.path_len)
-            .unwrap_or(true)
-        {
+        if should_replace_with_more_similar(best_fallback.as_ref(), &candidate, reference, true) {
             best_fallback = Some(candidate.clone());
         }
 
@@ -806,27 +1128,17 @@ fn try_generate_lod0(
             continue;
         }
 
-        if best_quality_any
-            .as_ref()
-            .map(|prev| candidate.complexity.path_len < prev.complexity.path_len)
-            .unwrap_or(true)
+        if should_replace_with_more_similar(best_quality_any.as_ref(), &candidate, reference, true)
         {
             best_quality_any = Some(candidate.clone());
         }
 
-        if fits_lod_budget(&candidate.complexity, path_len_soft_limit, None, None)
-            && best_quality_within_budget
-                .as_ref()
-                .map(|prev| candidate.complexity.path_len < prev.complexity.path_len)
-                .unwrap_or(true)
-        {
-            best_quality_within_budget = Some(candidate);
+        if fits_lod_budget(&candidate.complexity, path_len_soft_limit, None, None) {
+            return Some(candidate);
         }
     }
 
-    best_quality_within_budget
-        .or(best_quality_any)
-        .or(best_fallback)
+    best_quality_any.or(best_fallback)
 }
 
 fn try_generate_lod1(
@@ -835,46 +1147,35 @@ fn try_generate_lod1(
     reference: &QualitySignature,
     path_len_limit: usize,
 ) -> Option<LodCandidate> {
+    let denoised = filter_tiny_contours_for_lod(contours, 0.00005, 0.002);
+    let source = select_contours_by_importance(&denoised, LOD1_CONTOUR_LIMIT, 0.0001, 0.9995);
+    let max_contours = source.len().max(1);
+    let min_keep = if max_contours >= 48 {
+        12
+    } else if max_contours >= 24 {
+        8
+    } else if max_contours >= 10 {
+        4
+    } else {
+        1
+    };
+    let keep_levels = build_keep_levels(max_contours, min_keep);
+    let epsilons = [0.18f32, 0.28, 0.40, 0.60, 0.90, 1.30, 1.90];
+    let mut best_quality_budget_candidate: Option<LodCandidate> = None;
     let mut budget_only_candidate: Option<LodCandidate> = None;
-    let max_contours = contours.len().min(LOD1_CONTOUR_LIMIT).max(1);
+    let target_path_utilization = ((path_len_limit as f32) * 0.70) as usize;
+    let target_segment_utilization = ((LOD1_SEGMENT_LIMIT as f32) * 0.85) as usize;
 
-    for step in 0..32 {
-        let epsilon = 0.70 + step as f32 * 0.28;
-        let processed = process_contours_for_lod(contours, epsilon, 1, Some(1.15), max_contours);
-        let Some(candidate) = build_lod_candidate(processed, normalization) else {
-            continue;
-        };
-
-        if !fits_lod_budget(
-            &candidate.complexity,
-            path_len_limit,
-            Some(LOD1_SEGMENT_LIMIT),
-            Some(LOD1_CONTOUR_LIMIT),
-        ) {
-            continue;
-        }
-
-        if quality_gate_passed(reference, &candidate.signature) {
-            return Some(candidate);
-        }
-
-        if budget_only_candidate
-            .as_ref()
-            .map(|prev| candidate.complexity.path_len < prev.complexity.path_len)
-            .unwrap_or(true)
-        {
-            budget_only_candidate = Some(candidate);
-        }
-    }
-
-    let mut keep = max_contours;
-    loop {
-        for step in 0..24 {
-            let epsilon = 1.10 + step as f32 * 0.45;
-            let processed = process_contours_for_lod(contours, epsilon, 0, Some(1.25), keep);
+    for &keep in &keep_levels {
+        for &epsilon in &epsilons {
+            let processed =
+                process_contours_for_lod(&source, epsilon, 0, None, keep, SimplifyAlgorithm::Rdp);
             let Some(candidate) = build_lod_candidate(processed, normalization) else {
                 continue;
             };
+            if (candidate.complexity.contour_count as usize) < min_keep {
+                continue;
+            }
 
             if !fits_lod_budget(
                 &candidate.complexity,
@@ -886,30 +1187,44 @@ fn try_generate_lod1(
             }
 
             if quality_gate_passed(reference, &candidate.signature) {
-                return Some(candidate);
+                let path_len = candidate.complexity.path_len as usize;
+                let segment_count = candidate.complexity.segment_count as usize;
+                if path_len >= target_path_utilization
+                    || segment_count >= target_segment_utilization
+                {
+                    return Some(candidate);
+                }
+                if should_replace_with_more_similar(
+                    best_quality_budget_candidate.as_ref(),
+                    &candidate,
+                    reference,
+                    true,
+                ) {
+                    best_quality_budget_candidate = Some(candidate.clone());
+                }
             }
 
-            if budget_only_candidate
-                .as_ref()
-                .map(|prev| candidate.complexity.path_len < prev.complexity.path_len)
-                .unwrap_or(true)
-            {
+            if should_replace_with_more_similar(
+                budget_only_candidate.as_ref(),
+                &candidate,
+                reference,
+                true,
+            ) {
                 budget_only_candidate = Some(candidate);
             }
         }
+    }
 
-        if keep == 1 {
-            break;
-        }
-        keep = (keep / 2).max(1);
+    if let Some(candidate) = best_quality_budget_candidate {
+        return Some(candidate);
     }
 
     if let Some(candidate) = budget_only_candidate {
         return Some(candidate);
     }
 
-    for segments in [96usize, 64, 48, 32, 24, 16] {
-        let Some(fallback_contours) = build_bbox_ellipse_contour(contours, segments) else {
+    for segments in [96usize, 72, 56, 40, 32, 24, 16] {
+        let Some(fallback_contours) = build_bbox_ellipse_contour(&source, segments) else {
             continue;
         };
         let Some(candidate) = build_lod_candidate(fallback_contours, normalization) else {
@@ -931,46 +1246,70 @@ fn try_generate_lod1(
 fn try_generate_lod2(
     contours: &[Vec<(f32, f32)>],
     normalization: &NormalizationContext,
+    reference: &QualitySignature,
     path_len_limit: usize,
 ) -> Option<LodCandidate> {
-    let Some(main_contour) = contours.first() else {
+    let denoised = filter_tiny_contours_for_lod(contours, 0.0015, 0.02);
+    let source = select_contours_by_importance(&denoised, LOD2_CONTOUR_LIMIT, 0.06, 0.90);
+    if source.is_empty() {
         return None;
-    };
-    let source = vec![main_contour.clone()];
+    }
 
-    for step in 0..40 {
-        let epsilon = 1.40 + step as f32 * 0.65;
-        let processed = process_contours_for_lod(&source, epsilon, 0, None, 1);
-        let Some(candidate) = build_lod_candidate(processed, normalization) else {
-            continue;
-        };
-        if fits_lod_budget(
-            &candidate.complexity,
-            path_len_limit,
-            Some(LOD2_SEGMENT_LIMIT),
-            Some(LOD2_CONTOUR_LIMIT),
-        ) {
-            return Some(candidate);
+    let mut best_budget_candidate: Option<LodCandidate> = None;
+    let max_contours = source.len().min(LOD2_CONTOUR_LIMIT).max(1);
+    let keep_levels = [max_contours, (max_contours + 1) / 2, 1];
+    let candidates: &[(f32, Option<f32>, SimplifyAlgorithm)] = &[
+        (2.10, Some(1.20), SimplifyAlgorithm::Rdp),
+        (3.20, Some(1.30), SimplifyAlgorithm::Rdp),
+        (4.60, Some(1.35), SimplifyAlgorithm::Rdp),
+    ];
+
+    for &keep in &keep_levels {
+        for &(epsilon, post_mul, algorithm) in candidates {
+            let processed =
+                process_contours_for_lod(&source, epsilon, 0, post_mul, keep, algorithm);
+            let Some(candidate) = build_lod_candidate(processed, normalization) else {
+                continue;
+            };
+            if !fits_lod_budget(
+                &candidate.complexity,
+                path_len_limit,
+                Some(LOD2_SEGMENT_LIMIT),
+                Some(LOD2_CONTOUR_LIMIT),
+            ) {
+                continue;
+            }
+
+            if quality_gate_passed(reference, &candidate.signature) {
+                return Some(candidate);
+            }
+
+            if should_replace_with_more_similar(
+                best_budget_candidate.as_ref(),
+                &candidate,
+                reference,
+                true,
+            ) {
+                best_budget_candidate = Some(candidate);
+            }
         }
     }
 
-    for step in 0..30 {
-        let epsilon = 2.20 + step as f32 * 0.85;
-        let processed = process_contours_for_lod(&source, epsilon, 0, Some(1.35), 1);
-        let Some(candidate) = build_lod_candidate(processed, normalization) else {
-            continue;
-        };
-        if fits_lod_budget(
-            &candidate.complexity,
-            path_len_limit,
-            Some(LOD2_SEGMENT_LIMIT),
-            Some(LOD2_CONTOUR_LIMIT),
-        ) {
-            return Some(candidate);
-        }
+    if let Some(candidate) = best_budget_candidate {
+        return Some(candidate);
     }
 
-    for segments in [48usize, 32, 24, 16, 12, 8] {
+    if let Some(candidate) = force_fit_contours_by_sampling(
+        &source,
+        normalization,
+        path_len_limit,
+        LOD2_SEGMENT_LIMIT,
+        LOD2_CONTOUR_LIMIT,
+    ) {
+        return Some(candidate);
+    }
+
+    for segments in [64usize, 48, 32, 24, 16, 12, 8] {
         let Some(fallback_contours) = build_bbox_ellipse_contour(&source, segments) else {
             continue;
         };
@@ -999,25 +1338,60 @@ pub fn generate_cursor_lods(img: &GrayscaleImage, limits: CursorLodPathLenLimits
     if raw_contours.is_empty() {
         return CursorLodData::empty();
     }
+    let lod_base_contours = build_lod_base_contours(&raw_contours);
+    if lod_base_contours.is_empty() {
+        return CursorLodData::empty();
+    }
 
     let normalization = normalization_context_for_image(img);
-    let Some(reference_signature) = quality_signature_for_contours(&raw_contours) else {
+    let Some(reference_signature) = quality_signature_for_contours(&lod_base_contours) else {
         return CursorLodData::empty();
     };
 
     let lod0 = try_generate_lod0(
-        &raw_contours,
+        &lod_base_contours,
         &normalization,
         &reference_signature,
         limits.lod0_path_len_soft_limit,
     );
-    let lod1 = try_generate_lod1(
-        &raw_contours,
-        &normalization,
-        &reference_signature,
-        limits.lod1_path_len_limit,
-    );
-    let lod2 = try_generate_lod2(&raw_contours, &normalization, limits.lod2_path_len_limit);
+    let lod1 = lod0
+        .as_ref()
+        .and_then(|candidate| {
+            fits_lod_budget(
+                &candidate.complexity,
+                limits.lod1_path_len_limit,
+                Some(LOD1_SEGMENT_LIMIT),
+                Some(LOD1_CONTOUR_LIMIT),
+            )
+            .then(|| candidate.clone())
+        })
+        .or_else(|| {
+            try_generate_lod1(
+                &lod_base_contours,
+                &normalization,
+                &reference_signature,
+                limits.lod1_path_len_limit,
+            )
+        });
+
+    let lod2_from_existing = lod1.as_ref().or(lod0.as_ref()).and_then(|candidate| {
+        fits_lod_budget(
+            &candidate.complexity,
+            limits.lod2_path_len_limit,
+            Some(LOD2_SEGMENT_LIMIT),
+            Some(LOD2_CONTOUR_LIMIT),
+        )
+        .then(|| candidate.clone())
+    });
+
+    let lod2 = lod2_from_existing.or_else(|| {
+        try_generate_lod2(
+            &lod_base_contours,
+            &normalization,
+            &reference_signature,
+            limits.lod2_path_len_limit,
+        )
+    });
 
     CursorLodData {
         path_lod0: lod0.as_ref().map(|item| item.path.clone()),
@@ -1105,7 +1479,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lod2_single_contour_and_hard_budget() {
+    fn test_lod2_hard_budget_and_contour_cap() {
         let img = build_complex_test_image();
         let lods = generate_cursor_lods(&img, CursorLodPathLenLimits::default());
 
@@ -1113,9 +1487,9 @@ mod tests {
             .complexity_lod2
             .expect("LOD2 should produce complexity metadata");
         assert!(lods.path_lod2.is_some(), "LOD2 should produce path");
-        assert_eq!(
-            complexity.contour_count as usize, 1,
-            "LOD2 should be single contour"
+        assert!(
+            complexity.contour_count as usize <= LOD2_CONTOUR_LIMIT,
+            "LOD2 contour count should respect hard limit"
         );
         assert!(
             complexity.path_len as usize <= DEFAULT_LOD2_PATH_LEN_LIMIT,
