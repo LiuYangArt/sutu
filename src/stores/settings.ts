@@ -97,6 +97,7 @@ export type GPURenderScaleMode = 'auto' | 'off';
 export interface BrushSettings {
   renderMode: RenderMode;
   gpuRenderScaleMode: GPURenderScaleMode;
+  forceDomCursorDebug: boolean;
 }
 
 export type NewFileBackgroundPreset = 'transparent' | 'white' | 'black' | 'current-bg';
@@ -185,6 +186,7 @@ interface SettingsState extends PersistedSettings {
   // Brush/Renderer actions
   setRenderMode: (mode: RenderMode) => void;
   setGpuRenderScaleMode: (mode: GPURenderScaleMode) => void;
+  setForceDomCursorDebug: (enabled: boolean) => void;
 
   // New file preset actions
   addCustomSizePreset: (preset: { name: string; width: number; height: number }) => string;
@@ -533,6 +535,7 @@ const defaultSettings: PersistedSettings = {
   brush: {
     renderMode: 'gpu',
     gpuRenderScaleMode: 'off',
+    forceDomCursorDebug: false,
   },
   newFile: cloneDefaultNewFileSettings(),
   general: {
@@ -749,6 +752,13 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setForceDomCursorDebug: (enabled) => {
+      set((state) => {
+        state.brush.forceDomCursorDebug = enabled;
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     addCustomSizePreset: ({ name, width, height }) => {
       const id = createCustomSizePresetId();
       set((state) => {
@@ -921,6 +931,10 @@ export const useSettingsStore = create<SettingsState>()(
                 renderMode: loaded.brush.renderMode ?? defaultSettings.brush.renderMode,
                 gpuRenderScaleMode:
                   loaded.brush.gpuRenderScaleMode ?? defaultSettings.brush.gpuRenderScaleMode,
+                forceDomCursorDebug: normalizeBoolean(
+                  loaded.brush.forceDomCursorDebug,
+                  defaultSettings.brush.forceDomCursorDebug
+                ),
               };
             }
             state.newFile = mergeLoadedNewFileSettings(loaded.newFile);

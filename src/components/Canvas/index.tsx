@@ -548,7 +548,7 @@ export function Canvas() {
   const isBrushQuickPanelTool = currentTool === 'brush' || currentTool === 'eraser';
 
   const {
-    brush: { renderMode },
+    brush: { renderMode, forceDomCursorDebug },
     general: { selectionAutoFillEnabled },
     tablet: {
       pressureCurvePoints,
@@ -2438,6 +2438,18 @@ export function Canvas() {
     };
   }, [handleImportImageFiles, handlePasteImageAsNewLayer, resolveImportAnchorPoint]);
 
+  const cursorBrushTexture = useMemo(
+    () =>
+      brushTexture
+        ? {
+            cursorId: brushTexture.id,
+            cursorPath: brushTexture.cursorPath,
+            cursorBounds: brushTexture.cursorBounds,
+          }
+        : null,
+    [brushTexture]
+  );
+
   const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
     currentTool,
     currentSize,
@@ -2450,12 +2462,8 @@ export function Canvas() {
     eyedropperCursorRef,
     brushRoundness,
     brushAngle,
-    brushTexture: brushTexture
-      ? {
-          cursorPath: brushTexture.cursorPath,
-          cursorBounds: brushTexture.cursorBounds,
-        }
-      : null,
+    brushTexture: cursorBrushTexture,
+    forceDomCursor: forceDomCursorDebug,
     canvasRef,
   });
 
