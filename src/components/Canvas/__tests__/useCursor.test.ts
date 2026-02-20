@@ -1,0 +1,176 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import { useCursor, __resetHardwareCursorCacheForTest } from '../useCursor';
+
+type UseCursorProps = Parameters<typeof useCursor>[0];
+
+function createProps(overrides: Partial<UseCursorProps> = {}): UseCursorProps {
+  return {
+    currentTool: 'brush',
+    currentSize: 24,
+    scale: 1,
+    showCrosshair: false,
+    spacePressed: false,
+    isPanning: false,
+    containerRef: { current: null } as React.RefObject<HTMLDivElement>,
+    brushCursorRef: { current: null } as React.RefObject<HTMLDivElement>,
+    eyedropperCursorRef: { current: null } as React.RefObject<HTMLDivElement>,
+    brushRoundness: 100,
+    brushAngle: 0,
+    brushTexture: null,
+    canvasRef: { current: null } as React.RefObject<HTMLCanvasElement>,
+    ...overrides,
+  };
+}
+
+const SIMPLE_CURSOR_PATH = 'M0 0 L1 0 L1 1 L0 1 Z';
+const OVER_LIMIT_CURSOR_PATH = `${SIMPLE_CURSOR_PATH} `.repeat(12001);
+
+describe('useCursor', () => {
+  beforeEach(() => {
+    __resetHardwareCursorCacheForTest();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('small brush with short cursorPath uses hardware cursor', () => {
+    const props = createProps({
+      currentSize: 24,
+      brushTexture: {
+        cursorId: 'tip-hardware-short',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+    });
+
+    const { result } = renderHook(() => useCursor(props));
+
+    expect(result.current.showDomCursor).toBe(false);
+    expect(result.current.cursorStyle.startsWith('url("data:image/svg+xml;base64,')).toBe(true);
+  });
+
+  it('small brush with over-limit cursorPath falls back to DOM cursor', () => {
+    const props = createProps({
+      currentSize: 24,
+      brushTexture: {
+        cursorId: 'tip-over-limit',
+        cursorPath: OVER_LIMIT_CURSOR_PATH,
+      },
+    });
+
+    const { result } = renderHook(() => useCursor(props));
+
+    expect(result.current.showDomCursor).toBe(true);
+    expect(result.current.cursorStyle).toBe('none');
+  });
+
+  it('large brush keeps DOM cursor behavior', () => {
+    const props = createProps({
+      currentSize: 180,
+      brushTexture: {
+        cursorId: 'tip-large',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+    });
+
+    const { result } = renderHook(() => useCursor(props));
+
+    expect(result.current.showDomCursor).toBe(true);
+    expect(result.current.cursorStyle).toBe('none');
+  });
+
+  it('forceDomCursor debug switch disables hardware cursor even for small brush', () => {
+    const btoaSpy = vi.spyOn(globalThis, 'btoa');
+    const props = createProps({
+      currentSize: 24,
+      forceDomCursor: true,
+      brushTexture: {
+        cursorId: 'tip-force-dom',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+    });
+
+    const { result } = renderHook(() => useCursor(props));
+    expect(result.current.showDomCursor).toBe(true);
+    expect(result.current.cursorStyle).toBe('none');
+    expect(btoaSpy).not.toHaveBeenCalled();
+  });
+
+  it('reuses cached hardware cursor URL for identical key', () => {
+    const btoaSpy = vi.spyOn(globalThis, 'btoa');
+    const props = createProps({
+      brushTexture: {
+        cursorId: 'cache-tip-hit',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+      brushAngle: 5,
+    });
+
+    const first = renderHook(() => useCursor(props));
+    first.unmount();
+    expect(btoaSpy).toHaveBeenCalledTimes(1);
+
+    const second = renderHook(() => useCursor(props));
+    second.unmount();
+    expect(btoaSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('rebuilds hardware cursor URL when cache key changes', () => {
+    const btoaSpy = vi.spyOn(globalThis, 'btoa');
+    const firstProps = createProps({
+      currentSize: 24,
+      brushTexture: {
+        cursorId: 'cache-tip-key-change',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+      brushAngle: 10,
+    });
+    const secondProps = createProps({
+      currentSize: 25,
+      brushTexture: {
+        cursorId: 'cache-tip-key-change',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+      brushAngle: 10,
+    });
+
+    const first = renderHook(() => useCursor(firstProps));
+    first.unmount();
+    expect(btoaSpy).toHaveBeenCalledTimes(1);
+
+    const second = renderHook(() => useCursor(secondProps));
+    second.unmount();
+    expect(btoaSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('evicts oldest cache entry when capacity is exceeded', () => {
+    const btoaSpy = vi.spyOn(globalThis, 'btoa');
+
+    for (let angle = 0; angle <= 64; angle += 1) {
+      const props = createProps({
+        brushAngle: angle,
+        brushTexture: {
+          cursorId: 'cache-tip-eviction',
+          cursorPath: SIMPLE_CURSOR_PATH,
+        },
+      });
+      const hook = renderHook(() => useCursor(props));
+      hook.unmount();
+    }
+
+    const callsAfterFill = btoaSpy.mock.calls.length;
+
+    const evictedKeyProps = createProps({
+      brushAngle: 0,
+      brushTexture: {
+        cursorId: 'cache-tip-eviction',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+    });
+    const remount = renderHook(() => useCursor(evictedKeyProps));
+    remount.unmount();
+
+    expect(btoaSpy.mock.calls.length).toBe(callsAfterFill + 1);
+  });
+});

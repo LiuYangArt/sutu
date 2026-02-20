@@ -56,6 +56,7 @@ describe('settings store newFile persistence', () => {
       brush: {
         renderMode: 'gpu',
         gpuRenderScaleMode: 'off',
+        forceDomCursorDebug: false,
       },
       general: {
         language: 'en-US',
@@ -112,6 +113,7 @@ describe('settings store newFile persistence', () => {
     expect(state.newFile.lastUsed).toEqual(DEFAULT_NEW_FILE_SETTINGS.lastUsed);
     expect(state.brush.renderMode).toBe('cpu');
     expect(state.brush.gpuRenderScaleMode).toBe('auto');
+    expect(state.brush.forceDomCursorDebug).toBe(false);
     expect('colorBlendMode' in (state.brush as unknown as Record<string, unknown>)).toBe(false);
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
@@ -350,6 +352,24 @@ describe('settings store newFile persistence', () => {
     const parsed = JSON.parse(content) as { general?: { language?: string } };
 
     expect(parsed.general?.language).toBe('zh-CN');
+  });
+
+  it('persists brush debug force-dom-cursor toggle', async () => {
+    fsMocks.exists.mockResolvedValue(false);
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    useSettingsStore.getState().setForceDomCursorDebug(true);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(useSettingsStore.getState().brush.forceDomCursorDebug).toBe(true);
+
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as { brush?: { forceDomCursorDebug?: boolean } };
+
+    expect(parsed.brush?.forceDomCursorDebug).toBe(true);
   });
 
   it('clamps and persists tablet speed settings via actions', async () => {

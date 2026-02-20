@@ -235,6 +235,8 @@
     "settings.brush.renderer.downsample.auto.label": "自动",
     "settings.brush.renderer.downsample.off.description": "始终使用全分辨率渲染。",
     "settings.brush.renderer.downsample.off.label": "关闭",
+    "settings.brush.cursor.forceDomDebug.description": "仅用于调试：强制所有画笔光标走 DOM 光标路径。",
+    "settings.brush.cursor.forceDomDebug.label": "强制 DOM 光标（调试）",
     "settings.brush.renderer.mode": "模式",
     "settings.brush.renderer.mode.cpu.description": "兼容/调试用途，性能低于 GPU 路径。",
     "settings.brush.renderer.mode.cpu.label": "CPU（兜底）",

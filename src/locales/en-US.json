@@ -235,6 +235,8 @@
     "settings.brush.renderer.downsample.auto.label": "Auto",
     "settings.brush.renderer.downsample.off.description": "Always render at full resolution.",
     "settings.brush.renderer.downsample.off.label": "Off",
+    "settings.brush.cursor.forceDomDebug.description": "Debug only: force all brush cursors to use DOM cursor path.",
+    "settings.brush.cursor.forceDomDebug.label": "Force DOM cursor (Debug)",
     "settings.brush.renderer.mode": "Mode",
     "settings.brush.renderer.mode.cpu.description": "Use CPU renderer for compatibility/debug. Slower than GPU path.",
     "settings.brush.renderer.mode.cpu.label": "CPU (Fallback)",

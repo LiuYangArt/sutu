@@ -1065,7 +1065,10 @@ function BrushSettings() {
   const brush = useSettingsStore((s) => s.brush);
   const setRenderMode = useSettingsStore((s) => s.setRenderMode);
   const setGpuRenderScaleMode = useSettingsStore((s) => s.setGpuRenderScaleMode);
+  const setForceDomCursorDebug = useSettingsStore((s) => s.setForceDomCursorDebug);
   const { t } = useI18n();
+  const { renderMode, gpuRenderScaleMode, forceDomCursorDebug } = brush;
+  const forceDomCursorDebugDescription = t('settings.brush.cursor.forceDomDebug.description');
 
   return (
     <div className="settings-content">
@@ -1079,10 +1082,10 @@ function BrushSettings() {
           <span>{t('settings.brush.renderer.mode')}</span>
           <select
             className="settings-select"
-            value={brush.renderMode}
+            value={renderMode}
             onChange={(e) => setRenderMode(e.target.value as RenderMode)}
             title={t(
-              RENDER_MODES.find((m) => m.id === brush.renderMode)?.descriptionKey ??
+              RENDER_MODES.find((m) => m.id === renderMode)?.descriptionKey ??
                 'settings.brush.renderer.mode.gpu.description'
             )}
           >
@@ -1094,17 +1097,17 @@ function BrushSettings() {
           </select>
         </div>
 
-        {brush.renderMode === 'gpu' && (
+        {renderMode === 'gpu' && (
           <>
             <div className="settings-row">
               <span>{t('settings.brush.renderer.downsample')}</span>
               <select
                 className="settings-select"
-                value={brush.gpuRenderScaleMode}
+                value={gpuRenderScaleMode}
                 onChange={(e) => setGpuRenderScaleMode(e.target.value as GPURenderScaleMode)}
                 title={t(
-                  GPU_RENDER_SCALE_MODES.find((m) => m.id === brush.gpuRenderScaleMode)
-                    ?.descriptionKey ?? 'settings.brush.renderer.downsample.off.description'
+                  GPU_RENDER_SCALE_MODES.find((m) => m.id === gpuRenderScaleMode)?.descriptionKey ??
+                    'settings.brush.renderer.downsample.off.description'
                 )}
               >
                 {GPU_RENDER_SCALE_MODES.map((mode) => (
@@ -1116,6 +1119,20 @@ function BrushSettings() {
             </div>
           </>
         )}
+
+        <div className="settings-row">
+          <span title={forceDomCursorDebugDescription}>
+            {t('settings.brush.cursor.forceDomDebug.label')}
+          </span>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={forceDomCursorDebug}
+              onChange={(e) => setForceDomCursorDebug(e.target.checked)}
+            />
+            <span className="toggle-slider" />
+          </label>
+        </div>
       </div>
     </div>
   );

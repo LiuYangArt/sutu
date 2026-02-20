@@ -4,7 +4,7 @@ use crate::brush::{BrushEngine, StrokeSegment};
 use crate::input::wintab_spike::SpikeResult;
 use crate::input::{
     InputBackpressureMode, InputPhase, InputQueueMetrics, PressureCurve, RawInputPoint,
-    TabletBackend, TabletConfig, TabletInfo, TabletStatus,
+    TabletBackend, TabletConfig, TabletEventV3, TabletInfo, TabletStatus,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -407,6 +407,81 @@ pub struct TabletStatusResponse {
     pub info: Option<TabletInfo>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TabletEmitterBatchMetricsV1 {
+    pub emit_poll_time_us: u64,
+    pub emit_completed_time_us: u64,
+    pub emitted_event_count: usize,
+    pub input_event_count: usize,
+    pub min_seq: Option<u64>,
+    pub max_seq: Option<u64>,
+    pub first_stroke_id: Option<u64>,
+    pub last_stroke_id: Option<u64>,
+    pub first_pointer_id: Option<u32>,
+    pub last_pointer_id: Option<u32>,
+    pub min_host_time_us: Option<u64>,
+    pub max_host_time_us: Option<u64>,
+    pub oldest_input_latency_us: Option<u64>,
+    pub newest_input_latency_us: Option<u64>,
+}
+
+fn collect_emitter_batch_metrics(
+    events: &[TabletEventV3],
+    emit_poll_time_us: u64,
+    emit_completed_time_us: u64,
+) -> TabletEmitterBatchMetricsV1 {
+    let mut input_event_count = 0usize;
+    let mut min_seq = None::<u64>;
+    let mut max_seq = None::<u64>;
+    let mut first_stroke_id = None::<u64>;
+    let mut last_stroke_id = None::<u64>;
+    let mut first_pointer_id = None::<u32>;
+    let mut last_pointer_id = None::<u32>;
+    let mut min_host_time_us = None::<u64>;
+    let mut max_host_time_us = None::<u64>;
+
+    for event in events {
+        let TabletEventV3::Input(sample) = event else {
+            continue;
+        };
+        input_event_count += 1;
+        min_seq = Some(min_seq.map_or(sample.seq, |v| v.min(sample.seq)));
+        max_seq = Some(max_seq.map_or(sample.seq, |v| v.max(sample.seq)));
+
+        if first_stroke_id.is_none() {
+            first_stroke_id = Some(sample.stroke_id);
+        }
+        last_stroke_id = Some(sample.stroke_id);
+
+        if first_pointer_id.is_none() {
+            first_pointer_id = Some(sample.pointer_id);
+        }
+        last_pointer_id = Some(sample.pointer_id);
+
+        min_host_time_us =
+            Some(min_host_time_us.map_or(sample.host_time_us, |v| v.min(sample.host_time_us)));
+        max_host_time_us =
+            Some(max_host_time_us.map_or(sample.host_time_us, |v| v.max(sample.host_time_us)));
+    }
+
+    TabletEmitterBatchMetricsV1 {
+        emit_poll_time_us,
+        emit_completed_time_us,
+        emitted_event_count: events.len(),
+        input_event_count,
+        min_seq,
+        max_seq,
+        first_stroke_id,
+        last_stroke_id,
+        first_pointer_id,
+        last_pointer_id,
+        min_host_time_us,
+        max_host_time_us,
+        oldest_input_latency_us: min_host_time_us.map(|t| emit_poll_time_us.saturating_sub(t)),
+        newest_input_latency_us: max_host_time_us.map(|t| emit_poll_time_us.saturating_sub(t)),
+    }
+}
+
 /// Initialize tablet input system
 #[tauri::command]
 pub fn init_tablet(
@@ -517,10 +592,24 @@ pub fn start_tablet() -> Result<(), String> {
                     }
 
                     if !events.is_empty() {
+                        let emit_poll_time_us = crate::input::current_time_us();
+                        let metrics_before_emit = collect_emitter_batch_metrics(
+                            &events,
+                            emit_poll_time_us,
+                            emit_poll_time_us,
+                        );
                         for event in events.drain(..) {
                             if let Err(e) = app.emit("tablet-event-v3", &event) {
                                 tracing::error!("[Tablet] Failed to emit V3 event: {}", e);
                             }
+                        }
+                        let emit_completed_time_us = crate::input::current_time_us();
+                        let batch_metrics = TabletEmitterBatchMetricsV1 {
+                            emit_completed_time_us,
+                            ..metrics_before_emit
+                        };
+                        if let Err(e) = app.emit("tablet-emitter-metrics-v1", &batch_metrics) {
+                            tracing::error!("[Tablet] Failed to emit emitter metrics: {}", e);
                         }
                     }
 

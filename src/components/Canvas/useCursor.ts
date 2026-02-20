@@ -54,8 +54,15 @@ const TOOL_CURSORS: Record<ToolType, string> = {
   zoom: ZOOM_TOOL_CURSOR,
 };
 
+const HARDWARE_CURSOR_MAX_SIZE = 96;
+const HARDWARE_CURSOR_MAX_PATH_LENGTH = 120000;
+const HARDWARE_CURSOR_CACHE_LIMIT = 64;
+const hardwareCursorStyleCache = new Map<string, string>();
+
 /** Brush texture data for cursor rendering */
 export interface BrushCursorTexture {
+  /** Stable tip id used for hardware cursor cache key */
+  cursorId?: string;
   /** Pre-computed SVG path data (normalized 0-1 coordinates) */
   cursorPath?: string;
   /** Original texture bounds for proper scaling */
@@ -83,6 +90,63 @@ const SELECTION_MOVE_CURSOR = (() => {
 const setCursorPosition = (cursor: HTMLDivElement, x: number, y: number) => {
   cursor.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
 };
+
+function normalizePositiveNumber(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+function getCursorDevicePixelRatio(): number {
+  if (typeof window === 'undefined') return 1;
+  return normalizePositiveNumber(window.devicePixelRatio);
+}
+
+function formatCursorCacheNumber(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(3) : '0.000';
+}
+
+function buildHardwareCursorCacheKey(params: {
+  tipId: string;
+  size: number;
+  angle: number;
+  roundness: number;
+  showCrosshair: boolean;
+  dpr: number;
+}): string {
+  return [
+    params.tipId,
+    formatCursorCacheNumber(params.size),
+    formatCursorCacheNumber(params.angle),
+    formatCursorCacheNumber(params.roundness),
+    params.showCrosshair ? '1' : '0',
+    formatCursorCacheNumber(params.dpr),
+  ].join('|');
+}
+
+function getCachedHardwareCursorStyle(cacheKey: string): string | null {
+  const cached = hardwareCursorStyleCache.get(cacheKey);
+  if (!cached) return null;
+  // LRU touch
+  hardwareCursorStyleCache.delete(cacheKey);
+  hardwareCursorStyleCache.set(cacheKey, cached);
+  return cached;
+}
+
+function setCachedHardwareCursorStyle(cacheKey: string, style: string): void {
+  if (hardwareCursorStyleCache.has(cacheKey)) {
+    hardwareCursorStyleCache.delete(cacheKey);
+  }
+  hardwareCursorStyleCache.set(cacheKey, style);
+  if (hardwareCursorStyleCache.size <= HARDWARE_CURSOR_CACHE_LIMIT) return;
+  const oldestKey = hardwareCursorStyleCache.keys().next().value;
+  if (typeof oldestKey === 'string') {
+    hardwareCursorStyleCache.delete(oldestKey);
+  }
+}
+
+/** Test-only helper */
+export function __resetHardwareCursorCacheForTest(): void {
+  hardwareCursorStyleCache.clear();
+}
 
 /** Generate crosshair SVG lines */
 const generateCrosshairSvg = (cx: number, cy: number, size: number) => `
@@ -194,12 +258,6 @@ function createSelectionCursorSvg(modifier: 'plus' | 'minus' | null): string {
   // Origin is roughly at 4,4
   const cursorPath = `M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z`;
 
-  // Dual stroke style for visibility
-
-  // The original had fill="white" stroke="black". Let's stick to the dual-stroke outline style for consistency if desired,
-  // but standard mouse pointers usually have a solid fill.
-  // Let's use the provided mouse-pointer-2 style: fill="white" stroke="black"
-
   const cursorContent = `
     <path d="${cursorPath}" fill="black" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
   `;
@@ -259,6 +317,8 @@ interface UseCursorProps {
   brushAngle?: number;
   /** Texture cursor data (for ABR brushes) */
   brushTexture?: BrushCursorTexture | null;
+  /** Debug switch: force all brush/eraser cursors to use DOM path */
+  forceDomCursor?: boolean;
   /** Canvas ref for coordinate conversion (selection cursor) */
   canvasRef?: React.RefObject<HTMLCanvasElement>;
 }
@@ -276,6 +336,7 @@ export function useCursor({
   brushRoundness = 100,
   brushAngle = 0,
   brushTexture,
+  forceDomCursor = false,
   canvasRef,
 }: UseCursorProps) {
   const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
@@ -283,19 +344,27 @@ export function useCursor({
   // Track if cursor is hovering over selection bounds
   const [isOverSelection, setIsOverSelection] = useState(false);
 
+  // Track Ctrl/Shift keys for selection cursor modifier
+  const [shiftPressed, setShiftPressed] = useState(false);
+  const [ctrlPressed, setCtrlPressed] = useState(false);
+
   // Get selection state
   const { hasSelection, isPointInSelection, isCreating: isCreatingSelection } = useSelectionStore();
   const isSelectionTool = currentTool === 'select' || currentTool === 'lasso';
   const isInteracting = spacePressed || isPanning;
   const screenBrushSize = currentSize * scale;
   const isBrushTool = currentTool === 'brush' || currentTool === 'eraser';
-
-  // Windows cursor size limit varies (32-128px), 96px is safe threshold
-  const HARDWARE_CURSOR_MAX_SIZE = 96;
+  const cursorPathLength = brushTexture?.cursorPath?.length ?? 0;
+  const cursorPathWithinHardwareLimit =
+    cursorPathLength === 0 || cursorPathLength <= HARDWARE_CURSOR_MAX_PATH_LENGTH;
+  const cursorDevicePixelRatio = getCursorDevicePixelRatio();
   const shouldUseHardwareCursor =
-    isBrushTool && screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE && !isInteracting;
+    isBrushTool &&
+    !forceDomCursor &&
+    screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE &&
+    !isInteracting &&
+    cursorPathWithinHardwareLimit;
 
-  // Check if mouse position is inside selection (for move cursor)
   // Check if mouse position is inside selection (for move cursor)
   const checkSelectionHover = useCallback(
     (clientX: number, clientY: number) => {
@@ -328,26 +397,38 @@ export function useCursor({
     if (!shouldUseHardwareCursor) {
       return '';
     }
-
-    return createCursorSvg(
+    const tipId =
+      brushTexture?.cursorId ?? (brushTexture?.cursorPath ? 'texture-tip' : 'round-tip');
+    const cacheKey = buildHardwareCursorCacheKey({
+      tipId,
+      size: screenBrushSize,
+      angle: brushAngle,
+      roundness: brushRoundness,
+      showCrosshair,
+      dpr: cursorDevicePixelRatio,
+    });
+    const cached = getCachedHardwareCursorStyle(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const created = createCursorSvg(
       screenBrushSize,
       brushRoundness,
       brushAngle,
       brushTexture,
       showCrosshair
     );
+    setCachedHardwareCursorStyle(cacheKey, created);
+    return created;
   }, [
     shouldUseHardwareCursor,
     screenBrushSize,
     showCrosshair,
     brushRoundness,
     brushAngle,
+    cursorDevicePixelRatio,
     brushTexture,
   ]);
-
-  // Track Ctrl/Shift keys for selection cursor modifier
-  const [shiftPressed, setShiftPressed] = useState(false);
-  const [ctrlPressed, setCtrlPressed] = useState(false);
 
   // Listen for Ctrl/Shift key changes globally
   useEffect(() => {
@@ -444,7 +525,7 @@ export function useCursor({
       container.removeEventListener('pointerleave', handleNativePointerLeave);
       container.removeEventListener('pointerenter', handleNativePointerEnter);
     };
-  }, [containerRef, brushCursorRef, eyedropperCursorRef, checkSelectionHover]); // checkSelectionHover dependency included
+  }, [containerRef, brushCursorRef, eyedropperCursorRef, checkSelectionHover]);
 
   const showDomCursor = isBrushTool && !isInteracting && !shouldUseHardwareCursor;
 

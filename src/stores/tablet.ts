@@ -106,6 +106,23 @@ export type TabletEventV3 =
   | 'ProximityLeave'
   | { StatusChanged: TabletStatus };
 
+interface TabletEmitterBatchMetricsV1 {
+  emit_poll_time_us: number;
+  emit_completed_time_us: number;
+  emitted_event_count: number;
+  input_event_count: number;
+  min_seq: number | null;
+  max_seq: number | null;
+  first_stroke_id: number | null;
+  last_stroke_id: number | null;
+  first_pointer_id: number | null;
+  last_pointer_id: number | null;
+  min_host_time_us: number | null;
+  max_host_time_us: number | null;
+  oldest_input_latency_us: number | null;
+  newest_input_latency_us: number | null;
+}
+
 const POINT_BUFFER_SIZE = 512;
 
 // Shared sample buffer (kept outside Zustand to avoid high-frequency re-rendering).
@@ -343,7 +360,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
     }
 
     try {
-      const unlisten = await listen<TabletEventV3>('tablet-event-v3', (event) => {
+      const unlistenV3 = await listen<TabletEventV3>('tablet-event-v3', (event) => {
         const payload = event.payload;
 
         if (typeof payload === 'object' && payload !== null && 'Input' in payload) {
@@ -410,6 +427,37 @@ export const useTabletStore = create<TabletState>((set, get) => ({
           set({ status: payload.StatusChanged });
         }
       });
+
+      const unlistenEmitterMetrics = await listen<TabletEmitterBatchMetricsV1>(
+        'tablet-emitter-metrics-v1',
+        (event) => {
+          const payload = event.payload;
+          if (!payload || typeof payload !== 'object') {
+            return;
+          }
+          logTabletTrace('frontend.recv.emitter_batch_v1', {
+            emit_poll_time_us: payload.emit_poll_time_us,
+            emit_completed_time_us: payload.emit_completed_time_us,
+            emitted_event_count: payload.emitted_event_count,
+            input_event_count: payload.input_event_count,
+            min_seq: payload.min_seq,
+            max_seq: payload.max_seq,
+            first_stroke_id: payload.first_stroke_id,
+            last_stroke_id: payload.last_stroke_id,
+            first_pointer_id: payload.first_pointer_id,
+            last_pointer_id: payload.last_pointer_id,
+            min_host_time_us: payload.min_host_time_us,
+            max_host_time_us: payload.max_host_time_us,
+            oldest_input_latency_us: payload.oldest_input_latency_us,
+            newest_input_latency_us: payload.newest_input_latency_us,
+          });
+        }
+      );
+
+      const unlisten: UnlistenFn = () => {
+        unlistenV3();
+        unlistenEmitterMetrics();
+      };
 
       set({ unlisten });
       await invoke('start_tablet');
