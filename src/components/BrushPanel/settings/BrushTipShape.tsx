@@ -11,6 +11,12 @@ type MainTipListItem =
   | { kind: 'default' }
   | { kind: 'tip'; id: string; name: string; preset: BrushTipResource };
 
+const COMPACT_TIP_GRID_PROPS = {
+  minItemWidth: 52,
+  itemHeight: 54,
+  gap: 2,
+} as const;
+
 function buildMainTipItems(tips: BrushTipResource[]): MainTipListItem[] {
   const importedTips: MainTipListItem[] = tips.map((tip) => ({
     kind: 'tip',
@@ -88,6 +94,7 @@ export function BrushTipShape(): JSX.Element {
             item.kind === 'default' ? 'main-tip-default' : `main-tip-${item.id}`
           }
           maxHeight={220}
+          {...COMPACT_TIP_GRID_PROPS}
           className="abr-preset-grid mini-grid"
           renderItem={(item) => renderTipItem(item)}
         />

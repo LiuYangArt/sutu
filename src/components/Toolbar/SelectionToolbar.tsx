@@ -2,7 +2,7 @@ import { PaintBucket } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings';
 import { useI18n } from '@/i18n';
 
-const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
+const ICON_PROPS = { size: 18, strokeWidth: 1.5 } as const;
 
 export function SelectionToolbar() {
   const { t } = useI18n();

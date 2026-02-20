@@ -312,6 +312,12 @@
   margin-top: 8px;
 }
 
+.abr-preset-grid.mini-grid .abr-preset-item {
+  width: 100%;
+  min-height: 52px;
+  padding: 2px;
+}
+
 .abr-preset-item {
   display: flex;
   flex-direction: column;

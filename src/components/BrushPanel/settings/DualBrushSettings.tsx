@@ -22,6 +22,12 @@ type DualTipListItem =
   | { kind: 'default' }
   | { kind: 'tip'; id: string; name: string; index: number; preset: BrushTipResource };
 
+const COMPACT_TIP_GRID_PROPS = {
+  minItemWidth: 52,
+  itemHeight: 54,
+  gap: 2,
+} as const;
+
 function buildDualTipItems(tips: BrushTipResource[]): DualTipListItem[] {
   const importedTips: DualTipListItem[] = tips.map((preset, index) => ({
     kind: 'tip',
@@ -179,6 +185,7 @@ export function DualBrushSettings(): JSX.Element {
             item.kind === 'default' ? 'dual-tip-default' : `dual-tip-${item.id}`
           }
           maxHeight={300}
+          {...COMPACT_TIP_GRID_PROPS}
           className="abr-preset-grid mini-grid"
           renderItem={(item) => renderTipItem(item)}
         />

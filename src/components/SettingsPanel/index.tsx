@@ -44,16 +44,6 @@ const TABS: TabConfig[] = [
   { id: 'brush', labelKey: 'settings.tab.brush', icon: <Brush size={16} /> },
   { id: 'tablet', labelKey: 'settings.tab.tablet', icon: <Tablet size={16} /> },
 ];
-const PRESSURE_CURVE_OPTIONS: Array<{
-  value: 'linear' | 'soft' | 'hard' | 'scurve';
-  labelKey: string;
-}> = [
-  { value: 'linear', labelKey: 'settings.tablet.pressureCurve.linear' },
-  { value: 'soft', labelKey: 'settings.tablet.pressureCurve.soft' },
-  { value: 'hard', labelKey: 'settings.tablet.pressureCurve.hard' },
-  { value: 'scurve', labelKey: 'settings.tablet.pressureCurve.sCurve' },
-];
-
 const POINTER_DIAG_UPDATE_INTERVAL_MS = 66;
 const FALLBACK_SCROLLBAR_HIT_WIDTH = 18;
 const FALLBACK_SCROLLBAR_HIT_HEIGHT = 18;
@@ -498,7 +488,8 @@ function TabletSettings() {
     backpressureMode: tablet.backpressureMode,
   };
 
-  const applyPressureCurvePreset = (preset: 'linear' | 'soft' | 'hard' | 'scurve') => {
+  const handleResetPressureCurve = (): void => {
+    const preset = 'linear';
     setPressureCurve(preset);
     setPressureCurvePoints(getPressureCurvePresetPoints(preset));
   };
@@ -671,16 +662,7 @@ function TabletSettings() {
           <div className="pressure-curve-preset-row">
             <span>{t('settings.tablet.pressureCurve.preset')}</span>
             <div className="settings-actions">
-              {PRESSURE_CURVE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  className="settings-btn"
-                  onClick={() => applyPressureCurvePreset(option.value)}
-                >
-                  {t(option.labelKey)}
-                </button>
-              ))}
-              <button className="settings-btn" onClick={() => applyPressureCurvePreset('linear')}>
+              <button className="settings-btn" onClick={handleResetPressureCurve}>
                 {t('settings.tablet.pressureCurve.reset')}
               </button>
             </div>
