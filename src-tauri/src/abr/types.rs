@@ -558,37 +558,41 @@ impl BrushPreset {
             cursor_complexity_lod0,
             cursor_complexity_lod1,
             cursor_complexity_lod2,
-        ) = brush
-            .tip_image
-            .as_ref()
-            .map(|img| {
-                let lod = super::cursor::generate_cursor_lods(img, lod_limits);
-                let legacy = lod
-                    .path_lod2
-                    .clone()
-                    .or_else(|| lod.path_lod1.clone())
-                    .or_else(|| lod.path_lod0.clone());
-                let bounds = if legacy.is_some() {
-                    lod.bounds.map(|b| CursorBoundsData {
-                        width: b.width,
-                        height: b.height,
-                    })
-                } else {
-                    None
-                };
+        ) = if brush.is_computed {
+            (None, None, None, None, None, None, None, None)
+        } else {
+            brush
+                .tip_image
+                .as_ref()
+                .map(|img| {
+                    let lod = super::cursor::generate_cursor_lods(img, lod_limits);
+                    let legacy = lod
+                        .path_lod2
+                        .clone()
+                        .or_else(|| lod.path_lod1.clone())
+                        .or_else(|| lod.path_lod0.clone());
+                    let bounds = if legacy.is_some() {
+                        lod.bounds.map(|b| CursorBoundsData {
+                            width: b.width,
+                            height: b.height,
+                        })
+                    } else {
+                        None
+                    };
 
-                (
-                    legacy,
-                    bounds,
-                    lod.path_lod0,
-                    lod.path_lod1,
-                    lod.path_lod2,
-                    lod.complexity_lod0,
-                    lod.complexity_lod1,
-                    lod.complexity_lod2,
-                )
-            })
-            .unwrap_or((None, None, None, None, None, None, None, None));
+                    (
+                        legacy,
+                        bounds,
+                        lod.path_lod0,
+                        lod.path_lod1,
+                        lod.path_lod2,
+                        lod.complexity_lod0,
+                        lod.complexity_lod1,
+                        lod.complexity_lod2,
+                    )
+                })
+                .unwrap_or((None, None, None, None, None, None, None, None))
+        };
 
         let has_texture = brush.tip_image.is_some() && !brush.is_computed;
 

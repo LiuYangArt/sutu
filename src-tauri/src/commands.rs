@@ -712,7 +712,8 @@ use crate::brush::library as brush_library;
 use crate::brush::library::{
     BrushLibraryImportResult, BrushLibraryPreset, BrushLibraryPresetPayload, BrushLibrarySnapshot,
 };
-use crate::brush::{cache_brush_gray, cache_pattern_rgba};
+use crate::brush::{cache_brush_gray_ref, cache_pattern_rgba};
+use rayon::prelude::*;
 
 /// Pattern metadata for frontend
 #[derive(Debug, Clone, Serialize)]
@@ -759,6 +760,21 @@ pub struct AbrBenchmark {
     pub raw_bytes: usize,
     /// Total compressed bytes
     pub compressed_bytes: usize,
+}
+
+#[derive(Debug)]
+struct PendingPresetBuild {
+    order: usize,
+    is_tip_only: bool,
+    brush: AbrBrush,
+    id: String,
+}
+
+#[derive(Debug)]
+struct BuiltPreset {
+    order: usize,
+    is_tip_only: bool,
+    preset: BrushPreset,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -962,11 +978,13 @@ fn import_abr_file_internal(
 
     let mut presets: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
     let mut tips: Vec<BrushPreset> = Vec::with_capacity(abr_file.brushes.len());
+    let mut pending_preset_builds: Vec<PendingPresetBuild> =
+        Vec::with_capacity(abr_file.brushes.len());
     // Track usage of IDs to ensure uniqueness within this import batch
     // Map ID -> count (how many times seen so far)
     let mut id_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
-    for mut brush in abr_file.brushes {
+    for (order, mut brush) in abr_file.brushes.into_iter().enumerate() {
         let is_tip_only = brush.is_tip_only;
 
         if let Some(ref mut tex) = brush.texture_settings {
@@ -1011,29 +1029,52 @@ fn import_abr_file_internal(
             duplicate_id_count += 1;
         }
 
-        // Cache texture if present (skip computed brushes - render procedurally)
-        if let Some(ref tip) = brush.tip_image {
-            if !brush.is_computed {
+        // Record texture bytes for benchmark (cache write moved to parallel build stage).
+        if !brush.is_computed {
+            if let Some(tip) = brush.tip_image.as_ref() {
                 raw_bytes += tip.data.len();
-                cache_brush_gray(
-                    id.clone(),
-                    tip.data.clone(),
-                    tip.width,
-                    tip.height,
-                    brush.name.clone(),
-                );
             }
         }
 
-        // Build preset with the ID we generated
-        let preset = build_preset_with_id(brush, id, cursor_lod_limits);
-        if is_tip_only {
-            tips.push(preset);
+        pending_preset_builds.push(PendingPresetBuild {
+            order,
+            is_tip_only,
+            brush,
+            id,
+        });
+    }
+
+    let mut built_presets: Vec<BuiltPreset> = pending_preset_builds
+        .into_par_iter()
+        .map(|pending| {
+            if !pending.brush.is_computed {
+                if let Some(tip) = pending.brush.tip_image.as_ref() {
+                    cache_brush_gray_ref(
+                        pending.id.clone(),
+                        &tip.data,
+                        tip.width,
+                        tip.height,
+                        pending.brush.name.clone(),
+                    );
+                }
+            }
+            let preset = build_preset_with_id(pending.brush, pending.id, cursor_lod_limits);
+            BuiltPreset {
+                order: pending.order,
+                is_tip_only: pending.is_tip_only,
+                preset,
+            }
+        })
+        .collect();
+    built_presets.sort_unstable_by_key(|item| item.order);
+
+    for item in built_presets {
+        if item.is_tip_only {
+            tips.push(item.preset);
             continue;
         }
-
-        presets.push(preset.clone());
-        tips.push(preset);
+        presets.push(item.preset.clone());
+        tips.push(item.preset);
     }
 
     let cache_ms = cache_start.elapsed().as_secs_f64() * 1000.0;

@@ -241,8 +241,14 @@ pub fn clear_brush_cache() {
 
 /// Store brush Gray8 data with LZ4 compression in global cache AND disk
 pub fn cache_brush_gray(brush_id: String, data: Vec<u8>, width: u32, height: u32, name: String) {
+    cache_brush_gray_ref(brush_id, &data, width, height, name);
+}
+
+/// Store brush Gray8 data with LZ4 compression in global cache AND disk
+/// without cloning the source pixel buffer.
+pub fn cache_brush_gray_ref(brush_id: String, data: &[u8], width: u32, height: u32, name: String) {
     // LZ4 compress
-    let compressed = compress_prepend_size(&data);
+    let compressed = compress_prepend_size(data);
     tracing::trace!(
         "Brush {} Gray8: {} -> {} bytes ({:.1}% of original)",
         brush_id,
