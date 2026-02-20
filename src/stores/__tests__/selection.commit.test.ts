@@ -7,6 +7,7 @@ describe('SelectionStore commitSelection', () => {
     store.deselectAll();
     store.setSelectionMode('new');
     store.setLassoMode('freehand');
+    store.setSelectionShape('rect');
 
     vi.spyOn(HTMLCanvasElement.prototype as any, 'getContext').mockImplementation(function (
       this: HTMLCanvasElement
@@ -50,6 +51,42 @@ describe('SelectionStore commitSelection', () => {
     expect(state.selectionPath).toHaveLength(1);
     expect(state.selectionPath[0]).toHaveLength(5);
     expect(state.bounds).toEqual({ x: 10, y: 20, width: 50, height: 60 });
+  });
+
+  it('椭圆选区模式会生成椭圆路径并提交选区', () => {
+    const store = useSelectionStore.getState();
+    store.setSelectionShape('circle');
+    store.beginSelection({ x: 10, y: 20, type: 'polygonal' });
+    store.updateCreationRect(
+      { x: 10, y: 20, type: 'polygonal' },
+      { x: 70, y: 90, type: 'polygonal' }
+    );
+
+    const creatingState = useSelectionStore.getState();
+    expect(creatingState.creationPoints.length).toBeGreaterThan(20);
+
+    store.commitSelection(128, 128);
+
+    const state = useSelectionStore.getState();
+    expect(state.hasSelection).toBe(true);
+    expect(state.selectionPath).toHaveLength(1);
+    expect(state.selectionPath[0]).toBeDefined();
+    expect(state.selectionPath[0]!.length).toBeGreaterThan(20);
+    expect(state.bounds).toEqual({ x: 10, y: 20, width: 60, height: 70 });
+  });
+
+  it('大尺寸椭圆会使用更高采样点数，避免多边形边缘', () => {
+    const store = useSelectionStore.getState();
+    store.setSelectionShape('circle');
+    store.beginSelection({ x: 10, y: 10, type: 'polygonal' });
+    store.updateCreationRect(
+      { x: 10, y: 10, type: 'polygonal' },
+      { x: 1210, y: 810, type: 'polygonal' }
+    );
+
+    const creatingState = useSelectionStore.getState();
+    // 48 segments => 49 points. Large ellipse should be significantly higher.
+    expect(creatingState.creationPoints.length).toBeGreaterThan(120);
   });
 
   it('大画布新建选区时优先返回路径并进入异步 mask 构建', () => {

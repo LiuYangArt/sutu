@@ -7,6 +7,7 @@ import {
   Eraser,
   Pipette,
   Move,
+  CircleDashed,
   SquareDashed,
   Lasso,
   ZoomIn as ZoomIcon,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { useToolStore, ToolType } from '@/stores/tool';
+import { useSelectionStore, type SelectionShape } from '@/stores/selection';
 import { useViewportStore } from '@/stores/viewport';
 import { useI18n } from '@/i18n';
 import { GradientToolIcon } from '@/components/common/GradientToolIcon';
@@ -52,9 +54,20 @@ function getToolTooltip(tool: ToolItem, t: (key: string) => string): string {
   return `${t(`leftToolbar.tool.${tool.id}`)} (${shortcut})`;
 }
 
+function getToolIcon(tool: ToolItem, selectionShape: SelectionShape): ComponentType<LucideProps> {
+  if (tool.id !== 'select') {
+    return tool.icon;
+  }
+  if (selectionShape === 'circle') {
+    return CircleDashed;
+  }
+  return SquareDashed;
+}
+
 export function LeftToolbar(): JSX.Element {
   const { t } = useI18n();
   const { currentTool, setTool } = useToolStore();
+  const selectionShape = useSelectionStore((s) => s.selectionShape);
   const setScale = useViewportStore((s) => s.setScale);
 
   const handleToolDoubleClick = (toolId: ToolType) => {
@@ -66,17 +79,20 @@ export function LeftToolbar(): JSX.Element {
   return (
     <aside className="left-toolbar">
       <div className="toolbar-tools">
-        {TOOLS.map((tool) => (
-          <button
-            key={tool.id}
-            className={`tool-grid-btn ${currentTool === tool.id ? 'active' : ''}`}
-            onClick={() => setTool(tool.id)}
-            onDoubleClick={() => handleToolDoubleClick(tool.id)}
-            title={getToolTooltip(tool, t)}
-          >
-            <tool.icon {...ICON_PROPS} />
-          </button>
-        ))}
+        {TOOLS.map((tool) => {
+          const IconComponent = getToolIcon(tool, selectionShape);
+          return (
+            <button
+              key={tool.id}
+              className={`tool-grid-btn ${currentTool === tool.id ? 'active' : ''}`}
+              onClick={() => setTool(tool.id)}
+              onDoubleClick={() => handleToolDoubleClick(tool.id)}
+              title={getToolTooltip(tool, t)}
+            >
+              <IconComponent {...ICON_PROPS} />
+            </button>
+          );
+        })}
       </div>
     </aside>
   );
