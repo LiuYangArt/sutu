@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useToolStore, BrushTexture } from '@/stores/tool';
+import { useSettingsStore } from '@/stores/settings';
 import {
   BrushPreset,
   DEFAULT_ROUND_BRUSH,
   DEFAULT_TEXTURE_SETTINGS,
   ImportAbrResult,
+  ImportAbrOptions,
 } from '../types';
 import { BrushPresetThumbnail } from '../BrushPresetThumbnail';
 import { loadBrushTexture } from '@/utils/brushLoader';
@@ -16,6 +18,17 @@ interface BrushPresetsProps {
   setImportedPresets: (presets: BrushPreset[]) => void;
   importedTips: BrushPreset[];
   setImportedTips: (tips: BrushPreset[]) => void;
+}
+
+function buildImportAbrOptions(): ImportAbrOptions {
+  const cursorLodDebug = useSettingsStore.getState().brush.cursorLodDebug;
+  return {
+    cursorLod: {
+      lod0PathLenSoftLimit: cursorLodDebug.lod0PathLenSoftLimit,
+      lod1PathLenLimit: cursorLodDebug.lod1PathLenLimit,
+      lod2PathLenLimit: cursorLodDebug.lod2PathLenLimit,
+    },
+  };
 }
 
 function createBrushTextureFromPreset(preset: BrushPreset): BrushTexture | undefined {
@@ -29,6 +42,14 @@ function createBrushTextureFromPreset(preset: BrushPreset): BrushTexture | undef
     data: '',
     width: preset.textureWidth,
     height: preset.textureHeight,
+    cursorPath: preset.cursorPath ?? undefined,
+    cursorBounds: preset.cursorBounds ?? undefined,
+    cursorPathLod0: preset.cursorPathLod0 ?? undefined,
+    cursorPathLod1: preset.cursorPathLod1 ?? undefined,
+    cursorPathLod2: preset.cursorPathLod2 ?? undefined,
+    cursorComplexityLod0: preset.cursorComplexityLod0 ?? undefined,
+    cursorComplexityLod1: preset.cursorComplexityLod1 ?? undefined,
+    cursorComplexityLod2: preset.cursorComplexityLod2 ?? undefined,
   };
 }
 
@@ -157,6 +178,12 @@ export function applyPresetToToolStore(preset: BrushPreset, importedTips: BrushP
       height: preset.textureHeight,
       cursorPath: preset.cursorPath ?? undefined,
       cursorBounds: preset.cursorBounds ?? undefined,
+      cursorPathLod0: preset.cursorPathLod0 ?? undefined,
+      cursorPathLod1: preset.cursorPathLod1 ?? undefined,
+      cursorPathLod2: preset.cursorPathLod2 ?? undefined,
+      cursorComplexityLod0: preset.cursorComplexityLod0 ?? undefined,
+      cursorComplexityLod1: preset.cursorComplexityLod1 ?? undefined,
+      cursorComplexityLod2: preset.cursorComplexityLod2 ?? undefined,
     };
     setBrushTexture(texture);
   } else {
@@ -243,8 +270,10 @@ export function BrushPresets({
       });
 
       if (selected) {
+        const options = buildImportAbrOptions();
         const result = await invoke<ImportAbrResult>('import_abr_file', {
           path: selected,
+          options,
         });
 
         // Add presets (dedupe by ID to prevent React key conflicts)

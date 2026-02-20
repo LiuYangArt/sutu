@@ -264,6 +264,24 @@ export interface BrushTexture {
   cursorPath?: string;
   /** Bounding box of the cursor path for proper scaling */
   cursorBounds?: { width: number; height: number };
+  /** Cursor outline LOD0 path */
+  cursorPathLod0?: string;
+  /** Cursor outline LOD1 path */
+  cursorPathLod1?: string;
+  /** Cursor outline LOD2 path */
+  cursorPathLod2?: string;
+  /** Cursor complexity metadata for LOD0 */
+  cursorComplexityLod0?: CursorComplexityData;
+  /** Cursor complexity metadata for LOD1 */
+  cursorComplexityLod1?: CursorComplexityData;
+  /** Cursor complexity metadata for LOD2 */
+  cursorComplexityLod2?: CursorComplexityData;
+}
+
+export interface CursorComplexityData {
+  pathLen: number;
+  segmentCount: number;
+  contourCount: number;
 }
 
 /** Clamp brush/eraser size to valid range */
@@ -424,20 +442,32 @@ function cloneCursorBounds(
   return { width: bounds.width, height: bounds.height };
 }
 
+function cloneCursorComplexity(
+  complexity: BrushTexture['cursorComplexityLod0'] | undefined
+): BrushTexture['cursorComplexityLod0'] | undefined {
+  if (!complexity) return undefined;
+  return {
+    pathLen: complexity.pathLen,
+    segmentCount: complexity.segmentCount,
+    contourCount: complexity.contourCount,
+  };
+}
+
 function cloneBrushTexture(texture: BrushTexture | null): BrushTexture | null {
   if (!texture) return null;
   return {
     ...texture,
     cursorBounds: cloneCursorBounds(texture.cursorBounds),
+    cursorComplexityLod0: cloneCursorComplexity(texture.cursorComplexityLod0),
+    cursorComplexityLod1: cloneCursorComplexity(texture.cursorComplexityLod1),
+    cursorComplexityLod2: cloneCursorComplexity(texture.cursorComplexityLod2),
   };
 }
 
 function cloneDualBrushSettings(dual: DualBrushSettings): DualBrushSettings {
   return {
     ...dual,
-    texture: dual.texture
-      ? { ...dual.texture, cursorBounds: cloneCursorBounds(dual.texture.cursorBounds) }
-      : undefined,
+    texture: cloneBrushTexture(dual.texture ?? null) ?? undefined,
   };
 }
 
@@ -758,6 +788,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function coerceCursorComplexity(value: unknown): CursorComplexityData | undefined {
+  if (!isRecord(value)) return undefined;
+  const pathLen = typeof value.pathLen === 'number' ? value.pathLen : null;
+  const segmentCount = typeof value.segmentCount === 'number' ? value.segmentCount : null;
+  const contourCount = typeof value.contourCount === 'number' ? value.contourCount : null;
+  if (pathLen === null || segmentCount === null || contourCount === null) {
+    return undefined;
+  }
+  if (
+    !Number.isFinite(pathLen) ||
+    !Number.isFinite(segmentCount) ||
+    !Number.isFinite(contourCount)
+  ) {
+    return undefined;
+  }
+  return { pathLen, segmentCount, contourCount };
+}
+
 function coerceBrushTexture(value: unknown, fallback: BrushTexture | null): BrushTexture | null {
   if (!isRecord(value)) return cloneBrushTexture(fallback);
   const textureId = typeof value.id === 'string' ? value.id : null;
@@ -770,6 +818,9 @@ function coerceBrushTexture(value: unknown, fallback: BrushTexture | null): Brus
     width,
     height,
     cursorPath: typeof value.cursorPath === 'string' ? value.cursorPath : undefined,
+    cursorPathLod0: typeof value.cursorPathLod0 === 'string' ? value.cursorPathLod0 : undefined,
+    cursorPathLod1: typeof value.cursorPathLod1 === 'string' ? value.cursorPathLod1 : undefined,
+    cursorPathLod2: typeof value.cursorPathLod2 === 'string' ? value.cursorPathLod2 : undefined,
     cursorBounds: isRecord(value.cursorBounds)
       ? {
           width: typeof value.cursorBounds.width === 'number' ? value.cursorBounds.width : width,
@@ -777,6 +828,9 @@ function coerceBrushTexture(value: unknown, fallback: BrushTexture | null): Brus
             typeof value.cursorBounds.height === 'number' ? value.cursorBounds.height : height,
         }
       : undefined,
+    cursorComplexityLod0: coerceCursorComplexity(value.cursorComplexityLod0),
+    cursorComplexityLod1: coerceCursorComplexity(value.cursorComplexityLod1),
+    cursorComplexityLod2: coerceCursorComplexity(value.cursorComplexityLod2),
   };
 }
 
@@ -1283,15 +1337,18 @@ export const useToolStore = create<ToolState>()(
         (() => {
           const serializeTexture = (texture: BrushTexture | null): BrushTexture | null => {
             if (!texture) return null;
-            return {
-              ...texture,
-              imageData: undefined,
-              cursorBounds: cloneCursorBounds(texture.cursorBounds),
-            };
+            const cloned = cloneBrushTexture(texture);
+            if (!cloned) return null;
+            return { ...cloned, imageData: undefined };
           };
           const serializeDualBrush = (dual: DualBrushSettings): DualBrushSettings => ({
             ...dual,
-            texture: dual.texture ? { ...dual.texture, imageData: undefined } : undefined,
+            texture: (() => {
+              if (!dual.texture) return undefined;
+              const cloned = cloneBrushTexture(dual.texture);
+              if (!cloned) return undefined;
+              return { ...cloned, imageData: undefined };
+            })(),
           });
           const serializeProfile = (profile: BrushToolProfile): BrushToolProfile => ({
             ...profile,

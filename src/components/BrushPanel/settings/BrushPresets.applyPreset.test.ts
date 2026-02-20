@@ -175,6 +175,13 @@ describe('applyPresetToToolStore', () => {
       hasTexture: true,
       textureWidth: 64,
       textureHeight: 64,
+      cursorPath: 'M0 0 L1 0 L1 1 L0 1 Z',
+      cursorPathLod0: 'M0 0 L1 0 L1 1 Z',
+      cursorPathLod1: 'M0 0 L1 0 L1 1 L0 1 Z',
+      cursorPathLod2: 'M0 0 L1 0 L1 1 L0 0.5 Z',
+      cursorComplexityLod0: { pathLen: 120, segmentCount: 180, contourCount: 2 },
+      cursorComplexityLod1: { pathLen: 80, segmentCount: 96, contourCount: 1 },
+      cursorComplexityLod2: { pathLen: 40, segmentCount: 32, contourCount: 1 },
     };
 
     applyPresetToToolStore(preset, []);
@@ -183,6 +190,14 @@ describe('applyPresetToToolStore', () => {
     expect(s.brushTexture?.id).toBe('shared-tip-id');
     expect(s.brushTexture?.width).toBe(64);
     expect(s.brushTexture?.height).toBe(64);
+    expect(s.brushTexture?.cursorPathLod0).toBe('M0 0 L1 0 L1 1 Z');
+    expect(s.brushTexture?.cursorPathLod1).toBe('M0 0 L1 0 L1 1 L0 1 Z');
+    expect(s.brushTexture?.cursorPathLod2).toBe('M0 0 L1 0 L1 1 L0 0.5 Z');
+    expect(s.brushTexture?.cursorComplexityLod2).toEqual({
+      pathLen: 40,
+      segmentCount: 32,
+      contourCount: 1,
+    });
   });
 
   it('应用 Dual Brush preset 并正确映射 secondary tip', () => {

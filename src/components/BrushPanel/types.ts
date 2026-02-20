@@ -21,6 +21,18 @@ export interface BrushPreset {
   cursorPath?: string | null;
   /** Cursor bounds for proper scaling */
   cursorBounds?: { width: number; height: number } | null;
+  /** Cursor outline LOD0 (detail-first) */
+  cursorPathLod0?: string | null;
+  /** Cursor outline LOD1 (balanced) */
+  cursorPathLod1?: string | null;
+  /** Cursor outline LOD2 (budget-first) */
+  cursorPathLod2?: string | null;
+  /** Cursor complexity metadata for LOD0 */
+  cursorComplexityLod0?: CursorComplexityData | null;
+  /** Cursor complexity metadata for LOD1 */
+  cursorComplexityLod1?: CursorComplexityData | null;
+  /** Cursor complexity metadata for LOD2 */
+  cursorComplexityLod2?: CursorComplexityData | null;
   /** Texture settings from ABR Texture panel */
   textureSettings?: TextureSettings | null;
   /** Dual Brush settings from ABR Dual Brush panel */
@@ -51,6 +63,12 @@ export interface BrushPreset {
   baseOpacity?: number | null;
   /** Base flow (0..1) */
   baseFlow?: number | null;
+}
+
+export interface CursorComplexityData {
+  pathLen: number;
+  segmentCount: number;
+  contourCount: number;
 }
 
 /** Dual blend mode (Photoshop Dual Brush panel compatible) */
@@ -98,6 +116,16 @@ export interface ImportAbrResult {
   tips: BrushPreset[];
   patterns: PatternInfo[];
   benchmark: AbrBenchmark;
+}
+
+export interface ImportAbrCursorLodOptions {
+  lod0PathLenSoftLimit: number;
+  lod1PathLenLimit: number;
+  lod2PathLenLimit: number;
+}
+
+export interface ImportAbrOptions {
+  cursorLod?: ImportAbrCursorLodOptions;
 }
 
 /** Pattern metadata */
@@ -257,5 +285,11 @@ export const DEFAULT_ROUND_BRUSH: BrushPreset = {
   opacityPressure: false,
   cursorPath: null,
   cursorBounds: null,
+  cursorPathLod0: null,
+  cursorPathLod1: null,
+  cursorPathLod2: null,
+  cursorComplexityLod0: null,
+  cursorComplexityLod1: null,
+  cursorComplexityLod2: null,
   textureSettings: null,
 };

@@ -481,6 +481,18 @@ pub struct BrushPreset {
     pub cursor_path: Option<String>,
     /// Cursor bounds for proper scaling
     pub cursor_bounds: Option<CursorBoundsData>,
+    /// Pre-computed cursor outline LOD0 (detail-first path)
+    pub cursor_path_lod0: Option<String>,
+    /// Pre-computed cursor outline LOD1 (balanced path)
+    pub cursor_path_lod1: Option<String>,
+    /// Pre-computed cursor outline LOD2 (budget-first path)
+    pub cursor_path_lod2: Option<String>,
+    /// Cursor complexity metadata for LOD0
+    pub cursor_complexity_lod0: Option<CursorComplexityData>,
+    /// Cursor complexity metadata for LOD1
+    pub cursor_complexity_lod1: Option<CursorComplexityData>,
+    /// Cursor complexity metadata for LOD2
+    pub cursor_complexity_lod2: Option<CursorComplexityData>,
     /// Texture settings (from ABR Texture panel data)
     pub texture_settings: Option<TextureSettings>,
     /// Dual brush settings (from ABR Dual Brush panel data)
@@ -519,24 +531,64 @@ pub struct CursorBoundsData {
     pub height: f32,
 }
 
-impl From<AbrBrush> for BrushPreset {
-    fn from(brush: AbrBrush) -> Self {
+/// Cursor complexity metadata for runtime LOD selection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorComplexityData {
+    pub path_len: u32,
+    pub segment_count: u32,
+    pub contour_count: u32,
+}
+
+impl BrushPreset {
+    pub fn from_abr_with_cursor_lod(
+        brush: AbrBrush,
+        lod_limits: super::cursor::CursorLodPathLenLimits,
+    ) -> Self {
         let dynamics = brush.dynamics.as_ref();
         let source_uuid = brush.uuid.clone();
 
-        // Generate cursor outline from texture if available
-        let (cursor_path, cursor_bounds) = brush
+        // Generate cursor outline LODs from texture if available
+        let (
+            cursor_path,
+            cursor_bounds,
+            cursor_path_lod0,
+            cursor_path_lod1,
+            cursor_path_lod2,
+            cursor_complexity_lod0,
+            cursor_complexity_lod1,
+            cursor_complexity_lod2,
+        ) = brush
             .tip_image
             .as_ref()
             .map(|img| {
-                let path = super::cursor::extract_cursor_outline(img, 128);
-                let bounds = path.as_ref().map(|_| CursorBoundsData {
-                    width: img.width as f32,
-                    height: img.height as f32,
-                });
-                (path, bounds)
+                let lod = super::cursor::generate_cursor_lods(img, lod_limits);
+                let legacy = lod
+                    .path_lod2
+                    .clone()
+                    .or_else(|| lod.path_lod1.clone())
+                    .or_else(|| lod.path_lod0.clone());
+                let bounds = if legacy.is_some() {
+                    lod.bounds.map(|b| CursorBoundsData {
+                        width: b.width,
+                        height: b.height,
+                    })
+                } else {
+                    None
+                };
+
+                (
+                    legacy,
+                    bounds,
+                    lod.path_lod0,
+                    lod.path_lod1,
+                    lod.path_lod2,
+                    lod.complexity_lod0,
+                    lod.complexity_lod1,
+                    lod.complexity_lod2,
+                )
             })
-            .unwrap_or((None, None));
+            .unwrap_or((None, None, None, None, None, None, None, None));
 
         let has_texture = brush.tip_image.is_some() && !brush.is_computed;
 
@@ -568,6 +620,12 @@ impl From<AbrBrush> for BrushPreset {
             opacity_pressure: dynamics.map(|d| d.opacity_control == 2).unwrap_or(false),
             cursor_path,
             cursor_bounds,
+            cursor_path_lod0,
+            cursor_path_lod1,
+            cursor_path_lod2,
+            cursor_complexity_lod0,
+            cursor_complexity_lod1,
+            cursor_complexity_lod2,
             texture_settings: brush.texture_settings,
             dual_brush_settings: brush.dual_brush_settings,
             shape_dynamics_enabled: brush.shape_dynamics_enabled,
@@ -584,6 +642,15 @@ impl From<AbrBrush> for BrushPreset {
             base_opacity: brush.base_opacity,
             base_flow: brush.base_flow,
         }
+    }
+}
+
+impl From<AbrBrush> for BrushPreset {
+    fn from(brush: AbrBrush) -> Self {
+        BrushPreset::from_abr_with_cursor_lod(
+            brush,
+            super::cursor::CursorLodPathLenLimits::default(),
+        )
     }
 }
 

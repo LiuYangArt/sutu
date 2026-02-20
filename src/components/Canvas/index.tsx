@@ -2445,12 +2445,18 @@ export function Canvas() {
             cursorId: brushTexture.id,
             cursorPath: brushTexture.cursorPath,
             cursorBounds: brushTexture.cursorBounds,
+            cursorPathLod0: brushTexture.cursorPathLod0,
+            cursorPathLod1: brushTexture.cursorPathLod1,
+            cursorPathLod2: brushTexture.cursorPathLod2,
+            cursorComplexityLod0: brushTexture.cursorComplexityLod0,
+            cursorComplexityLod1: brushTexture.cursorComplexityLod1,
+            cursorComplexityLod2: brushTexture.cursorComplexityLod2,
           }
         : null,
     [brushTexture]
   );
 
-  const { cursorStyle, showDomCursor, showEyedropperDomCursor } = useCursor({
+  const { cursorStyle, showDomCursor, showEyedropperDomCursor, resolvedDomCursorPath } = useCursor({
     currentTool,
     currentSize,
     scale: displayScale,
@@ -3329,7 +3335,7 @@ export function Canvas() {
       {showDomCursor && !brushQuickPanelHovering && (
         <div
           ref={brushCursorRef}
-          className={`brush-cursor ${brushTexture?.cursorPath ? 'brush-cursor--texture' : ''}`}
+          className={`brush-cursor ${resolvedDomCursorPath ? 'brush-cursor--texture' : ''}`}
           style={{
             width: currentSize * displayScale,
             height: currentSize * displayScale * (brushRoundness / 100),
@@ -3337,9 +3343,9 @@ export function Canvas() {
             // rotation is applied to inner content, not the container
           }}
         >
-          {brushTexture?.cursorPath ? (
+          {resolvedDomCursorPath ? (
             <svg
-              key={brushTexture.cursorPath.slice(0, 50)}
+              key={resolvedDomCursorPath.slice(0, 50)}
               width="100%"
               height="100%"
               viewBox="-0.5 -0.5 1 1"
@@ -3354,14 +3360,14 @@ export function Canvas() {
             >
               {/* Use vector-effect to keep stroke width constant regardless of viewBox scale */}
               <path
-                d={brushTexture.cursorPath}
+                d={resolvedDomCursorPath}
                 fill="none"
                 stroke="rgba(255,255,255,0.9)"
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
               />
               <path
-                d={brushTexture.cursorPath}
+                d={resolvedDomCursorPath}
                 fill="none"
                 stroke="rgba(0,0,0,0.8)"
                 strokeWidth={1}

@@ -34,7 +34,10 @@ pub mod patt;
 mod samp;
 mod types;
 
-pub use cursor::{extract_cursor_outline, generate_cursor_data, CursorBounds};
+pub use cursor::{
+    extract_cursor_outline, generate_cursor_data, generate_cursor_lods, CursorBounds,
+    CursorLodPathLenLimits,
+};
 pub use defaults::AbrDefaults;
 pub use error::AbrError;
 pub use parser::AbrParser;
@@ -42,8 +45,8 @@ pub use patt::PatternResource;
 pub use samp::normalize_brush_texture;
 pub use types::{
     AbrBrush, AbrDynamics, AbrFile, AbrVersion, BrushPreset, ColorDynamicsSettings, ControlSource,
-    CursorBoundsData, GrayscaleImage, ScatterSettings, ShapeDynamicsSettings, TextureBlendMode,
-    TextureSettings, TransferSettings,
+    CursorBoundsData, CursorComplexityData, GrayscaleImage, ScatterSettings, ShapeDynamicsSettings,
+    TextureBlendMode, TextureSettings, TransferSettings,
 };
 
 #[cfg(test)]

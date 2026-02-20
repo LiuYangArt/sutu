@@ -1066,9 +1066,39 @@ function BrushSettings() {
   const setRenderMode = useSettingsStore((s) => s.setRenderMode);
   const setGpuRenderScaleMode = useSettingsStore((s) => s.setGpuRenderScaleMode);
   const setForceDomCursorDebug = useSettingsStore((s) => s.setForceDomCursorDebug);
+  const setCursorLodPathLenLimit = useSettingsStore((s) => s.setCursorLodPathLenLimit);
+  const resetCursorLodDebugDefaults = useSettingsStore((s) => s.resetCursorLodDebugDefaults);
   const { t } = useI18n();
-  const { renderMode, gpuRenderScaleMode, forceDomCursorDebug } = brush;
+  const { renderMode, gpuRenderScaleMode, forceDomCursorDebug, cursorLodDebug } = brush;
   const forceDomCursorDebugDescription = t('settings.brush.cursor.forceDomDebug.description');
+  const [lod0Input, setLod0Input] = useState(String(cursorLodDebug.lod0PathLenSoftLimit));
+  const [lod1Input, setLod1Input] = useState(String(cursorLodDebug.lod1PathLenLimit));
+  const [lod2Input, setLod2Input] = useState(String(cursorLodDebug.lod2PathLenLimit));
+
+  useEffect(() => {
+    setLod0Input(String(cursorLodDebug.lod0PathLenSoftLimit));
+    setLod1Input(String(cursorLodDebug.lod1PathLenLimit));
+    setLod2Input(String(cursorLodDebug.lod2PathLenLimit));
+  }, [
+    cursorLodDebug.lod0PathLenSoftLimit,
+    cursorLodDebug.lod1PathLenLimit,
+    cursorLodDebug.lod2PathLenLimit,
+  ]);
+
+  const commitCursorLodLimit = (
+    key: 'lod0PathLenSoftLimit' | 'lod1PathLenLimit' | 'lod2PathLenLimit',
+    inputValue: string,
+    setInput: (value: string) => void
+  ) => {
+    const parsed = Number.parseInt(inputValue, 10);
+    if (!Number.isFinite(parsed)) {
+      setInput(String(cursorLodDebug[key]));
+      return;
+    }
+    setCursorLodPathLenLimit(key, parsed);
+    const normalized = useSettingsStore.getState().brush.cursorLodDebug[key];
+    setInput(String(normalized));
+  };
 
   return (
     <div className="settings-content">
@@ -1132,6 +1162,71 @@ function BrushSettings() {
             />
             <span className="toggle-slider" />
           </label>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <label className="settings-label">{t('settings.brush.cursor.lodDebug.title')}</label>
+        <div className="settings-row">
+          <span className="settings-description">
+            {t('settings.brush.cursor.lodDebug.description')}
+          </span>
+        </div>
+        <div className="settings-row">
+          <span>{t('settings.brush.cursor.lodDebug.lod0PathLenSoftLimit')}</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            className="settings-number-input"
+            value={lod0Input}
+            onChange={(e) => setLod0Input(e.target.value)}
+            onBlur={() => commitCursorLodLimit('lod0PathLenSoftLimit', lod0Input, setLod0Input)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitCursorLodLimit('lod0PathLenSoftLimit', lod0Input, setLod0Input);
+              }
+            }}
+          />
+        </div>
+        <div className="settings-row">
+          <span>{t('settings.brush.cursor.lodDebug.lod1PathLenLimit')}</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            className="settings-number-input"
+            value={lod1Input}
+            onChange={(e) => setLod1Input(e.target.value)}
+            onBlur={() => commitCursorLodLimit('lod1PathLenLimit', lod1Input, setLod1Input)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitCursorLodLimit('lod1PathLenLimit', lod1Input, setLod1Input);
+              }
+            }}
+          />
+        </div>
+        <div className="settings-row">
+          <span>{t('settings.brush.cursor.lodDebug.lod2PathLenLimit')}</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            className="settings-number-input"
+            value={lod2Input}
+            onChange={(e) => setLod2Input(e.target.value)}
+            onBlur={() => commitCursorLodLimit('lod2PathLenLimit', lod2Input, setLod2Input)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitCursorLodLimit('lod2PathLenLimit', lod2Input, setLod2Input);
+              }
+            }}
+          />
+        </div>
+        <div className="settings-actions">
+          <button className="settings-btn" onClick={resetCursorLodDebugDefaults}>
+            {t('settings.brush.cursor.lodDebug.resetDefaults')}
+          </button>
         </div>
       </div>
     </div>

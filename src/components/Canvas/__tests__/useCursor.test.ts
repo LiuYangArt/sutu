@@ -24,7 +24,15 @@ function createProps(overrides: Partial<UseCursorProps> = {}): UseCursorProps {
 }
 
 const SIMPLE_CURSOR_PATH = 'M0 0 L1 0 L1 1 L0 1 Z';
+const LOD0_CURSOR_PATH = 'M0 0 L1 0 L1 0.8 L0 1 Z';
+const LOD1_CURSOR_PATH = 'M0 0 L1 0 L1 1 L0.2 1 Z';
+const LOD2_CURSOR_PATH = 'M0 0 L1 0 L0.8 1 L0 1 Z';
 const OVER_LIMIT_CURSOR_PATH = `${SIMPLE_CURSOR_PATH} `.repeat(12001);
+
+function getLastBtoaInput(spy: { mock: { calls: unknown[][] } }): string {
+  const lastCall = spy.mock.calls[spy.mock.calls.length - 1];
+  return typeof lastCall?.[0] === 'string' ? lastCall[0] : '';
+}
 
 describe('useCursor', () => {
   beforeEach(() => {
@@ -35,12 +43,16 @@ describe('useCursor', () => {
     vi.restoreAllMocks();
   });
 
-  it('small brush with short cursorPath uses hardware cursor', () => {
+  it('<=24 硬件模式优先选择 LOD2', () => {
+    const btoaSpy = vi.spyOn(globalThis, 'btoa');
     const props = createProps({
       currentSize: 24,
       brushTexture: {
-        cursorId: 'tip-hardware-short',
+        cursorId: 'tip-hardware-lod2',
         cursorPath: SIMPLE_CURSOR_PATH,
+        cursorPathLod0: LOD0_CURSOR_PATH,
+        cursorPathLod1: LOD1_CURSOR_PATH,
+        cursorPathLod2: LOD2_CURSOR_PATH,
       },
     });
 
@@ -48,6 +60,27 @@ describe('useCursor', () => {
 
     expect(result.current.showDomCursor).toBe(false);
     expect(result.current.cursorStyle.startsWith('url("data:image/svg+xml;base64,')).toBe(true);
+    expect(getLastBtoaInput(btoaSpy)).toContain(LOD2_CURSOR_PATH);
+  });
+
+  it('24~96 硬件模式优先选择 LOD1', () => {
+    const btoaSpy = vi.spyOn(globalThis, 'btoa');
+    const props = createProps({
+      currentSize: 48,
+      brushTexture: {
+        cursorId: 'tip-hardware-lod1',
+        cursorPath: SIMPLE_CURSOR_PATH,
+        cursorPathLod0: LOD0_CURSOR_PATH,
+        cursorPathLod1: LOD1_CURSOR_PATH,
+        cursorPathLod2: LOD2_CURSOR_PATH,
+      },
+    });
+
+    const { result } = renderHook(() => useCursor(props));
+
+    expect(result.current.showDomCursor).toBe(false);
+    expect(result.current.cursorStyle.startsWith('url("data:image/svg+xml;base64,')).toBe(true);
+    expect(getLastBtoaInput(btoaSpy)).toContain(LOD1_CURSOR_PATH);
   });
 
   it('small brush with over-limit cursorPath falls back to DOM cursor', () => {
@@ -65,12 +98,15 @@ describe('useCursor', () => {
     expect(result.current.cursorStyle).toBe('none');
   });
 
-  it('large brush keeps DOM cursor behavior', () => {
+  it('DOM 模式默认选择 LOD0', () => {
     const props = createProps({
       currentSize: 180,
       brushTexture: {
         cursorId: 'tip-large',
         cursorPath: SIMPLE_CURSOR_PATH,
+        cursorPathLod0: LOD0_CURSOR_PATH,
+        cursorPathLod1: LOD1_CURSOR_PATH,
+        cursorPathLod2: LOD2_CURSOR_PATH,
       },
     });
 
@@ -78,6 +114,21 @@ describe('useCursor', () => {
 
     expect(result.current.showDomCursor).toBe(true);
     expect(result.current.cursorStyle).toBe('none');
+    expect(result.current.resolvedDomCursorPath).toBe(LOD0_CURSOR_PATH);
+  });
+
+  it('缺失 LOD 字段时回退 legacy cursorPath', () => {
+    const props = createProps({
+      currentSize: 180,
+      brushTexture: {
+        cursorId: 'tip-legacy-only',
+        cursorPath: SIMPLE_CURSOR_PATH,
+      },
+    });
+
+    const { result } = renderHook(() => useCursor(props));
+    expect(result.current.showDomCursor).toBe(true);
+    expect(result.current.resolvedDomCursorPath).toBe(SIMPLE_CURSOR_PATH);
   });
 
   it('forceDomCursor debug switch disables hardware cursor even for small brush', () => {

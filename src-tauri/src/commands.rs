@@ -707,7 +707,7 @@ use crate::brush::soft_dab::{render_soft_dab, GaussParams};
 // ABR Brush Import
 // ============================================================================
 
-use crate::abr::{AbrBrush, AbrParser, BrushPreset};
+use crate::abr::{AbrBrush, AbrParser, BrushPreset, CursorLodPathLenLimits};
 use crate::brush::library as brush_library;
 use crate::brush::library::{
     BrushLibraryImportResult, BrushLibraryPreset, BrushLibraryPresetPayload, BrushLibrarySnapshot,
@@ -759,6 +759,20 @@ pub struct AbrBenchmark {
     pub raw_bytes: usize,
     /// Total compressed bytes
     pub compressed_bytes: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAbrOptions {
+    pub cursor_lod: Option<ImportAbrCursorLodOptions>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAbrCursorLodOptions {
+    pub lod0_path_len_soft_limit: Option<u32>,
+    pub lod1_path_len_limit: Option<u32>,
+    pub lod2_path_len_limit: Option<u32>,
 }
 
 // ============================================================================
@@ -829,19 +843,56 @@ pub fn stamp_soft_dab(
 ///
 /// Parses a Photoshop ABR brush file, caches textures via BrushCache,
 /// and returns lightweight metadata. Textures are served via `project://brush/{id}`.
-#[tauri::command]
-pub async fn import_abr_file(path: String) -> Result<ImportAbrResult, String> {
-    import_abr_file_internal(&path)
+fn normalize_cursor_path_len_limit(value: Option<u32>, default_value: usize) -> usize {
+    const MIN_LIMIT: usize = 512;
+    const MAX_LIMIT: usize = 2_000_000;
+    let raw = value.map(|v| v as usize).unwrap_or(default_value);
+    raw.clamp(MIN_LIMIT, MAX_LIMIT)
+}
+
+fn resolve_cursor_lod_path_len_limits(
+    options: Option<&ImportAbrOptions>,
+) -> CursorLodPathLenLimits {
+    let cursor_lod = options.and_then(|opts| opts.cursor_lod.as_ref());
+    CursorLodPathLenLimits {
+        lod0_path_len_soft_limit: normalize_cursor_path_len_limit(
+            cursor_lod.and_then(|value| value.lod0_path_len_soft_limit),
+            CursorLodPathLenLimits::default().lod0_path_len_soft_limit,
+        ),
+        lod1_path_len_limit: normalize_cursor_path_len_limit(
+            cursor_lod.and_then(|value| value.lod1_path_len_limit),
+            CursorLodPathLenLimits::default().lod1_path_len_limit,
+        ),
+        lod2_path_len_limit: normalize_cursor_path_len_limit(
+            cursor_lod.and_then(|value| value.lod2_path_len_limit),
+            CursorLodPathLenLimits::default().lod2_path_len_limit,
+        ),
+    }
 }
 
 #[tauri::command]
-pub async fn import_abr_to_brush_library(path: String) -> Result<BrushLibraryImportResult, String> {
-    let import_result = import_abr_file_internal(&path)?;
+pub async fn import_abr_file(
+    path: String,
+    options: Option<ImportAbrOptions>,
+) -> Result<ImportAbrResult, String> {
+    import_abr_file_internal(&path, options.as_ref())
+}
+
+#[tauri::command]
+pub async fn import_abr_to_brush_library(
+    path: String,
+    options: Option<ImportAbrOptions>,
+) -> Result<BrushLibraryImportResult, String> {
+    let import_result = import_abr_file_internal(&path, options.as_ref())?;
     brush_library::import_from_abr(&path, import_result.presets, import_result.tips)
 }
 
-fn import_abr_file_internal(path: &str) -> Result<ImportAbrResult, String> {
+fn import_abr_file_internal(
+    path: &str,
+    options: Option<&ImportAbrOptions>,
+) -> Result<ImportAbrResult, String> {
     let total_start = std::time::Instant::now();
+    let cursor_lod_limits = resolve_cursor_lod_path_len_limits(options);
 
     // Step 1: Read file
     let read_start = std::time::Instant::now();
@@ -975,7 +1026,7 @@ fn import_abr_file_internal(path: &str) -> Result<ImportAbrResult, String> {
         }
 
         // Build preset with the ID we generated
-        let preset = build_preset_with_id(brush, id);
+        let preset = build_preset_with_id(brush, id, cursor_lod_limits);
         if is_tip_only {
             tips.push(preset);
             continue;
@@ -1042,8 +1093,12 @@ fn import_abr_file_internal(path: &str) -> Result<ImportAbrResult, String> {
 }
 
 /// Build BrushPreset with a specific ID (used when we generate ID before caching)
-fn build_preset_with_id(brush: AbrBrush, id: String) -> BrushPreset {
-    let mut preset: BrushPreset = brush.into();
+fn build_preset_with_id(
+    brush: AbrBrush,
+    id: String,
+    cursor_lod_limits: CursorLodPathLenLimits,
+) -> BrushPreset {
+    let mut preset = BrushPreset::from_abr_with_cursor_lod(brush, cursor_lod_limits);
     preset.id = id;
     preset
 }
@@ -1385,7 +1440,11 @@ mod tests {
             base_flow: None,
         };
 
-        let preset = build_preset_with_id(brush, "preset-id".to_string());
+        let preset = build_preset_with_id(
+            brush,
+            "preset-id".to_string(),
+            CursorLodPathLenLimits::default(),
+        );
 
         assert!(preset.texture_settings.is_some());
         assert_eq!(

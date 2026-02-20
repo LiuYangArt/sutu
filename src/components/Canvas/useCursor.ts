@@ -67,6 +67,32 @@ export interface BrushCursorTexture {
   cursorPath?: string;
   /** Original texture bounds for proper scaling */
   cursorBounds?: { width: number; height: number };
+  /** Cursor LOD0 path */
+  cursorPathLod0?: string;
+  /** Cursor LOD1 path */
+  cursorPathLod1?: string;
+  /** Cursor LOD2 path */
+  cursorPathLod2?: string;
+  /** Cursor complexity metadata for LOD0 */
+  cursorComplexityLod0?: BrushCursorComplexityData;
+  /** Cursor complexity metadata for LOD1 */
+  cursorComplexityLod1?: BrushCursorComplexityData;
+  /** Cursor complexity metadata for LOD2 */
+  cursorComplexityLod2?: BrushCursorComplexityData;
+}
+
+interface BrushCursorComplexityData {
+  pathLen: number;
+  segmentCount: number;
+  contourCount: number;
+}
+
+type CursorPathLodLevel = 'lod0' | 'lod1' | 'lod2' | 'legacy' | 'ellipse';
+
+interface ResolvedCursorPath {
+  path: string | null;
+  lodLevel: CursorPathLodLevel;
+  complexity?: BrushCursorComplexityData;
 }
 
 /** Stroke style for cursor outline (dual-stroke for visibility) */
@@ -111,6 +137,10 @@ function buildHardwareCursorCacheKey(params: {
   roundness: number;
   showCrosshair: boolean;
   dpr: number;
+  lodLevel: CursorPathLodLevel;
+  pathLen: number;
+  segmentCount: number;
+  contourCount: number;
 }): string {
   return [
     params.tipId,
@@ -119,6 +149,10 @@ function buildHardwareCursorCacheKey(params: {
     formatCursorCacheNumber(params.roundness),
     params.showCrosshair ? '1' : '0',
     formatCursorCacheNumber(params.dpr),
+    params.lodLevel,
+    String(params.pathLen),
+    String(params.segmentCount),
+    String(params.contourCount),
   ].join('|');
 }
 
@@ -301,6 +335,69 @@ function createSelectionCursorSvg(modifier: 'plus' | 'minus' | null): string {
   return `url("${cursorUrl}") 4 4, default`;
 }
 
+interface CursorPathCandidate {
+  path: string;
+  lodLevel: CursorPathLodLevel;
+  complexity?: BrushCursorComplexityData;
+}
+
+function normalizeCursorPath(path: string | undefined): string | null {
+  if (typeof path !== 'string') return null;
+  const trimmed = path.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getCursorPathCandidate(
+  texture: BrushCursorTexture | null | undefined,
+  level: CursorPathLodLevel
+): CursorPathCandidate | null {
+  if (!texture) return null;
+
+  if (level === 'lod0') {
+    const path = normalizeCursorPath(texture.cursorPathLod0);
+    if (!path) return null;
+    return { path, lodLevel: 'lod0', complexity: texture.cursorComplexityLod0 };
+  }
+  if (level === 'lod1') {
+    const path = normalizeCursorPath(texture.cursorPathLod1);
+    if (!path) return null;
+    return { path, lodLevel: 'lod1', complexity: texture.cursorComplexityLod1 };
+  }
+  if (level === 'lod2') {
+    const path = normalizeCursorPath(texture.cursorPathLod2);
+    if (!path) return null;
+    return { path, lodLevel: 'lod2', complexity: texture.cursorComplexityLod2 };
+  }
+  if (level === 'legacy') {
+    const path = normalizeCursorPath(texture.cursorPath);
+    if (!path) return null;
+    return { path, lodLevel: 'legacy', complexity: texture.cursorComplexityLod2 };
+  }
+
+  return null;
+}
+
+function resolveCursorPathByOrder(
+  texture: BrushCursorTexture | null | undefined,
+  order: CursorPathLodLevel[],
+  maxPathLength?: number
+): ResolvedCursorPath {
+  for (const level of order) {
+    const candidate = getCursorPathCandidate(texture, level);
+    if (!candidate) continue;
+    if (typeof maxPathLength === 'number' && candidate.path.length > maxPathLength) {
+      continue;
+    }
+    return {
+      path: candidate.path,
+      lodLevel: candidate.lodLevel,
+      complexity: candidate.complexity,
+    };
+  }
+
+  return { path: null, lodLevel: 'ellipse' };
+}
+
 interface UseCursorProps {
   currentTool: ToolType;
   currentSize: number;
@@ -354,9 +451,28 @@ export function useCursor({
   const isInteracting = spacePressed || isPanning;
   const screenBrushSize = currentSize * scale;
   const isBrushTool = currentTool === 'brush' || currentTool === 'eraser';
-  const cursorPathLength = brushTexture?.cursorPath?.length ?? 0;
+  const domResolvedCursorPath = useMemo(
+    () => resolveCursorPathByOrder(brushTexture, ['lod0', 'lod1', 'lod2', 'legacy']),
+    [brushTexture]
+  );
+  const hardwarePathOrder = useMemo<CursorPathLodLevel[]>(
+    () =>
+      screenBrushSize <= 24
+        ? ['lod2', 'lod1', 'lod0', 'legacy']
+        : ['lod1', 'lod2', 'lod0', 'legacy'],
+    [screenBrushSize]
+  );
+  const hardwareResolvedCursorPath = useMemo(
+    () =>
+      resolveCursorPathByOrder(brushTexture, hardwarePathOrder, HARDWARE_CURSOR_MAX_PATH_LENGTH),
+    [brushTexture, hardwarePathOrder]
+  );
+  const hasAnyHardwarePathCandidate = useMemo(
+    () => resolveCursorPathByOrder(brushTexture, hardwarePathOrder).path !== null,
+    [brushTexture, hardwarePathOrder]
+  );
   const cursorPathWithinHardwareLimit =
-    cursorPathLength === 0 || cursorPathLength <= HARDWARE_CURSOR_MAX_PATH_LENGTH;
+    !hasAnyHardwarePathCandidate || hardwareResolvedCursorPath.path !== null;
   const cursorDevicePixelRatio = getCursorDevicePixelRatio();
   const shouldUseHardwareCursor =
     isBrushTool &&
@@ -398,7 +514,10 @@ export function useCursor({
       return '';
     }
     const tipId =
-      brushTexture?.cursorId ?? (brushTexture?.cursorPath ? 'texture-tip' : 'round-tip');
+      brushTexture?.cursorId ?? (hardwareResolvedCursorPath.path ? 'texture-tip' : 'round-tip');
+    const pathLen = hardwareResolvedCursorPath.path?.length ?? 0;
+    const segmentCount = hardwareResolvedCursorPath.complexity?.segmentCount ?? 0;
+    const contourCount = hardwareResolvedCursorPath.complexity?.contourCount ?? 0;
     const cacheKey = buildHardwareCursorCacheKey({
       tipId,
       size: screenBrushSize,
@@ -406,16 +525,27 @@ export function useCursor({
       roundness: brushRoundness,
       showCrosshair,
       dpr: cursorDevicePixelRatio,
+      lodLevel: hardwareResolvedCursorPath.lodLevel,
+      pathLen,
+      segmentCount,
+      contourCount,
     });
     const cached = getCachedHardwareCursorStyle(cacheKey);
     if (cached) {
       return cached;
     }
+    const cursorTextureForHardware =
+      hardwareResolvedCursorPath.path && brushTexture
+        ? {
+            ...brushTexture,
+            cursorPath: hardwareResolvedCursorPath.path,
+          }
+        : null;
     const created = createCursorSvg(
       screenBrushSize,
       brushRoundness,
       brushAngle,
-      brushTexture,
+      cursorTextureForHardware,
       showCrosshair
     );
     setCachedHardwareCursorStyle(cacheKey, created);
@@ -428,6 +558,7 @@ export function useCursor({
     brushAngle,
     cursorDevicePixelRatio,
     brushTexture,
+    hardwareResolvedCursorPath,
   ]);
 
   // Listen for Ctrl/Shift key changes globally
@@ -578,5 +709,7 @@ export function useCursor({
     cursorStyle,
     showDomCursor,
     showEyedropperDomCursor,
+    resolvedDomCursorPath: domResolvedCursorPath.path,
+    resolvedDomCursorLodLevel: domResolvedCursorPath.lodLevel,
   };
 }

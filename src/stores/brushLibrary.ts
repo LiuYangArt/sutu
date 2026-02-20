@@ -7,7 +7,11 @@ import {
   type BrushPresetSelectionByTool,
   type BrushPresetSelectionTool,
 } from '@/stores/settings';
-import type { BrushPreset, DualBrushSettingsPreset } from '@/components/BrushPanel/types';
+import type {
+  BrushPreset,
+  DualBrushSettingsPreset,
+  ImportAbrOptions,
+} from '@/components/BrushPanel/types';
 import { applyPresetToToolStore } from '@/components/BrushPanel/settings/BrushPresets';
 
 export type { BrushPresetSelectionByTool, BrushPresetSelectionTool } from '@/stores/settings';
@@ -197,6 +201,17 @@ function isSameSelection(
   return left.brush === right.brush && left.eraser === right.eraser;
 }
 
+function buildImportAbrOptions(): ImportAbrOptions {
+  const cursorLodDebug = useSettingsStore.getState().brush.cursorLodDebug;
+  return {
+    cursorLod: {
+      lod0PathLenSoftLimit: cursorLodDebug.lod0PathLenSoftLimit,
+      lod1PathLenLimit: cursorLodDebug.lod1PathLenLimit,
+      lod2PathLenLimit: cursorLodDebug.lod2PathLenLimit,
+    },
+  };
+}
+
 function persistSelectionToSettings(selection: BrushPresetSelectionByTool): void {
   const current = useSettingsStore.getState().brushLibrary.selectedPresetByTool;
   if (isSameSelection(selection, current)) {
@@ -268,6 +283,36 @@ function buildPresetFromToolState(
       activeTip?.cursorBounds ??
       currentPreset?.cursorBounds ??
       tool.brushTexture?.cursorBounds ??
+      null,
+    cursorPathLod0:
+      activeTip?.cursorPathLod0 ??
+      currentPreset?.cursorPathLod0 ??
+      tool.brushTexture?.cursorPathLod0 ??
+      null,
+    cursorPathLod1:
+      activeTip?.cursorPathLod1 ??
+      currentPreset?.cursorPathLod1 ??
+      tool.brushTexture?.cursorPathLod1 ??
+      null,
+    cursorPathLod2:
+      activeTip?.cursorPathLod2 ??
+      currentPreset?.cursorPathLod2 ??
+      tool.brushTexture?.cursorPathLod2 ??
+      null,
+    cursorComplexityLod0:
+      activeTip?.cursorComplexityLod0 ??
+      currentPreset?.cursorComplexityLod0 ??
+      tool.brushTexture?.cursorComplexityLod0 ??
+      null,
+    cursorComplexityLod1:
+      activeTip?.cursorComplexityLod1 ??
+      currentPreset?.cursorComplexityLod1 ??
+      tool.brushTexture?.cursorComplexityLod1 ??
+      null,
+    cursorComplexityLod2:
+      activeTip?.cursorComplexityLod2 ??
+      currentPreset?.cursorComplexityLod2 ??
+      tool.brushTexture?.cursorComplexityLod2 ??
       null,
     textureSettings: tool.textureSettings,
     dualBrushSettings: buildDualBrushSettings(),
@@ -362,8 +407,10 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
     importAbrFile: async (path: string) => {
       set({ isLoading: true, error: null });
       try {
+        const options = buildImportAbrOptions();
         const result = await invoke<BrushLibraryImportResult>('import_abr_to_brush_library', {
           path,
+          options,
         });
         const normalized = {
           ...result,
@@ -511,6 +558,12 @@ export const useBrushLibraryStore = create<BrushLibraryState>((set, get) => {
           height: tip.textureHeight,
           cursorPath: tip.cursorPath ?? undefined,
           cursorBounds: tip.cursorBounds ?? undefined,
+          cursorPathLod0: tip.cursorPathLod0 ?? undefined,
+          cursorPathLod1: tip.cursorPathLod1 ?? undefined,
+          cursorPathLod2: tip.cursorPathLod2 ?? undefined,
+          cursorComplexityLod0: tip.cursorComplexityLod0 ?? undefined,
+          cursorComplexityLod1: tip.cursorComplexityLod1 ?? undefined,
+          cursorComplexityLod2: tip.cursorComplexityLod2 ?? undefined,
         });
         return;
       }

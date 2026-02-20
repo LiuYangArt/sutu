@@ -94,10 +94,25 @@ export type RenderMode = 'gpu' | 'cpu';
  */
 export type GPURenderScaleMode = 'auto' | 'off';
 
+export interface CursorLodDebugSettings {
+  lod0PathLenSoftLimit: number;
+  lod1PathLenLimit: number;
+  lod2PathLenLimit: number;
+}
+
+export type CursorLodPathLenLimitKey = keyof CursorLodDebugSettings;
+
+export const DEFAULT_CURSOR_LOD_DEBUG_SETTINGS: CursorLodDebugSettings = {
+  lod0PathLenSoftLimit: 160000,
+  lod1PathLenLimit: 60000,
+  lod2PathLenLimit: 8000,
+};
+
 export interface BrushSettings {
   renderMode: RenderMode;
   gpuRenderScaleMode: GPURenderScaleMode;
   forceDomCursorDebug: boolean;
+  cursorLodDebug: CursorLodDebugSettings;
 }
 
 export type NewFileBackgroundPreset = 'transparent' | 'white' | 'black' | 'current-bg';
@@ -187,6 +202,8 @@ interface SettingsState extends PersistedSettings {
   setRenderMode: (mode: RenderMode) => void;
   setGpuRenderScaleMode: (mode: GPURenderScaleMode) => void;
   setForceDomCursorDebug: (enabled: boolean) => void;
+  setCursorLodPathLenLimit: (key: CursorLodPathLenLimitKey, value: number) => void;
+  resetCursorLodDebugDefaults: () => void;
 
   // New file preset actions
   addCustomSizePreset: (preset: { name: string; width: number; height: number }) => string;
@@ -512,6 +529,41 @@ function buildRecentFilesWithout(path: string, current: string[]): string[] {
   return normalizeRecentFiles(filtered);
 }
 
+const MIN_CURSOR_LOD_PATH_LEN_LIMIT = 512;
+const MAX_CURSOR_LOD_PATH_LEN_LIMIT = 2_000_000;
+
+function clampCursorLodPathLenLimit(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(
+    MIN_CURSOR_LOD_PATH_LEN_LIMIT,
+    Math.min(MAX_CURSOR_LOD_PATH_LEN_LIMIT, Math.round(value))
+  );
+}
+
+function normalizeCursorLodDebugSettings(
+  value: unknown,
+  fallback: CursorLodDebugSettings = DEFAULT_CURSOR_LOD_DEBUG_SETTINGS
+): CursorLodDebugSettings {
+  if (!value || typeof value !== 'object') {
+    return { ...fallback };
+  }
+  const partial = value as Partial<CursorLodDebugSettings>;
+  return {
+    lod0PathLenSoftLimit: clampCursorLodPathLenLimit(
+      Number(partial.lod0PathLenSoftLimit),
+      fallback.lod0PathLenSoftLimit
+    ),
+    lod1PathLenLimit: clampCursorLodPathLenLimit(
+      Number(partial.lod1PathLenLimit),
+      fallback.lod1PathLenLimit
+    ),
+    lod2PathLenLimit: clampCursorLodPathLenLimit(
+      Number(partial.lod2PathLenLimit),
+      fallback.lod2PathLenLimit
+    ),
+  };
+}
+
 // Default settings
 const defaultSettings: PersistedSettings = {
   appearance: {
@@ -536,6 +588,7 @@ const defaultSettings: PersistedSettings = {
     renderMode: 'gpu',
     gpuRenderScaleMode: 'off',
     forceDomCursorDebug: false,
+    cursorLodDebug: { ...DEFAULT_CURSOR_LOD_DEBUG_SETTINGS },
   },
   newFile: cloneDefaultNewFileSettings(),
   general: {
@@ -759,6 +812,21 @@ export const useSettingsStore = create<SettingsState>()(
       debouncedSave(() => get()._saveSettings());
     },
 
+    setCursorLodPathLenLimit: (key, value) => {
+      set((state) => {
+        const fallback = state.brush.cursorLodDebug[key];
+        state.brush.cursorLodDebug[key] = clampCursorLodPathLenLimit(value, fallback);
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
+    resetCursorLodDebugDefaults: () => {
+      set((state) => {
+        state.brush.cursorLodDebug = { ...DEFAULT_CURSOR_LOD_DEBUG_SETTINGS };
+      });
+      debouncedSave(() => get()._saveSettings());
+    },
+
     addCustomSizePreset: ({ name, width, height }) => {
       const id = createCustomSizePresetId();
       set((state) => {
@@ -934,6 +1002,10 @@ export const useSettingsStore = create<SettingsState>()(
                 forceDomCursorDebug: normalizeBoolean(
                   loaded.brush.forceDomCursorDebug,
                   defaultSettings.brush.forceDomCursorDebug
+                ),
+                cursorLodDebug: normalizeCursorLodDebugSettings(
+                  loaded.brush.cursorLodDebug,
+                  defaultSettings.brush.cursorLodDebug
                 ),
               };
             }

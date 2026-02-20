@@ -16,6 +16,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 }));
 
 import {
+  DEFAULT_CURSOR_LOD_DEBUG_SETTINGS,
   DEFAULT_NEW_FILE_SETTINGS,
   DEFAULT_QUICK_EXPORT_SETTINGS,
   useSettingsStore,
@@ -57,6 +58,7 @@ describe('settings store newFile persistence', () => {
         renderMode: 'gpu',
         gpuRenderScaleMode: 'off',
         forceDomCursorDebug: false,
+        cursorLodDebug: { ...DEFAULT_CURSOR_LOD_DEBUG_SETTINGS },
       },
       general: {
         language: 'en-US',
@@ -114,6 +116,7 @@ describe('settings store newFile persistence', () => {
     expect(state.brush.renderMode).toBe('cpu');
     expect(state.brush.gpuRenderScaleMode).toBe('auto');
     expect(state.brush.forceDomCursorDebug).toBe(false);
+    expect(state.brush.cursorLodDebug).toEqual(DEFAULT_CURSOR_LOD_DEBUG_SETTINGS);
     expect('colorBlendMode' in (state.brush as unknown as Record<string, unknown>)).toBe(false);
     expect(state.general.autosaveIntervalMinutes).toBe(10);
     expect(state.general.openLastFileOnStartup).toBe(true);
@@ -370,6 +373,79 @@ describe('settings store newFile persistence', () => {
     const parsed = JSON.parse(content) as { brush?: { forceDomCursorDebug?: boolean } };
 
     expect(parsed.brush?.forceDomCursorDebug).toBe(true);
+  });
+
+  it('loads default cursor LOD debug limits when field is missing', async () => {
+    fsMocks.exists.mockResolvedValue(true);
+    fsMocks.readTextFile.mockResolvedValue(
+      JSON.stringify({
+        brush: {
+          renderMode: 'gpu',
+          gpuRenderScaleMode: 'off',
+          forceDomCursorDebug: false,
+        },
+      })
+    );
+
+    await useSettingsStore.getState()._loadSettings();
+    expect(useSettingsStore.getState().brush.cursorLodDebug).toEqual(
+      DEFAULT_CURSOR_LOD_DEBUG_SETTINGS
+    );
+  });
+
+  it('persists updated cursor LOD debug limits', async () => {
+    fsMocks.exists.mockResolvedValue(false);
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    useSettingsStore.getState().setCursorLodPathLenLimit('lod1PathLenLimit', 43210);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const state = useSettingsStore.getState();
+    expect(state.brush.cursorLodDebug.lod1PathLenLimit).toBe(43210);
+
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as {
+      brush?: {
+        cursorLodDebug?: {
+          lod0PathLenSoftLimit?: number;
+          lod1PathLenLimit?: number;
+          lod2PathLenLimit?: number;
+        };
+      };
+    };
+    expect(parsed.brush?.cursorLodDebug?.lod1PathLenLimit).toBe(43210);
+  });
+
+  it('resets cursor LOD debug limits to defaults and persists', async () => {
+    fsMocks.exists.mockResolvedValue(false);
+    fsMocks.mkdir.mockResolvedValue(undefined);
+    fsMocks.writeTextFile.mockResolvedValue(undefined);
+
+    await useSettingsStore.getState()._loadSettings();
+    useSettingsStore.getState().setCursorLodPathLenLimit('lod0PathLenSoftLimit', 190000);
+    useSettingsStore.getState().setCursorLodPathLenLimit('lod2PathLenLimit', 9000);
+    useSettingsStore.getState().resetCursorLodDebugDefaults();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(useSettingsStore.getState().brush.cursorLodDebug).toEqual(
+      DEFAULT_CURSOR_LOD_DEBUG_SETTINGS
+    );
+
+    const lastCall = fsMocks.writeTextFile.mock.calls[fsMocks.writeTextFile.mock.calls.length - 1];
+    const content = String(lastCall?.[1] ?? '{}');
+    const parsed = JSON.parse(content) as {
+      brush?: {
+        cursorLodDebug?: {
+          lod0PathLenSoftLimit?: number;
+          lod1PathLenLimit?: number;
+          lod2PathLenLimit?: number;
+        };
+      };
+    };
+    expect(parsed.brush?.cursorLodDebug).toEqual(DEFAULT_CURSOR_LOD_DEBUG_SETTINGS);
   });
 
   it('clamps and persists tablet speed settings via actions', async () => {
