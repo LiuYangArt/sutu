@@ -101,6 +101,15 @@ export function useKeyboardShortcuts({
     [onBeforeSelectionMutation, pushSelection]
   );
 
+  const toggleSelectionShape = useCallback((): void => {
+    const selectionState = useSelectionStore.getState();
+    if (selectionState.selectionShape === 'rect') {
+      selectionState.setSelectionShape('circle');
+      return;
+    }
+    selectionState.setSelectionShape('rect');
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
@@ -266,6 +275,9 @@ export function useKeyboardShortcuts({
         case 'KeyM':
           if (!e.altKey) {
             e.preventDefault();
+            if (e.shiftKey) {
+              toggleSelectionShape();
+            }
             setTool('select');
           }
           break;
@@ -332,6 +344,7 @@ export function useKeyboardShortcuts({
     handleMergeAllLayers,
     handleOpenCurvesPanel,
     handleToggleHistoryPanel,
+    toggleSelectionShape,
   ]);
 
   return { spacePressed };

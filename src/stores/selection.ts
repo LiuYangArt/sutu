@@ -17,6 +17,7 @@ export type SelectionMode = 'new' | 'add' | 'subtract' | 'intersect';
  * - polygonal: Click to add vertices, double-click to complete
  */
 export type LassoMode = 'freehand' | 'polygonal';
+export type SelectionShape = 'rect' | 'circle';
 
 /** Selection path point */
 export interface SelectionPoint {
@@ -293,6 +294,7 @@ interface SelectionState {
   creationStart: SelectionPoint | null; // Start point for rect selection
   selectionMode: SelectionMode; // Boolean operation mode
   lassoMode: LassoMode; // Lasso sub-mode
+  selectionShape: SelectionShape; // Marquee shape sub-mode
 
   // Move state
   isMoving: boolean; // Currently moving selection
@@ -307,6 +309,7 @@ interface SelectionState {
   // Actions
   setSelectionMode: (mode: SelectionMode) => void;
   setLassoMode: (mode: LassoMode) => void;
+  setSelectionShape: (shape: SelectionShape) => void;
 
   // Selection creation
   beginSelection: (startPoint?: SelectionPoint) => void;
@@ -490,6 +493,46 @@ function createRectPath(start: SelectionPoint, end: SelectionPoint): SelectionPo
   return points.map((p) => ({ ...p, type: 'polygonal' }));
 }
 
+/**
+ * Create ellipse path from two corner points (bounding rectangle)
+ */
+function createEllipsePath(start: SelectionPoint, end: SelectionPoint): SelectionPoint[] {
+  const x1 = Math.min(start.x, end.x);
+  const y1 = Math.min(start.y, end.y);
+  const x2 = Math.max(start.x, end.x);
+  const y2 = Math.max(start.y, end.y);
+  const centerX = (x1 + x2) / 2;
+  const centerY = (y1 + y2) / 2;
+  const radiusX = (x2 - x1) / 2;
+  const radiusY = (y2 - y1) / 2;
+
+  // Use adaptive segment count to avoid polygonal edges on large ellipses.
+  // Keep an upper bound to control per-frame generation cost while dragging.
+  const maxRadius = Math.max(radiusX, radiusY);
+  const perimeterApprox =
+    Math.PI *
+    (3 * (radiusX + radiusY) - Math.sqrt((3 * radiusX + radiusY) * (radiusX + 3 * radiusY)));
+  const chordTargetPx = 10; // target edge length in pixels
+  const byPerimeter = Math.ceil(perimeterApprox / chordTargetPx);
+
+  const maxSagittaPx = 0.35; // max arc-to-chord deviation in pixels
+  const ratio = maxRadius > 0 ? 1 - maxSagittaPx / maxRadius : 1;
+  const angle = Math.acos(Math.max(-1, Math.min(1, ratio)));
+  const bySagitta = angle > 0 ? Math.ceil(Math.PI / angle) : 0;
+
+  const segments = Math.max(48, Math.min(360, Math.max(byPerimeter, bySagitta)));
+  const points: SelectionPoint[] = [];
+  for (let i = 0; i <= segments; i += 1) {
+    const theta = (i / segments) * Math.PI * 2;
+    points.push({
+      x: centerX + Math.cos(theta) * radiusX,
+      y: centerY + Math.sin(theta) * radiusY,
+      type: 'polygonal',
+    });
+  }
+  return points;
+}
+
 export const useSelectionStore = create<SelectionState>()((set, get) => ({
   // Initial state
   hasSelection: false,
@@ -505,6 +548,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   creationStart: null,
   selectionMode: 'new',
   lassoMode: 'freehand',
+  selectionShape: 'rect',
 
   // Move state
   isMoving: false,
@@ -518,6 +562,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   // Actions
   setSelectionMode: (mode) => set({ selectionMode: mode }),
   setLassoMode: (mode) => set({ lassoMode: mode }),
+  setSelectionShape: (shape) => set({ selectionShape: shape }),
 
   beginSelection: (startPoint) =>
     set({
@@ -538,10 +583,13 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     }),
 
   updateCreationRect: (start, end) =>
-    set({
+    set((state) => ({
       creationStart: start,
-      creationPoints: createRectPath(start, end),
-    }),
+      creationPoints:
+        state.selectionShape === 'circle'
+          ? createEllipsePath(start, end)
+          : createRectPath(start, end),
+    })),
 
   commitSelection: (documentWidth, documentHeight) => {
     const state = get();

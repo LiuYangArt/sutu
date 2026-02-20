@@ -19,6 +19,7 @@ function resetSelectionState(): void {
   useSelectionStore.getState().deselectAll();
   useSelectionStore.getState().setSelectionMode('new');
   useSelectionStore.getState().setLassoMode('freehand');
+  useSelectionStore.getState().setSelectionShape('rect');
 }
 
 describe('useSelectionHandler', () => {
