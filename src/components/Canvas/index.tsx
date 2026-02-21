@@ -498,6 +498,8 @@ export function Canvas() {
   const pendingPointsRef = useRef<QueuedPoint[]>([]);
   const inputQueueRef = useRef<QueuedPoint[]>([]);
   const pointIndexRef = useRef(0);
+  const usingRawInputRef = useRef(false);
+  const rawPointerIngressHandlerRef = useRef<((events: PointerEvent[]) => void) | null>(null);
 
   // Profiling
   const latencyProfilerRef = useRef(new LatencyProfiler());
@@ -1002,10 +1004,12 @@ export function Canvas() {
   // No need to subscribe to state changes here since we sync-read in handlers
 
   // Q1 Optimization: Use pointerrawupdate for lower-latency input (1-3ms improvement)
-  const { usingRawInput } = useRawPointerInput({
+  useRawPointerInput({
     containerRef,
     canvasRef,
     isDrawingRef,
+    usingRawInputRef,
+    pointerIngressHandlerRef: rawPointerIngressHandlerRef,
     currentTool,
     strokeStateRef,
     pendingPointsRef,
@@ -3178,55 +3182,67 @@ export function Canvas() {
     clearPreview: clearGradientPreview,
   });
 
-  const { handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel } =
-    usePointerHandlers({
-      containerRef,
-      canvasRef,
-      layerRendererRef,
-      useGpuDisplay: gpuDisplayActive,
-      sampleGpuPixelColor,
-      currentTool,
-      scale,
-      spacePressed,
-      isPanning,
-      setIsPanning,
-      panStartRef,
-      pan,
-      isZoomingRef,
-      zoomStartRef,
-      setScale,
-      setBrushColor,
-      width,
-      height,
-      layers,
-      activeLayerId,
-      captureBeforeImage,
-      initializeBrushStroke,
-      finishCurrentStroke,
-      isSelectionToolActive,
-      handleSelectionPointerDown,
-      handleSelectionPointerMove,
-      handleSelectionPointerUp,
-      handleMovePointerDown,
-      handleMovePointerMove,
-      handleMovePointerUp,
-      handleGradientPointerDown,
-      handleGradientPointerMove,
-      handleGradientPointerUp,
-      updateShiftLineCursor,
-      lockShiftLine,
-      constrainShiftLinePoint,
-      usingRawInput,
-      isDrawingRef,
-      strokeStateRef,
-      pendingPointsRef,
-      inputQueueRef,
-      pointIndexRef,
-      pendingEndRef,
-      lastInputPosRef,
-      latencyProfilerRef,
-      onBeforeCanvasMutation,
-    });
+  const {
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp,
+    handlePointerCancel,
+    handleRawPointerIngressEvents,
+  } = usePointerHandlers({
+    containerRef,
+    canvasRef,
+    layerRendererRef,
+    useGpuDisplay: gpuDisplayActive,
+    sampleGpuPixelColor,
+    currentTool,
+    scale,
+    spacePressed,
+    isPanning,
+    setIsPanning,
+    panStartRef,
+    pan,
+    isZoomingRef,
+    zoomStartRef,
+    setScale,
+    setBrushColor,
+    width,
+    height,
+    layers,
+    activeLayerId,
+    captureBeforeImage,
+    initializeBrushStroke,
+    finishCurrentStroke,
+    isSelectionToolActive,
+    handleSelectionPointerDown,
+    handleSelectionPointerMove,
+    handleSelectionPointerUp,
+    handleMovePointerDown,
+    handleMovePointerMove,
+    handleMovePointerUp,
+    handleGradientPointerDown,
+    handleGradientPointerMove,
+    handleGradientPointerUp,
+    updateShiftLineCursor,
+    lockShiftLine,
+    constrainShiftLinePoint,
+    usingRawInput: usingRawInputRef,
+    isDrawingRef,
+    strokeStateRef,
+    pendingPointsRef,
+    inputQueueRef,
+    pointIndexRef,
+    pendingEndRef,
+    lastInputPosRef,
+    latencyProfilerRef,
+    onBeforeCanvasMutation,
+  });
+
+  useEffect(() => {
+    rawPointerIngressHandlerRef.current = handleRawPointerIngressEvents;
+    return () => {
+      rawPointerIngressHandlerRef.current = null;
+    };
+  }, [handleRawPointerIngressEvents]);
 
   useEffect(() => {
     return () => {

@@ -35,6 +35,13 @@ export interface NativeCoordinateDiagnostics {
   macnative_out_of_view_count: number;
 }
 
+export interface IngressGateDiagnostics {
+  total_drop_count: number;
+  space_pan_drop_count: number;
+  canvas_lock_drop_count: number;
+  move_tool_drop_count: number;
+}
+
 export interface TabletStreamingBackendStateLike {
   backend: string | null | undefined;
   activeBackend: string | null | undefined;
@@ -116,6 +123,13 @@ let nativeCoordinateDiagnostics: NativeCoordinateDiagnostics = {
   macnative_out_of_view_count: 0,
 };
 
+let ingressGateDiagnostics: IngressGateDiagnostics = {
+  total_drop_count: 0,
+  space_pan_drop_count: 0,
+  canvas_lock_drop_count: 0,
+  move_tool_drop_count: 0,
+};
+
 function recordNativeCoordinateSample(source: StrictInputSource, outOfView: boolean): void {
   nativeCoordinateDiagnostics.total_count += 1;
   if (!outOfView) return;
@@ -129,11 +143,45 @@ export function getNativeCoordinateDiagnosticsSnapshot(): NativeCoordinateDiagno
   return { ...nativeCoordinateDiagnostics };
 }
 
+export function recordIngressGateDrop(
+  gate: {
+    spacePressed?: boolean;
+    isPanning?: boolean;
+    isZooming?: boolean;
+    currentTool?: string;
+    isCanvasInputLocked?: boolean;
+  },
+  count: number = 1
+): void {
+  const normalizedCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  if (normalizedCount <= 0) return;
+  ingressGateDiagnostics.total_drop_count += normalizedCount;
+  if (gate.isCanvasInputLocked) {
+    ingressGateDiagnostics.canvas_lock_drop_count += normalizedCount;
+  }
+  if (gate.currentTool === 'move') {
+    ingressGateDiagnostics.move_tool_drop_count += normalizedCount;
+  }
+  if (gate.spacePressed || gate.isPanning || gate.isZooming) {
+    ingressGateDiagnostics.space_pan_drop_count += normalizedCount;
+  }
+}
+
+export function getIngressGateDiagnosticsSnapshot(): IngressGateDiagnostics {
+  return { ...ingressGateDiagnostics };
+}
+
 export function resetNativeCoordinateDiagnosticsForTest(): void {
   nativeCoordinateDiagnostics = {
     total_count: 0,
     out_of_view_count: 0,
     macnative_out_of_view_count: 0,
+  };
+  ingressGateDiagnostics = {
+    total_drop_count: 0,
+    space_pan_drop_count: 0,
+    canvas_lock_drop_count: 0,
+    move_tool_drop_count: 0,
   };
 }
 

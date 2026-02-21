@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { detectPlatformKind } from '@/utils/platform';
-import { logTabletTrace } from '@/utils/tabletTrace';
+import { isTabletInputTraceEnabled, logTabletTrace } from '@/utils/tabletTrace';
 
 function resolveDefaultRequestedBackend(): BackendType {
   const platformKind = detectPlatformKind();
@@ -283,6 +283,7 @@ interface TabletState {
   queueMetrics: InputQueueMetrics;
   v3Diagnostics: TabletV3Diagnostics;
   bufferEpoch: number;
+  nativeIngressTick: number;
   info: TabletInfo | null;
   isInitialized: boolean;
   isStreaming: boolean;
@@ -404,6 +405,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
   queueMetrics: { ...EMPTY_QUEUE_METRICS },
   v3Diagnostics: { ...EMPTY_V3_DIAGNOSTICS },
   bufferEpoch: getPointBufferEpoch(),
+  nativeIngressTick: 0,
   info: null,
   isInitialized: false,
   isStreaming: false,
@@ -424,6 +426,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         ...toTabletStatusStatePatch(response),
         isInitialized: true,
         bufferEpoch: getPointBufferEpoch(),
+        nativeIngressTick: 0,
       });
     } catch (error) {
       console.error('[Tablet] Init failed:', error);
@@ -462,6 +465,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         currentPoint: null,
         inProximity: false,
         bufferEpoch: getPointBufferEpoch(),
+        nativeIngressTick: 0,
       });
       clearPointBuffer();
       nativeTraceStrokeActive = false;
@@ -549,7 +553,30 @@ export const useTabletStore = create<TabletState>((set, get) => ({
           if (addResult.seqRewindReset) {
             set({ bufferEpoch: addResult.bufferEpoch });
           }
-          get()._setPoint(point);
+          const nativeIngressSource = point.source === 'wintab' || point.source === 'macnative';
+          if (!nativeIngressSource) {
+            get()._setPoint(point);
+          } else {
+            set((state) => {
+              const nextNativeIngressTick = state.nativeIngressTick + 1;
+              if (isTabletInputTraceEnabled() && nextNativeIngressTick % 64 === 0) {
+                logTabletTrace('frontend.status.snapshot', {
+                  status: state.status,
+                  backend: state.backend,
+                  requested_backend: state.requestedBackend,
+                  active_backend: state.activeBackend,
+                  is_streaming: state.isStreaming,
+                  native_ingress_tick: nextNativeIngressTick,
+                  queue_metrics: state.queueMetrics,
+                  v3_diagnostics: state.v3Diagnostics,
+                });
+              }
+              return {
+                currentPoint: point,
+                nativeIngressTick: nextNativeIngressTick,
+              };
+            });
+          }
         } else if (payload === 'ProximityEnter') {
           logTabletTrace('frontend.recv.proximity_enter', {});
           get()._setProximity(true);
@@ -630,6 +657,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         unlisten: null,
         currentPoint: null,
         bufferEpoch: getPointBufferEpoch(),
+        nativeIngressTick: 0,
       });
     } catch (error) {
       console.error('[Tablet] Stop failed:', error);
@@ -657,6 +685,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
       isStreaming: false,
       currentPoint: null,
       bufferEpoch: getPointBufferEpoch(),
+      nativeIngressTick: 0,
     });
   },
 

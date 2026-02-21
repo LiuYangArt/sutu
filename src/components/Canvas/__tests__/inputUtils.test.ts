@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { TabletInputPoint } from '@/stores/tablet';
 import {
+  getIngressGateDiagnosticsSnapshot,
   getNativeCoordinateDiagnosticsSnapshot,
   isNativeTabletStreamingBackend,
   isNativeTabletStreamingState,
   mapNativeWindowPxToCanvasPoint,
   parseNativeTabletSample,
   parsePointerEventSample,
+  recordIngressGateDrop,
   resetNativeCoordinateDiagnosticsForTest,
   resolveNativeStrokePoints,
 } from '../inputUtils';
@@ -174,6 +176,31 @@ describe('inputUtils', () => {
     expect(diagnostics.total_count).toBe(1);
     expect(diagnostics.out_of_view_count).toBe(1);
     expect(diagnostics.macnative_out_of_view_count).toBe(1);
+  });
+
+  it('records ingress gate diagnostics for space/pan/move/canvas-lock drops', () => {
+    recordIngressGateDrop(
+      {
+        spacePressed: true,
+        isPanning: true,
+        currentTool: 'brush',
+        isCanvasInputLocked: false,
+      },
+      2
+    );
+    recordIngressGateDrop(
+      {
+        currentTool: 'move',
+        isCanvasInputLocked: true,
+      },
+      1
+    );
+
+    const diagnostics = getIngressGateDiagnosticsSnapshot();
+    expect(diagnostics.total_drop_count).toBe(3);
+    expect(diagnostics.space_pan_drop_count).toBe(2);
+    expect(diagnostics.move_tool_drop_count).toBe(1);
+    expect(diagnostics.canvas_lock_drop_count).toBe(1);
   });
 
   it('recognizes native streaming backends', () => {

@@ -82,6 +82,11 @@ function quantile(sorted, p) {
   return sorted[idx];
 }
 
+function getMsLag(traceEpochMs, hostTimeUs) {
+  if (!Number.isFinite(traceEpochMs) || !Number.isFinite(hostTimeUs)) return null;
+  return traceEpochMs - hostTimeUs / 1000;
+}
+
 function formatPercent(value) {
   if (!Number.isFinite(value)) return 'n/a';
   return `${(value * 100).toFixed(3)}%`;
@@ -208,6 +213,9 @@ function main() {
   const firstConsumedStrokeSeen = new Set();
   const firstDabPressureErrors = [];
   const emitterTransportLags = [];
+  const ingressConsumeLags = [];
+  let nativePumpConsumeCount = 0;
+  let spacePanDrawLeakCount = 0;
   let nativeEmptyWithContactCount = 0;
   let nativeConsumeCount = 0;
   let latestV3Diagnostics = null;
@@ -229,6 +237,10 @@ function main() {
     if (scope.startsWith('frontend.anomaly.') || scope === 'frontend.canvas.queue_drop') {
       inc(anomalyCounts, scope);
     }
+    if (scope === 'frontend.anomaly.space_pan_draw_leak') {
+      const count = Number(row.count);
+      spacePanDrawLeakCount += Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+    }
 
     if (row.v3_diagnostics && typeof row.v3_diagnostics === 'object') {
       latestV3Diagnostics = row.v3_diagnostics;
@@ -246,9 +258,17 @@ function main() {
     if (
       scope === 'frontend.pointermove.native_consume' ||
       scope === 'frontend.pointerup.native_consume' ||
+      scope === 'frontend.ingress.native_tick_consume' ||
       scope === 'frontend.native_pump.consume'
     ) {
+      const lagMs = getMsLag(row.trace_epoch_ms, row.host_time_us);
+      if (lagMs !== null) {
+        ingressConsumeLags.push(lagMs);
+      }
       nativeConsumeCount += 1;
+      if (scope === 'frontend.native_pump.consume') {
+        nativePumpConsumeCount += 1;
+      }
       const strokeId = Number(row.stroke_id);
       if (Number.isFinite(strokeId) && !firstConsumedStrokeSeen.has(strokeId)) {
         firstConsumedStrokeSeen.add(strokeId);
@@ -329,6 +349,10 @@ function main() {
   const firstDabPressureErrorP95 = quantile(firstDabPressureErrorSorted, 0.95);
   const emitTransportSorted = [...emitterTransportLags].sort((a, b) => a - b);
   const emitToFrontendRecvP95Ms = quantile(emitTransportSorted, 0.95);
+  const ingressConsumeSorted = [...ingressConsumeLags].sort((a, b) => a - b);
+  const hostToIngressConsumeP95Ms = quantile(ingressConsumeSorted, 0.95);
+  const nativePumpPrimaryConsumeRate =
+    nativeConsumeCount > 0 ? nativePumpConsumeCount / nativeConsumeCount : null;
   const pressureClampRate =
     latestV3Diagnostics &&
     Number.isFinite(latestV3Diagnostics.pressure_total_count) &&
@@ -351,6 +375,13 @@ function main() {
   console.log(
     `  emit_to_frontend_recv_p95_ms=${formatMs(emitToFrontendRecvP95Ms)} (threshold <= 8.00ms)`
   );
+  console.log(
+    `  host_to_ingress_consume_p95_ms=${formatMs(hostToIngressConsumeP95Ms)} (threshold <= 12.00ms)`
+  );
+  console.log(
+    `  native_pump_primary_consume_rate=${formatPercent(nativePumpPrimaryConsumeRate)} (threshold = 0.000%)`
+  );
+  console.log(`  space_pan_draw_leak_count=${spacePanDrawLeakCount} (threshold = 0)`);
   if (!latestV3Diagnostics) {
     console.log('  [Hint] pressure_clamp_rate requires v3_diagnostics snapshot rows in trace.');
   }

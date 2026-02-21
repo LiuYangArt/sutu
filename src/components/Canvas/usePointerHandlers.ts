@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
-import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
+import { useTabletStore } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { useUiInteractionStore } from '@/stores/uiInteraction';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
-import {
-  MacnativeSessionRouterV3,
-  createMacnativeSessionCursorV3,
-  type MacnativeSessionDiagnosticsDelta,
-  type UnifiedPointerEventV3,
-} from '@/engine/kritaParityInput/macnativeSessionRouterV3';
 import {
   isNativeTabletStreamingState,
   mapNativeWindowPxToCanvasPoint,
@@ -21,6 +15,7 @@ import {
 } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
 import { logTabletTrace } from '@/utils/tabletTrace';
+import { useUnifiedInputIngress, createIngressGateStateV3 } from './useUnifiedInputIngress';
 
 function pointerEventToCanvasPoint(
   canvas: HTMLCanvasElement,
@@ -193,8 +188,6 @@ export function usePointerHandlers({
 }: UsePointerHandlersParams) {
   const DOM_POINTER_ACTIVITY_TIMEOUT_MS = 24;
   const DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS = 120;
-  const nativeRouterRef = useRef<MacnativeSessionRouterV3>(new MacnativeSessionRouterV3());
-  const nativeSessionCursorRef = useRef(createMacnativeSessionCursorV3());
   const activePointerIdRef = useRef<number | null>(null);
   const activeSessionBackendRef = useRef<string | null>(null);
   const sessionStartedWithoutTrustedDownRef = useRef<boolean>(false);
@@ -312,82 +305,28 @@ export function usePointerHandlers({
   const markDomPointerActivity = useCallback(() => {
     lastDomPointerActivityMsRef.current = getNowMs();
   }, [getNowMs]);
+  const getIngressGateState = useCallback(() => {
+    return createIngressGateStateV3({
+      spacePressed,
+      isPanning: isPanningRef.current,
+      isZooming: isZoomingRef.current,
+      currentTool,
+      isCanvasInputLocked: useUiInteractionStore.getState().isCanvasInputLocked,
+    });
+  }, [currentTool, spacePressed, isZoomingRef]);
 
-  const applyNativeRouterDiagnosticsDelta = useCallback(
-    (delta: MacnativeSessionDiagnosticsDelta, stage: string) => {
-      if (delta.mixed_source_reject_count > 0) {
-        logTabletTrace('frontend.anomaly.native_mixed_source_reject', {
-          stage,
-          count: delta.mixed_source_reject_count,
-        });
-      }
-      if (delta.native_down_without_seed_count > 0) {
-        logTabletTrace('frontend.anomaly.native_down_without_seed', {
-          stage,
-          count: delta.native_down_without_seed_count,
-        });
-      }
-      if (delta.stroke_tail_drop_count > 0) {
-        logTabletTrace('frontend.anomaly.native_stroke_tail_drop', {
-          stage,
-          count: delta.stroke_tail_drop_count,
-        });
-      }
-      if (delta.seq_rewind_recovery_fail_count > 0) {
-        logTabletTrace('frontend.anomaly.native_seq_rewind_recovery_fail', {
-          stage,
-          count: delta.seq_rewind_recovery_fail_count,
-        });
-      }
-    },
-    []
-  );
-
-  const consumeNativeRoutedPoints = useCallback(
-    (
-      stage: string
-    ): {
-      rawPoints: ReturnType<typeof readPointBufferSince>['points'];
-      events: UnifiedPointerEventV3[];
-      cursor: ReturnType<typeof createMacnativeSessionCursorV3>;
-      bufferEpoch: number;
-    } => {
-      const readCursor = nativeSessionCursorRef.current.seq;
-      const readResult = readPointBufferSince(readCursor);
-      const effectiveBufferEpoch =
-        typeof readResult.bufferEpoch === 'number' && Number.isFinite(readResult.bufferEpoch)
-          ? readResult.bufferEpoch
-          : nativeSessionCursorRef.current.bufferEpoch;
-      const routeResult = nativeRouterRef.current.route({
-        points: readResult.points,
-        cursor: nativeSessionCursorRef.current,
-        bufferEpoch: effectiveBufferEpoch,
-      });
-      nativeSessionCursorRef.current = routeResult.nextCursor;
-      applyNativeRouterDiagnosticsDelta(routeResult.diagnosticsDelta, stage);
-      return {
-        rawPoints: readResult.points,
-        events: routeResult.events,
-        cursor: routeResult.nextCursor,
-        bufferEpoch: effectiveBufferEpoch,
-      };
-    },
-    [applyNativeRouterDiagnosticsDelta]
-  );
+  const {
+    consumeNativeRoutedPoints,
+    getCursorSnapshot: getIngressCursorSnapshot,
+    resetUnifiedIngress: resetNativeSessionRouter,
+    routePointerIngressPoints,
+  } = useUnifiedInputIngress({
+    getGateState: getIngressGateState,
+  });
 
   const flushNativePointBuffer = useCallback(() => {
     consumeNativeRoutedPoints('flush');
   }, [consumeNativeRoutedPoints]);
-
-  const resetNativeSessionRouter = useCallback(() => {
-    const bufferEpoch = nativeSessionCursorRef.current.bufferEpoch;
-    nativeRouterRef.current.reset();
-    nativeSessionCursorRef.current = createMacnativeSessionCursorV3({
-      seq: 0,
-      bufferEpoch,
-      activeStrokeId: null,
-    });
-  }, []);
 
   const pickColorAt = useCallback(
     async (canvasX: number, canvasY: number) => {
@@ -548,7 +487,7 @@ export function usePointerHandlers({
           (latestNativePoint.source === 'wintab' || latestNativePoint.source === 'macnative')
             ? latestNativePoint.seq
             : null;
-        const readCursorSeq = nativeSessionCursorRef.current.seq;
+        const readCursorSeq = getIngressCursorSnapshot().seq;
         const hasNewNativeSample =
           typeof latestNativeSeq !== 'number' || !Number.isFinite(latestNativeSeq)
             ? true
@@ -712,36 +651,62 @@ export function usePointerHandlers({
 
       for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
         const evt = coalescedEvents[eventIndex]!;
-        const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(canvas, evt, rect);
         const normalized = parsePointerEventSample(evt);
+        const ingressBatch = routePointerIngressPoints('pointermove.pointerevent', [
+          {
+            seq: 0,
+            stroke_id: activePointerId ?? evt.pointerId,
+            pointer_id: evt.pointerId,
+            source: normalized.source,
+            phase: normalized.phase,
+            x_px: evt.clientX,
+            y_px: evt.clientY,
+            pressure_0_1: normalized.pressure,
+            tilt_x_deg: normalized.tiltX * 90,
+            tilt_y_deg: normalized.tiltY * 90,
+            rotation_deg: normalized.rotation,
+            host_time_us: normalized.hostTimeUs,
+            device_time_us: normalized.deviceTimeUs,
+          },
+        ]);
+        const routedEvent = ingressBatch.events[0];
+        if (!routedEvent) {
+          continue;
+        }
+        const routedSample = parseNativeTabletSample(routedEvent);
+        const { x: canvasX, y: canvasY } = pointerEventToCanvasPoint(
+          canvas,
+          { clientX: routedSample.xPx, clientY: routedSample.yPx },
+          rect
+        );
         const idx = pointIndexRef.current++;
         latencyProfilerRef.current.markInputReceived(idx, evt);
         const queuedPoint: QueuedPoint = {
           x: canvasX,
           y: canvasY,
-          pressure: normalized.pressure,
-          tiltX: normalized.tiltX,
-          tiltY: normalized.tiltY,
-          rotation: normalized.rotation,
-          timestampMs: normalized.timestampMs,
-          source: normalized.source,
-          phase: normalized.phase,
-          hostTimeUs: normalized.hostTimeUs,
-          deviceTimeUs: normalized.deviceTimeUs,
+          pressure: routedSample.pressure,
+          tiltX: routedSample.tiltX,
+          tiltY: routedSample.tiltY,
+          rotation: routedSample.rotation,
+          timestampMs: routedSample.timestampMs,
+          source: routedSample.source,
+          phase: routedSample.phase,
+          hostTimeUs: routedSample.hostTimeUs,
+          deviceTimeUs: routedSample.deviceTimeUs,
           pointIndex: idx,
         };
 
         logTabletTrace('frontend.pointermove.pointerevent_consume', {
           pointer_id: evt.pointerId,
-          phase: normalized.phase,
-          source: normalized.source,
-          client_x: evt.clientX,
-          client_y: evt.clientY,
+          phase: routedSample.phase,
+          source: routedSample.source,
+          client_x: routedSample.xPx,
+          client_y: routedSample.yPx,
           mapped_canvas_x: canvasX,
           mapped_canvas_y: canvasY,
-          pressure_0_1: normalized.pressure,
-          host_time_us: normalized.hostTimeUs,
-          device_time_us: normalized.deviceTimeUs,
+          pressure_0_1: routedSample.pressure,
+          host_time_us: routedSample.hostTimeUs,
+          device_time_us: routedSample.deviceTimeUs,
         });
 
         const state = strokeStateRef.current;
@@ -771,7 +736,9 @@ export function usePointerHandlers({
       updateShiftLineCursor,
       isDrawingRef,
       usingRawInput,
+      getIngressCursorSnapshot,
       consumeNativeRoutedPoints,
+      routePointerIngressPoints,
       pointIndexRef,
       latencyProfilerRef,
       strokeStateRef,
@@ -779,6 +746,221 @@ export function usePointerHandlers({
       inputQueueRef,
     ]
   );
+
+  const handleRawPointerIngressEvents = useCallback(
+    (events: PointerEvent[]) => {
+      if (!isDrawingRef.current || !isStrokeTool(currentTool)) {
+        return;
+      }
+      const canvas = canvasRef.current;
+      if (!canvas || events.length <= 0) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+        const evt = events[eventIndex]!;
+        const normalized = parsePointerEventSample(evt);
+        const ingressBatch = routePointerIngressPoints('pointerrawupdate.pointerevent', [
+          {
+            seq: 0,
+            stroke_id: activePointerIdRef.current ?? evt.pointerId,
+            pointer_id: evt.pointerId,
+            source: normalized.source,
+            phase: normalized.phase,
+            x_px: evt.clientX,
+            y_px: evt.clientY,
+            pressure_0_1: normalized.pressure,
+            tilt_x_deg: normalized.tiltX * 90,
+            tilt_y_deg: normalized.tiltY * 90,
+            rotation_deg: normalized.rotation,
+            host_time_us: normalized.hostTimeUs,
+            device_time_us: normalized.deviceTimeUs,
+          },
+        ]);
+        const routedEvent = ingressBatch.events[0];
+        if (!routedEvent) {
+          continue;
+        }
+        const routedSample = parseNativeTabletSample(routedEvent);
+        const mapped = pointerEventToCanvasPoint(
+          canvas,
+          { clientX: routedSample.xPx, clientY: routedSample.yPx },
+          rect
+        );
+        const idx = pointIndexRef.current++;
+        latencyProfilerRef.current.markInputReceived(idx, evt);
+        const queuedPoint: QueuedPoint = {
+          x: mapped.x,
+          y: mapped.y,
+          pressure: routedSample.pressure,
+          tiltX: routedSample.tiltX,
+          tiltY: routedSample.tiltY,
+          rotation: routedSample.rotation,
+          timestampMs: routedSample.timestampMs,
+          source: routedSample.source,
+          phase: routedSample.phase,
+          hostTimeUs: routedSample.hostTimeUs,
+          deviceTimeUs: routedSample.deviceTimeUs,
+          pointIndex: idx,
+        };
+
+        const strokeState = strokeStateRef.current;
+        if (strokeState === 'starting') {
+          pendingPointsRef.current.push(queuedPoint);
+          window.__strokeDiagnostics?.onPointBuffered();
+        } else if (strokeState === 'active' || strokeState === 'finishing') {
+          inputQueueRef.current.push(queuedPoint);
+          window.__strokeDiagnostics?.onPointBuffered();
+        }
+
+        logTabletTrace('frontend.pointerrawupdate.pointerevent_consume', {
+          pointer_id: evt.pointerId,
+          phase: routedSample.phase,
+          source: routedSample.source,
+          client_x: routedSample.xPx,
+          client_y: routedSample.yPx,
+          mapped_canvas_x: mapped.x,
+          mapped_canvas_y: mapped.y,
+          pressure_0_1: routedSample.pressure,
+          host_time_us: routedSample.hostTimeUs,
+          device_time_us: routedSample.deviceTimeUs,
+        });
+      }
+    },
+    [
+      currentTool,
+      canvasRef,
+      isDrawingRef,
+      routePointerIngressPoints,
+      pointIndexRef,
+      latencyProfilerRef,
+      strokeStateRef,
+      pendingPointsRef,
+      inputQueueRef,
+    ]
+  );
+
+  useEffect(() => {
+    const subscribeStore = (
+      useTabletStore as unknown as {
+        subscribe?: (
+          listener: (state: ReturnType<typeof useTabletStore.getState>) => void
+        ) => () => void;
+      }
+    ).subscribe;
+    if (typeof subscribeStore !== 'function') {
+      return undefined;
+    }
+
+    let lastIngressTick = useTabletStore.getState().nativeIngressTick;
+    const unsubscribe = subscribeStore((state) => {
+      if (state.nativeIngressTick === lastIngressTick) {
+        return;
+      }
+      lastIngressTick = state.nativeIngressTick;
+
+      if (!isDrawingRef.current || !isStrokeTool(currentTool)) {
+        return;
+      }
+      if (!isNativeTabletStreamingState(state)) {
+        return;
+      }
+
+      const gateState = getIngressGateState();
+      const blockedByGesture =
+        gateState.isCanvasInputLocked ||
+        gateState.spacePressed ||
+        gateState.isPanning ||
+        gateState.isZooming ||
+        gateState.currentTool === 'move';
+      if (blockedByGesture) {
+        return;
+      }
+
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const nativeBatch = consumeNativeRoutedPoints('native_tick');
+      if (nativeBatch.events.length <= 0) {
+        return;
+      }
+
+      for (const nativePoint of nativeBatch.events) {
+        const normalized = parseNativeTabletSample(nativePoint);
+        if (normalized.phase === 'hover') continue;
+
+        const mapped = mapNativeWindowPxToCanvasPoint(
+          canvas,
+          rect,
+          normalized.xPx,
+          normalized.yPx,
+          normalized.source
+        );
+        const idx = pointIndexRef.current++;
+        latencyProfilerRef.current.markInputReceived(idx, {
+          timeStamp: normalized.timestampMs,
+        } as PointerEvent);
+        const queuedPoint: QueuedPoint = {
+          x: mapped.x,
+          y: mapped.y,
+          pressure: normalized.pressure,
+          tiltX: normalized.tiltX,
+          tiltY: normalized.tiltY,
+          rotation: normalized.rotation,
+          timestampMs: normalized.timestampMs,
+          source: normalized.source,
+          phase: normalized.phase,
+          hostTimeUs: normalized.hostTimeUs,
+          deviceTimeUs: normalized.deviceTimeUs,
+          pointIndex: idx,
+        };
+
+        const strokeState = strokeStateRef.current;
+        if (strokeState === 'starting') {
+          pendingPointsRef.current.push(queuedPoint);
+          window.__strokeDiagnostics?.onPointBuffered();
+        } else if (strokeState === 'active' || strokeState === 'finishing') {
+          inputQueueRef.current.push(queuedPoint);
+          window.__strokeDiagnostics?.onPointBuffered();
+        }
+
+        logTabletTrace('frontend.ingress.native_tick_consume', {
+          pointer_id: nativePoint.pointer_id,
+          stroke_id: nativePoint.stroke_id,
+          seq: nativePoint.seq,
+          phase: normalized.phase,
+          mapped_canvas_x: mapped.x,
+          mapped_canvas_y: mapped.y,
+          pressure_0_1: normalized.pressure,
+        });
+
+        if (normalized.phase === 'up') {
+          usingRawInput.current = false;
+          nativeMissingInputStreakRef.current = 0;
+          endPointerSession(nativePoint.pointer_id);
+          void requestFinishCurrentStroke();
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [
+    canvasRef,
+    currentTool,
+    getIngressGateState,
+    consumeNativeRoutedPoints,
+    isDrawingRef,
+    strokeStateRef,
+    pendingPointsRef,
+    inputQueueRef,
+    pointIndexRef,
+    latencyProfilerRef,
+    usingRawInput,
+    endPointerSession,
+    requestFinishCurrentStroke,
+  ]);
 
   const processPointerUpNative = useCallback(
     (nativeEvent: PointerEvent) => {
@@ -900,34 +1082,64 @@ export function usePointerHandlers({
             }
           } else {
             const normalized = parsePointerEventSample(nativeEvent);
-            const mapped = pointerEventToCanvasPoint(canvas, nativeEvent, rect);
+            const ingressBatch = routePointerIngressPoints('pointerup.pointerevent', [
+              {
+                seq: 0,
+                stroke_id: nativeEvent.pointerId,
+                pointer_id: nativeEvent.pointerId,
+                source: normalized.source,
+                phase: 'up',
+                x_px: nativeEvent.clientX,
+                y_px: nativeEvent.clientY,
+                pressure_0_1: normalized.pressure,
+                tilt_x_deg: normalized.tiltX * 90,
+                tilt_y_deg: normalized.tiltY * 90,
+                rotation_deg: normalized.rotation,
+                host_time_us: normalized.hostTimeUs,
+                device_time_us: normalized.deviceTimeUs,
+              },
+            ]);
+            const routedEvent = ingressBatch.events[0];
+            if (!routedEvent) {
+              usingRawInput.current = false;
+              nativeMissingInputStreakRef.current = 0;
+              endPointerSession(nativeEvent.pointerId);
+              void requestFinishCurrentStroke();
+              return;
+            }
+            const routedSample = parseNativeTabletSample(routedEvent);
+            const mapped = pointerEventToCanvasPoint(
+              canvas,
+              { clientX: routedSample.xPx, clientY: routedSample.yPx },
+              rect
+            );
             const idx = pointIndexRef.current++;
             latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
             queuedTailPoints.push({
               x: mapped.x,
               y: mapped.y,
-              pressure: normalized.pressure,
-              tiltX: normalized.tiltX,
-              tiltY: normalized.tiltY,
-              rotation: normalized.rotation,
-              timestampMs: normalized.timestampMs,
-              source: normalized.source,
-              phase: 'up',
-              hostTimeUs: normalized.hostTimeUs,
-              deviceTimeUs: normalized.deviceTimeUs,
+              pressure: routedSample.pressure,
+              tiltX: routedSample.tiltX,
+              tiltY: routedSample.tiltY,
+              rotation: routedSample.rotation,
+              timestampMs: routedSample.timestampMs,
+              source: routedSample.source,
+              phase: routedSample.phase,
+              hostTimeUs: routedSample.hostTimeUs,
+              deviceTimeUs: routedSample.deviceTimeUs,
               pointIndex: idx,
             });
             logTabletTrace('frontend.pointerup.pointerevent_consume', {
               pointer_id: nativeEvent.pointerId,
-              phase: 'up',
-              source: normalized.source,
-              client_x: nativeEvent.clientX,
-              client_y: nativeEvent.clientY,
+              phase: routedSample.phase,
+              source: routedSample.source,
+              client_x: routedSample.xPx,
+              client_y: routedSample.yPx,
               mapped_canvas_x: mapped.x,
               mapped_canvas_y: mapped.y,
-              pressure_0_1: normalized.pressure,
-              host_time_us: normalized.hostTimeUs,
-              device_time_us: normalized.deviceTimeUs,
+              pressure_0_1: routedSample.pressure,
+              host_time_us: routedSample.hostTimeUs,
+              device_time_us: routedSample.deviceTimeUs,
             });
           }
 
@@ -973,6 +1185,7 @@ export function usePointerHandlers({
       pointIndexRef,
       latencyProfilerRef,
       consumeNativeRoutedPoints,
+      routePointerIngressPoints,
     ]
   );
 
@@ -1388,19 +1601,40 @@ export function usePointerHandlers({
           }
         } else {
           const normalized = parsePointerEventSample(pe);
-          strokeSeedPoints.push({
-            x: pointerCanvasPoint.x,
-            y: pointerCanvasPoint.y,
-            pressure: normalized.pressure,
-            tiltX: normalized.tiltX,
-            tiltY: normalized.tiltY,
-            rotation: normalized.rotation,
-            timestampMs: normalized.timestampMs,
-            source: normalized.source,
-            phase: 'down',
-            hostTimeUs: normalized.hostTimeUs,
-            deviceTimeUs: normalized.deviceTimeUs,
-          });
+          const ingressBatch = routePointerIngressPoints('pointerdown.pointerevent_seed', [
+            {
+              seq: 0,
+              stroke_id: pe.pointerId,
+              pointer_id: pe.pointerId,
+              source: normalized.source,
+              phase: 'down',
+              x_px: pe.clientX,
+              y_px: pe.clientY,
+              pressure_0_1: normalized.pressure,
+              tilt_x_deg: normalized.tiltX * 90,
+              tilt_y_deg: normalized.tiltY * 90,
+              rotation_deg: normalized.rotation,
+              host_time_us: normalized.hostTimeUs,
+              device_time_us: normalized.deviceTimeUs,
+            },
+          ]);
+          const routedSeed = ingressBatch.events[0];
+          if (routedSeed) {
+            const routedSample = parseNativeTabletSample(routedSeed);
+            strokeSeedPoints.push({
+              x: pointerCanvasPoint.x,
+              y: pointerCanvasPoint.y,
+              pressure: routedSample.pressure,
+              tiltX: routedSample.tiltX,
+              tiltY: routedSample.tiltY,
+              rotation: routedSample.rotation,
+              timestampMs: routedSample.timestampMs,
+              source: routedSample.source,
+              phase: routedSample.phase,
+              hostTimeUs: routedSample.hostTimeUs,
+              deviceTimeUs: routedSample.deviceTimeUs,
+            });
+          }
           logTabletTrace('frontend.pointerdown.pointerevent_seed', {
             pointer_id: pe.pointerId,
             phase: 'down',
@@ -1515,6 +1749,7 @@ export function usePointerHandlers({
       lastInputPosRef,
       beginPointerSession,
       consumeNativeRoutedPoints,
+      routePointerIngressPoints,
       resetNativeSessionRouter,
       usingRawInput,
       onBeforeCanvasMutation,
@@ -1548,6 +1783,12 @@ export function usePointerHandlers({
       const domInactiveForMs = getNowMs() - lastDomPointerActivityMsRef.current;
       const gestureOwnsPointer =
         spacePressed || isPanningRef.current || isZoomingRef.current || currentTool === 'move';
+      const allowPumpFallbackConsume =
+        (
+          window as typeof window & {
+            __forceNativePumpFallback?: boolean;
+          }
+        ).__forceNativePumpFallback === true;
       const shouldPumpNative =
         nativeBackendActive &&
         !gestureOwnsPointer &&
@@ -1638,6 +1879,16 @@ export function usePointerHandlers({
                 continue;
               }
 
+              if (!allowPumpFallbackConsume) {
+                logTabletTrace('frontend.native_pump.fallback_skip', {
+                  pointer_id: nativePoint.pointer_id,
+                  stroke_id: nativePoint.stroke_id,
+                  seq: nativePoint.seq,
+                  phase: normalized.phase,
+                });
+                continue;
+              }
+
               const idx = pointIndexRef.current++;
               const queuedPoint: QueuedPoint = {
                 x: mapped.x,
@@ -1672,6 +1923,7 @@ export function usePointerHandlers({
                 mapped_canvas_y: mapped.y,
                 pressure_0_1: normalized.pressure,
                 stroke_state: strokeStateRef.current,
+                fallback_mode: true,
               });
 
               if (normalized.phase === 'up') {
@@ -1720,6 +1972,7 @@ export function usePointerHandlers({
     initializeBrushStroke,
     consumeNativeRoutedPoints,
     flushNativePointBuffer,
+    isZoomingRef,
   ]);
 
   const handlePointerDown = useCallback(
@@ -1753,5 +2006,11 @@ export function usePointerHandlers({
     [processPointerUpNative]
   );
 
-  return { handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel };
+  return {
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp,
+    handlePointerCancel,
+    handleRawPointerIngressEvents,
+  };
 }

@@ -31,7 +31,16 @@
 2. `pressure_clamp_rate <= 0.1%`
 3. `first_dab_pressure_error_p95 <= 0.12`
 4. `emit_to_frontend_recv_p95_ms <= 8`
+5. `host_to_ingress_consume_p95_ms <= 12`
+6. `native_pump_primary_consume_rate = 0`
+7. `space_pan_draw_leak_count = 0`
 
-## 6. 调整规则
+## 6. 入口层统一条款（新增）
+1. `wintab/macnative/pointerevent` 必须先进入同一 `UnifiedSessionRouterV3 + IngressGateStateV3`，再进入 Krita 对齐笔刷链。
+2. `pointerevent` 允许继续前端直采，但禁止绕过统一 router/gate 直接写入绘制主队列。
+3. `native_pump` 仅允许作为异常兜底与观测分支，不得作为默认主消费路径。
+4. `DOM_POINTER_ACTIVITY_TIMEOUT_MS` 仅作为兜底触发条件，不得作为正常消费的主时钟。
+
+## 7. 调整规则
 1. 阈值仅允许通过更新本附录一次性调整。
 2. 代码中禁止引入动态阈值分支或运行时 fallback。

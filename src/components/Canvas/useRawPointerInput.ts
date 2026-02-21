@@ -1,4 +1,4 @@
-import { useEffect, useRef, MutableRefObject, RefObject } from 'react';
+import { useCallback, useEffect, useRef, MutableRefObject, RefObject } from 'react';
 import { useTabletStore } from '@/stores/tablet';
 import { isNativeTabletStreamingState, parsePointerEventSample } from './inputUtils';
 import { clientToCanvasPoint } from './canvasGeometry';
@@ -27,6 +27,8 @@ interface RawPointerInputConfig {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   isDrawingRef: MutableRefObject<boolean>;
   currentTool: string;
+  usingRawInputRef?: MutableRefObject<boolean>;
+  pointerIngressHandlerRef?: MutableRefObject<((events: PointerEvent[]) => void) | null>;
   strokeStateRef: MutableRefObject<string>;
   pendingPointsRef: MutableRefObject<QueuedPoint[]>;
   inputQueueRef: MutableRefObject<QueuedPoint[]>;
@@ -53,6 +55,8 @@ export function useRawPointerInput({
   canvasRef,
   isDrawingRef,
   currentTool,
+  usingRawInputRef,
+  pointerIngressHandlerRef,
   strokeStateRef,
   pendingPointsRef,
   inputQueueRef,
@@ -60,38 +64,53 @@ export function useRawPointerInput({
   latencyProfiler,
   onPointBuffered,
 }: RawPointerInputConfig) {
-  const usingRawInputRef = useRef(false);
+  const internalUsingRawInputRef = useRef(false);
+  const resolvedUsingRawInputRef = usingRawInputRef ?? internalUsingRawInputRef;
+
+  const setUsingRawInput = useCallback(
+    (value: boolean): void => {
+      resolvedUsingRawInputRef.current = value;
+    },
+    [resolvedUsingRawInputRef]
+  );
 
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
 
     if (!container || !canvas || !supportsPointerRawUpdate) {
-      usingRawInputRef.current = false;
+      setUsingRawInput(false);
       return;
     }
 
     const handleRawUpdate = (e: Event) => {
       const pe = e as PointerEvent;
       if (!isPointerEventMode()) {
-        usingRawInputRef.current = false;
+        setUsingRawInput(false);
         return;
       }
       if (!isDrawingRef.current || (currentTool !== 'brush' && currentTool !== 'eraser')) {
-        usingRawInputRef.current = false;
+        setUsingRawInput(false);
         return;
       }
 
       const state = strokeStateRef.current;
       if (state !== 'starting' && state !== 'active') {
-        usingRawInputRef.current = false;
+        setUsingRawInput(false);
         return;
       }
 
-      usingRawInputRef.current = true;
-      const rect = canvas.getBoundingClientRect();
       const sampledEvents = pe.getCoalescedEvents?.();
       const coalescedEvents = sampledEvents && sampledEvents.length > 0 ? sampledEvents : [pe];
+      const ingressHandler = pointerIngressHandlerRef?.current;
+      if (ingressHandler) {
+        setUsingRawInput(true);
+        ingressHandler(coalescedEvents);
+        return;
+      }
+
+      setUsingRawInput(true);
+      const rect = canvas.getBoundingClientRect();
 
       for (let eventIndex = 0; eventIndex < coalescedEvents.length; eventIndex += 1) {
         const evt = coalescedEvents[eventIndex]!;
@@ -132,12 +151,14 @@ export function useRawPointerInput({
     container.addEventListener('pointerrawupdate', handleRawUpdate, { passive: true });
     return () => {
       container.removeEventListener('pointerrawupdate', handleRawUpdate);
-      usingRawInputRef.current = false;
+      setUsingRawInput(false);
     };
   }, [
     containerRef,
     canvasRef,
     isDrawingRef,
+    usingRawInputRef,
+    pointerIngressHandlerRef,
     currentTool,
     strokeStateRef,
     pendingPointsRef,
@@ -145,7 +166,8 @@ export function useRawPointerInput({
     pointIndexRef,
     latencyProfiler,
     onPointBuffered,
+    setUsingRawInput,
   ]);
 
-  return { usingRawInput: usingRawInputRef, supportsRawInput: supportsPointerRawUpdate };
+  return { usingRawInput: resolvedUsingRawInputRef, supportsRawInput: supportsPointerRawUpdate };
 }

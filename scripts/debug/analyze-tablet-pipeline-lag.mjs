@@ -183,6 +183,7 @@ function main() {
   const recvByStroke = new Map();
   const consumeLags = [];
   const consumeByStroke = new Map();
+  const ingressConsumeLags = [];
   const emitterOldestLags = [];
   const emitterNewestLags = [];
   const emitterTransportLags = [];
@@ -198,6 +199,8 @@ function main() {
 
   let nativeEmptyWithContactCount = 0;
   let nativeConsumeSampleCount = 0;
+  let nativePumpConsumeCount = 0;
+  let spacePanDrawLeakCount = 0;
   let latestV3Diagnostics = null;
 
   let parsedRows = 0;
@@ -242,17 +245,28 @@ function main() {
       continue;
     }
 
+    if (scope === 'frontend.anomaly.space_pan_draw_leak') {
+      const count = Number(row.count);
+      spacePanDrawLeakCount += Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+      continue;
+    }
+
     if (
       scope === 'frontend.pointermove.native_consume' ||
       scope === 'frontend.pointerup.native_consume' ||
+      scope === 'frontend.ingress.native_tick_consume' ||
       scope === 'frontend.native_pump.consume'
     ) {
       const lag = getMsLag(traceEpochMs, row.host_time_us);
       if (lag !== null) {
         consumeLags.push(lag);
+        ingressConsumeLags.push(lag);
         addStrokeLag(consumeByStroke, row.stroke_id, lag);
       }
       nativeConsumeSampleCount += 1;
+      if (scope === 'frontend.native_pump.consume') {
+        nativePumpConsumeCount += 1;
+      }
       const strokeId = Number(row.stroke_id);
       const pressure = Number(row.pressure_0_1);
       if (
@@ -330,6 +344,7 @@ function main() {
   );
   summarizeLags('frontend.recv.native_v3 (host->recv)', recvLags);
   summarizeLags('frontend.native_consume (host->consume)', consumeLags);
+  summarizeLags('frontend.ingress.consume (host->ingress)', ingressConsumeLags);
   summarizeLags('emitter oldest_input_latency (host->emit)', emitterOldestLags);
   summarizeLags('emitter newest_input_latency (host->emit)', emitterNewestLags);
   summarizeLags('emitter transport (emit->frontend.recv)', emitterTransportLags);
@@ -350,6 +365,10 @@ function main() {
     nativeEmptyDenominator > 0 ? nativeEmptyWithContactCount / nativeEmptyDenominator : null;
   const firstDabErrorSorted = [...firstDabPressureErrors].sort((a, b) => a - b);
   const firstDabPressureErrorP95 = quantile(firstDabErrorSorted, 0.95);
+  const ingressConsumeSorted = [...ingressConsumeLags].sort((a, b) => a - b);
+  const hostToIngressConsumeP95Ms = quantile(ingressConsumeSorted, 0.95);
+  const nativePumpPrimaryConsumeRate =
+    nativeConsumeSampleCount > 0 ? nativePumpConsumeCount / nativeConsumeSampleCount : null;
   const pressureClampRate =
     latestV3Diagnostics &&
     Number.isFinite(latestV3Diagnostics.pressure_total_count) &&
@@ -371,6 +390,13 @@ function main() {
   console.log(
     `  emit_to_frontend_recv_p95_ms=${formatMs(emitToFrontendRecvP95Ms)} (threshold <= 8.00ms)`
   );
+  console.log(
+    `  host_to_ingress_consume_p95_ms=${formatMs(hostToIngressConsumeP95Ms)} (threshold <= 12.00ms)`
+  );
+  console.log(
+    `  native_pump_primary_consume_rate=${formatPercent(nativePumpPrimaryConsumeRate)} (threshold = 0.000%)`
+  );
+  console.log(`  space_pan_draw_leak_count=${spacePanDrawLeakCount} (threshold = 0)`);
   if (!latestV3Diagnostics) {
     console.log('  [Hint] pressure_clamp_rate requires v3_diagnostics snapshot rows in trace.');
   }
