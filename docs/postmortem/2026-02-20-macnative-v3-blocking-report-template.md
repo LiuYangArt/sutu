@@ -22,6 +22,8 @@
 4. trace 文件路径：
 
 ## 4. Blocking 指标（入口层统一版）
+> 必填要求：第 7/8/9 项不得为 `n/a`；若为 `n/a`，本次报告默认不通过。
+
 1. `phase_transition_error_count`：
 2. `native_down_without_seed_count`：
 3. `stroke_tail_drop_count`：

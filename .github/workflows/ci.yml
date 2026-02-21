@@ -110,6 +110,15 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Run input ingress guard tests
+        run: >
+          pnpm test --
+          src/components/Canvas/__tests__/usePointerHandlers.nativeOffset.test.ts
+          src/components/Canvas/__tests__/useUnifiedInputIngress.test.ts
+          src/engine/kritaParityInput/__tests__/unifiedSessionRouterV3.test.ts
+          src/engine/kritaParityInput/__tests__/macnativePipelineV3.test.ts
+          src/engine/kritaParityInput/__tests__/macnativeSeqRewindRecovery.test.ts
+
       - name: Run frontend tests
         run: pnpm test -- --coverage
 

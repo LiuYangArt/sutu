@@ -85,6 +85,35 @@ A 路线采用“共享 Core + 双端适配层”：
 
 ---
 
+### 3.2 输入入口统一（Ingress Unification, 2026-02）
+
+为防止后端分叉导致延迟/丢笔回归，桌面输入链路冻结为单一入口：
+
+1. 后端采样层：WinTab / MacNative / PointerEvent
+2. 统一入口层：`UnifiedSessionRouterV3 + IngressGateStateV3`
+3. 绘制主链：Krita 对齐笔刷处理（Builder/LUT/Smoother/Sampler/Mix/Sensor）
+
+强制约束：
+
+1. 任何输入源都不能绕过统一入口直接写绘制主队列。
+2. `native_pump` 仅作为 debug 兜底观测分支，默认不参与主消费。
+3. `seq rewind` 恢复和 `bufferEpoch` 复位必须在统一入口层处理。
+
+```
+WinTab/MacNative/PointerEvent
+          │
+          ▼
+UnifiedSessionRouterV3 + IngressGateStateV3
+          │
+          ▼
+Krita Parity Brush Pipeline
+          │
+          ▼
+Canvas Dabs / GPU Render
+```
+
+---
+
 ## 4. 核心模块设计
 
 ### 4.1 GPU-First 笔刷引擎 (GPU-First Brush Engine)

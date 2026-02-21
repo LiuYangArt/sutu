@@ -57,9 +57,17 @@ pnpm format           # 格式化代码
 
 1. **平台原生后端/PointerEvent** 捕获原始输入 (Rust)
 2. **IPC** 传输至前端
-3. **Frontend Brush Engine** (TS): 插值、抖动、生成 Dabs
-4. **Renderer** (WebGPU): 实时写入 Stroke Buffer 并合成到显示层（绘画阶段不做 readback）
-5. **Export/Snapshot**: 仅在导出/截图时执行显式 readback
+3. **Unified Ingress Router + Gate**（TS）归一化输入会话（`UnifiedSessionRouterV3` + `IngressGateStateV3`）
+4. **Frontend Brush Engine** (TS): 插值、抖动、生成 Dabs
+5. **Renderer** (WebGPU): 实时写入 Stroke Buffer 并合成到显示层（绘画阶段不做 readback）
+6. **Export/Snapshot**: 仅在导出/截图时执行显式 readback
+
+### 输入链路不变量（硬规则）
+
+1. `wintab/macnative/pointerevent` 必须先进入统一入口（`UnifiedSessionRouterV3 + Gate`），再进入笔刷链。
+2. 禁止后端或任意旁路直接写绘制主队列，`pendingPointsRef/inputQueueRef` 仅允许入口/处理器白名单模块访问。
+3. `native_pump` 仅允许 debug 兜底，不可作为默认主消费路径。
+4. PR 必须附带入口链路回归测试结果（见 CI 必跑集合）。
 
 ## 代码规范
 

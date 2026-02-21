@@ -195,6 +195,13 @@ function printSuspiciousStrokes(strokeMap) {
   }
 }
 
+const PRIMARY_NATIVE_CONSUME_SCOPES = new Set([
+  'frontend.pointermove.native_consume',
+  'frontend.pointerup.native_consume',
+  'frontend.ingress.native_tick_consume',
+  'frontend.native_pump.consume',
+]);
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!fs.existsSync(args.file)) {
@@ -255,12 +262,7 @@ function main() {
     if (scope === 'frontend.pointermove.native_empty' && row.pointer_contact) {
       nativeEmptyWithContactCount += 1;
     }
-    if (
-      scope === 'frontend.pointermove.native_consume' ||
-      scope === 'frontend.pointerup.native_consume' ||
-      scope === 'frontend.ingress.native_tick_consume' ||
-      scope === 'frontend.native_pump.consume'
-    ) {
+    if (PRIMARY_NATIVE_CONSUME_SCOPES.has(scope)) {
       const lagMs = getMsLag(row.trace_epoch_ms, row.host_time_us);
       if (lagMs !== null) {
         ingressConsumeLags.push(lagMs);
@@ -306,6 +308,7 @@ function main() {
         break;
       case 'frontend.pointermove.native_consume':
       case 'frontend.pointerup.native_consume':
+      case 'frontend.ingress.native_tick_consume':
         counter.nativeConsume += 1;
         break;
       case 'frontend.native_pump.stroke_start':
@@ -333,6 +336,21 @@ function main() {
   printStrokeSummary(strokeCounters);
   console.log('');
   printSuspiciousStrokes(strokeCounters);
+  console.log('');
+  const strokeSummaryNativeConsumeTotal = [...strokeCounters.values()].reduce(
+    (sum, counter) => sum + counter.nativeConsume,
+    0
+  );
+  console.log('[Trace] scope consistency check:');
+  console.log(`  consume_scopes_total=${nativeConsumeCount}`);
+  console.log(`  stroke_summary_native_consume_total=${strokeSummaryNativeConsumeTotal}`);
+  if (strokeSummaryNativeConsumeTotal !== nativeConsumeCount) {
+    console.log(
+      `  [Warning] mismatch=${nativeConsumeCount - strokeSummaryNativeConsumeTotal} (summary likely missing scope mapping)`
+    );
+  } else {
+    console.log('  status=ok');
+  }
   console.log('');
   console.log('[Trace] anomaly counts:');
   if (anomalyCounts.size === 0) {

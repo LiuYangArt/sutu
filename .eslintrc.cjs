@@ -48,5 +48,33 @@ module.exports = {
     'prefer-const': 'error',
     'no-var': 'error',
   },
+  overrides: [
+    {
+      files: ['src/components/Canvas/**/*.{ts,tsx}'],
+      excludedFiles: [
+        'src/components/Canvas/index.tsx',
+        'src/components/Canvas/usePointerHandlers.ts',
+        'src/components/Canvas/useRawPointerInput.ts',
+        'src/components/Canvas/useStrokeProcessor.ts',
+        'src/components/Canvas/useUnifiedInputIngress.ts',
+        'src/components/Canvas/__tests__/**/*.{ts,tsx}',
+      ],
+      rules: {
+        'no-restricted-syntax': [
+          'error',
+          {
+            selector: "MemberExpression[object.name='pendingPointsRef']",
+            message:
+              'Do not write drawing queue refs outside ingress whitelist modules. Route input via UnifiedSessionRouterV3 + Gate.',
+          },
+          {
+            selector: "MemberExpression[object.name='inputQueueRef']",
+            message:
+              'Do not write drawing queue refs outside ingress whitelist modules. Route input via UnifiedSessionRouterV3 + Gate.',
+          },
+        ],
+      },
+    },
+  ],
   ignorePatterns: ['dist', 'node_modules', 'src-tauri/target'],
 };

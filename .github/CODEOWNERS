@@ -1,0 +1,10 @@
+# Input ingress guard ownership
+/src/components/Canvas/usePointerHandlers.ts @LiuYangArt
+/src/components/Canvas/useUnifiedInputIngress.ts @LiuYangArt
+/src/components/Canvas/useRawPointerInput.ts @LiuYangArt
+/src/engine/kritaParityInput/unifiedSessionRouterV3.ts @LiuYangArt
+/src/engine/kritaParityInput/macnativeSessionRouterV3.ts @LiuYangArt
+/src/stores/tablet.ts @LiuYangArt
+/scripts/debug/analyze-tablet-trace.mjs @LiuYangArt
+/scripts/debug/analyze-tablet-pipeline-lag.mjs @LiuYangArt
+/docs/postmortem/2026-02-20-macnative-v3-blocking-report-template.md @LiuYangArt

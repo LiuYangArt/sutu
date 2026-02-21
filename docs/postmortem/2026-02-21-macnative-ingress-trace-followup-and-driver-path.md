@@ -34,7 +34,24 @@
 2. 只看 `stroke summary` 不够，必须和 `top scopes + canvas.consume_point + dab_emit` 交叉验证。
 3. `pressure_clamp_rate` 和 `first_dab_pressure_error_p95` 仍会出现 `n/a`，当次 trace 中需要保证包含足够的 `frontend.status.snapshot` 与有效首点对齐样本。
 
-## 5. 如果后续要接 Wacom Driver（macOS）怎么做
+## 5. 前序调试补充经验（cursor/dab 偏移与“60Hz”问题）
+1. cursor 与 dab 偏移问题：
+   1. 现象：普通窗口模式出现“dab 在 cursor 下方”，macOS 绿色按钮进入全屏后偏移消失。
+   2. 结论：这是窗口坐标到 WebView client 坐标的语义错配，不是笔刷算法问题。
+   3. 经验：
+      1. 输入契约必须冻结为 `x_px/y_px = WebView client px`，前端只做 `client->canvas` 缩放。
+      2. 验收必须包含“两种窗口形态”：普通窗口 + macOS 全屏（隐藏菜单栏/标题栏）。
+      3. 任何基于窗口外框（title bar/chrome）的隐式偏移补丁都应禁止进入主路径。
+2. “macnative 只有 60Hz”判断的经验：
+   1. 现象：一次采样统计出现约 `60Hz`，容易被误判为硬件或后端上限。
+   2. 结论：`60Hz` 往往是“有效消费节拍”而非“硬件报告率”；两者必须分开测。
+   3. 经验：
+      1. 硬件报告率看 `host_time_us` 连续间隔（后端/emit 侧）。
+      2. 体感流畅度看 `host->ingress->canvas` 链路时延与抖动（前端消费侧）。
+      3. 即使设备支持 `200Hz+`，若消费时钟被 DOM/pump/队列门禁限制，前端有效频率仍会显著下降。
+      4. 判断“后端是否错”前，先同时对比 `emitter cadence` 与 `ingress consume cadence`。
+
+## 6. 如果后续要接 Wacom Driver（macOS）怎么做
 > 本节是后续路线，不在本轮实现范围。
 
 1. 总体原则：
@@ -57,6 +74,6 @@
    2. macOS 权限/事件源限制需提前验证（尤其后台/前台焦点行为）。
    3. 若新后端未显著降低 `host_to_ingress_consume_p95` 或提升稳定性，不应切主。
 
-## 6. 本轮决策
+## 7. 本轮决策
 1. 按要求暂停继续功能改动，不基于本次 log 继续做行为修补。
 2. 本轮只完成证据归档、经验沉淀、代码清理与提交。
