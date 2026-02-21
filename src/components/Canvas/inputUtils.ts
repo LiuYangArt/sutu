@@ -1,4 +1,5 @@
 import type { TabletInputPoint } from '@/stores/tablet';
+import type { UnifiedPointerEventV3 } from '@/engine/kritaParityInput/macnativeSessionRouterV3';
 
 type StrictInputSource = 'wintab' | 'macnative' | 'pointerevent';
 
@@ -26,6 +27,12 @@ export interface NativeInputSample {
   hostTimeUs: number;
   deviceTimeUs: number;
   phase: 'hover' | 'down' | 'move' | 'up';
+}
+
+export interface NativeCoordinateDiagnostics {
+  total_count: number;
+  out_of_view_count: number;
+  macnative_out_of_view_count: number;
 }
 
 export interface TabletStreamingBackendStateLike {
@@ -71,14 +78,63 @@ function resolveNativeSource(source: string): StrictInputSource {
   return 'pointerevent';
 }
 
-function resolveHostTimeUs(value: number, fallbackTimestampMs: number): number {
+function resolveHostTimeUs(value: number, fallbackTimestampMs?: number): number {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
-  return Math.max(0, Math.round(fallbackTimestampMs * 1000));
+  if (typeof fallbackTimestampMs === 'number' && Number.isFinite(fallbackTimestampMs)) {
+    return Math.max(0, Math.round(fallbackTimestampMs * 1000));
+  }
+  return Math.max(0, Math.round(Date.now() * 1000));
 }
 
 function resolveDeviceTimeUs(value: number | null | undefined, hostTimeUs: number): number {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
   return hostTimeUs;
+}
+
+type NativeTabletPointLike = Pick<
+  TabletInputPoint,
+  | 'source'
+  | 'phase'
+  | 'x_px'
+  | 'y_px'
+  | 'pressure_0_1'
+  | 'tilt_x_deg'
+  | 'tilt_y_deg'
+  | 'rotation_deg'
+  | 'host_time_us'
+  | 'device_time_us'
+> &
+  Partial<Pick<TabletInputPoint, 'timestamp_ms'>> &
+  Partial<UnifiedPointerEventV3>;
+
+type NativeStrokePointLike = Pick<TabletInputPoint, 'seq' | 'stroke_id' | 'pointer_id' | 'phase'> &
+  NativeTabletPointLike;
+
+let nativeCoordinateDiagnostics: NativeCoordinateDiagnostics = {
+  total_count: 0,
+  out_of_view_count: 0,
+  macnative_out_of_view_count: 0,
+};
+
+function recordNativeCoordinateSample(source: StrictInputSource, outOfView: boolean): void {
+  nativeCoordinateDiagnostics.total_count += 1;
+  if (!outOfView) return;
+  nativeCoordinateDiagnostics.out_of_view_count += 1;
+  if (source === 'macnative') {
+    nativeCoordinateDiagnostics.macnative_out_of_view_count += 1;
+  }
+}
+
+export function getNativeCoordinateDiagnosticsSnapshot(): NativeCoordinateDiagnostics {
+  return { ...nativeCoordinateDiagnostics };
+}
+
+export function resetNativeCoordinateDiagnosticsForTest(): void {
+  nativeCoordinateDiagnostics = {
+    total_count: 0,
+    out_of_view_count: 0,
+    macnative_out_of_view_count: 0,
+  };
 }
 
 type PointerEventWithAngles = PointerEvent & {
@@ -164,7 +220,7 @@ export function parsePointerEventSample(evt: PointerEvent): PointerInputSample {
   };
 }
 
-export function parseNativeTabletSample(point: TabletInputPoint): NativeInputSample {
+export function parseNativeTabletSample(point: NativeTabletPointLike): NativeInputSample {
   const hostTimeUs = resolveHostTimeUs(point.host_time_us, point.timestamp_ms);
   const deviceTimeUs = resolveDeviceTimeUs(point.device_time_us, hostTimeUs);
   const phase =
@@ -190,12 +246,17 @@ export function mapNativeWindowPxToCanvasPoint(
   canvas: HTMLCanvasElement,
   rect: { left: number; top: number; width: number; height: number },
   xPx: number,
-  yPx: number
+  yPx: number,
+  source: StrictInputSource = 'pointerevent'
 ): { x: number; y: number } {
   const rectWidth =
     Number.isFinite(rect.width) && rect.width > 0 ? rect.width : Math.max(1, canvas.width);
   const rectHeight =
     Number.isFinite(rect.height) && rect.height > 0 ? rect.height : Math.max(1, canvas.height);
+  const right = rect.left + rectWidth;
+  const bottom = rect.top + rectHeight;
+  const outOfView = xPx < rect.left || xPx > right || yPx < rect.top || yPx > bottom;
+  recordNativeCoordinateSample(source, outOfView);
   const scaleX = canvas.width / rectWidth;
   const scaleY = canvas.height / rectHeight;
   return {
@@ -204,10 +265,20 @@ export function mapNativeWindowPxToCanvasPoint(
   };
 }
 
+export function mapNativeClientPxToCanvasPoint(
+  canvas: HTMLCanvasElement,
+  rect: { left: number; top: number; width: number; height: number },
+  xPx: number,
+  yPx: number,
+  source: StrictInputSource = 'pointerevent'
+): { x: number; y: number } {
+  return mapNativeWindowPxToCanvasPoint(canvas, rect, xPx, yPx, source);
+}
+
 export function resolveNativeStrokePoints(
-  bufferedPoints: TabletInputPoint[],
-  currentPoint: TabletInputPoint | null
-): TabletInputPoint[] {
+  bufferedPoints: NativeStrokePointLike[],
+  currentPoint: NativeStrokePointLike | null
+): NativeStrokePointLike[] {
   const sourcePoints =
     bufferedPoints.length > 0 ? bufferedPoints : currentPoint ? [currentPoint] : [];
   if (sourcePoints.length === 0) return [];

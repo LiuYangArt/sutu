@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
-import { readPointBufferSince, useTabletStore, type TabletInputPoint } from '@/stores/tablet';
+import { readPointBufferSince, useTabletStore } from '@/stores/tablet';
 import { ToolType } from '@/stores/tool';
 import { Layer } from '@/stores/document';
 import { useUiInteractionStore } from '@/stores/uiInteraction';
 import { LatencyProfiler } from '@/benchmark/LatencyProfiler';
 import { LayerRenderer } from '@/utils/layerRenderer';
+import {
+  MacnativeSessionRouterV3,
+  createMacnativeSessionCursorV3,
+  type MacnativeSessionDiagnosticsDelta,
+  type UnifiedPointerEventV3,
+} from '@/engine/kritaParityInput/macnativeSessionRouterV3';
 import {
   isNativeTabletStreamingState,
   mapNativeWindowPxToCanvasPoint,
@@ -130,15 +136,6 @@ function isEventInsideContainer(container: HTMLDivElement | null, event: Pointer
   return target instanceof Node ? container.contains(target) : false;
 }
 
-function filterNativePointsByPointerId(
-  points: TabletInputPoint[],
-  pointerId: number | null
-): TabletInputPoint[] {
-  if (pointerId === null) return points;
-  const filtered = points.filter((point) => point.pointer_id === pointerId);
-  return filtered.length > 0 ? filtered : points;
-}
-
 function normalizeBackendSessionKey(backendName: string | null): string {
   if (typeof backendName !== 'string' || backendName.length <= 0) {
     return 'none';
@@ -196,7 +193,8 @@ export function usePointerHandlers({
 }: UsePointerHandlersParams) {
   const DOM_POINTER_ACTIVITY_TIMEOUT_MS = 24;
   const DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS = 120;
-  const nativeSeqCursorRef = useRef(0);
+  const nativeRouterRef = useRef<MacnativeSessionRouterV3>(new MacnativeSessionRouterV3());
+  const nativeSessionCursorRef = useRef(createMacnativeSessionCursorV3());
   const activePointerIdRef = useRef<number | null>(null);
   const activeSessionBackendRef = useRef<string | null>(null);
   const lastTrustedPointerDownAtMsRef = useRef<number>(-Infinity);
@@ -312,9 +310,80 @@ export function usePointerHandlers({
     lastDomPointerActivityMsRef.current = getNowMs();
   }, [getNowMs]);
 
+  const applyNativeRouterDiagnosticsDelta = useCallback(
+    (delta: MacnativeSessionDiagnosticsDelta, stage: string) => {
+      if (delta.mixed_source_reject_count > 0) {
+        logTabletTrace('frontend.anomaly.native_mixed_source_reject', {
+          stage,
+          count: delta.mixed_source_reject_count,
+        });
+      }
+      if (delta.native_down_without_seed_count > 0) {
+        logTabletTrace('frontend.anomaly.native_down_without_seed', {
+          stage,
+          count: delta.native_down_without_seed_count,
+        });
+      }
+      if (delta.stroke_tail_drop_count > 0) {
+        logTabletTrace('frontend.anomaly.native_stroke_tail_drop', {
+          stage,
+          count: delta.stroke_tail_drop_count,
+        });
+      }
+      if (delta.seq_rewind_recovery_fail_count > 0) {
+        logTabletTrace('frontend.anomaly.native_seq_rewind_recovery_fail', {
+          stage,
+          count: delta.seq_rewind_recovery_fail_count,
+        });
+      }
+    },
+    []
+  );
+
+  const consumeNativeRoutedPoints = useCallback(
+    (
+      stage: string
+    ): {
+      rawPoints: ReturnType<typeof readPointBufferSince>['points'];
+      events: UnifiedPointerEventV3[];
+      cursor: ReturnType<typeof createMacnativeSessionCursorV3>;
+      bufferEpoch: number;
+    } => {
+      const readCursor = nativeSessionCursorRef.current.seq;
+      const readResult = readPointBufferSince(readCursor);
+      const effectiveBufferEpoch =
+        typeof readResult.bufferEpoch === 'number' && Number.isFinite(readResult.bufferEpoch)
+          ? readResult.bufferEpoch
+          : nativeSessionCursorRef.current.bufferEpoch;
+      const routeResult = nativeRouterRef.current.route({
+        points: readResult.points,
+        cursor: nativeSessionCursorRef.current,
+        bufferEpoch: effectiveBufferEpoch,
+      });
+      nativeSessionCursorRef.current = routeResult.nextCursor;
+      applyNativeRouterDiagnosticsDelta(routeResult.diagnosticsDelta, stage);
+      return {
+        rawPoints: readResult.points,
+        events: routeResult.events,
+        cursor: routeResult.nextCursor,
+        bufferEpoch: effectiveBufferEpoch,
+      };
+    },
+    [applyNativeRouterDiagnosticsDelta]
+  );
+
   const flushNativePointBuffer = useCallback(() => {
-    const { nextSeq } = readPointBufferSince(nativeSeqCursorRef.current);
-    nativeSeqCursorRef.current = nextSeq;
+    consumeNativeRoutedPoints('flush');
+  }, [consumeNativeRoutedPoints]);
+
+  const resetNativeSessionRouter = useCallback(() => {
+    const bufferEpoch = nativeSessionCursorRef.current.bufferEpoch;
+    nativeRouterRef.current.reset();
+    nativeSessionCursorRef.current = createMacnativeSessionCursorV3({
+      seq: 0,
+      bufferEpoch,
+      activeStrokeId: null,
+    });
   }, []);
 
   const pickColorAt = useCallback(
@@ -467,14 +536,8 @@ export function usePointerHandlers({
       const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
       const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
       if (shouldUseNativeBackend) {
-        const { points: bufferedPointsRaw, nextSeq } = readPointBufferSince(
-          nativeSeqCursorRef.current
-        );
-        nativeSeqCursorRef.current = nextSeq;
-        const resolvedNativePoints = filterNativePointsByPointerId(
-          bufferedPointsRaw,
-          activePointerId
-        );
+        const nativeBatch = consumeNativeRoutedPoints('pointermove');
+        const resolvedNativePoints = nativeBatch.events;
         if (resolvedNativePoints.length === 0) {
           const hasPointerContact =
             (typeof nativeEvent.pressure === 'number' && nativeEvent.pressure > 0) ||
@@ -485,7 +548,9 @@ export function usePointerHandlers({
           logTabletTrace('frontend.pointermove.native_empty', {
             pointer_id: nativeEvent.pointerId,
             active_pointer_id: activePointerId,
-            read_cursor_seq: nativeSeqCursorRef.current,
+            read_cursor_seq: nativeBatch.cursor.seq,
+            buffer_epoch: nativeBatch.bufferEpoch,
+            buffered_native_points: nativeBatch.rawPoints.length,
             missing_streak: nativeMissingInputStreakRef.current,
             pointer_contact: hasPointerContact,
             mapped_canvas_x: mappedHoverPoint.x,
@@ -534,7 +599,8 @@ export function usePointerHandlers({
             canvas,
             rect,
             normalized.xPx,
-            normalized.yPx
+            normalized.yPx,
+            normalized.source
           );
           const idx = pointIndexRef.current++;
           latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
@@ -674,6 +740,7 @@ export function usePointerHandlers({
       updateShiftLineCursor,
       isDrawingRef,
       usingRawInput,
+      consumeNativeRoutedPoints,
       pointIndexRef,
       latencyProfilerRef,
       strokeStateRef,
@@ -756,14 +823,8 @@ export function usePointerHandlers({
           const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
           const queuedTailPoints: QueuedPoint[] = [];
           if (shouldUseNativeBackend) {
-            const { points: bufferedPointsRaw, nextSeq } = readPointBufferSince(
-              nativeSeqCursorRef.current
-            );
-            nativeSeqCursorRef.current = nextSeq;
-            const resolvedNativePoints = filterNativePointsByPointerId(
-              bufferedPointsRaw,
-              activePointerId
-            );
+            const nativeBatch = consumeNativeRoutedPoints('pointerup');
+            const resolvedNativePoints = nativeBatch.events;
             for (const nativePoint of resolvedNativePoints) {
               const normalized = parseNativeTabletSample(nativePoint);
               if (normalized.phase === 'hover') continue;
@@ -771,7 +832,8 @@ export function usePointerHandlers({
                 canvas,
                 rect,
                 normalized.xPx,
-                normalized.yPx
+                normalized.yPx,
+                normalized.source
               );
               const idx = pointIndexRef.current++;
               latencyProfilerRef.current.markInputReceived(idx, nativeEvent);
@@ -879,6 +941,7 @@ export function usePointerHandlers({
       inputQueueRef,
       pointIndexRef,
       latencyProfilerRef,
+      consumeNativeRoutedPoints,
     ]
   );
 
@@ -899,6 +962,7 @@ export function usePointerHandlers({
 
     usingRawInput.current = false;
     nativeMissingInputStreakRef.current = 0;
+    resetNativeSessionRouter();
     endPointerSession();
     void requestFinishCurrentStroke();
   }, [
@@ -907,6 +971,7 @@ export function usePointerHandlers({
     isZoomingRef,
     zoomStartRef,
     usingRawInput,
+    resetNativeSessionRouter,
     endPointerSession,
     requestFinishCurrentStroke,
   ]);
@@ -1126,6 +1191,7 @@ export function usePointerHandlers({
         });
         usingRawInput.current = false;
         nativeMissingInputStreakRef.current = 0;
+        resetNativeSessionRouter();
         endPointerSession(activePointerId);
       }
 
@@ -1235,21 +1301,8 @@ export function usePointerHandlers({
       const strokeSeedPoints: Array<Omit<QueuedPoint, 'pointIndex'>> = [];
       if (isStrokeTool(currentTool)) {
         if (shouldUseNativeBackend) {
-          const { points: bufferedPointsRaw, nextSeq } = readPointBufferSince(
-            nativeSeqCursorRef.current
-          );
-          nativeSeqCursorRef.current = nextSeq;
-          const pointerScopedBufferedPoints = bufferedPointsRaw.filter(
-            (point) => point.pointer_id === pe.pointerId
-          );
-          const pointerScopedCurrentPoint =
-            tabletState.currentPoint && tabletState.currentPoint.pointer_id === pe.pointerId
-              ? tabletState.currentPoint
-              : null;
-          const resolvedNativePoints = resolveNativeStrokePoints(
-            pointerScopedBufferedPoints,
-            pointerScopedCurrentPoint
-          );
+          const nativeBatch = consumeNativeRoutedPoints('pointerdown.seed');
+          const resolvedNativePoints = resolveNativeStrokePoints(nativeBatch.events, null);
           for (const nativePoint of resolvedNativePoints) {
             const normalized = parseNativeTabletSample(nativePoint);
             if (normalized.phase === 'hover') continue;
@@ -1257,7 +1310,8 @@ export function usePointerHandlers({
               canvas,
               rect,
               normalized.xPx,
-              normalized.yPx
+              normalized.yPx,
+              normalized.source
             );
             strokeSeedPoints.push({
               x: mapped.x,
@@ -1291,9 +1345,9 @@ export function usePointerHandlers({
           if (strokeSeedPoints.length === 0) {
             logTabletTrace('frontend.pointerdown.native_seed_empty', {
               pointer_id: pe.pointerId,
-              read_cursor_seq: nativeSeqCursorRef.current,
-              buffered_native_points: bufferedPointsRaw.length,
-              has_current_point: !!tabletState.currentPoint,
+              read_cursor_seq: nativeBatch.cursor.seq,
+              buffer_epoch: nativeBatch.bufferEpoch,
+              buffered_native_points: nativeBatch.rawPoints.length,
             });
           }
         } else {
@@ -1406,6 +1460,7 @@ export function usePointerHandlers({
       currentTool,
       isDrawingRef,
       strokeStateRef,
+      getNowMs,
       requestFinishCurrentStroke,
       isZoomingRef,
       zoomStartRef,
@@ -1423,6 +1478,8 @@ export function usePointerHandlers({
       constrainShiftLinePoint,
       lastInputPosRef,
       beginPointerSession,
+      consumeNativeRoutedPoints,
+      resetNativeSessionRouter,
       usingRawInput,
       onBeforeCanvasMutation,
       pointIndexRef,
@@ -1457,19 +1514,12 @@ export function usePointerHandlers({
         nativeBackendActive && domInactiveForMs >= DOM_POINTER_ACTIVITY_TIMEOUT_MS;
 
       if (shouldPumpNative) {
-        const { points: bufferedPointsRaw, nextSeq } = readPointBufferSince(
-          nativeSeqCursorRef.current
-        );
-        if (bufferedPointsRaw.length > 0) {
-          nativeSeqCursorRef.current = nextSeq;
+        const nativeBatch = consumeNativeRoutedPoints('native_pump');
+        if (nativeBatch.events.length > 0) {
           const canvas = canvasRef.current;
           if (canvas) {
             const rect = canvas.getBoundingClientRect();
-            const activePointerId = activePointerIdRef.current;
-            const resolvedNativePoints = filterNativePointsByPointerId(
-              bufferedPointsRaw,
-              activePointerId
-            );
+            const resolvedNativePoints = nativeBatch.events;
             for (const nativePoint of resolvedNativePoints) {
               const normalized = parseNativeTabletSample(nativePoint);
               if (normalized.phase === 'hover') continue;
@@ -1478,7 +1528,8 @@ export function usePointerHandlers({
                 canvas,
                 rect,
                 normalized.xPx,
-                normalized.yPx
+                normalized.yPx,
+                normalized.source
               );
 
               if (!isDrawingRef.current) {
@@ -1626,6 +1677,7 @@ export function usePointerHandlers({
     requestFinishCurrentStroke,
     captureBeforeImage,
     initializeBrushStroke,
+    consumeNativeRoutedPoints,
     flushNativePointBuffer,
   ]);
 

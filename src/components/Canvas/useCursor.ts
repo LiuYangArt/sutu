@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { ToolType } from '@/stores/tool';
 import { useSelectionStore } from '@/stores/selection';
+import { logTabletTrace } from '@/utils/tabletTrace';
 import { clientToCanvasPoint } from './canvasGeometry';
 
 const MOVE_TOOL_CURSOR = (() => {
@@ -56,6 +57,8 @@ const TOOL_CURSORS: Record<ToolType, string> = {
 
 const HARDWARE_CURSOR_MAX_SIZE = 96;
 const HARDWARE_CURSOR_MAX_PATH_LENGTH = 120000;
+const HARDWARE_CURSOR_MAX_SEGMENT_COUNT = 8000;
+const HARDWARE_CURSOR_MAX_CONTOUR_COUNT = 512;
 const HARDWARE_CURSOR_CACHE_LIMIT = 64;
 const hardwareCursorStyleCache = new Map<string, string>();
 
@@ -473,13 +476,56 @@ export function useCursor({
   );
   const cursorPathWithinHardwareLimit =
     !hasAnyHardwarePathCandidate || hardwareResolvedCursorPath.path !== null;
+  const hardwareSegmentCount = hardwareResolvedCursorPath.complexity?.segmentCount ?? 0;
+  const hardwareContourCount = hardwareResolvedCursorPath.complexity?.contourCount ?? 0;
+  const cursorComplexityWithinHardwareBudget =
+    hardwareSegmentCount <= HARDWARE_CURSOR_MAX_SEGMENT_COUNT &&
+    hardwareContourCount <= HARDWARE_CURSOR_MAX_CONTOUR_COUNT;
   const cursorDevicePixelRatio = getCursorDevicePixelRatio();
   const shouldUseHardwareCursor =
     isBrushTool &&
     !forceDomCursor &&
     screenBrushSize <= HARDWARE_CURSOR_MAX_SIZE &&
     !isInteracting &&
-    cursorPathWithinHardwareLimit;
+    cursorPathWithinHardwareLimit &&
+    cursorComplexityWithinHardwareBudget;
+
+  useEffect(() => {
+    if (!isBrushTool) return;
+    const reason = forceDomCursor
+      ? 'force_dom_cursor_debug'
+      : screenBrushSize > HARDWARE_CURSOR_MAX_SIZE
+        ? 'size_over_budget'
+        : !cursorPathWithinHardwareLimit
+          ? 'path_length_over_budget'
+          : !cursorComplexityWithinHardwareBudget
+            ? 'complexity_over_budget'
+            : null;
+    if (!reason) return;
+    logTabletTrace('frontend.cursor.hardware_gate', {
+      reason,
+      force_dom_cursor: forceDomCursor,
+      screen_brush_size: screenBrushSize,
+      max_hardware_size: HARDWARE_CURSOR_MAX_SIZE,
+      has_hardware_candidate: hasAnyHardwarePathCandidate,
+      hardware_lod_level: hardwareResolvedCursorPath.lodLevel,
+      hardware_path_len: hardwareResolvedCursorPath.path?.length ?? 0,
+      hardware_segment_count: hardwareSegmentCount,
+      hardware_contour_count: hardwareContourCount,
+      max_segment_count: HARDWARE_CURSOR_MAX_SEGMENT_COUNT,
+      max_contour_count: HARDWARE_CURSOR_MAX_CONTOUR_COUNT,
+    });
+  }, [
+    isBrushTool,
+    forceDomCursor,
+    screenBrushSize,
+    cursorPathWithinHardwareLimit,
+    cursorComplexityWithinHardwareBudget,
+    hasAnyHardwarePathCandidate,
+    hardwareResolvedCursorPath,
+    hardwareSegmentCount,
+    hardwareContourCount,
+  ]);
 
   // Check if mouse position is inside selection (for move cursor)
   const checkSelectionHover = useCallback(

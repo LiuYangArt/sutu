@@ -11,12 +11,14 @@ pub mod wintab_spike;
 pub use backend::{
     InputBackpressureMode, InputEventQueue, InputPhase, InputQueueMetrics, InputSource,
     NativeTabletEventV3, PressureCurve, TabletBackend, TabletConfig, TabletEventV3, TabletInfo,
-    TabletStatus,
+    TabletStatus, TabletV3Diagnostics,
 };
 #[cfg(target_os = "windows")]
 pub use krita_v3::WinTabAdapter;
 pub use krita_v3::{
-    CoordinateMapper, InputPhaseV3, InputSourceV3, MonotonicTimebase, PhaseMachine, PhaseOutput,
+    CoordinateMapper, CoordinateMapperMac, InputPhaseV3, InputSourceV3, MacNativeAdapterV3,
+    MacNativeEventKind, MacNativeRawSample, MonotonicTimebase, MonotonicTimebaseMac, PhaseMachine,
+    PhaseOutput, PhaseOutputMac,
 };
 pub use macos_backend::MacNativeBackend;
 pub use pointer_backend::PointerEventBackend;

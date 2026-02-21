@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { TabletInputPoint } from '@/stores/tablet';
 import {
+  getNativeCoordinateDiagnosticsSnapshot,
   isNativeTabletStreamingBackend,
   isNativeTabletStreamingState,
   mapNativeWindowPxToCanvasPoint,
   parseNativeTabletSample,
   parsePointerEventSample,
+  resetNativeCoordinateDiagnosticsForTest,
   resolveNativeStrokePoints,
 } from '../inputUtils';
 
@@ -56,6 +58,10 @@ function createPointerEvent(
 }
 
 describe('inputUtils', () => {
+  beforeEach(() => {
+    resetNativeCoordinateDiagnosticsForTest();
+  });
+
   it('parsePointerEventSample returns normalized pointerevent sample', () => {
     const sample = parsePointerEventSample(createPointerEvent());
     expect(sample).toMatchObject({
@@ -151,6 +157,23 @@ describe('inputUtils', () => {
     );
     expect(mapped.x).toBeCloseTo(500, 6);
     expect(mapped.y).toBeCloseTo(250, 6);
+  });
+
+  it('tracks macnative out-of-view coordinate diagnostics', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1000;
+    canvas.height = 500;
+    mapNativeWindowPxToCanvasPoint(
+      canvas,
+      { left: 10, top: 20, width: 500, height: 250 },
+      800,
+      600,
+      'macnative'
+    );
+    const diagnostics = getNativeCoordinateDiagnosticsSnapshot();
+    expect(diagnostics.total_count).toBe(1);
+    expect(diagnostics.out_of_view_count).toBe(1);
+    expect(diagnostics.macnative_out_of_view_count).toBe(1);
   });
 
   it('recognizes native streaming backends', () => {

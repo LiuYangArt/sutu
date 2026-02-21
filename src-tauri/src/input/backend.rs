@@ -93,6 +93,19 @@ pub struct InputQueueMetrics {
     pub latency_last_us: u64,
 }
 
+/// Runtime diagnostics snapshot for V3 tablet pipeline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TabletV3Diagnostics {
+    pub phase_transition_error_count: u64,
+    pub host_time_non_monotonic_count: u64,
+    pub stroke_tail_drop_count: u64,
+    pub native_down_without_seed_count: u64,
+    pub coord_out_of_view_count: u64,
+    pub seq_rewind_recovery_fail_count: u64,
+    pub pressure_clamp_count: u64,
+    pub pressure_total_count: u64,
+}
+
 const LATENCY_HISTORY_LIMIT: usize = 1024;
 const LOSSLESS_WAIT_SLICE_MS: u64 = 10;
 const DEFAULT_EVENT_QUEUE_CAPACITY: usize = 2048;
@@ -383,6 +396,11 @@ pub trait TabletBackend: Send {
 
     /// Queue telemetry metrics for diagnostics/status response.
     fn queue_metrics(&self) -> InputQueueMetrics;
+
+    /// V3 diagnostics snapshot for Krita-parity input pipeline.
+    fn v3_diagnostics(&self) -> TabletV3Diagnostics {
+        TabletV3Diagnostics::default()
+    }
 
     /// Check if this backend is available on the current system
     fn is_available() -> bool

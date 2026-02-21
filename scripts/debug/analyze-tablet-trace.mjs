@@ -65,6 +65,22 @@ function inc(map, key, delta = 1) {
   map.set(key, (map.get(key) ?? 0) + delta);
 }
 
+function quantile(sorted, p) {
+  if (sorted.length === 0) return null;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
+  return sorted[idx];
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return 'n/a';
+  return `${(value * 100).toFixed(3)}%`;
+}
+
+function formatMs(value) {
+  if (!Number.isFinite(value)) return 'n/a';
+  return `${value.toFixed(2)}ms`;
+}
+
 function getStrokeCounter(map, strokeId) {
   const id = Number(strokeId);
   if (!Number.isFinite(id)) return null;
@@ -177,6 +193,13 @@ function main() {
   const scopeCounts = new Map();
   const strokeCounters = new Map();
   const anomalyCounts = new Map();
+  const firstSeedPressureByStroke = new Map();
+  const firstConsumedStrokeSeen = new Set();
+  const firstDabPressureErrors = [];
+  const emitterTransportLags = [];
+  let nativeEmptyWithContactCount = 0;
+  let nativeConsumeCount = 0;
+  let latestV3Diagnostics = null;
 
   let parsedRows = 0;
   let skippedRows = 0;
@@ -194,6 +217,43 @@ function main() {
 
     if (scope.startsWith('frontend.anomaly.') || scope === 'frontend.canvas.queue_drop') {
       inc(anomalyCounts, scope);
+    }
+
+    if (row.v3_diagnostics && typeof row.v3_diagnostics === 'object') {
+      latestV3Diagnostics = row.v3_diagnostics;
+    }
+    if (scope === 'frontend.pointerdown.native_seed') {
+      const strokeId = Number(row.stroke_id);
+      const pressure = Number(row.pressure_0_1);
+      if (Number.isFinite(strokeId) && Number.isFinite(pressure) && !firstSeedPressureByStroke.has(strokeId)) {
+        firstSeedPressureByStroke.set(strokeId, pressure);
+      }
+    }
+    if (scope === 'frontend.pointermove.native_empty' && row.pointer_contact) {
+      nativeEmptyWithContactCount += 1;
+    }
+    if (
+      scope === 'frontend.pointermove.native_consume' ||
+      scope === 'frontend.pointerup.native_consume' ||
+      scope === 'frontend.native_pump.consume'
+    ) {
+      nativeConsumeCount += 1;
+      const strokeId = Number(row.stroke_id);
+      if (Number.isFinite(strokeId) && !firstConsumedStrokeSeen.has(strokeId)) {
+        firstConsumedStrokeSeen.add(strokeId);
+        const seedPressure = firstSeedPressureByStroke.get(strokeId);
+        const consumePressure = Number(row.pressure_0_1);
+        if (Number.isFinite(seedPressure) && Number.isFinite(consumePressure)) {
+          firstDabPressureErrors.push(Math.abs(consumePressure - seedPressure));
+        }
+      }
+    }
+    if (scope === 'frontend.recv.emitter_batch_v1') {
+      const traceEpochMs = Number(row.trace_epoch_ms);
+      const emitCompletedUs = Number(row.emit_completed_time_us);
+      if (Number.isFinite(traceEpochMs) && Number.isFinite(emitCompletedUs)) {
+        emitterTransportLags.push(traceEpochMs - emitCompletedUs / 1000);
+      }
     }
 
     const counter = getStrokeCounter(strokeCounters, row.stroke_id);
@@ -250,6 +310,38 @@ function main() {
     for (const [scope, count] of [...anomalyCounts.entries()].sort((a, b) => b[1] - a[1])) {
       console.log(`  ${scope}: ${count}`);
     }
+  }
+  const nativeEmptyDenominator = nativeConsumeCount + nativeEmptyWithContactCount;
+  const nativeEmptyWithContactRate =
+    nativeEmptyDenominator > 0 ? nativeEmptyWithContactCount / nativeEmptyDenominator : null;
+  const firstDabPressureErrorSorted = [...firstDabPressureErrors].sort((a, b) => a - b);
+  const firstDabPressureErrorP95 = quantile(firstDabPressureErrorSorted, 0.95);
+  const emitTransportSorted = [...emitterTransportLags].sort((a, b) => a - b);
+  const emitToFrontendRecvP95Ms = quantile(emitTransportSorted, 0.95);
+  const pressureClampRate =
+    latestV3Diagnostics &&
+    Number.isFinite(latestV3Diagnostics.pressure_total_count) &&
+    latestV3Diagnostics.pressure_total_count > 0 &&
+    Number.isFinite(latestV3Diagnostics.pressure_clamp_count)
+      ? latestV3Diagnostics.pressure_clamp_count / latestV3Diagnostics.pressure_total_count
+      : null;
+
+  console.log('');
+  console.log('[Blocking] metrics:');
+  console.log(
+    `  native_empty_with_contact_rate=${formatPercent(nativeEmptyWithContactRate)} (threshold <= 0.500%)`
+  );
+  console.log(
+    `  pressure_clamp_rate=${formatPercent(pressureClampRate)} (threshold <= 0.100%)`
+  );
+  console.log(
+    `  first_dab_pressure_error_p95=${Number.isFinite(firstDabPressureErrorP95) ? firstDabPressureErrorP95.toFixed(4) : 'n/a'} (threshold <= 0.12)`
+  );
+  console.log(
+    `  emit_to_frontend_recv_p95_ms=${formatMs(emitToFrontendRecvP95Ms)} (threshold <= 8.00ms)`
+  );
+  if (!latestV3Diagnostics) {
+    console.log('  [Hint] pressure_clamp_rate requires v3_diagnostics snapshot rows in trace.');
   }
 }
 

@@ -1,6 +1,7 @@
 export * from './bridge/disablePressureBridge';
 export * from './contracts';
 export * from './inputRouterV3';
+export * from './macnativeSessionRouterV3';
 export * from './strokeStateMachineV3';
 export * from './paintingInfoBuilderV3';
 export * from './speedSmootherV3';

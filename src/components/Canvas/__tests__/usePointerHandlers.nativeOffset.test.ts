@@ -232,6 +232,49 @@ describe('usePointerHandlers native geometry path', () => {
     expect(tail?.source).toBe('wintab');
   });
 
+  it('consumes native seed by stroke_id even when native pointer_id differs from DOM pointer', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock.mockReturnValueOnce({
+      points: [
+        createNativePoint({
+          seq: 1,
+          stroke_id: 88,
+          pointer_id: 99,
+          phase: 'down',
+          x_px: 150,
+          y_px: 170,
+          pressure_0_1: 0.3,
+        }),
+      ],
+      nextSeq: 1,
+      bufferEpoch: 0,
+    });
+
+    act(() => {
+      result.current.handlePointerDown(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 40,
+            clientY: 60,
+            type: 'pointerdown',
+          })
+        )
+      );
+    });
+
+    const seed = params.pendingPointsRef.current[0] as
+      | { x: number; y: number; pressure: number }
+      | undefined;
+    expect(seed).toBeDefined();
+    expect(seed?.x).toBeCloseTo(150, 6);
+    expect(seed?.y).toBeCloseTo(170, 6);
+    expect(seed?.pressure).toBeCloseTo(0.3, 6);
+  });
+
   it('queues explicit native up sample and does not use pointerup geometry patch', () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');

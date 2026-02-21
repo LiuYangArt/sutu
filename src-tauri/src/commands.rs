@@ -4,7 +4,7 @@ use crate::brush::{BrushEngine, StrokeSegment};
 use crate::input::wintab_spike::SpikeResult;
 use crate::input::{
     InputBackpressureMode, InputPhase, InputQueueMetrics, PressureCurve, RawInputPoint,
-    TabletBackend, TabletConfig, TabletEventV3, TabletInfo, TabletStatus,
+    TabletBackend, TabletConfig, TabletEventV3, TabletInfo, TabletStatus, TabletV3Diagnostics,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -191,6 +191,14 @@ fn backend_type_name(backend: BackendType) -> &'static str {
     }
 }
 
+fn input_source_name(source: crate::input::InputSource) -> &'static str {
+    match source {
+        crate::input::InputSource::WinTab => "wintab",
+        crate::input::InputSource::MacNative => "macnative",
+        crate::input::InputSource::PointerEvent => "pointerevent",
+    }
+}
+
 fn default_backend_for_platform() -> BackendType {
     #[cfg(target_os = "windows")]
     {
@@ -250,6 +258,7 @@ fn current_tablet_status_response(state: &mut TabletState) -> TabletStatusRespon
         let status = backend.status();
         let info = backend.info().cloned();
         let queue_metrics = backend.queue_metrics();
+        let v3_diagnostics = backend.v3_diagnostics();
         TabletStatusResponse {
             status,
             backend: backend_name,
@@ -257,6 +266,7 @@ fn current_tablet_status_response(state: &mut TabletState) -> TabletStatusRespon
             active_backend: backend_type_name(state.backend_type).to_string(),
             backpressure_mode,
             queue_metrics,
+            v3_diagnostics,
             info,
         }
     } else {
@@ -267,6 +277,7 @@ fn current_tablet_status_response(state: &mut TabletState) -> TabletStatusRespon
             active_backend: "none".to_string(),
             backpressure_mode,
             queue_metrics: InputQueueMetrics::default(),
+            v3_diagnostics: TabletV3Diagnostics::default(),
             info: None,
         }
     }
@@ -404,15 +415,19 @@ pub struct TabletStatusResponse {
     pub active_backend: String,
     pub backpressure_mode: InputBackpressureMode,
     pub queue_metrics: InputQueueMetrics,
+    pub v3_diagnostics: TabletV3Diagnostics,
     pub info: Option<TabletInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct TabletEmitterBatchMetricsV1 {
+    pub backend: String,
     pub emit_poll_time_us: u64,
     pub emit_completed_time_us: u64,
     pub emitted_event_count: usize,
     pub input_event_count: usize,
+    pub first_source: Option<String>,
+    pub last_source: Option<String>,
     pub min_seq: Option<u64>,
     pub max_seq: Option<u64>,
     pub first_stroke_id: Option<u64>,
@@ -427,6 +442,7 @@ struct TabletEmitterBatchMetricsV1 {
 
 fn collect_emitter_batch_metrics(
     events: &[TabletEventV3],
+    backend: &str,
     emit_poll_time_us: u64,
     emit_completed_time_us: u64,
 ) -> TabletEmitterBatchMetricsV1 {
@@ -439,6 +455,8 @@ fn collect_emitter_batch_metrics(
     let mut last_pointer_id = None::<u32>;
     let mut min_host_time_us = None::<u64>;
     let mut max_host_time_us = None::<u64>;
+    let mut first_source = None::<String>;
+    let mut last_source = None::<String>;
 
     for event in events {
         let TabletEventV3::Input(sample) = event else {
@@ -457,6 +475,10 @@ fn collect_emitter_batch_metrics(
             first_pointer_id = Some(sample.pointer_id);
         }
         last_pointer_id = Some(sample.pointer_id);
+        if first_source.is_none() {
+            first_source = Some(input_source_name(sample.source).to_string());
+        }
+        last_source = Some(input_source_name(sample.source).to_string());
 
         min_host_time_us =
             Some(min_host_time_us.map_or(sample.host_time_us, |v| v.min(sample.host_time_us)));
@@ -465,10 +487,13 @@ fn collect_emitter_batch_metrics(
     }
 
     TabletEmitterBatchMetricsV1 {
+        backend: backend.to_string(),
         emit_poll_time_us,
         emit_completed_time_us,
         emitted_event_count: events.len(),
         input_event_count,
+        first_source,
+        last_source,
         min_seq,
         max_seq,
         first_stroke_id,
@@ -569,6 +594,7 @@ pub fn start_tablet() -> Result<(), String> {
             std::thread::spawn(move || {
                 tracing::info!("[Tablet] Event emitter thread started");
                 let mut events = Vec::with_capacity(64);
+                let mut active_backend_name = "none".to_string();
 
                 loop {
                     let should_continue = {
@@ -580,6 +606,7 @@ pub fn start_tablet() -> Result<(), String> {
                         if !state.emitter_running {
                             false
                         } else {
+                            active_backend_name = backend_type_name(state.backend_type).to_string();
                             if let Some(backend) = state.active_backend() {
                                 backend.poll(&mut events);
                             }
@@ -595,6 +622,7 @@ pub fn start_tablet() -> Result<(), String> {
                         let emit_poll_time_us = crate::input::current_time_us();
                         let metrics_before_emit = collect_emitter_batch_metrics(
                             &events,
+                            &active_backend_name,
                             emit_poll_time_us,
                             emit_poll_time_us,
                         );

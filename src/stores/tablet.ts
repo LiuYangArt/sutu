@@ -38,6 +38,17 @@ export interface InputQueueMetrics {
   latency_last_us: number;
 }
 
+export interface TabletV3Diagnostics {
+  phase_transition_error_count: number;
+  host_time_non_monotonic_count: number;
+  stroke_tail_drop_count: number;
+  native_down_without_seed_count: number;
+  coord_out_of_view_count: number;
+  seq_rewind_recovery_fail_count: number;
+  pressure_clamp_count: number;
+  pressure_total_count: number;
+}
+
 export interface TabletStatusResponse {
   status: TabletStatus;
   backend: string;
@@ -45,6 +56,7 @@ export interface TabletStatusResponse {
   active_backend: string;
   backpressure_mode: InputBackpressureMode;
   queue_metrics: InputQueueMetrics;
+  v3_diagnostics: TabletV3Diagnostics;
   info: TabletInfo | null;
 }
 
@@ -55,6 +67,7 @@ interface TabletStatusStatePatch {
   activeBackend: string;
   backpressureMode: InputBackpressureMode;
   queueMetrics: InputQueueMetrics;
+  v3Diagnostics: TabletV3Diagnostics;
   info: TabletInfo | null;
 }
 
@@ -107,10 +120,13 @@ export type TabletEventV3 =
   | { StatusChanged: TabletStatus };
 
 interface TabletEmitterBatchMetricsV1 {
+  backend: string;
   emit_poll_time_us: number;
   emit_completed_time_us: number;
   emitted_event_count: number;
   input_event_count: number;
+  first_source: string | null;
+  last_source: string | null;
   min_seq: number | null;
   max_seq: number | null;
   first_stroke_id: number | null;
@@ -127,9 +143,18 @@ const POINT_BUFFER_SIZE = 512;
 
 // Shared sample buffer (kept outside Zustand to avoid high-frequency re-rendering).
 let pointBuffer: TabletInputPoint[] = [];
+let pointBufferEpoch = 0;
 let nativeTraceStrokeActive = false;
 const SEQ_REWIND_RESET_THRESHOLD = 32;
 const SEQ_REWIND_LOW_SEQ_MAX = 8;
+
+function bumpPointBufferEpoch(): number {
+  pointBufferEpoch += 1;
+  if (!Number.isSafeInteger(pointBufferEpoch) || pointBufferEpoch < 0) {
+    pointBufferEpoch = 1;
+  }
+  return pointBufferEpoch;
+}
 
 function sliceTailPoints<T>(points: T[], limit: number): T[] {
   return limit > 0 ? points.slice(-limit) : [];
@@ -146,11 +171,15 @@ function shouldResetBufferForSeqRewind(
   return incoming.phase === 'down' || incoming.seq <= SEQ_REWIND_LOW_SEQ_MAX;
 }
 
-function addPointToBuffer(point: TabletInputPoint): void {
+function addPointToBuffer(point: TabletInputPoint): {
+  seqRewindReset: boolean;
+  bufferEpoch: number;
+} {
+  let seqRewindReset = false;
   const latest = pointBuffer[pointBuffer.length - 1];
   if (latest && point.seq <= latest.seq) {
     if (!shouldResetBufferForSeqRewind(latest, point)) {
-      return;
+      return { seqRewindReset: false, bufferEpoch: pointBufferEpoch };
     }
     logTabletTrace('frontend.buffer.seq_rewind_reset', {
       latest_seq: latest.seq,
@@ -164,12 +193,15 @@ function addPointToBuffer(point: TabletInputPoint): void {
       incoming_phase: point.phase,
     });
     pointBuffer = [];
+    bumpPointBufferEpoch();
+    seqRewindReset = true;
   }
 
   pointBuffer.push(point);
   if (pointBuffer.length > POINT_BUFFER_SIZE) {
     pointBuffer = pointBuffer.slice(pointBuffer.length - POINT_BUFFER_SIZE);
   }
+  return { seqRewindReset, bufferEpoch: pointBufferEpoch };
 }
 
 /**
@@ -179,9 +211,9 @@ function addPointToBuffer(point: TabletInputPoint): void {
 export function readPointBufferSince(
   lastSeq: number,
   limit: number = POINT_BUFFER_SIZE
-): { points: TabletInputPoint[]; nextSeq: number } {
+): { points: TabletInputPoint[]; nextSeq: number; bufferEpoch: number } {
   if (pointBuffer.length === 0) {
-    return { points: [], nextSeq: lastSeq };
+    return { points: [], nextSeq: lastSeq, bufferEpoch: pointBufferEpoch };
   }
 
   const latest = pointBuffer[pointBuffer.length - 1];
@@ -197,12 +229,13 @@ export function readPointBufferSince(
     return {
       points: sliced,
       nextSeq: tail ? tail.seq : latest.seq,
+      bufferEpoch: pointBufferEpoch,
     };
   }
 
   const startIndex = pointBuffer.findIndex((point) => point.seq > lastSeq);
   if (startIndex < 0) {
-    return { points: [], nextSeq: lastSeq };
+    return { points: [], nextSeq: lastSeq, bufferEpoch: pointBufferEpoch };
   }
 
   const points = pointBuffer.slice(startIndex);
@@ -211,6 +244,7 @@ export function readPointBufferSince(
   return {
     points: sliced,
     nextSeq: tail ? tail.seq : lastSeq,
+    bufferEpoch: pointBufferEpoch,
   };
 }
 
@@ -220,6 +254,11 @@ export function getLatestPoint(): TabletInputPoint | null {
 
 export function clearPointBuffer(): void {
   pointBuffer = [];
+  bumpPointBufferEpoch();
+}
+
+export function getPointBufferEpoch(): number {
+  return pointBufferEpoch;
 }
 
 function toTabletStatusStatePatch(response: TabletStatusResponse): TabletStatusStatePatch {
@@ -230,6 +269,7 @@ function toTabletStatusStatePatch(response: TabletStatusResponse): TabletStatusS
     activeBackend: response.active_backend,
     backpressureMode: response.backpressure_mode,
     queueMetrics: response.queue_metrics,
+    v3Diagnostics: response.v3_diagnostics,
     info: response.info,
   };
 }
@@ -241,6 +281,8 @@ interface TabletState {
   activeBackend: string;
   backpressureMode: InputBackpressureMode;
   queueMetrics: InputQueueMetrics;
+  v3Diagnostics: TabletV3Diagnostics;
+  bufferEpoch: number;
   info: TabletInfo | null;
   isInitialized: boolean;
   isStreaming: boolean;
@@ -282,6 +324,17 @@ const EMPTY_QUEUE_METRICS: InputQueueMetrics = {
   latency_p95_us: 0,
   latency_p99_us: 0,
   latency_last_us: 0,
+};
+
+const EMPTY_V3_DIAGNOSTICS: TabletV3Diagnostics = {
+  phase_transition_error_count: 0,
+  host_time_non_monotonic_count: 0,
+  stroke_tail_drop_count: 0,
+  native_down_without_seed_count: 0,
+  coord_out_of_view_count: 0,
+  seq_rewind_recovery_fail_count: 0,
+  pressure_clamp_count: 0,
+  pressure_total_count: 0,
 };
 
 function clampUnit(value: number): number {
@@ -349,6 +402,8 @@ export const useTabletStore = create<TabletState>((set, get) => ({
   activeBackend: 'none',
   backpressureMode: 'lossless',
   queueMetrics: { ...EMPTY_QUEUE_METRICS },
+  v3Diagnostics: { ...EMPTY_V3_DIAGNOSTICS },
+  bufferEpoch: getPointBufferEpoch(),
   info: null,
   isInitialized: false,
   isStreaming: false,
@@ -368,6 +423,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
       set({
         ...toTabletStatusStatePatch(response),
         isInitialized: true,
+        bufferEpoch: getPointBufferEpoch(),
       });
     } catch (error) {
       console.error('[Tablet] Init failed:', error);
@@ -405,9 +461,11 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         isInitialized: true,
         currentPoint: null,
         inProximity: false,
+        bufferEpoch: getPointBufferEpoch(),
       });
       clearPointBuffer();
       nativeTraceStrokeActive = false;
+      set({ bufferEpoch: getPointBufferEpoch() });
       logTabletTrace('frontend.backend.switch.success', {
         requested_backend: backend,
         response_backend: response.backend,
@@ -487,7 +545,10 @@ export const useTabletStore = create<TabletState>((set, get) => ({
             }
             nativeTraceStrokeActive = false;
           }
-          addPointToBuffer(point);
+          const addResult = addPointToBuffer(point);
+          if (addResult.seqRewindReset) {
+            set({ bufferEpoch: addResult.bufferEpoch });
+          }
           get()._setPoint(point);
         } else if (payload === 'ProximityEnter') {
           logTabletTrace('frontend.recv.proximity_enter', {});
@@ -497,7 +558,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
           nativeTraceStrokeActive = false;
           get()._setProximity(false);
           clearPointBuffer();
-          set({ currentPoint: null });
+          set({ currentPoint: null, bufferEpoch: getPointBufferEpoch() });
         } else if (typeof payload === 'object' && payload !== null && 'StatusChanged' in payload) {
           logTabletTrace('frontend.recv.status_changed', {
             status: payload.StatusChanged,
@@ -514,10 +575,13 @@ export const useTabletStore = create<TabletState>((set, get) => ({
             return;
           }
           logTabletTrace('frontend.recv.emitter_batch_v1', {
+            backend: payload.backend,
             emit_poll_time_us: payload.emit_poll_time_us,
             emit_completed_time_us: payload.emit_completed_time_us,
             emitted_event_count: payload.emitted_event_count,
             input_event_count: payload.input_event_count,
+            first_source: payload.first_source,
+            last_source: payload.last_source,
             min_seq: payload.min_seq,
             max_seq: payload.max_seq,
             first_stroke_id: payload.first_stroke_id,
@@ -565,6 +629,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
         isStreaming: false,
         unlisten: null,
         currentPoint: null,
+        bufferEpoch: getPointBufferEpoch(),
       });
     } catch (error) {
       console.error('[Tablet] Stop failed:', error);
@@ -591,6 +656,7 @@ export const useTabletStore = create<TabletState>((set, get) => ({
       unlisten: null,
       isStreaming: false,
       currentPoint: null,
+      bufferEpoch: getPointBufferEpoch(),
     });
   },
 

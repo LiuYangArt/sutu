@@ -98,6 +98,27 @@ describe('useCursor', () => {
     expect(result.current.cursorStyle).toBe('none');
   });
 
+  it('falls back to DOM cursor when hardware complexity budget is exceeded', () => {
+    const props = createProps({
+      currentSize: 24,
+      brushTexture: {
+        cursorId: 'tip-complexity-over-budget',
+        cursorPath: SIMPLE_CURSOR_PATH,
+        cursorPathLod2: LOD2_CURSOR_PATH,
+        cursorComplexityLod2: {
+          pathLen: LOD2_CURSOR_PATH.length,
+          segmentCount: 9001,
+          contourCount: 1,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useCursor(props));
+
+    expect(result.current.showDomCursor).toBe(true);
+    expect(result.current.cursorStyle).toBe('none');
+  });
+
   it('DOM 模式默认选择 LOD0', () => {
     const props = createProps({
       currentSize: 180,

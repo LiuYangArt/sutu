@@ -14,6 +14,7 @@
 7. `docs/postmortem/2026-02-20-wintab-scribbles2-cursor-hardware-path-lag.md`
 8. `docs/postmortem/2026-02-18-wintab-input-fusion-v3-no-improvement-rollback.md`
 9. `docs/postmortem/2026-02-08-wintab-pressure-drop-stopgap.md`
+10. `docs/plans/2026-02-20-macnative-align-krita-contract-freeze-appendix.md`
 
 ---
 
@@ -388,21 +389,21 @@ flowchart TD
 
 ## Task List（中文）
 
-1. [ ] 冻结 MacNative V3 契约：字段、单位、坐标域、相位、时间域。
-2. [ ] 新建 `src-tauri/src/input/krita_v3/macnative_adapter.rs`。
-3. [ ] 新建 `src-tauri/src/input/krita_v3/coordinate_mapper_mac.rs`。
-4. [ ] 新建 `src-tauri/src/input/krita_v3/phase_machine_mac.rs`。
-5. [ ] 新建 `src-tauri/src/input/krita_v3/timebase_mac.rs`。
-6. [ ] 改 `src-tauri/src/input/macos_backend.rs` 统一接入 V3 适配器，并补齐队列无静默丢样指标。
-7. [ ] 改 `src-tauri/src/commands.rs` 增补 macnative emitter 与 `emit->recv` 延迟指标。
-8. [ ] 新建 `src/engine/kritaParityInput/macnativeSessionRouterV3.ts`。
-9. [ ] 改 `src/components/Canvas/usePointerHandlers.ts` 去除 native 起笔 DOM 强耦合，并修复 hover 误门控。
-10. [ ] 改 `src/components/Canvas/inputUtils.ts` 固化 mac 坐标语义 + 首点质量诊断。
-11. [ ] 改 `src/stores/tablet.ts` 增加 `seq` 回绕恢复与异常指标透传。
-12. [ ] 改 `src/components/Canvas/useCursor.ts` 增加复杂度预算门控与 debug 旁路。
-13. [ ] 新增 `macnativePipelineV3` 与 `macnativeSeqRewindRecovery` 测试与回放样本。
-14. [ ] 删除旧融合路径并更新文档。
-15. [ ] 运行 `cargo check` + `pnpm check:all` + 关键测试集。
+1. [x] 冻结 MacNative V3 契约：字段、单位、坐标域、相位、时间域。
+2. [x] 新建 `src-tauri/src/input/krita_v3/macnative_adapter.rs`。
+3. [x] 新建 `src-tauri/src/input/krita_v3/coordinate_mapper_mac.rs`。
+4. [x] 新建 `src-tauri/src/input/krita_v3/phase_machine_mac.rs`。
+5. [x] 新建 `src-tauri/src/input/krita_v3/timebase_mac.rs`。
+6. [x] 改 `src-tauri/src/input/macos_backend.rs` 统一接入 V3 适配器，并补齐队列无静默丢样指标。
+7. [x] 改 `src-tauri/src/commands.rs` 增补 macnative emitter 与 `emit->recv` 延迟指标。
+8. [x] 新建 `src/engine/kritaParityInput/macnativeSessionRouterV3.ts`。
+9. [x] 改 `src/components/Canvas/usePointerHandlers.ts` 去除 native 起笔 DOM 强耦合，并修复 hover 误门控。
+10. [x] 改 `src/components/Canvas/inputUtils.ts` 固化 mac 坐标语义 + 首点质量诊断。
+11. [x] 改 `src/stores/tablet.ts` 增加 `seq` 回绕恢复与异常指标透传。
+12. [x] 改 `src/components/Canvas/useCursor.ts` 增加复杂度预算门控与 debug 旁路。
+13. [x] 新增 `macnativePipelineV3` 与 `macnativeSeqRewindRecovery` 测试与回放样本。
+14. [x] 删除旧融合路径并更新文档。
+15. [x] 运行 `cargo check` + `pnpm check:all` + 关键测试集。
 
 ## Thought（中文）
 

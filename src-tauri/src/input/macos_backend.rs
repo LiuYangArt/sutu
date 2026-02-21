@@ -4,14 +4,12 @@
 //! and feeds them into the V3 tablet queue.
 
 #[cfg(target_os = "macos")]
-use super::backend::{
-    default_event_queue_capacity, InputEventQueue, InputPhase, InputSource, NativeTabletEventV3,
-};
+use super::backend::{default_event_queue_capacity, InputEventQueue, TabletV3Diagnostics};
 use super::backend::{
     InputQueueMetrics, TabletBackend, TabletConfig, TabletEventV3, TabletInfo, TabletStatus,
 };
 #[cfg(target_os = "macos")]
-use std::collections::HashMap;
+use super::krita_v3::{MacNativeAdapterV3, MacNativeEventKind, MacNativeRawSample};
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
 
@@ -70,9 +68,9 @@ use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2::runtime::AnyObject;
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
+use objc2::MainThreadMarker;
 #[cfg(target_os = "macos")]
-use std::sync::atomic::AtomicU64;
+use objc2_app_kit::{NSEvent, NSEventMask, NSEventType};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
@@ -89,9 +87,8 @@ use tauri::Manager;
 struct MonitorRuntime {
     events: Arc<InputEventQueue>,
     collecting: AtomicBool,
-    pointer_down: AtomicBool,
-    active_strokes: Mutex<HashMap<u32, u64>>,
-    next_stroke_id: AtomicU64,
+    in_proximity: AtomicBool,
+    adapter: Mutex<MacNativeAdapterV3>,
 }
 
 #[cfg(target_os = "macos")]
@@ -100,35 +97,49 @@ impl MonitorRuntime {
         Self {
             events,
             collecting: AtomicBool::new(false),
-            pointer_down: AtomicBool::new(false),
-            active_strokes: Mutex::new(HashMap::new()),
-            next_stroke_id: AtomicU64::new(1),
+            in_proximity: AtomicBool::new(false),
+            adapter: Mutex::new(MacNativeAdapterV3::new("macnative".to_string(), 1.0, 1.0)),
         }
     }
 
-    fn resolve_stroke_id(&self, pointer_id: u32, phase: InputPhase) -> u64 {
-        let mut active = match self.active_strokes.lock() {
+    fn with_adapter<R>(&self, f: impl FnOnce(&mut MacNativeAdapterV3) -> R) -> R {
+        let mut adapter = match self.adapter.lock() {
             Ok(lock) => lock,
             Err(poisoned) => poisoned.into_inner(),
         };
+        f(&mut adapter)
+    }
 
-        match phase {
-            InputPhase::Down => {
-                let stroke_id = self.next_stroke_id.fetch_add(1, Ordering::Relaxed);
-                active.insert(pointer_id, stroke_id);
-                stroke_id
-            }
-            InputPhase::Up => active
-                .remove(&pointer_id)
-                .unwrap_or_else(|| self.next_stroke_id.fetch_add(1, Ordering::Relaxed)),
-            InputPhase::Move | InputPhase::Hover => {
-                active.get(&pointer_id).copied().unwrap_or_else(|| {
-                    let stroke_id = self.next_stroke_id.fetch_add(1, Ordering::Relaxed);
-                    active.insert(pointer_id, stroke_id);
-                    stroke_id
-                })
-            }
+    fn update_viewport_size(&self, width_px: f32, height_px: f32) {
+        self.with_adapter(|adapter| {
+            adapter.update_viewport_size(width_px, height_px);
+        });
+    }
+
+    fn reset_adapter(&self) {
+        self.with_adapter(|adapter| {
+            adapter.reset();
+        });
+    }
+
+    fn diagnostics_snapshot(&self) -> TabletV3Diagnostics {
+        self.with_adapter(|adapter| adapter.diagnostics_snapshot())
+    }
+
+    fn update_viewport_size_from_event_window(&self, event: &NSEvent) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let Some(window) = event.window(mtm) else {
+            return;
+        };
+        let frame = window.frame();
+        let width_px = frame.size.width as f32;
+        let height_px = frame.size.height as f32;
+        if !width_px.is_finite() || !height_px.is_finite() {
+            return;
         }
+        self.update_viewport_size(width_px.max(1.0), height_px.max(1.0));
     }
 
     fn process_event(&self, event: &NSEvent) {
@@ -136,61 +147,51 @@ impl MonitorRuntime {
             return;
         }
 
+        self.update_viewport_size_from_event_window(event);
         match event.r#type() {
             NSEventType::TabletProximity => {
                 if event.isEnteringProximity() {
+                    self.in_proximity.store(true, Ordering::Relaxed);
                     let _ = self.events.enqueue_event(TabletEventV3::ProximityEnter);
                 } else {
-                    self.pointer_down.store(false, Ordering::Relaxed);
+                    self.in_proximity.store(false, Ordering::Relaxed);
                     let _ = self.events.enqueue_event(TabletEventV3::ProximityLeave);
                 }
             }
             NSEventType::LeftMouseDown | NSEventType::OtherMouseDown => {
-                self.pointer_down.store(true, Ordering::Relaxed);
-                self.enqueue_sample(event, InputPhase::Down, None);
+                self.enqueue_sample(event, MacNativeEventKind::MouseDown, None);
             }
             NSEventType::LeftMouseDragged | NSEventType::OtherMouseDragged => {
-                self.enqueue_sample(event, InputPhase::Move, None);
+                self.enqueue_sample(event, MacNativeEventKind::MouseDragged, None);
             }
             NSEventType::LeftMouseUp | NSEventType::OtherMouseUp | NSEventType::MouseCancelled => {
-                self.pointer_down.store(false, Ordering::Relaxed);
-                self.enqueue_sample(event, InputPhase::Up, Some(0.0));
+                self.enqueue_sample(event, MacNativeEventKind::MouseUp, Some(0.0));
             }
             NSEventType::TabletPoint => {
                 let pressure = normalize_pressure(event.pressure());
-                let phase = if pressure > 0.0 {
-                    if self.pointer_down.swap(true, Ordering::Relaxed) {
-                        InputPhase::Move
-                    } else {
-                        InputPhase::Down
-                    }
-                } else if self.pointer_down.swap(false, Ordering::Relaxed) {
-                    InputPhase::Up
-                } else {
-                    InputPhase::Hover
-                };
-                self.enqueue_sample(event, phase, Some(pressure));
+                self.enqueue_sample(event, MacNativeEventKind::TabletPoint, Some(pressure));
             }
             _ => {}
         }
     }
 
-    fn enqueue_sample(&self, event: &NSEvent, phase: InputPhase, pressure_override: Option<f32>) {
+    fn enqueue_sample(
+        &self,
+        event: &NSEvent,
+        kind: MacNativeEventKind,
+        pressure_override: Option<f32>,
+    ) {
         let location = event.locationInWindow();
         let tilt = event.tilt();
         let host_time_us = super::current_time_us();
         let pressure = pressure_override.unwrap_or_else(|| normalize_pressure(event.pressure()));
         let pointer_id = normalize_pointer_id(event.pointingDeviceID() as u64);
-        let stroke_id = self.resolve_stroke_id(pointer_id, phase);
-        let sample = NativeTabletEventV3 {
-            seq: 0,
-            stroke_id,
+        let raw = MacNativeRawSample {
             pointer_id,
-            device_id: "macnative".to_string(),
-            source: InputSource::MacNative,
-            phase,
-            x_px: location.x as f32,
-            y_px: location.y as f32,
+            kind,
+            in_proximity: self.in_proximity.load(Ordering::Relaxed),
+            x_window_px: location.x as f32,
+            y_window_px: location.y as f32,
             pressure_0_1: pressure,
             tilt_x_deg: normalize_tilt_component(tilt.x),
             tilt_y_deg: normalize_tilt_component(tilt.y),
@@ -201,7 +202,11 @@ impl MonitorRuntime {
                 host_time_us,
             )),
         };
-        let _ = self.events.enqueue_sample(sample);
+
+        let sample = self.with_adapter(|adapter| adapter.process_raw_sample(raw));
+        if let Some(sample) = sample {
+            let _ = self.events.enqueue_sample(sample);
+        }
     }
 }
 
@@ -371,7 +376,8 @@ impl TabletBackend for MacNativeBackend {
         }
 
         self.events.reopen();
-        self.runtime.pointer_down.store(false, Ordering::Relaxed);
+        self.runtime.reset_adapter();
+        self.runtime.in_proximity.store(false, Ordering::Relaxed);
         self.runtime.collecting.store(true, Ordering::Relaxed);
 
         if let Err(err) = self.install_monitor() {
@@ -387,7 +393,7 @@ impl TabletBackend for MacNativeBackend {
 
     fn stop(&mut self) {
         self.runtime.collecting.store(false, Ordering::Relaxed);
-        self.runtime.pointer_down.store(false, Ordering::Relaxed);
+        self.runtime.in_proximity.store(false, Ordering::Relaxed);
         self.events.close();
         self.uninstall_monitor();
         self.events.clear();
@@ -408,6 +414,10 @@ impl TabletBackend for MacNativeBackend {
 
     fn queue_metrics(&self) -> InputQueueMetrics {
         self.events.metrics_snapshot()
+    }
+
+    fn v3_diagnostics(&self) -> TabletV3Diagnostics {
+        self.runtime.diagnostics_snapshot()
     }
 
     fn is_available() -> bool {

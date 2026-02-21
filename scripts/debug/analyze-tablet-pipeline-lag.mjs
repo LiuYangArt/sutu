@@ -65,6 +65,11 @@ function formatMs(value) {
   return `${value.toFixed(2)}ms`;
 }
 
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return 'n/a';
+  return `${(value * 100).toFixed(3)}%`;
+}
+
 function summarizeLags(label, arr) {
   if (arr.length === 0) {
     console.log(`[Lag] ${label}: no data`);
@@ -94,6 +99,11 @@ function addStrokeLag(map, strokeId, lag) {
   map.get(key).push(lag);
 }
 
+function incMap(map, key) {
+  if (typeof key !== 'string' || key.length === 0) return;
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
 function printPerStroke(label, map) {
   const ids = [...map.keys()].sort((a, b) => a - b);
   if (ids.length === 0) {
@@ -116,6 +126,18 @@ function printPerStroke(label, map) {
   }
 }
 
+function printTopCounts(label, map) {
+  const entries = [...map.entries()].sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    console.log(`[Lag] ${label}: no data`);
+    return;
+  }
+  console.log(`[Lag] ${label}:`);
+  for (const [key, count] of entries.slice(0, 8)) {
+    console.log(`  ${key}: ${count}`);
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!fs.existsSync(args.file)) {
@@ -134,6 +156,16 @@ function main() {
   const emitterNewestLags = [];
   const emitterTransportLags = [];
   const delayedBatches = [];
+  const emitterBackendCounts = new Map();
+  const emitterFirstSourceCounts = new Map();
+  const emitterLastSourceCounts = new Map();
+  const firstSeedPressureByStroke = new Map();
+  const firstConsumedPressureByStroke = new Map();
+  const firstDabPressureErrors = [];
+
+  let nativeEmptyWithContactCount = 0;
+  let nativeConsumeSampleCount = 0;
+  let latestV3Diagnostics = null;
 
   let parsedRows = 0;
   let skippedRows = 0;
@@ -150,6 +182,9 @@ function main() {
       typeof row.trace_epoch_ms === 'number' && Number.isFinite(row.trace_epoch_ms)
         ? row.trace_epoch_ms
         : null;
+    if (row.v3_diagnostics && typeof row.v3_diagnostics === 'object') {
+      latestV3Diagnostics = row.v3_diagnostics;
+    }
 
     if (scope === 'frontend.recv.native_v3') {
       const lag = getMsLag(traceEpochMs, row.host_time_us);
@@ -160,14 +195,43 @@ function main() {
       continue;
     }
 
+    if (scope === 'frontend.pointerdown.native_seed') {
+      const strokeId = Number(row.stroke_id);
+      const pressure = Number(row.pressure_0_1);
+      if (Number.isFinite(strokeId) && Number.isFinite(pressure) && !firstSeedPressureByStroke.has(strokeId)) {
+        firstSeedPressureByStroke.set(strokeId, pressure);
+      }
+      continue;
+    }
+
+    if (scope === 'frontend.pointermove.native_empty' && row.pointer_contact) {
+      nativeEmptyWithContactCount += 1;
+      continue;
+    }
+
     if (
       scope === 'frontend.pointermove.native_consume' ||
-      scope === 'frontend.pointerup.native_consume'
+      scope === 'frontend.pointerup.native_consume' ||
+      scope === 'frontend.native_pump.consume'
     ) {
       const lag = getMsLag(traceEpochMs, row.host_time_us);
       if (lag !== null) {
         consumeLags.push(lag);
         addStrokeLag(consumeByStroke, row.stroke_id, lag);
+      }
+      nativeConsumeSampleCount += 1;
+      const strokeId = Number(row.stroke_id);
+      const pressure = Number(row.pressure_0_1);
+      if (
+        Number.isFinite(strokeId) &&
+        Number.isFinite(pressure) &&
+        !firstConsumedPressureByStroke.has(strokeId)
+      ) {
+        firstConsumedPressureByStroke.set(strokeId, pressure);
+        const seedPressure = firstSeedPressureByStroke.get(strokeId);
+        if (Number.isFinite(seedPressure)) {
+          firstDabPressureErrors.push(Math.abs(pressure - seedPressure));
+        }
       }
       continue;
     }
@@ -184,6 +248,9 @@ function main() {
       if (Number.isFinite(oldestUs)) emitterOldestLags.push(oldestUs / 1000);
       if (Number.isFinite(newestUs)) emitterNewestLags.push(newestUs / 1000);
       if (transportLag !== null) emitterTransportLags.push(transportLag);
+      incMap(emitterBackendCounts, row.backend);
+      incMap(emitterFirstSourceCounts, row.first_source);
+      incMap(emitterLastSourceCounts, row.last_source);
 
       if ((Number.isFinite(oldestUs) && oldestUs / 1000 > 80) || (transportLag ?? 0) > 80) {
         delayedBatches.push({
@@ -212,6 +279,41 @@ function main() {
 
   printPerStroke('frontend.recv.native_v3', recvByStroke);
   printPerStroke('frontend.native_consume', consumeByStroke);
+  printTopCounts('emitter backend distribution', emitterBackendCounts);
+  printTopCounts('emitter first_source distribution', emitterFirstSourceCounts);
+  printTopCounts('emitter last_source distribution', emitterLastSourceCounts);
+
+  const emitTransportSorted = [...emitterTransportLags].sort((a, b) => a - b);
+  const emitToFrontendRecvP95Ms = quantile(emitTransportSorted, 0.95);
+  const nativeEmptyDenominator = nativeConsumeSampleCount + nativeEmptyWithContactCount;
+  const nativeEmptyWithContactRate =
+    nativeEmptyDenominator > 0 ? nativeEmptyWithContactCount / nativeEmptyDenominator : null;
+  const firstDabErrorSorted = [...firstDabPressureErrors].sort((a, b) => a - b);
+  const firstDabPressureErrorP95 = quantile(firstDabErrorSorted, 0.95);
+  const pressureClampRate =
+    latestV3Diagnostics &&
+    Number.isFinite(latestV3Diagnostics.pressure_total_count) &&
+    latestV3Diagnostics.pressure_total_count > 0 &&
+    Number.isFinite(latestV3Diagnostics.pressure_clamp_count)
+      ? latestV3Diagnostics.pressure_clamp_count / latestV3Diagnostics.pressure_total_count
+      : null;
+
+  console.log('[Blocking] threshold checks:');
+  console.log(
+    `  native_empty_with_contact_rate=${formatPercent(nativeEmptyWithContactRate)} (threshold <= 0.500%)`
+  );
+  console.log(
+    `  pressure_clamp_rate=${formatPercent(pressureClampRate)} (threshold <= 0.100%)`
+  );
+  console.log(
+    `  first_dab_pressure_error_p95=${Number.isFinite(firstDabPressureErrorP95) ? firstDabPressureErrorP95.toFixed(4) : 'n/a'} (threshold <= 0.12)`
+  );
+  console.log(
+    `  emit_to_frontend_recv_p95_ms=${formatMs(emitToFrontendRecvP95Ms)} (threshold <= 8.00ms)`
+  );
+  if (!latestV3Diagnostics) {
+    console.log('  [Hint] pressure_clamp_rate requires v3_diagnostics snapshot rows in trace.');
+  }
 
   if (delayedBatches.length > 0) {
     console.log('[Lag] Delayed emitter batches (top 12 by oldest/transport lag):');
