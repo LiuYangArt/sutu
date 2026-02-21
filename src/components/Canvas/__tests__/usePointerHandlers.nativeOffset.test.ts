@@ -502,6 +502,61 @@ describe('usePointerHandlers native geometry path', () => {
     expect(params.finishCurrentStroke).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores stale duplicate pointerdown when session started without trusted down', async () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    readPointBufferSinceMock.mockReturnValue({
+      points: [],
+      nextSeq: 0,
+      bufferEpoch: 0,
+    });
+
+    await act(async () => {
+      result.current.handlePointerDown(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 100,
+            clientY: 120,
+            type: 'pointerdown',
+            isTrusted: false,
+          })
+        )
+      );
+      await Promise.resolve();
+    });
+
+    params.isDrawingRef.current = true;
+    params.strokeStateRef.current = 'active';
+    vi.mocked(params.finishCurrentStroke).mockClear();
+    readPointBufferSinceMock.mockClear();
+
+    const performanceNowSpy = vi.spyOn(performance, 'now').mockReturnValue(10_000);
+    try {
+      await act(async () => {
+        result.current.handlePointerDown(
+          createReactPointerEvent(
+            createNativePointerEvent({
+              pointerId: 1,
+              clientX: 101,
+              clientY: 121,
+              type: 'pointerdown',
+              isTrusted: true,
+            })
+          )
+        );
+        await Promise.resolve();
+      });
+    } finally {
+      performanceNowSpy.mockRestore();
+    }
+
+    expect(params.finishCurrentStroke).not.toHaveBeenCalled();
+    expect(readPointBufferSinceMock).not.toHaveBeenCalled();
+  });
+
   it('resets stale pointer session when backend switches before next pointerdown', async () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');

@@ -134,8 +134,21 @@ impl MonitorRuntime {
             return;
         };
         let frame = window.frame();
-        let width_px = frame.size.width as f32;
-        let height_px = frame.size.height as f32;
+        // We need the actual drawable layout height for WebView client coordinates.
+        // In windowed mode, title/toolbar area can add a constant top inset (for example +64 px)
+        // if we use frame/content size directly.
+        let layout_rect = window.contentLayoutRect();
+        let mut width_px = layout_rect.size.width as f32;
+        let mut height_px = layout_rect.size.height as f32;
+        if !width_px.is_finite() || !height_px.is_finite() || width_px <= 0.0 || height_px <= 0.0 {
+            let content_rect = window.contentRectForFrameRect(frame);
+            width_px = content_rect.size.width as f32;
+            height_px = content_rect.size.height as f32;
+        }
+        if !width_px.is_finite() || !height_px.is_finite() || width_px <= 0.0 || height_px <= 0.0 {
+            width_px = frame.size.width as f32;
+            height_px = frame.size.height as f32;
+        }
         if !width_px.is_finite() || !height_px.is_finite() {
             return;
         }

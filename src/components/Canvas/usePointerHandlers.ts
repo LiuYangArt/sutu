@@ -197,6 +197,7 @@ export function usePointerHandlers({
   const nativeSessionCursorRef = useRef(createMacnativeSessionCursorV3());
   const activePointerIdRef = useRef<number | null>(null);
   const activeSessionBackendRef = useRef<string | null>(null);
+  const sessionStartedWithoutTrustedDownRef = useRef<boolean>(false);
   const lastTrustedPointerDownAtMsRef = useRef<number>(-Infinity);
   const nonCanvasPointerIdsRef = useRef<Set<number>>(new Set());
   const isPanningRef = useRef(isPanning);
@@ -260,6 +261,7 @@ export function usePointerHandlers({
             ? performance.now()
             : Date.now();
       }
+      sessionStartedWithoutTrustedDownRef.current = !isTrusted;
       setActivePointerId(pointerId);
       trySetPointerCapture(pointerId, isTrusted);
     },
@@ -274,6 +276,7 @@ export function usePointerHandlers({
       const didClear = clearActivePointerId(pointerId);
       if (didClear) {
         activeSessionBackendRef.current = null;
+        sessionStartedWithoutTrustedDownRef.current = false;
       }
     },
     [clearActivePointerId, tryReleasePointerCapture]
@@ -1118,11 +1121,13 @@ export function usePointerHandlers({
         resolveStreamingBackendName(tabletStateSnapshot.activeBackend, tabletStateSnapshot.backend)
       );
       const activeSessionBackend = activeSessionBackendRef.current;
+      const sameBackendDuplicateSession =
+        activeSessionBackend !== null && activeSessionBackend === currentBackendSessionKey;
       const duplicatePointerDownAgeMs = getNowMs() - lastTrustedPointerDownAtMsRef.current;
       const shouldIgnoreDuplicatePointerDown =
-        duplicatePointerDownAgeMs <= DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS &&
-        activeSessionBackend !== null &&
-        activeSessionBackend === currentBackendSessionKey;
+        sameBackendDuplicateSession &&
+        (duplicatePointerDownAgeMs <= DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS ||
+          sessionStartedWithoutTrustedDownRef.current);
       const isActiveDuplicatePointerDown =
         wantsStrokeInput &&
         pe.isTrusted &&
@@ -1138,6 +1143,7 @@ export function usePointerHandlers({
             duplicate_ignore_window_ms: DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS,
             session_backend: activeSessionBackend,
             current_backend: currentBackendSessionKey,
+            session_started_without_trusted_down: sessionStartedWithoutTrustedDownRef.current,
           });
           return;
         }
@@ -1148,6 +1154,7 @@ export function usePointerHandlers({
           duplicate_ignore_window_ms: DUPLICATE_POINTERDOWN_IGNORE_WINDOW_MS,
           session_backend: activeSessionBackend,
           current_backend: currentBackendSessionKey,
+          session_started_without_trusted_down: sessionStartedWithoutTrustedDownRef.current,
         });
       }
       if (wantsStrokeInput) {
@@ -1191,6 +1198,7 @@ export function usePointerHandlers({
         });
         usingRawInput.current = false;
         nativeMissingInputStreakRef.current = 0;
+        sessionStartedWithoutTrustedDownRef.current = false;
         resetNativeSessionRouter();
         endPointerSession(activePointerId);
       }
