@@ -38,6 +38,17 @@ function defaultTracePath() {
     const appData = process.env.APPDATA ?? '';
     return path.join(appData, 'com.sutu', 'debug', 'tablet-input-trace.ndjson');
   }
+  if (process.platform === 'darwin') {
+    const home = process.env.HOME ?? '';
+    return path.join(
+      home,
+      'Library',
+      'Application Support',
+      'com.sutu',
+      'debug',
+      'tablet-input-trace.ndjson'
+    );
+  }
   const home = process.env.HOME ?? '';
   return path.join(home, '.config', 'com.sutu', 'debug', 'tablet-input-trace.ndjson');
 }

@@ -232,6 +232,7 @@ pub struct MacNativeBackend {
     app_handle: tauri::AppHandle,
     runtime: Arc<MonitorRuntime>,
     monitor_token_raw: Option<usize>,
+    mouse_coalescing_previous: Option<bool>,
 }
 
 #[cfg(target_os = "macos")]
@@ -250,6 +251,7 @@ impl MacNativeBackend {
             app_handle,
             runtime,
             monitor_token_raw: None,
+            mouse_coalescing_previous: None,
         }
     }
 
@@ -271,11 +273,11 @@ impl MacNativeBackend {
         };
 
         let runtime = self.runtime.clone();
-        let (tx, rx) = mpsc::channel::<Result<usize, String>>();
+        let (tx, rx) = mpsc::channel::<Result<(usize, bool), String>>();
 
         main_window
             .with_webview(move |webview| {
-                let result = (|| -> Result<usize, String> {
+                let result = (|| -> Result<(usize, bool), String> {
                     let webview_ptr = webview.inner();
                     let window_ptr = webview.ns_window();
                     if webview_ptr.is_null() || window_ptr.is_null() {
@@ -299,22 +301,36 @@ impl MacNativeBackend {
                             event_ptr.as_ptr()
                         });
 
+                    let mouse_coalescing_previous = NSEvent::isMouseCoalescingEnabled();
+                    NSEvent::setMouseCoalescingEnabled(false);
+
                     let monitor = unsafe {
                         NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler)
-                    }
-                    .ok_or_else(|| "Failed to register NSEvent local monitor".to_string())?;
+                    };
+                    let Some(monitor) = monitor else {
+                        NSEvent::setMouseCoalescingEnabled(mouse_coalescing_previous);
+                        return Err("Failed to register NSEvent local monitor".to_string());
+                    };
 
-                    Ok(Retained::into_raw(monitor) as usize)
+                    Ok((
+                        Retained::into_raw(monitor) as usize,
+                        mouse_coalescing_previous,
+                    ))
                 })();
                 let _ = tx.send(result);
             })
             .map_err(|e| format!("Failed to schedule webview monitor install: {e}"))?;
 
-        let token_raw = rx
+        let (token_raw, mouse_coalescing_previous) = rx
             .recv_timeout(Duration::from_millis(MONITOR_SETUP_TIMEOUT_MS))
             .map_err(|_| "Timed out waiting for macOS monitor installation".to_string())??;
 
         self.monitor_token_raw = Some(token_raw);
+        self.mouse_coalescing_previous = Some(mouse_coalescing_previous);
+        tracing::info!(
+            "[MacNative] NSEvent mouse coalescing: previous={}, now=false",
+            mouse_coalescing_previous
+        );
         Ok(())
     }
 
@@ -322,10 +338,14 @@ impl MacNativeBackend {
         let Some(raw) = self.monitor_token_raw.take() else {
             return;
         };
+        let mouse_coalescing_previous = self.mouse_coalescing_previous.take();
 
         let Some(main_window) = self.app_handle.get_webview_window("main") else {
             unsafe {
                 drop(Retained::from_raw(raw as *mut AnyObject));
+            }
+            if let Some(previous) = mouse_coalescing_previous {
+                NSEvent::setMouseCoalescingEnabled(previous);
             }
             return;
         };
@@ -341,6 +361,9 @@ impl MacNativeBackend {
                     NSEvent::removeMonitor(&*monitor_ptr);
                     drop(Retained::from_raw(monitor_ptr));
                 }
+                if let Some(previous) = mouse_coalescing_previous {
+                    NSEvent::setMouseCoalescingEnabled(previous);
+                }
                 Ok(())
             })();
             let _ = tx.send(remove_result);
@@ -351,15 +374,24 @@ impl MacNativeBackend {
             unsafe {
                 drop(Retained::from_raw(raw as *mut AnyObject));
             }
+            if let Some(previous) = mouse_coalescing_previous {
+                NSEvent::setMouseCoalescingEnabled(previous);
+            }
             return;
         }
 
         match rx.recv_timeout(Duration::from_millis(MONITOR_TEARDOWN_TIMEOUT_MS)) {
             Ok(Err(err)) => {
                 tracing::warn!("[MacNative] Failed to remove local monitor: {}", err);
+                if let Some(previous) = mouse_coalescing_previous {
+                    NSEvent::setMouseCoalescingEnabled(previous);
+                }
             }
             Err(_) => {
                 tracing::warn!("[MacNative] Timed out waiting for monitor teardown");
+                if let Some(previous) = mouse_coalescing_previous {
+                    NSEvent::setMouseCoalescingEnabled(previous);
+                }
             }
             Ok(Ok(())) => {}
         }

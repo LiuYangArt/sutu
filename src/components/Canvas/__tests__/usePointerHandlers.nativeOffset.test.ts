@@ -394,6 +394,110 @@ describe('usePointerHandlers native geometry path', () => {
     expect(params.lockShiftLine).toHaveBeenCalledWith({ x: 120, y: 140 });
   });
 
+  it('does not read native buffer on pointermove when there is no new native sample', async () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    const { result } = renderHook(() => usePointerHandlers(params as any));
+
+    const seedPoint = createNativePoint({
+      seq: 10,
+      stroke_id: 1,
+      pointer_id: 1,
+      phase: 'down',
+      x_px: 180,
+      y_px: 200,
+      source: 'wintab',
+    });
+
+    readPointBufferSinceMock.mockReturnValueOnce({
+      points: [seedPoint],
+      nextSeq: 10,
+      bufferEpoch: 0,
+    });
+
+    await act(async () => {
+      result.current.handlePointerDown(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 100,
+            clientY: 120,
+            type: 'pointerdown',
+          })
+        )
+      );
+      await Promise.resolve();
+    });
+
+    params.isDrawingRef.current = true;
+    params.strokeStateRef.current = 'active';
+    readPointBufferSinceMock.mockClear();
+    getTabletStateMock.mockReturnValue({
+      isStreaming: true,
+      backend: 'wintab',
+      activeBackend: 'wintab',
+      currentPoint: {
+        ...seedPoint,
+        phase: 'move',
+        pressure_0_1: 0.4,
+        pressure: 0.4,
+      },
+    });
+
+    act(() => {
+      result.current.handlePointerMove(
+        createReactPointerEvent(
+          createNativePointerEvent({
+            pointerId: 1,
+            clientX: 220,
+            clientY: 260,
+            type: 'pointermove',
+            pressure: 0.5,
+            buttons: 1,
+          })
+        )
+      );
+    });
+
+    expect(readPointBufferSinceMock).not.toHaveBeenCalled();
+  });
+
+  it('does not start native pump while space pan gesture is active', () => {
+    const ctx = createHookContext();
+    const params = createHookParams(ctx, 'brush');
+    params.spacePressed = true;
+    params.isPanning = true;
+
+    getTabletStateMock.mockReturnValue({
+      isStreaming: true,
+      backend: 'macnative',
+      activeBackend: 'macnative',
+      currentPoint: null,
+    });
+
+    let rafCallback: FrameRequestCallback | null = null;
+    const rafSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((cb: FrameRequestCallback): number => {
+        rafCallback = cb;
+        return 1;
+      });
+    const cancelSpy = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation((): void => undefined);
+
+    try {
+      renderHook(() => usePointerHandlers(params as any));
+      act(() => {
+        rafCallback?.(0);
+      });
+      expect(readPointBufferSinceMock).not.toHaveBeenCalled();
+    } finally {
+      rafSpy.mockRestore();
+      cancelSpy.mockRestore();
+    }
+  });
+
   it('ignores late duplicate pointerdown when native stroke is already active', async () => {
     const ctx = createHookContext();
     const params = createHookParams(ctx, 'brush');

@@ -539,12 +539,40 @@ export function usePointerHandlers({
       const isNativeBackendActive = isNativeTabletStreamingState(tabletState);
       const shouldUseNativeBackend = isNativeBackendActive && nativeEvent.isTrusted;
       if (shouldUseNativeBackend) {
+        const hasPointerContact =
+          (typeof nativeEvent.pressure === 'number' && nativeEvent.pressure > 0) ||
+          nativeEvent.buttons !== 0;
+        const latestNativePoint = tabletState.currentPoint;
+        const latestNativeSeq =
+          latestNativePoint &&
+          (latestNativePoint.source === 'wintab' || latestNativePoint.source === 'macnative')
+            ? latestNativePoint.seq
+            : null;
+        const readCursorSeq = nativeSessionCursorRef.current.seq;
+        const hasNewNativeSample =
+          typeof latestNativeSeq !== 'number' || !Number.isFinite(latestNativeSeq)
+            ? true
+            : latestNativeSeq > readCursorSeq;
+        if (!hasNewNativeSample) {
+          nativeMissingInputStreakRef.current = 0;
+          if (hasPointerContact) {
+            logTabletTrace('frontend.pointermove.native_wait', {
+              pointer_id: nativeEvent.pointerId,
+              active_pointer_id: activePointerId,
+              read_cursor_seq: readCursorSeq,
+              latest_native_seq: latestNativeSeq,
+              pointer_contact: hasPointerContact,
+              mapped_canvas_x: mappedHoverPoint.x,
+              mapped_canvas_y: mappedHoverPoint.y,
+              pressure: nativeEvent.pressure,
+              buttons: nativeEvent.buttons,
+            });
+          }
+          return;
+        }
         const nativeBatch = consumeNativeRoutedPoints('pointermove');
         const resolvedNativePoints = nativeBatch.events;
         if (resolvedNativePoints.length === 0) {
-          const hasPointerContact =
-            (typeof nativeEvent.pressure === 'number' && nativeEvent.pressure > 0) ||
-            nativeEvent.buttons !== 0;
           nativeMissingInputStreakRef.current = hasPointerContact
             ? nativeMissingInputStreakRef.current + 1
             : 0;
@@ -1518,8 +1546,12 @@ export function usePointerHandlers({
       const nativeBackendActive =
         isStrokeTool(currentTool) && isNativeTabletStreamingState(tabletState);
       const domInactiveForMs = getNowMs() - lastDomPointerActivityMsRef.current;
+      const gestureOwnsPointer =
+        spacePressed || isPanningRef.current || isZoomingRef.current || currentTool === 'move';
       const shouldPumpNative =
-        nativeBackendActive && domInactiveForMs >= DOM_POINTER_ACTIVITY_TIMEOUT_MS;
+        nativeBackendActive &&
+        !gestureOwnsPointer &&
+        domInactiveForMs >= DOM_POINTER_ACTIVITY_TIMEOUT_MS;
 
       if (shouldPumpNative) {
         const nativeBatch = consumeNativeRoutedPoints('native_pump');
@@ -1665,6 +1697,7 @@ export function usePointerHandlers({
     };
   }, [
     currentTool,
+    spacePressed,
     getNowMs,
     canvasRef,
     layers,

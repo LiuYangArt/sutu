@@ -8,6 +8,17 @@ function defaultTracePath() {
     const appData = process.env.APPDATA ?? '';
     return path.join(appData, 'com.sutu', 'debug', 'tablet-input-trace.ndjson');
   }
+  if (process.platform === 'darwin') {
+    const home = process.env.HOME ?? '';
+    return path.join(
+      home,
+      'Library',
+      'Application Support',
+      'com.sutu',
+      'debug',
+      'tablet-input-trace.ndjson'
+    );
+  }
   const home = process.env.HOME ?? '';
   return path.join(home, '.config', 'com.sutu', 'debug', 'tablet-input-trace.ndjson');
 }
@@ -138,6 +149,26 @@ function printTopCounts(label, map) {
   }
 }
 
+function summarizeCadenceFromDeltas(label, arrMs) {
+  if (arrMs.length === 0) {
+    console.log(`[Cadence] ${label}: no data`);
+    return;
+  }
+  const sorted = [...arrMs].sort((a, b) => a - b);
+  const p50 = quantile(sorted, 0.5);
+  const p90 = quantile(sorted, 0.9);
+  const avg = sorted.reduce((sum, v) => sum + v, 0) / sorted.length;
+  const hzP50 = Number.isFinite(p50) && p50 > 0 ? 1000 / p50 : null;
+  const hzAvg = Number.isFinite(avg) && avg > 0 ? 1000 / avg : null;
+  console.log(
+    `[Cadence] ${label}: n=${arrMs.length} p50=${formatMs(p50)} p90=${formatMs(
+      p90
+    )} avg=${formatMs(avg)} hz_p50=${Number.isFinite(hzP50) ? hzP50.toFixed(1) : 'n/a'} hz_avg=${
+      Number.isFinite(hzAvg) ? hzAvg.toFixed(1) : 'n/a'
+    }`
+  );
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!fs.existsSync(args.file)) {
@@ -159,6 +190,8 @@ function main() {
   const emitterBackendCounts = new Map();
   const emitterFirstSourceCounts = new Map();
   const emitterLastSourceCounts = new Map();
+  const emitterCadenceByBackend = new Map();
+  const lastEmitterSampleByBackend = new Map();
   const firstSeedPressureByStroke = new Map();
   const firstConsumedPressureByStroke = new Map();
   const firstDabPressureErrors = [];
@@ -252,6 +285,30 @@ function main() {
       incMap(emitterFirstSourceCounts, row.first_source);
       incMap(emitterLastSourceCounts, row.last_source);
 
+      const backendKey =
+        typeof row.backend === 'string' && row.backend.length > 0 ? row.backend : 'unknown';
+      const inputCount = Number(row.input_event_count);
+      const minSeq = Number(row.min_seq);
+      const hostTimeUs = Number(row.min_host_time_us);
+      if (
+        Number.isFinite(inputCount) &&
+        inputCount > 0 &&
+        Number.isFinite(minSeq) &&
+        Number.isFinite(hostTimeUs)
+      ) {
+        const previous = lastEmitterSampleByBackend.get(backendKey);
+        if (previous && minSeq === previous.seq + 1) {
+          const deltaMs = (hostTimeUs - previous.hostTimeUs) / 1000;
+          if (Number.isFinite(deltaMs) && deltaMs > 0 && deltaMs <= 200) {
+            if (!emitterCadenceByBackend.has(backendKey)) {
+              emitterCadenceByBackend.set(backendKey, []);
+            }
+            emitterCadenceByBackend.get(backendKey).push(deltaMs);
+          }
+        }
+        lastEmitterSampleByBackend.set(backendKey, { seq: minSeq, hostTimeUs });
+      }
+
       if ((Number.isFinite(oldestUs) && oldestUs / 1000 > 80) || (transportLag ?? 0) > 80) {
         delayedBatches.push({
           iso: row.trace_iso_time,
@@ -282,6 +339,9 @@ function main() {
   printTopCounts('emitter backend distribution', emitterBackendCounts);
   printTopCounts('emitter first_source distribution', emitterFirstSourceCounts);
   printTopCounts('emitter last_source distribution', emitterLastSourceCounts);
+  for (const [backend, cadenceDeltasMs] of emitterCadenceByBackend.entries()) {
+    summarizeCadenceFromDeltas(`backend=${backend} continuous_host_interval`, cadenceDeltasMs);
+  }
 
   const emitTransportSorted = [...emitterTransportLags].sort((a, b) => a - b);
   const emitToFrontendRecvP95Ms = quantile(emitTransportSorted, 0.95);
